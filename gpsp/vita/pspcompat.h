@@ -251,6 +251,10 @@ void pspcompat_dialogs_init(void);
  * Enter Button Assignment): 1 = Circle confirms (the Japanese layout).  The
  * twin answers 0, or 1 with GBADHOC_ENTER_BUTTON=circle in its environment. */
 int  pspcompat_enter_is_circle(void);
+/* The Vita's system language, a SceSystemParamLang (0 Japanese, 1 English US,
+ * 2 French, 3 Spanish, 4 German, 5 Italian ... 17 Brazilian Portuguese); 1 when
+ * unknown.  The twin answers 1, or GBADHOC_FAKE_LANG's number. */
+int  pspcompat_system_lang(void);
 /* 1 = pspcompat_pad() hands Cross and Circle over exchanged (the same switch
  * as plat_pad_face_swap, for the pad this file reads itself). */
 void pspcompat_face_swap(int on);

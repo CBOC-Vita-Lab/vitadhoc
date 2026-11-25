@@ -79,6 +79,7 @@ static inline void *memalign(size_t al, size_t n)
 #define UI_DIAG_END(stage, t) md_end(stage, t)
 #include "ui_host_hooks.h"
 #include "fe_util.h"         /* fe_crc32: the list's CRC in rom_scan */
+#include "i18n.h"            /* tr(): the interface languages */
 #else
 #define UI_PREV_CHAR(s, n) ((n) - 1)
 #define UI_DIAG_BEGIN() 0ull
@@ -1166,7 +1167,7 @@ int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
 {
    int shot_frames = 0, inj_frames = 0;
    (void)inj_frames;
-   static const char *lbl[2] = { "Continue", "Quit to game list" };
+   const char *lbl[2] = { tr("ui.continue"), tr("ui.quit_to_game_list") };
    const int LX = 20;                 /* wordmark + title margin */
    int sel = 0, first = 1;
    unsigned prev = 0;
@@ -1254,7 +1255,7 @@ int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
          vs_wordmark(36, 26, 34, VS_HEX(0xFFFFFF, 210));
          hm_status(VS_W - 36, 20);
          vs_icon(VS_I_PAUSE, VS_W * 0.5f, 170, 44, HC_TEXT);
-         vs_text_c(VS_TITLE, VS_W * 0.5f, 206, "Paused", HC_TEXT);
+         vs_text_c(VS_TITLE, VS_W * 0.5f, 206, tr("ui.paused"), HC_TEXT);
          snprintf(t, sizeof(t), "%s", title);
          par = strstr(t, " (");
          if (par && par != t)
@@ -1282,7 +1283,7 @@ int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
          }
          {
             static const int ic[2] = { VS_I_BTN_X, VS_I_BTN_O };
-            static const char *const w[2] = { "Select", "Resume" };
+            const char *const w[2] = { tr("ui.select"), tr("ui.resume") };
             static const unsigned b[2] = { PSP_CTRL_CROSS, PSP_CTRL_CIRCLE };
             hm_hints_b(VS_W - 44, VS_H - 50, ic, w, b, 2);
          }
@@ -1336,10 +1337,10 @@ int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
        *    rest of the UI uses -- not floating under a box. */
 #ifdef VITA
       /* The Vita's footers end on the way out, every one of them. */
-      footer(UI_KEY_X " select   DPAD change   " UI_KEY_O " resume");
+      footer(tr("hint.x_select_dpad_change_o_resume"));
       }
 #else
-      footer(UI_KEY_X " select     " UI_KEY_O " resume     DPAD change");
+      footer("\x81 select     \x80 resume     DPAD change");
 #endif
 
       vid_overlay_end();
@@ -2060,8 +2061,8 @@ static void ov_cluster(void)
       g_ov_room_show = 1;
    /* A cable host waiting for the other PSP reads HOSTING (docs/
     * GBA-LINK-UI.md); any other session, LINKED. */
-   ov_cluster_text(g_link.state == UI_LINK_HOSTING ? "HOSTING" :
-                   g_ov_linked ? "LINKED"
+   ov_cluster_text(g_link.state == UI_LINK_HOSTING ? tr("ui.hosting") :
+                   g_ov_linked ? tr("ui.linked")
                                : room_label(g_pcfg.group, lbl, sizeof(lbl)));
 }
 
@@ -2124,8 +2125,8 @@ static void ov_head(const char *sub, const char *title)
       const ui_skin *sk = skin_of(g_pcfg.console);
       char lbl[ROOM_LABEL_CAP];
       const char *room = g_ov_room_txt ? g_ov_room_txt
-                       : g_link.state == UI_LINK_HOSTING ? "Hosting"
-                       : g_ov_linked ? "Linked"
+                       : g_link.state == UI_LINK_HOSTING ? tr("ui.hosting_2")
+                       : g_ov_linked ? tr("ui.linked_2")
                        : room_label(g_pcfg.group, lbl, sizeof(lbl));
       float x;
       vs_grad_v(0, 0, VS_W, 110, VS_HEX(0x070B18, 190), VS_HEX(0x070B18, 0));
@@ -2223,7 +2224,7 @@ void ui_linking_draw(const ui_linking_view *v)
    g_ov_browse = 0;
    ov_backdrop(OV_SCRIM);
    vid_logo(20, 17, C_TITLE, 255);
-   vid_text_hd(20 + VID_LOGO_W + 14, 16, "LINKING", C_SEL);
+   vid_text_hd(20 + VID_LOGO_W + 14, 16, tr("ui.linking"), C_SEL);
    snprintf(sub, sizeof(sub), "%s", v->game ? v->game : g_ov_title);
    g_ov_room_show = 1;         /* LINKING names the room */
    bx = ov_cluster_text(v->room && v->room[0]
@@ -2238,7 +2239,7 @@ void ui_linking_draw(const ui_linking_view *v)
          vid_text(22, 72, v->l1, C_VALUE);
       if (v->l2)
          vid_text(22, 72 + FE_FONT_H + 2, v->l2, C_DIM);
-      footer(v->footer ? v->footer : VID_GLYPH_O " back");
+      footer(v->footer ? v->footer : tr("hint.o_back"));
    }
    else
    {
@@ -2257,7 +2258,7 @@ void ui_linking_draw(const ui_linking_view *v)
       }
       if (v->l3)
          vid_text(22, 130, v->l3, C_DIM);
-      footer(v->footer ? v->footer : VID_GLYPH_O " cancel");
+      footer(v->footer ? v->footer : tr("hint.o_cancel"));
    }
    vid_overlay_end();
 }
@@ -2513,7 +2514,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
         * (the app and both players).  First of INTERFACE, above Theme where
         * the list's Settings opens: both are on the page as it opens, and no
         * row below Theme moved. */
-       SET_TEXTSIZE, SET_CONTRAST,
+       SET_LANGUAGE, SET_TEXTSIZE, SET_CONTRAST,
        SET_THEME, SET_SHELL, SET_PREVIEW, SET_COVERS, SET_REFRESH,
        SET_SHOTDIR,
        SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_REWIND, SET_FPS,
@@ -2598,191 +2599,192 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
 #ifdef VITA
    /* Not "PLAY TOGETHER": that is the in-game menu's page, and the owner
     * looked for "Two players on this Vita" here. */
-   { 1, "LINK SETUP" },
-   { 0, "Player name" },
-   { 0, "Connection" },
-   { 0, "Room" },
+   { 1, TR_KEY("settings.link_setup") },
+   { 0, TR_KEY("settings.player_name") },
+   { 0, TR_KEY("settings.connection") },
+   { 0, TR_KEY("settings.room") },
 #else
    { 1, "WIRELESS" },
    { 0, "Room" },
 #endif
    /* Link Cable / Wireless Adapter, PER GAME (docs/GBA-LINK-UI.md): the
     * design puts it here, between Room and Session overlay. */
-   { 0, "Link mode" },
+   { 0, TR_KEY("settings.link_mode") },
 #ifdef VITA
-   { 0, "Link delay" },
-   { 0, "Fast link" },         /* GBAdhoc 4.0's, beside the other link knob */
+   { 0, TR_KEY("settings.link_delay") },
+   { 0, TR_KEY("settings.fast_link") },         /* GBAdhoc 4.0's, beside the other link knob */
 #endif
-   { 0, "Session overlay" },
+   { 0, TR_KEY("settings.session_overlay") },
    /* BROWSER ONLY (docs/SAVE-SHARE.md): hidden in the in-game Settings, so
     * every row there keeps its place and its count (set_row_shown).  Share
     * game data HOSTS a data-share room on the Settings room; the row under
     * it is the ordinary room list -- the in-game Wireless menu's -- which
     * the browser had no way to reach.  There is no other entry: a joined
     * room that turns out to be a data share opens its menu by itself. */
-   { 0, "Share game data" },
+   { 0, TR_KEY("settings.share_game_data") },
 #ifdef VITA
    /* The Vita joins the share on its own Room (Settings > Room) over Wi-Fi
     * (vita/share_vita.c); the link's Join list holds only links.  Fast link
     * is up with Link delay. */
-   { 0, "Join a share" },
+   { 0, TR_KEY("settings.join_a_share") },
    /* 2.0, BROWSER ONLY: type a friend's room code from the game list; the
     * game it needs is found in the library (set_row_shown) */
-   { 0, "Join online" },
+   { 0, TR_KEY("settings.join_online") },
    /* 2.0, BROWSER ONLY, SNES tab only: host or join Two players with the highlighted game (snes.bin plays it) */
-   { 0, "Two players" },
+   { 0, TR_KEY("settings.two_players") },
 #else
    { 0, "Join: scan for rooms" },
    /* BROWSER ONLY too, and LAST in the section, so no row a harness walker
     * counts has moved (in game the row is in the Wireless menu itself). */
    { 0, "Fast link" },
 #endif
-   { 1, "DISPLAY" },              /* + " (GBA)" etc., drawn per console */
+   { 1, TR_KEY("settings.display") },              /* + " (GBA)" etc., drawn per console */
    { 0,
 #ifdef VITA
-     "Screen size"
+     TR_KEY("settings.screen_size")
 #else
      "Video scale"
 #endif
    },
 #ifdef VITA
-   { 0, "Image quality" },
+   { 0, TR_KEY("settings.image_quality") },
 #endif
-   { 0, "Video filter" },
-   { 0, "Ambient glow" },
-   { 0, "Game Boy colours" },
+   { 0, TR_KEY("settings.video_filter") },
+   { 0, TR_KEY("settings.ambient_glow") },
+   { 0, TR_KEY("settings.game_boy_colours") },
 #ifdef VITA
    /* A Game Boy's only, and greyed (stepped over) on the others, so no row
     * a harness walker counts on a GBA moves. */
-   { 0, "SGB border" },
+   { 0, TR_KEY("settings.sgb_border") },
    /* After the PSP's rows of the section, so those keep their order. */
-   { 0, "LCD colours" },
-   { 0, "LCD ghosting" },
-   { 0, "Wide view" },
-   { 0, "Screen fill" },        /* the wide view's margins: bars / soft edges / stretch */
+   { 0, TR_KEY("settings.lcd_colours") },
+   { 0, TR_KEY("settings.lcd_ghosting") },
+   { 0, TR_KEY("settings.wide_view") },
+   { 0, TR_KEY("settings.screen_fill") },        /* the wide view's margins: bars / soft edges / stretch */
    /* 1.2: what were vita.ini keys, now rows (players asked for them) */
-   { 0, "Scanlines" },          /* 0..10, like the players' */
-   { 0, "LCD grid" },           /* 0..10 */
-   { 0, "CRT mask" },           /* 0..10 */
-   { 0, "Screen overlay" },
-   { 0, "Smooth 75 Hz motion" },
-   { 0, "Wide view" },
-   { 0, "PAL games speed" },
-   { 0, "Screen" },             /* every console, whatever profile is open */
+   { 0, TR_KEY("settings.scanlines") },          /* 0..10, like the players' */
+   { 0, TR_KEY("settings.lcd_grid") },           /* 0..10 */
+   { 0, TR_KEY("settings.crt_mask") },           /* 0..10 */
+   { 0, TR_KEY("settings.screen_overlay") },
+   { 0, TR_KEY("settings.smooth_75_hz_motion") },
+   { 0, TR_KEY("settings.wide_view") },
+   { 0, TR_KEY("settings.pal_games_speed") },
+   { 0, TR_KEY("settings.screen") },             /* every console, whatever profile is open */
 #endif
-   { 1, "INTERFACE" },
+   { 1, TR_KEY("settings.interface") },
 #ifdef VITA
-   { 0, "Text size" },
-   { 0, "High contrast" },
+   { 0, TR_KEY("settings.language") },        /* 2.0: the menus' language (vita/i18n.h) */
+   { 0, TR_KEY("settings.text_size") },
+   { 0, TR_KEY("settings.high_contrast") },
 #endif
-   { 0, "Theme" },
+   { 0, TR_KEY("settings.theme") },
 #ifdef VITA
-   { 0, "Game list" },
-   { 0, "Game previews" },
+   { 0, TR_KEY("settings.game_list") },
+   { 0, TR_KEY("settings.game_previews") },
    /* Browser only: what artfetch.h found, and X looks again for the
     * covers the server did not have. */
-   { 0, "Covers" },
-   { 0, "Refresh library" },
-   { 0, "Screenshot folder" },
+   { 0, TR_KEY("settings.covers") },
+   { 0, TR_KEY("settings.refresh_library") },
+   { 0, TR_KEY("settings.screenshot_folder") },
 #else
    { 0, "Menu style" },
 #endif
-   { 1, "GAMEPLAY" },
-   { 0, "Fast-forward" },
-   { 0, "FF button (Square)" },
+   { 1, TR_KEY("settings.gameplay") },
+   { 0, TR_KEY("settings.fast_forward") },
+   { 0, TR_KEY("settings.ff_button_square") },
 #ifdef VITA
-   { 0, "Rewind" },
+   { 0, TR_KEY("settings.rewind") },
 #endif
    /* "A/B buttons" (3.0's btn_swap) was here.  Button mapping does the same
     * and more, and an old swapped config is converted into bind_a/bind_b at
     * load (ctl_load_ini), so the row went.  Rows are walked by count: the
     * harness walkers only ever cross rows ABOVE this point, or wrap UP to
     * Button mapping, so none of their arithmetic moved. */
-   { 0, "FPS counter" },
+   { 0, TR_KEY("settings.fps_counter") },
 #ifdef VITA
    /* After FPS counter, so the rows the harness walkers cross keep their
     * places. */
-   { 0, "Keep full speed" },
+   { 0, TR_KEY("settings.keep_full_speed") },
    /* 1.3: 500 or 444 MHz (cpuclock.h).  One row, right here. */
-   { 0, "CPU speed" },
-   { 0, "Steady pacing" },
-   { 0, "Smooth hand-over" },
-   { 0, "Fourth core" },
-   { 0, "Quick response" },
-   { 1, "RETROACHIEVEMENTS" },
-   { 0, "Account" },
-   { 0, "Hardcore" },
-   { 0, "Achievements" },
-   { 0, "Achievement indicators" },
-   { 1, "LIBRARY" },
+   { 0, TR_KEY("settings.cpu_speed") },
+   { 0, TR_KEY("settings.steady_pacing") },
+   { 0, TR_KEY("settings.smooth_hand_over") },
+   { 0, TR_KEY("settings.fourth_core") },
+   { 0, TR_KEY("settings.quick_response") },
+   { 1, TR_KEY("settings.retroachievements") },
+   { 0, TR_KEY("settings.account") },
+   { 0, TR_KEY("settings.hardcore") },
+   { 0, TR_KEY("settings.achievements") },
+   { 0, TR_KEY("settings.achievement_indicators") },
+   { 1, TR_KEY("settings.library") },
    /* 1.4: Game title / File name (GitHub #16).  First under the header, so
     * the walkers that wrap up from the top to Cover picture, Game folders
     * and Game order keep their counts. */
-   { 0, "Game names" },
+   { 0, TR_KEY("settings.game_names") },
    /* The labels follow the enum: Cover picture, then Sync RetroArch saves
     * (they were in the other order, so each row wore the other's name). */
-   { 0, "Cover picture" },
+   { 0, TR_KEY("settings.cover_picture") },
    /* 1.3: RetroArch saves stay in step (save_sync.h).  Above Game folders,
     * so the walkers that wrap up from the top to Game folders / Game order
     * keep their counts. */
-   { 0, "Sync RetroArch saves" },
+   { 0, TR_KEY("settings.sync_retroarch_saves") },
    /* Folders of games beside roms/ (vita.ini extra_roms; GitHub #5).
     * Above Game order, which the harness walkers reach by wrapping up from
     * the top past Button mapping: it keeps that place. */
    /* Before Game folders: the harness walks up from the top to Game
     * folders (Button mapping, Game order, Game folders) and keeps its row. */
-   { 0, "Game folders" },
-   { 0, "Game order" },
+   { 0, TR_KEY("settings.game_folders") },
+   { 0, TR_KEY("settings.game_order") },
    /* The running game's own (config_psp.h pcfg_game): its look, and the
     * sensor rows of a sensor cartridge (fe_sensor.h). */
-   { 1, "THIS GAME" },
+   { 1, TR_KEY("settings.this_game") },
    /* GBA games, for ROM hacks the app does not detect right; read at the
     * next start of the game.  Placed above Display settings so the rows a
     * walker reaches by wrapping up from the top keep their place. */
-   { 0, "Save type" },
-   { 0, "Clock (RTC)" },
-   { 0, "Display settings" },
-   { 0, "Motion controls" },
-   { 0, "Motion strength" },
-   { 0, "Direction" },
-   { 0, "Level" },
-   { 0, "Sunlight" },
-   { 0, "Rotation" },
-   { 0, "Vertical play" },
-   { 0, "Palette" },
-   { 0, "Game Boy type" },
-   { 0, "Quick response" },
-   { 0, "Camera" },
-   { 0, "Game Boy Printer" },
-   { 0, "Rear touch panel" },
-   { 0, "Port 2" },
-   { 0, "Export save for other emulators" },
-   { 1, "ABOUT" },
-   { 0, "Check for updates" },
-   { 0, "Extra CPU core" },
+   { 0, TR_KEY("settings.save_type") },
+   { 0, TR_KEY("settings.clock_rtc") },
+   { 0, TR_KEY("settings.display_settings") },
+   { 0, TR_KEY("settings.motion_controls") },
+   { 0, TR_KEY("settings.motion_strength") },
+   { 0, TR_KEY("settings.direction") },
+   { 0, TR_KEY("settings.level") },
+   { 0, TR_KEY("settings.sunlight") },
+   { 0, TR_KEY("settings.rotation") },
+   { 0, TR_KEY("settings.vertical_play") },
+   { 0, TR_KEY("settings.palette") },
+   { 0, TR_KEY("settings.game_boy_type") },
+   { 0, TR_KEY("settings.quick_response") },
+   { 0, TR_KEY("settings.camera") },
+   { 0, TR_KEY("settings.game_boy_printer") },
+   { 0, TR_KEY("settings.rear_touch_panel") },
+   { 0, TR_KEY("settings.port_2") },
+   { 0, TR_KEY("settings.export_save_for_other_emulators") },
+   { 1, TR_KEY("settings.about") },
+   { 0, TR_KEY("settings.check_for_updates") },
+   { 0, TR_KEY("settings.extra_cpu_core") },
 #endif
 #ifdef REWIND
    /* Hold the Rewind button (Triangle unless remapped) and the game runs
     * backwards.  Both rows are read when a game is started. */
-   { 0, "Rewind" },
-   { 0, "Rewind length" },
+   { 0, tr("settings.rewind") },
+   { 0, tr("settings.rewind_length") },
 #endif
    /* Last, so every row above keeps its position (the harness ui_demo walks
     * this list by count).  X opens the page; it is not a value to cycle. */
-   { 1, "CONTROLS" },
+   { 1, TR_KEY("settings.controls") },
    /* Above Button mapping, which stays LAST: the harness walkers reach it
     * by wrapping up from the top. */
 #ifndef VITA   /* the Vita's left stick is the d-pad, its right one fixed */
    { 0, "Thumbstick" },
 #else
-   { 0, "A and B buttons" },
-   { 0, "Rewind with right stick" },
-   { 0, "Screenshot button combo" },
-   { 0, "Tap screen for menu" },
-   { 0, "Rear touch panel" },
-   { 0, "Button test" },
+   { 0, TR_KEY("settings.a_and_b_buttons") },
+   { 0, TR_KEY("settings.rewind_with_right_stick") },
+   { 0, TR_KEY("settings.screenshot_button_combo") },
+   { 0, TR_KEY("settings.tap_screen_for_menu") },
+   { 0, TR_KEY("settings.rear_touch_panel") },
+   { 0, TR_KEY("settings.button_test") },
 #endif
-   { 0, "Button mapping" },
+   { 0, TR_KEY("settings.button_mapping") },
 };
 
 /* A GBA profile has no DMG palette: the row stays visible, greyed, and the
@@ -2877,8 +2879,8 @@ static int set_row_shown(int idx)
  * GBA Link Cable session.  The HOST's setting is the session's; a guest's is
  * ignored (and left alone).  It does nothing for a GB/GBC link or for the
  * Wireless Adapter, so the row is greyed there. */
-#define FASTLINK_HINT1 "For a strong connection: slightly faster link play."
-#define FASTLINK_HINT2 "The host's setting is used."
+#define FASTLINK_HINT1 tr("settings.help.for_a_strong_connection_slightly_faster")
+#define FASTLINK_HINT2 tr("settings.help.the_host_s_setting_is_used")
 static int fastlink_row_enabled(void)
 {
    return pcfg_display_console() == FE_CONSOLE_GBA;
@@ -3187,19 +3189,19 @@ static const char *linkmode_value(void)
    const char *k, *c;
    int ov;
    if (!lm_target(&k, &c))
-      return g_ov_browse && g_pcfg.console == FE_CONSOLE_GBA ? "pick a game"
-           : pcfg_display_console() != FE_CONSOLE_GBA ? "Link Cable"
-                                                      : "Auto";
+      return g_ov_browse && g_pcfg.console == FE_CONSOLE_GBA ? tr("ui.pick_a_game")
+           : pcfg_display_console() != FE_CONSOLE_GBA ? tr("ui.link_cable")
+                                                      : tr("ui.auto");
    ov = fe_linkmode_get(&g_lm, k);
    if (ov == FE_LM_CABLE)
-      return "Link Cable";
+      return tr("ui.link_cable");
    if (ov == FE_LM_ADAPTER)
-      return "Wireless Adapter";
+      return tr("ui.wireless_adapter");
    switch (link_game_mode(c))
    {
-   case LINK_ADAPTER: return "Auto: Wireless Adapter";
-   case LINK_BOTH:    return "Auto: ask";
-   default:           return "Auto: Link Cable";
+   case LINK_ADAPTER: return tr("ui.auto_wireless_adapter");
+   case LINK_BOTH:    return tr("ui.auto_ask");
+   default:           return tr("ui.auto_link_cable");
    }
 }
 
@@ -3212,7 +3214,7 @@ static void linkmode_cycle(int dir)
       return;
    ov = (fe_linkmode_get(&g_lm, k) + 3 + (dir < 0 ? -1 : 1)) % 3;
    if (fe_linkmode_set(&g_lm, k, ov) != 0)
-      osd_toast("The link mode list is full");
+      osd_toast(tr("toast.the_link_mode_list_is_full"));
    else
       (void)lm_save();
    fe_evt("linkmode_set key=\"%s\" mode=%d", k, ov);
@@ -3392,8 +3394,8 @@ static void scan_row_decide(const char *group, scan_row *r)
          {
             r->ok = 0;
             snprintf(r->plate, sizeof(r->plate),
-                     "%s is a Wireless Adapter room. This game links by "
-                     "cable.", room);
+                     "%s is a Wireless Adapter room. This game links by cable."
+, room);
          }
       }
       else
@@ -3754,9 +3756,9 @@ static void settings_adjust(int id, int dir)
       break;
    case SET_LEVEL:
       if (ui_host_sensor_level() == 0)
-         osd_toast("Level is how you hold the Vita now");
+         osd_toast(tr("toast.level_is_how_you_hold_the"));
       else
-         osd_toast("No motion reading to set level from");
+         osd_toast(tr("toast.no_motion_reading_to_set_level"));
       break;
    case SET_SUN:
       g_pgame.sunlight = (g_pgame.sunlight + PCFG_SUN_CLOCK + 1 + dir) %
@@ -3767,14 +3769,14 @@ static void settings_adjust(int id, int dir)
       g_pgame.save_type = (g_pgame.save_type + PCFG_SAVE_MODES +
                            (dir < 0 ? -1 : 1)) % PCFG_SAVE_MODES;
       (void)pcfg_game_save();
-      osd_toast("Save type is used the next time the game starts");
+      osd_toast(tr("toast.save_type_is_used_the_next"));
       fe_evt("game_setting save_type=%d", g_pgame.save_type);
       break;
    case SET_CLOCK:
       g_pgame.rtc_mode = (g_pgame.rtc_mode + PCFG_RTC_MODES +
                           (dir < 0 ? -1 : 1)) % PCFG_RTC_MODES;
       (void)pcfg_game_save();
-      osd_toast("Clock is used the next time the game starts");
+      osd_toast(tr("toast.clock_is_used_the_next_time"));
       fe_evt("game_setting rtc=%d", g_pgame.rtc_mode);
       break;
 #endif
@@ -3880,6 +3882,14 @@ static void settings_adjust(int id, int dir)
       g_pcfg.screen = (g_pcfg.screen + 4 + (dir < 0 ? -1 : 1)) % 4;
       ui_host_look_changed();
       break;
+   case SET_LANGUAGE:
+      /* Automatic, then each catalogue; the pseudo-locale of the tests is
+       * only ever set from display.ini */
+      g_pcfg.language = ((g_pcfg.language == I18N_PSEUDO ? I18N_AUTO : g_pcfg.language) +
+                         I18N_PSEUDO + (dir < 0 ? -1 : 1)) % I18N_PSEUDO;
+      pcfg_language_apply();
+      ui_host_look_changed();
+      break;
    case SET_TEXTSIZE:
       g_pcfg.text_large = !g_pcfg.text_large;
       ui_host_look_changed();   /* the renderer's text (vid_set_text_look) */
@@ -3940,7 +3950,7 @@ static void settings_adjust(int id, int dir)
       if (ui_host_gb_kind_set(k) == 0)
       {
          g_gbtype_have = 0;
-         osd_toast("Game Boy type is used the next time the game starts");
+         osd_toast(tr("toast.game_boy_type_is_used_the"));
          fe_evt("game_setting gb_type=%d", k);
       }
       else
@@ -4138,7 +4148,7 @@ static void set_row_trace(int sel, const char *row, const char *label)
    if (last == label)
       return;
    last = label;
-   fe_evt("settings_row row=%s label=\"%s\"", row, label);
+   fe_evt("settings_row row=%s label=\"%s\"", row, tr_english_of(label));
 }
 
 #ifdef VITA
@@ -4147,198 +4157,199 @@ static const char *set_help(int id)
 {
    switch (id)
    {
-   case SET_NAME:     return "The name other players see beside your room.";
+   case SET_NAME:     return tr("settings.help.the_name_other_players_see_beside");
    case SET_CONN:
       return g_pcfg.net_conn == UI_CONN_ONLINE
-             ? "Far apart: the host shows a code, your friend types it."
+             ? tr("settings.help.far_apart_the_host_shows_a")
            : g_pcfg.net_conn == UI_CONN_INTERNET
-             ? "Advanced: the joiner types the host's address."
+             ? tr("settings.help.advanced_the_joiner_types_the_host")
            : g_pcfg.net_conn == UI_CONN_ADHOC
-             ? "No router: the two " UI_DEVS " connect directly."
-             : "Same Wi-Fi or phone hotspot: rooms appear by themselves.";
-   case SET_ROOM:     return "A number that tells rooms apart when several "
-                             "people host.";
+             ? tr("settings.help.no_router_the_two_vitas_connect")
+             : tr("settings.help.same_wi_fi_or_phone_hotspot");
+   case SET_ROOM:     return tr("settings.help.a_number_that_tells_rooms_apart")
+;
    case SET_LINKMODE: return g_ov_browse
-             ? "The highlighted game: Link Cable or Wireless Adapter."
-             : "How this game links: Link Cable or Wireless Adapter.";
-   case SET_DELAY:    return "Auto suits most. Fewer frames react faster, "
-                             "more are smoother.";
-   case SET_FASTLINK: return "Faster link play on a strong connection. "
-                             "The host's is used.";
-   case SET_SHARE:    return "A Vita on the same Wi-Fi can copy your saves "
-                             "and states.";
-   case SET_JOIN:     return "Copy saves and states from the Vita sharing "
-                             "on your Room.";
+             ? tr("settings.help.the_highlighted_game_link_cable_or")
+             : tr("settings.help.how_this_game_links_link_cable");
+   case SET_DELAY:    return tr("settings.help.auto_suits_most_fewer_frames_react")
+;
+   case SET_FASTLINK: return tr("settings.help.faster_link_play_on_a_strong")
+;
+   case SET_SHARE:    return tr("settings.help.a_vita_on_the_same_wi")
+;
+   case SET_JOIN:     return tr("settings.help.copy_saves_and_states_from_the")
+;
    case SET_ONLINE_JOIN:
-      return "Type your friend's room code. Your copy of their game is "
-             "found and started.";
+      return tr("settings.help.type_your_friend_s_room_code")
+;
    case SET_SNES_TWO:
-      return "Play this game with a friend: one hosts, the other joins. "
-             "Both need the same game.";
-   case SET_OSD:      return "The small link status in the corner of the "
-                             "game.";
-   case SET_SCALE:    return "How large the game is drawn. 3x is exact and "
-                             "the sharpest.";
+      return tr("settings.help.play_this_game_with_a_friend")
+;
+   case SET_OSD:      return tr("settings.help.the_small_link_status_in_the")
+;
+   case SET_SCALE:    return tr("settings.help.how_large_the_game_is_drawn")
+;
    case SET_FILTER:
 #ifdef VITA
       /* Original draws exact pixels whatever is stored here (the stored
        * filter is Auto's); choosing one here switches the quality to Auto. */
       if (g_pcfg.quality == PCFG_QUALITY_ORIGINAL)
-         return "Set by Image quality. Choosing one switches it to Auto.";
+         return tr("settings.help.set_by_image_quality_choosing_one");
 #endif
       /* What the chosen one does, not a list of all of them. */
       switch (g_pcfg.filter)
       {
-      case VID_FILTER_NEAREST:   return "Exact pixels. Sharpest at 2x, 3x "
-                                        "and 4x.";
-      case VID_FILTER_BILINEAR:  return "Soft: every pixel blends into "
-                                        "the next.";
-      case VID_FILTER_SHARP:     return "Exact pixels with softened edges, "
-                                        "at any size.";
-      case VID_FILTER_LCD:       return "Adds the handheld screen's grid of "
-                                        "dots.";
-      case VID_FILTER_XBRZ:      return "Redraws curves and diagonals "
-                                        "smoothly. The heaviest.";
-      case VID_FILTER_SCALE:     return "Rounds stair-steps only. Light, "
-                                        "adds no colours.";
-      case VID_FILTER_SCANLINES: return "Darkens a thin line under every "
-                                        "row of pixels.";
-      default:                   return "How its pixels are drawn.";
+      case VID_FILTER_NEAREST:   return tr("settings.help.exact_pixels_sharpest_at_2x_3x")
+;
+      case VID_FILTER_BILINEAR:  return tr("settings.help.soft_every_pixel_blends_into_the")
+;
+      case VID_FILTER_SHARP:     return tr("settings.help.exact_pixels_with_softened_edges_at")
+;
+      case VID_FILTER_LCD:       return tr("settings.help.adds_the_handheld_screen_s_grid")
+;
+      case VID_FILTER_XBRZ:      return tr("settings.help.redraws_curves_and_diagonals_smoothly_the")
+;
+      case VID_FILTER_SCALE:     return tr("settings.help.rounds_stair_steps_only_light_adds")
+;
+      case VID_FILTER_SCANLINES: return tr("settings.help.darkens_a_thin_line_under_every")
+;
+      default:                   return tr("settings.help.how_its_pixels_are_drawn");
       }
 #ifdef VITA
    case SET_QUALITY:
       return g_pcfg.quality == PCFG_QUALITY_ORIGINAL
-             ? "The game's own pixels, evenly sized at any screen size."
+             ? tr("settings.help.the_game_s_own_pixels_evenly")
            : g_pcfg.quality == PCFG_QUALITY_2X
-             ? "Smoothed at twice the game's size, then sized to fit."
+             ? tr("settings.help.smoothed_at_twice_the_game_s")
            : g_pcfg.quality == PCFG_QUALITY_3X
-             ? "Smoothed at three times its size. More detail, more work."
+             ? tr("settings.help.smoothed_at_three_times_its_size")
            : g_pcfg.quality == PCFG_QUALITY_4X
-             ? "Smoothed at four times its size. The most detail and work."
+             ? tr("settings.help.smoothed_at_four_times_its_size")
            : g_pcfg.quality == PCFG_QUALITY_MMPX
-             ? "MMPX at twice its size: crisp pixel art, light on the Vita."
-             : "Auto adapts to keep 60 fps; smoothing when it can.";
+             ? tr("settings.help.mmpx_at_twice_its_size_crisp")
+             : tr("settings.help.auto_adapts_to_keep_60_fps");
 #endif
    case SET_COLOR:
       if (pcfg_display_console() == FE_CONSOLE_GBA)
-         return g_pcfg.color == 2 ? "Muted and dark, as on the first GBA's "
-                                    "unlit screen."
-              : g_pcfg.color == 1 ? "Muted, as on a GBA's screen: what the "
-                                    "art was made for."
-              : "Colours exactly as the game sends them.";
+         return g_pcfg.color == 2 ? tr("settings.help.muted_and_dark_as_on_the")
+
+              : g_pcfg.color == 1 ? tr("settings.help.muted_as_on_a_gba_s")
+
+              : tr("settings.help.colours_exactly_as_the_game_sends");
       if (pcfg_display_console() == FE_CONSOLE_GBC)
-         return g_pcfg.color ? "As on a Game Boy Color's screen."
-                             : "Colours exactly as the game sends them.";
+         return g_pcfg.color ? tr("settings.help.as_on_a_game_boy_color")
+                             : tr("settings.help.colours_exactly_as_the_game_sends");
       if (pcfg_display_console() == FE_CONSOLE_WSWAN)
-         return g_pcfg.color ? "As on a WonderSwan's screen: softer, blacks "
-                               "a little lifted."
-                             : "Colours exactly as the game sends them.";
+         return g_pcfg.color ? tr("settings.help.as_on_a_wonderswan_s_screen")
+
+                             : tr("settings.help.colours_exactly_as_the_game_sends");
       if (pcfg_display_console() == FE_CONSOLE_NES)
-         return g_pcfg.color ? "As a television showed them: a little softer "
-                               "and deeper."
-                             : "Colours exactly as the game sends them.";
-      return "An original Game Boy's shades are its colours, above.";
-   case SET_GRID:     return "Dark lines between the rows, like a TV. 1 is "
-                             "faint, 10 is strong.";
-   case SET_LCDGRID:  return "A faint pixel grid, like a handheld's screen. "
-                             "1 is faint, 10 is strong.";
-   case SET_CRT:      return "Coloured stripes like a CRT tube. Darkens the "
-                             "picture a little. 1 is faint, 10 is strong.";
-   case SET_SCREEN:   return "Which Vita screen this is. OLED softens the "
-                             "colours a little. Every console.";
-   case SET_TEXTSIZE: return "Bigger text in the menus of the app and the "
-                             "players.";
-   case SET_CONTRAST: return "Brighter text and clearer edges in the menus "
-                             "of the app and the players.";
+         return g_pcfg.color ? tr("settings.help.as_a_television_showed_them_a")
+
+                             : tr("settings.help.colours_exactly_as_the_game_sends");
+      return tr("settings.help.an_original_game_boy_s_shades");
+   case SET_GRID:     return tr("settings.help.dark_lines_between_the_rows_like")
+;
+   case SET_LCDGRID:  return tr("settings.help.a_faint_pixel_grid_like_a")
+;
+   case SET_CRT:      return tr("settings.help.coloured_stripes_like_a_crt_tube")
+;
+   case SET_SCREEN:   return tr("settings.help.which_vita_screen_this_is_oled")
+;
+   case SET_LANGUAGE: return tr("settings.help.the_language_of_the_menus_automatic");
+   case SET_TEXTSIZE: return tr("settings.help.bigger_text_in_the_menus_of")
+;
+   case SET_CONTRAST: return tr("settings.help.brighter_text_and_clearer_edges_in")
+;
    case SET_NESWIDE:  return g_pcfg.nes_wide == 2
-                             ? "The NES picture as it was: 256 columns."
+                             ? tr("settings.help.the_nes_picture_as_it_was")
                              : g_pcfg.nes_wide == 1
-                             ? "Always the 16:9 picture; unknown sides fade."
-                             : "The sides filled with the game's own picture "
-                               "where it is known. Never guessed.";
+                             ? tr("settings.help.always_the_16_9_picture_unknown")
+                             : tr("settings.help.the_sides_filled_with_the_game")
+;
    case SET_NESPAL:   return g_pcfg.nes_pal_smooth
-                             ? "European games run at 50 Hz. Smooth 50 Hz keeps their real speed and evens out the picture: one refresh in six blends two frames."
-                             : "European games run at 50 Hz. True 50 Hz plays them at their real speed and shows one frame in six again.";
+                             ? tr("settings.help.european_games_run_at_50_hz")
+                             : tr("settings.help.european_games_run_at_50_hz_2");
    case SET_WSBLEND:  return g_pcfg.ws_blend
-                             ? "The WonderSwan's 75 frames a second blended "
-                               "into each refresh: smooth scrolling."
-                             : "The newest frame only: sharper, with a "
-                               "little judder when the screen scrolls.";
-   case SET_WSROT:    return "Auto follows the game (some turn mid-game). "
-                             "This game only.";
+                             ? tr("settings.help.the_wonderswan_s_75_frames_a")
+
+                             : tr("settings.help.the_newest_frame_only_sharper_with")
+;
+   case SET_WSROT:    return tr("settings.help.auto_follows_the_game_some_turn")
+;
    case SET_WSVPLAY:  return g_pgame.ws_vplay
-                             ? "Turn the Vita left for vertical scenes: the "
-                               "picture fills the screen."
-                             : "Vertical scenes upright on a level Vita; "
-                               "the d-pad turns with them.";
+                             ? tr("settings.help.turn_the_vita_left_for_vertical")
+
+                             : tr("settings.help.vertical_scenes_upright_on_a_level")
+;
    case SET_EXPORT:   return g_export_dest
                              ? "X: a plain .sav beside the game (mGBA, "
                                "SameBoy...)."
-                             : "X: a copy RetroArch can use, where it looks.";
+                             : tr("settings.help.x_a_copy_retroarch_can_use");
    case SET_CAMERA:   return g_pgame.camera == PCFG_CAM_FILE
                              ? "What the camera sees: camera.png from the data folder."
                              : g_pgame.camera == PCFG_CAM_BACK
-                             ? "What the camera sees: the Vita's back camera."
-                             : "What the camera sees: the Vita's front camera.";
+                             ? tr("settings.help.what_the_camera_sees_the_vita")
+                             : tr("settings.help.what_the_camera_sees_the_vita_2");
    case SET_PRINTER:  return g_pcfg.gb_printer
-                             ? "Pictures a game prints are saved in prints/. Off during a link."
-                             : "Off: games find no printer.";
-   case SET_GBTYPE:   return "Auto follows the cartridge. Takes effect at "
-                             "the next start.";
-   case SET_WSPAL:    return "Black-and-white games: grey, or the original "
-                             "LCD's tint. Colour games keep theirs.";
+                             ? tr("settings.help.pictures_a_game_prints_are_saved")
+                             : tr("settings.help.off_games_find_no_printer");
+   case SET_GBTYPE:   return tr("settings.help.auto_follows_the_cartridge_takes_effect")
+;
+   case SET_WSPAL:    return tr("settings.help.black_and_white_games_grey_or")
+;
    case SET_OVERLAY:  return ui_host_overlay_on()
                              ? "Your picture from overlays/ over the game "
                                "(gba.png, gb.png, gbc.png or its name)."
-                             : "Put a PNG in ux0:data/GBAdhoc/overlays/ to "
-                               "frame the game.";
-   case SET_SHOTDIR:  return VID_GLYPH_X ": type a folder (ux0:pictures/VitAdhoc). "
-                             "Empty: screenshots/.";
+                             : tr("settings.help.put_a_png_in_ux0_data")
+;
+   case SET_SHOTDIR:  return tr("settings.help.x_type_a_folder_ux0_pictures")
+;
    case SET_BLEND:    return g_pcfg.ghost
-             ? "The slow LCD left a trail behind moving things. 10 is strong."
-             : "The slow LCD left a trail behind moving things. 0 is off, 5 "
-               "steadies flicker used as transparency.";
+             ? tr("settings.help.the_slow_lcd_left_a_trail")
+             : tr("settings.help.the_slow_lcd_left_a_trail_2")
+;
    case SET_WIDE:
       if (pcfg_display_console() != FE_CONSOLE_GBA)
-         return "A Game Boy's picture has no more to show.";
-      return g_pcfg.wide == 3 ? "Any game: shows what it has drawn beside "
-                                "the screen. May err."
-           : g_pcfg.wide == 2 ? "Also widens rotating 3D tracks. Sprites "
-                                "may stray in."
-           : g_pcfg.wide == 1 ? "More of the map beside the picture, in "
-                                "games it knows."
-           : "The console's own picture, bars beside it.";
+         return tr("settings.help.a_game_boy_s_picture_has");
+      return g_pcfg.wide == 3 ? tr("settings.help.any_game_shows_what_it_has")
+
+           : g_pcfg.wide == 2 ? tr("settings.help.also_widens_rotating_3d_tracks_sprites")
+
+           : g_pcfg.wide == 1 ? tr("settings.help.more_of_the_map_beside_the")
+
+           : tr("settings.help.the_console_s_own_picture_bars");
    case SET_WFILL:
       if (pcfg_display_console() != FE_CONSOLE_GBA || !g_pcfg.wide)
-         return "What fills the wide view's margins (needs Wide view on).";
-      return g_pcfg.wide_fill == 2 ? "Screens with no more to show are "
-                                     "stretched to the edges."
-           : g_pcfg.wide_fill == 1 ? "Screens with no more to show fade "
-                                     "out softly at the sides."
-           : "Screens with no more to show keep black bars.";
-   case SET_AMBIENT:  return "A soft glow beside the picture in place of "
-                             "black bars. 1 is faint, 10 is bright.";
-   case SET_GBPAL:    return "GBC auto: the colours a Game Boy Color gave "
-                             "this game.";
-   case SET_THEME:    return "Dark or light menus.";
+         return tr("settings.help.what_fills_the_wide_view_s");
+      return g_pcfg.wide_fill == 2 ? tr("settings.help.screens_with_no_more_to_show")
+
+           : g_pcfg.wide_fill == 1 ? tr("settings.help.screens_with_no_more_to_show_2")
+
+           : tr("settings.help.screens_with_no_more_to_show_3");
+   case SET_AMBIENT:  return tr("settings.help.a_soft_glow_beside_the_picture")
+;
+   case SET_GBPAL:    return tr("settings.help.gbc_auto_the_colours_a_game")
+;
+   case SET_THEME:    return tr("settings.help.dark_or_light_menus");
 #ifdef VITA
-   case SET_SHELL:    return "Tiles over your game, a list with art, or art "
-                             "full screen.";
-   case SET_PREVIEW:  return "Rest on a game in the home screen and the last "
-                             "ten seconds you played of it play behind it.";
-   case SET_COVERS:   return "Retry missing box art and title screens over Wi-Fi.";
+   case SET_SHELL:    return tr("settings.help.tiles_over_your_game_a_list")
+;
+   case SET_PREVIEW:  return tr("settings.help.rest_on_a_game_in_the")
+;
+   case SET_COVERS:   return tr("settings.help.retry_missing_box_art_and_title");
 #else
-   case SET_SHELL:    return "The game list: a shelf with box art, or art "
-                             "across the screen.";
+   case SET_SHELL:    return "The game list: a shelf with box art, or art across the screen."
+;
 #endif
 #ifdef VITA
-   case SET_FFMULT:   return "How fast it runs. 2x and 3x can play the "
-                             "sound sped up, or at normal pitch.";
+   case SET_FFMULT:   return tr("settings.help.how_fast_it_runs_2x_and")
+;
 #else
    case SET_FFMULT:   return "How fast fast-forward runs.";
 #endif
-   case SET_FFMODE:   return "Hold the button to fast-forward, or press it "
-                             "to switch.";
+   case SET_FFMODE:   return tr("settings.help.hold_the_button_to_fast_forward")
+;
    case SET_REWIND:
    {
       /* Names the control, whatever it is bound to. */
@@ -4346,130 +4357,130 @@ static const char *set_help(int id)
       char b[32];
       unsigned rb = g_pcfg.controls.bind[CTL_SC_REWIND];
       if (!g_pcfg.rewind)
-         return "Running the game backwards is switched off.";
+         return tr("settings.help.running_the_game_backwards_is_switched");
       ctl_format(rb, b, sizeof(b), CTL_UI_NAMES, "none");
       /* 56 characters fit the line; a long chord drops the stick. */
       if (rb && g_pcfg.stick_rewind && strlen(b) <= 13)
-         snprintf(line, sizeof(line), "Hold %s or the right stick left "
-                  "to go back.", b);
+         snprintf(line, sizeof(line), tr("settings.help.hold_or_the_right_stick_left")
+, b);
       else if (rb)
-         snprintf(line, sizeof(line), "Hold %s to go back in time.", b);
+         snprintf(line, sizeof(line), tr("settings.help.hold_to_go_back_in_time"), b);
       else if (g_pcfg.stick_rewind)
-         snprintf(line, sizeof(line), "Hold the right stick left to go "
-                  "back in time.");
+         snprintf(line, sizeof(line), tr("settings.help.hold_the_right_stick_left_to")
+);
       else
-         snprintf(line, sizeof(line), "Turn on Rewind with right stick, "
-                  "or bind a button.");
+         snprintf(line, sizeof(line), tr("settings.help.turn_on_rewind_with_right_stick")
+);
       return line;
    }
-   case SET_FPS:      return "Shows the game's speed in a corner.";
+   case SET_FPS:      return tr("settings.help.shows_the_game_s_speed_in");
 #ifdef VITA
    case SET_CPU:      return ui_host_cpu_note();
    case SET_STEADY:   return g_pcfg.steady_pacing
-                             ? "Busy moments show every second frame, evenly, "
-                               "at full speed."
-                             : "Every frame when it can be; busy moments drop "
-                               "unevenly.";
+                             ? tr("settings.help.busy_moments_show_every_second_frame")
+
+                             : tr("settings.help.every_frame_when_it_can_be")
+;
    case SET_ABOUT_UPDATE:
       return g_pcfg.update_check
-         ? VID_GLYPH_X ": check now. Once a day it asks GitHub if a newer VitAdhoc is out."
-         : VID_GLYPH_X ": check now. Off: no check unless you ask.";
+         ? tr("settings.help.x_check_now_once_a_day")
+         : tr("settings.help.x_check_now_off_no_check");
    case SET_ABOUT_CORE4:
-      return "Whether the app is using the Vita's fourth CPU core (it needs the CapUnlocker plugin).";
+      return tr("settings.help.whether_the_app_is_using_the");
    case SET_CORE4:    return g_pcfg.core4_off
-                             ? "Off: the app stays on the three cores it is given."
-                             : "Auto: uses the Vita's fourth core if it works. Next game.";
-   case SET_QUICK:    return "Shows what you press one frame sooner by working the next "
-                             "frame out ahead. The game runs the same. "
-                             "Auto uses it while there is time.";
-   case SET_QUICKGAME: return "This game's own choice. Settings follows the "
-                              "Gameplay row. Auto uses it while there is time.";
+                             ? tr("settings.help.off_the_app_stays_on_the")
+                             : tr("settings.help.auto_uses_the_vita_s_fourth");
+   case SET_QUICK:    return tr("settings.help.shows_what_you_press_one_frame")
+
+;
+   case SET_QUICKGAME: return tr("settings.help.this_game_s_own_choice_settings")
+;
    case SET_HANDOFF:  return g_pcfg.smooth_handoff
-                             ? "Drawn on a second core: heavy looks do not "
-                               "slow the game."
-                             : "Off: try this if the picture ever misbehaves.";
+                             ? tr("settings.help.drawn_on_a_second_core_heavy")
+
+                             : tr("settings.help.off_try_this_if_the_picture");
    case SET_ABSWAP:
       return g_pcfg.ab_buttons < 0
-         ? "Follows the Vita's own Enter button. Press to change it."
+         ? tr("settings.help.follows_the_vita_s_own_enter")
          : ui_host_ab_circle()
-         ? "Circle is A and confirms in menus. Cross is B."
-         : "Cross is A and confirms in menus. Circle is B.";
+         ? tr("settings.help.circle_is_a_and_confirms_in")
+         : tr("settings.help.cross_is_a_and_confirms_in");
    case SET_STICKRW:
       return g_pcfg.stick_rewind
-         ? "Hold the right stick left to rewind."
-         : "The right stick does not rewind.";
+         ? tr("settings.help.hold_the_right_stick_left_to_2")
+         : tr("settings.help.the_right_stick_does_not_rewind");
    case SET_TAPMENU:
       return g_pcfg.tap_menu
-         ? "A tap on the game opens the menu. Start + Select always does."
-         : "Only Start + Select (or L + R + Start) opens the menu.";
+         ? tr("settings.help.a_tap_on_the_game_opens")
+         : tr("settings.help.only_start_select_or_l_r");
    case SET_REARTOUCH:
       return g_pcfg.rear_touch
-         ? "The rear panel's four corners can be buttons. Set them in Button mapping."
-         : "The rear panel does nothing.";
+         ? tr("settings.help.the_rear_panel_s_four_corners")
+         : tr("settings.help.the_rear_panel_does_nothing");
    case SET_REARGAME:
-      return "This game's own choice. Settings follows the Controls row.";
+      return tr("settings.help.this_game_s_own_choice_settings_2");
    case SET_PORT2:
       return g_pgame.nes_port2 == PCFG_PORT2_ZAPPER
-         ? "Zapper: touch the screen to aim and fire. Next time the game starts."
+         ? tr("settings.help.zapper_touch_the_screen_to_aim")
          : g_pgame.nes_port2 == PCFG_PORT2_PAD
-         ? "Controller: a Zapper game is played with the pad. Next time the game starts."
-         : "Auto: games that use the Zapper get it on the touch screen. Next time the game starts.";
+         ? tr("settings.help.controller_a_zapper_game_is_played")
+         : tr("settings.help.auto_games_that_use_the_zapper");
    case SET_BTNTEST:
-      return "Shows each button, stick and touch panel as it is pressed, and what it does.";
+      return tr("settings.help.shows_each_button_stick_and_touch");
    case SET_SHOTCOMBO:
       return g_pcfg.controls.bind[CTL_SC_SHOT]
-         ? "Shot with the buttons set in Button mapping."
-         : "The Vita's own PS + Start takes screenshots.";
+         ? tr("settings.help.shot_with_the_buttons_set_in")
+         : tr("settings.help.the_vita_s_own_ps_start");
    case SET_SPEED:    return g_pcfg.full_speed
-                             ? "Busy moments skip a frame; game and sound "
-                               "keep speed."
-                             : "Busy moments slow the game and its sound down.";
-   case SET_SGB:      return "Super Game Boy games in the border they bring "
-                             "(Game Boy colours: Super Game Boy).";
-   case SET_RA_ACCOUNT: return "Your retroachievements.org account.";
+                             ? tr("settings.help.busy_moments_skip_a_frame_game")
+
+                             : tr("settings.help.busy_moments_slow_the_game_and");
+   case SET_SGB:      return tr("settings.help.super_game_boy_games_in_the")
+;
+   case SET_RA_ACCOUNT: return tr("settings.help.your_retroachievements_org_account");
    case SET_RA_HARDCORE: return ra_hardcore_pref()
-                             ? "No states, rewind or cheats. From the next "
-                               "game."
-                             : "States, rewind and cheats allowed.";
-   case SET_RA_LIST:  return "This game's achievements and what each asks.";
+                             ? tr("settings.help.no_states_rewind_or_cheats_from")
+
+                             : tr("settings.help.states_rewind_and_cheats_allowed");
+   case SET_RA_LIST:  return tr("settings.help.this_game_s_achievements_and_what");
    case SET_RA_INDIC: return ra_indicators_pref()
-                             ? "Small marks for a challenge, progress and a "
-                               "leaderboard attempt."
-                             : "No marks over the game. Unlocks still show.";
+                             ? tr("settings.help.small_marks_for_a_challenge_progress")
+
+                             : tr("settings.help.no_marks_over_the_game_unlocks");
    case SET_SYNCRA:   return ui_host_sync_ra_on()
-                             ? "Each save also goes where RetroArch looks, "
-                               "kept in step."
-                             : "RetroArch's files are left alone; Export save "
-                               "copies one.";
+                             ? tr("settings.help.each_save_also_goes_where_retroarch")
+
+                             : tr("settings.help.retroarch_s_files_are_left_alone")
+;
    case SET_NAMES:    return g_pcfg.lib_names
-                             ? "Each game shows its file name, as it is on the "
-                               "card."
-                             : "Each game shows its title; games with the same "
-                               "title also show their file name.";
-   case SET_SORT:     return "The order of All games and Starred. Recent is "
-                             "newest first.";
-   case SET_COVERPIC: return VID_GLYPH_X ": a picture of your own as the cover of the "
-                             "game picked in the list.";
-   case SET_FOLDERS:  return VID_GLYPH_X ": add a folder (ux0:ROMS/GBA), or pick one "
-                             "to remove it.";
+                             ? tr("settings.help.each_game_shows_its_file_name")
+
+                             : tr("settings.help.each_game_shows_its_title_games")
+;
+   case SET_SORT:     return tr("settings.help.the_order_of_all_games_and")
+;
+   case SET_COVERPIC: return tr("settings.help.x_a_picture_of_your_own")
+;
+   case SET_FOLDERS:  return tr("settings.help.x_add_a_folder_ux0_roms")
+;
    case SET_OWN_LOOK: return g_pgame.override
-                             ? "Display changes made now apply to this game "
-                               "only."
-                             : "Choose \"just this game\" to give it a look "
-                               "of its own.";
+                             ? tr("settings.help.display_changes_made_now_apply_to")
+
+                             : tr("settings.help.choose_just_this_game_to_give")
+;
    case SET_MOTION:   return g_pgame.sensor_mode == PCFG_SENSOR_STICK
-                             ? "The right stick is the cartridge's sensor."
-                             : "Turn or tilt the Vita: the cartridge's sensor "
-                               "feels it.";
-   case SET_SENS:     return "How strongly a turn or a tilt is felt.";
-   case SET_REVERSE:  return "Swap it if turning or tilting feels backwards.";
-   case SET_LEVEL:    return "Hold the Vita as level should be, then press X.";
-   case SET_SAVETYPE: return "For ROM hacks. Takes effect at the next start.";
-   case SET_CLOCK:    return "Auto: on where the game has one. Next start.";
-   case SET_SUN:      return "How much sunlight the cartridge's solar sensor "
-                             "sees.";
+                             ? tr("settings.help.the_right_stick_is_the_cartridge")
+                             : tr("settings.help.turn_or_tilt_the_vita_the")
+;
+   case SET_SENS:     return tr("settings.help.how_strongly_a_turn_or_a");
+   case SET_REVERSE:  return tr("settings.help.swap_it_if_turning_or_tilting");
+   case SET_LEVEL:    return tr("settings.help.hold_the_vita_as_level_should");
+   case SET_SAVETYPE: return tr("settings.help.for_rom_hacks_takes_effect_at");
+   case SET_CLOCK:    return tr("settings.help.auto_on_where_the_game_has");
+   case SET_SUN:      return tr("settings.help.how_much_sunlight_the_cartridge_s")
+;
 #endif
-   case SET_CONTROLS: return "Which button does what, and the shortcuts.";
+   case SET_CONTROLS: return tr("settings.help.which_button_does_what_and_the");
    default:           return "";
    }
 }
@@ -4559,7 +4570,7 @@ static void ra_settings_account(void)
    int st = ra_account(nm, sizeof(nm));
    if (st == RA_ACCT_BUSY)
    {
-      osd_toast("Signing in to RetroAchievements...");
+      osd_toast(tr("toast.signing_in_to_retroachievements"));
       return;
    }
    if (st == RA_ACCT_IN)
@@ -4569,18 +4580,18 @@ static void ra_settings_account(void)
       {
          g_ra_out_armed = 0;
          ra_logout();
-         osd_toast("Signed out of RetroAchievements");
+         osd_toast(tr("toast.signed_out_of_retroachievements"));
       }
       else
       {
          g_ra_out_armed = now ? now : 1;
-         osd_toast("Press the same button again to sign out of RetroAchievements");
+         osd_toast(tr("toast.press_the_same_button_again_to"));
       }
       return;
    }
-   if (ui_text_open(TXT_RA_USER, "RetroAchievements user name",
+   if (ui_text_open(TXT_RA_USER, tr("ui.retroachievements_user_name"),
                     g_ra_typed_user, 32) != 0)
-      osd_toast("The keyboard is not available");
+      osd_toast(tr("toast.the_keyboard_is_not_available"));
 }
 
 /* The keyboard closed on one of the two fields: 1 = it was ours. */
@@ -4593,9 +4604,9 @@ static int ra_settings_typed(void)
       if (r > 0 && typed[0])
       {
          snprintf(g_ra_typed_user, sizeof(g_ra_typed_user), "%s", typed);
-         if (ui_text_open_secret(TXT_RA_PASS, "RetroAchievements password",
+         if (ui_text_open_secret(TXT_RA_PASS, tr("ui.retroachievements_password"),
                                  PC_IME_MAX_CHARS) != 0)
-            osd_toast("The keyboard is not available");
+            osd_toast(tr("toast.the_keyboard_is_not_available"));
       }
       return 1;
    }
@@ -4605,9 +4616,9 @@ static int ra_settings_typed(void)
    if (r > 0 && typed[0])
    {
       if (ra_login(g_ra_typed_user, typed) == 0)
-         osd_toast("Signing in to RetroAchievements...");
+         osd_toast(tr("toast.signing_in_to_retroachievements"));
       else
-         osd_toast("Sign-in is already under way");
+         osd_toast(tr("toast.sign_in_is_already_under_way"));
    }
    ui_text_wipe();
    return 1;
@@ -4650,21 +4661,21 @@ static ui_action screen_settings_page(unsigned edges)
       (void)ra_settings_typed();
       if (ui_text_take(TXT_SHOTDIR, &typed) > 0)
          osd_toast(ui_host_shot_dir_set(typed) == 0
-                   ? (typed[0] ? "Screenshots go there now"
-                               : "Screenshots go to screenshots/")
-                   : "That folder can't be used");
+                   ? (typed[0] ? tr("ui.screenshots_go_there_now")
+                               : tr("ui.screenshots_go_to_screenshots"))
+                   : tr("toast.that_folder_can_t_be_used"));
       if (ui_text_take(TXT_FOLDER, &typed) > 0 && typed[0])
       {
          int rc = ui_host_extra_root_toggle(typed);
          if (rc == 1 || rc == 2)
          {
-            osd_toast(rc == 1 ? "Folder added - scanning" : "Folder removed - scanning");
+            osd_toast(rc == 1 ? tr("toast.folder_added_scanning") : tr("toast.folder_removed_scanning"));
             g_library_refresh = 1;
          }
          else
-            osd_toast(rc == -2 ? "Eight folders is the most" :
-                      rc == -3 ? "The folder list could not be saved" :
-                                 "No folder with that name on the card");
+            osd_toast(rc == -2 ? tr("toast.eight_folders_is_the_most") :
+                      rc == -3 ? tr("toast.the_folder_list_could_not_be") :
+                                 tr("toast.no_folder_with_that_name_on"));
       }
       if (ui_text_take(TXT_NICK, &typed) > 0 && typed[0])
       {
@@ -4707,16 +4718,16 @@ static ui_action screen_settings_page(unsigned edges)
          set_touch_reset();
       if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_NAME)
       {
-         if (ui_text_open(TXT_NICK, "Player name", g_pcfg.nick, 15) != 0)
-            osd_toast("The keyboard is not available");
+         if (ui_text_open(TXT_NICK, tr("ui.player_name"), g_pcfg.nick, 15) != 0)
+            osd_toast(tr("toast.the_keyboard_is_not_available"));
          edges &= ~PSP_CTRL_CROSS;
       }
       if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_SHOTDIR)
       {
          const char *d = ui_host_shot_dir();
-         if (ui_text_open(TXT_SHOTDIR, "Screenshot folder (empty: the usual one)",
+         if (ui_text_open(TXT_SHOTDIR, tr("ui.screenshot_folder_empty_the_usual_one"),
                           d && d[0] ? d : "ux0:pictures/VitAdhoc", 63) != 0)
-            osd_toast("The keyboard is not available");
+            osd_toast(tr("toast.the_keyboard_is_not_available"));
          edges &= ~PSP_CTRL_CROSS;
       }
       if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_COVERPIC)
@@ -4727,9 +4738,9 @@ static ui_action screen_settings_page(unsigned edges)
       }
       if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_FOLDERS)
       {
-         if (ui_text_open(TXT_FOLDER, "Game folder to add or remove",
+         if (ui_text_open(TXT_FOLDER, tr("ui.game_folder_to_add_or_remove"),
                           "ux0:", 63) != 0)
-            osd_toast("The keyboard is not available");
+            osd_toast(tr("toast.the_keyboard_is_not_available"));
          edges &= ~PSP_CTRL_CROSS;
       }
       if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_ABOUT_UPDATE)
@@ -4793,9 +4804,9 @@ static ui_action screen_settings_page(unsigned edges)
          if (note[0] && strlen(note) <= 60)
             osd_toast("%s", note);
          else if (rc == 0)
-            osd_toast("Exported as %.48s", base[0] ? base : "a plain file");
+            osd_toast(tr("toast.exported_as"), base[0] ? base : tr("toast.a_plain_file"));
          else
-            osd_toast("The save could not be exported");
+            osd_toast(tr("toast.the_save_could_not_be_exported"));
       }
       fe_evt("export_save_row dest=%d rc=%d where=%s", g_export_dest, rc, where);
       edges &= ~PSP_CTRL_CROSS;
@@ -4803,7 +4814,7 @@ static ui_action screen_settings_page(unsigned edges)
    if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_COVERS)
    {
       artfetch_retry();
-      osd_toast("Looking again for missing covers");
+      osd_toast(tr("toast.looking_again_for_missing_covers"));
       fe_evt("art_retry_asked");
       edges &= ~PSP_CTRL_CROSS;
    }
@@ -4832,7 +4843,7 @@ static ui_action screen_settings_page(unsigned edges)
    /* Scrim 200 over the frame (the browser's page, from START there): a
     * long list needs more hold-back than the menu's 170. */
    ov_backdrop(OV_SCRIM_DENSE);
-   ov_head(NULL, "SETTINGS");
+   ov_head(NULL, tr("ui.settings"));
 #ifdef VITA
    if (tch_scroll(&g_set_ts, &g_set_scroll,
                   set_row_bot(set_row_y(set_last_shown())) - SET_VIEW_BOT, 0,
@@ -4853,13 +4864,13 @@ static ui_action screen_settings_page(unsigned edges)
          continue;                /* wholly outside the scissor */
       if (set_rows[i].header)
       {
-         int lx = 20 + vid_text_w(set_rows[i].label) + FE_FONT_W;
+         int lx = 20 + vid_text_w(tr(set_rows[i].label)) + FE_FONT_W;
 #ifdef VITA
          if (g_pcfg.theme != 1)
          {
             /* a section: its name in sentence case, quiet, no rule */
             char t[40];
-            hm_sentence(t, sizeof(t), set_rows[i].label);
+            hm_sentence(t, sizeof(t), tr(set_rows[i].label));
             if (i == SET_HDR_RA)
                snprintf(t, sizeof(t), "RetroAchievements");   /* its name */
             vs_text(VS_LABEL, 40, (float)(y * 2) - 2, t, HC_TEXT3);
@@ -4871,7 +4882,7 @@ static ui_action screen_settings_page(unsigned edges)
                snprintf(tag, sizeof(tag), "%s",
                         g_pgame.on && g_pgame.override &&
                         pcfg_display_console() == g_pgame.console
-                        ? "This game"
+                        ? tr("settings.value.this_game")
                         : pcfg_console_tag(pcfg_display_console()));
                hm_chip(40 + vs_text_w(VS_LABEL, t) + 12, (float)(y * 2) - 6,
                        tag, VS_ALPHA(hm_tint(pcfg_display_console(), 255),
@@ -4880,13 +4891,13 @@ static ui_action screen_settings_page(unsigned edges)
             continue;
          }
 #endif
-         vid_text(20, y, set_rows[i].label, C_ACCENT);
+         vid_text(20, y, tr(set_rows[i].label), C_ACCENT);
          if (i == SET_HDR_VID)
          {
             /* Which profile these rows edit, in that console's own accent
              * -- the colour its browser badge wears. */
             char tag[12];
-            int tx = 20 + vid_text_w(set_rows[i].label) + 6;
+            int tx = 20 + vid_text_w(tr(set_rows[i].label)) + 6;
             snprintf(tag, sizeof(tag), "(%s)",
                      pcfg_console_tag(pcfg_display_console()));
             vid_text(tx, y, tag, skin_of(pcfg_display_console())->accent);
@@ -4912,75 +4923,75 @@ static ui_action screen_settings_page(unsigned edges)
       {
 #ifdef VITA
       case SET_NAME:
-         set_item_raw(y, g_cursor == i, 1, set_rows[i].label, g_pcfg.nick);
+         set_item_raw(y, g_cursor == i, 1, tr(set_rows[i].label), g_pcfg.nick);
          break;
       case SET_CONN:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   conn_name(g_pcfg.net_conn));
          break;
       case SET_DELAY:
       {
          char d[16];
          if (g_pcfg.link_delay)
-            snprintf(d, sizeof(d), g_pcfg.link_delay == 1 ? "%d frame"
-                     : "%d frames", g_pcfg.link_delay);
+            snprintf(d, sizeof(d), g_pcfg.link_delay == 1 ? tr("settings.value.frame")
+                     : tr("settings.value.frames"), g_pcfg.link_delay);
          else
-            snprintf(d, sizeof(d), "Auto");
-         set_item(y, g_cursor == i, 1, set_rows[i].label, d);
+            snprintf(d, sizeof(d), tr("settings.value.auto"));
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), d);
          break;
       }
 #endif
       case SET_ROOM:
       {
          char lbl[ROOM_LABEL_CAP];
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   room_label(g_pcfg.group, lbl, sizeof(lbl)));
          break;
       }
       case SET_LINKMODE:
-         set_item(y, g_cursor == i, set_row_enabled(i), set_rows[i].label,
+         set_item(y, g_cursor == i, set_row_enabled(i), tr(set_rows[i].label),
                   linkmode_value());
          break;
       case SET_OSD:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
              g_pcfg.osd_wireless ? "shown" : "hidden");
          break;
       case SET_SHARE:
       {
          char lbl[ROOM_LABEL_CAP], v[48];
-         snprintf(v, sizeof(v), "host saves and states on %s",
+         snprintf(v, sizeof(v), tr("settings.value.host_saves_and_states_on"),
                   room_label(g_pcfg.group, lbl, sizeof(lbl)));
-         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), v);
          break;
       }
       case SET_JOIN:
 #ifdef VITA
       {
          char lbl[ROOM_LABEL_CAP], v[48];
-         snprintf(v, sizeof(v), "the one on %s",
+         snprintf(v, sizeof(v), tr("settings.value.the_one_on"),
                   room_label(g_pcfg.group, lbl, sizeof(lbl)));
-         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), v);
          break;
       }
 #else
-         set_item(y, g_cursor == i, 1, set_rows[i].label, NULL);
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), NULL);
          break;
 #endif
 #ifdef VITA
       case SET_ONLINE_JOIN:
-         set_item(y, g_cursor == i, 1, set_rows[i].label, "type a room code");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), tr("settings.value.type_a_room_code"));
          break;
       case SET_SNES_TWO:
-         set_item(y, g_cursor == i, 1, set_rows[i].label, "host or join");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), tr("settings.value.host_or_join"));
          break;
 #endif
       case SET_FASTLINK:
-         set_item(y, g_cursor == i, set_row_enabled(i), set_rows[i].label,
-                  !set_row_enabled(i) ? "GBA Link Cable only"
+         set_item(y, g_cursor == i, set_row_enabled(i), tr(set_rows[i].label),
+                  !set_row_enabled(i) ? tr("settings.value.gba_link_cable_only")
                   : g_pcfg.fast_link ? "on" : "off");
          break;
       case SET_SCALE:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
              vid_scale_name(g_pcfg.scale));
          break;
       case SET_FILTER:
@@ -4989,13 +5000,13 @@ static ui_action screen_settings_page(unsigned edges)
           * bilinear and sharp all draw the same exact pixels, but "LCD grid"
           * still adds its grid, so the row always has something to choose. */
          /* Under Original: what is drawn, not Auto's stored filter. */
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
              vid_filter_name(g_pcfg.quality == PCFG_QUALITY_ORIGINAL
                              ? VID_FILTER_SHARP : g_pcfg.filter));
 #else
          /* 2x samples nearest whatever this says; say so. */
          set_item(y, g_cursor == i, g_pcfg.scale != VID_SCALE_INT2,
-             set_rows[i].label,
+             tr(set_rows[i].label),
              g_pcfg.scale == VID_SCALE_INT2 ? "sharp (2x)"
                                             : vid_filter_name(g_pcfg.filter));
 #endif
@@ -5005,12 +5016,12 @@ static ui_action screen_settings_page(unsigned edges)
       {
          char v[8];
          snprintf(v, sizeof(v), "%d", g_pcfg.glow);
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   g_pcfg.glow ? v : "off");
          break;
       }
 #else
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
              pcfg_ambient_name(g_pcfg.ambient));
          break;
 #endif
@@ -5020,12 +5031,12 @@ static ui_action screen_settings_page(unsigned edges)
          char v[40];
          const int snd = ff_steps[ff_step_now()].sound;
          snprintf(v, sizeof(v), "%s%s", pcfg_ff_name(),
-                  snd == 2 ? ", normal pitch" : snd ? " with sound" : "");
-         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+                  snd == 2 ? tr("settings.value.normal_pitch") : snd ? tr("settings.value.with_sound") : "");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), v);
          break;
       }
 #else
-         set_item(y, g_cursor == i, 1, set_rows[i].label, pcfg_ff_name());
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), pcfg_ff_name());
          break;
 #endif
       case SET_FFMODE:
@@ -5035,11 +5046,11 @@ static ui_action screen_settings_page(unsigned edges)
          char lbl[48], b[32];
          unsigned ffb = g_pcfg.controls.bind[CTL_SC_FF];
          if (ffb == CTL_SQUARE)
-            snprintf(lbl, sizeof(lbl), "%s", set_rows[i].label);
+            snprintf(lbl, sizeof(lbl), "%s", tr(set_rows[i].label));
          else
          {
             ctl_format(ffb, b, sizeof(b), CTL_UI_NAMES, "none");
-            snprintf(lbl, sizeof(lbl), "FF button (%s)", b);
+            snprintf(lbl, sizeof(lbl), tr("settings.value.ff_button"), b);
          }
          set_item(y, g_cursor == i, 1, lbl,
              g_pcfg.ff_hold ? "hold" : "toggle");
@@ -5049,23 +5060,33 @@ static ui_action screen_settings_page(unsigned edges)
       case SET_COLOR:
          /* the NES has a television, not an LCD */
          set_item(y, g_cursor == i, set_row_enabled(i),
-                  pcfg_display_console() == FE_CONSOLE_NES ? "NTSC colours"
-                                                           : set_rows[i].label,
+                  pcfg_display_console() == FE_CONSOLE_NES ? tr("settings.value.ntsc_colours")
+                                                           : tr(set_rows[i].label),
                   pcfg_color_name(pcfg_display_console(), g_pcfg.color));
          break;
       case SET_SCREEN:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pcfg.screen == 1 ? "OLED (PCH-1000)"
-                  : g_pcfg.screen == 2 ? "LCD (PCH-2000)"
-                  : g_pcfg.screen == 3 ? "PS TV" : "Auto");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pcfg.screen == 1 ? tr("settings.value.oled_pch_1000")
+                  : g_pcfg.screen == 2 ? tr("settings.value.lcd_pch_2000")
+                  : g_pcfg.screen == 3 ? "PS TV" : tr("settings.value.auto"));
          break;
+      case SET_LANGUAGE:
+      {
+         char v[64];
+         if (g_pcfg.language == I18N_AUTO)
+            snprintf(v, sizeof(v), "%s (%s)", tr("settings.value.automatic"), i18n_native[i18n_current()]);
+         else
+            snprintf(v, sizeof(v), "%s", i18n_native[g_pcfg.language]);
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), v);
+         break;
+      }
       case SET_TEXTSIZE:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pcfg.text_large ? "Large" : "Normal");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pcfg.text_large ? tr("settings.value.large") : tr("settings.value.normal"));
          break;
       case SET_CONTRAST:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pcfg.contrast ? "On" : "Off");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pcfg.contrast ? tr("settings.value.on") : tr("settings.value.off"));
          break;
       case SET_BLEND:
       case SET_GRID:
@@ -5077,59 +5098,59 @@ static ui_action screen_settings_page(unsigned edges)
                      : i == SET_GRID ? g_pcfg.scan
                      : i == SET_CRT ? g_pcfg.crt : g_pcfg.grid;
          snprintf(v, sizeof(v), "%d", n);
-         set_item(y, g_cursor == i, 1, set_rows[i].label, n ? v : "off");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), n ? v : "off");
          break;
       }
       case SET_NESWIDE:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pcfg.nes_wide == 1 ? "On" : g_pcfg.nes_wide == 2 ? "Off" : "Auto");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pcfg.nes_wide == 1 ? tr("settings.value.on") : g_pcfg.nes_wide == 2 ? tr("settings.value.off") : tr("settings.value.auto"));
          break;
       case SET_NESPAL:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pcfg.nes_pal_smooth ? "Smooth 50 Hz" : "True 50 Hz");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pcfg.nes_pal_smooth ? tr("settings.value.smooth_50_hz") : tr("settings.value.true_50_hz"));
          break;
       case SET_WSBLEND:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   g_pcfg.ws_blend ? "on" : "off");
          break;
       case SET_WSROT:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   pcfg_ws_rotation_name(g_pgame.ws_rotation));
          break;
       case SET_WSVPLAY:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pgame.ws_vplay ? "Turn the Vita" : "Upright");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pgame.ws_vplay ? tr("settings.value.turn_the_vita") : tr("settings.value.upright"));
          break;
       case SET_WSPAL:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pgame.ws_palette ? "Classic LCD tint" : "Greyscale");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pgame.ws_palette ? tr("settings.value.classic_lcd_tint") : tr("settings.value.greyscale"));
          break;
       case SET_CAMERA:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   pcfg_camera_name(g_pgame.camera));
          break;
       case SET_PRINTER:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pcfg.gb_printer ? "On" : "Off");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pcfg.gb_printer ? tr("settings.value.on") : tr("settings.value.off"));
          break;
       case SET_GBTYPE:
       {
          int k = gbtype_now();
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  k == 1 ? "Game Boy" : k == 2 ? "Game Boy Color" : "Auto");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  k == 1 ? "Game Boy" : k == 2 ? "Game Boy Color" : tr("settings.value.auto"));
          break;
       }
       case SET_EXPORT:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_export_dest ? "plain .sav" : "for RetroArch");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_export_dest ? "plain .sav" : tr("settings.value.for_retroarch"));
          break;
       case SET_ABOUT_UPDATE:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pcfg.update_check ? "Daily" : "Off");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pcfg.update_check ? tr("settings.value.daily") : tr("settings.value.off"));
          break;
       case SET_ABOUT_CORE4:
          /* "in use", "not available" or "off" (core4_status, handoff_glue.h) */
-         set_item(y, g_cursor == i, 1, set_rows[i].label, ui_host_core4_status());
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), ui_host_core4_status());
          break;
       case SET_OVERLAY:
       {
@@ -5138,26 +5159,26 @@ static ui_action screen_settings_page(unsigned edges)
          if (!ui_host_overlay_on())
             snprintf(v, sizeof(v), "off");
          else if (n && n[0])
-            snprintf(v, sizeof(v), "on - %.48s", n);
+            snprintf(v, sizeof(v), tr("settings.value.on_2"), n);
          else
-            snprintf(v, sizeof(v), "on - none in overlays/");
-         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+            snprintf(v, sizeof(v), tr("settings.value.on_none_in_overlays"));
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), v);
          break;
       }
       case SET_SHOTDIR:
       {
          const char *d = ui_host_shot_dir();
-         set_item_raw(y, g_cursor == i, 1, set_rows[i].label,
+         set_item_raw(y, g_cursor == i, 1, tr(set_rows[i].label),
                       d && d[0] ? d : "screenshots/");
          break;
       }
       case SET_WIDE:
-         set_item(y, g_cursor == i, set_row_enabled(i), set_rows[i].label,
+         set_item(y, g_cursor == i, set_row_enabled(i), tr(set_rows[i].label),
                   pcfg_wide_modes(pcfg_display_console())
                   ? pcfg_wide_name(g_pcfg.wide) : "-");
          break;
       case SET_WFILL:
-         set_item(y, g_cursor == i, set_row_enabled(i), set_rows[i].label,
+         set_item(y, g_cursor == i, set_row_enabled(i), tr(set_rows[i].label),
                   set_row_enabled(i) ? pcfg_wide_fill_name(g_pcfg.wide_fill)
                                      : "-");
          break;
@@ -5169,8 +5190,8 @@ static ui_action screen_settings_page(unsigned edges)
          else if (g_pcfg.rewind < 60)
             snprintf(d, sizeof(d), "%d s", g_pcfg.rewind);
          else
-            snprintf(d, sizeof(d), "%d min", g_pcfg.rewind / 60);
-         set_item(y, g_cursor == i, 1, set_rows[i].label, d);
+            snprintf(d, sizeof(d), tr("settings.value.min"), g_pcfg.rewind / 60);
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), d);
          break;
       }
 #endif
@@ -5179,18 +5200,18 @@ static ui_action screen_settings_page(unsigned edges)
       {
          char v[40];
          snprintf(v, sizeof(v), "%s%s",
-                  ui_host_ab_circle() ? "Circle is A" : "Cross is A",
-                  g_pcfg.ab_buttons < 0 ? " (as the Vita)" : "");
-         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+                  ui_host_ab_circle() ? tr("settings.value.circle_is_a") : tr("settings.value.cross_is_a"),
+                  g_pcfg.ab_buttons < 0 ? tr("settings.value.as_the_vita") : "");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), v);
          break;
       }
       case SET_STICKRW:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   g_pcfg.stick_rewind ? "on" : "off");
          break;
       case SET_TAPMENU:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pcfg.tap_menu ? "On" : "Off");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pcfg.tap_menu ? tr("settings.value.on") : tr("settings.value.off"));
          break;
       case SET_SHOTCOMBO:
       {
@@ -5199,24 +5220,24 @@ static ui_action screen_settings_page(unsigned edges)
          if (!sb)
             snprintf(v, sizeof(v), "off");
          else if (sb == (CTL_L | CTL_R | CTL_SELECT))
-            snprintf(v, sizeof(v), "on (L + R + Select)");
+            snprintf(v, sizeof(v), tr("settings.value.on_l_r_select"));
          else
             ctl_value(sb, v, sizeof(v));
-         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), v);
          break;
       }
 #endif
       case SET_CONTROLS:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
              ctl_is_default(&g_pcfg.controls)
                 ? "default" : "custom");
          break;
       case SET_THEME:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
              g_pcfg.theme ? "light" : "dark");
          break;
       case SET_SHELL:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
 #ifdef VITA
              g_pcfg.ui_home ? "home" :
 #endif
@@ -5224,7 +5245,7 @@ static ui_action screen_settings_page(unsigned edges)
          break;
 #ifdef VITA
       case SET_PREVIEW:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
              g_pcfg.previews ? "on" : "off");
          break;
       case SET_QUALITY:
@@ -5232,85 +5253,85 @@ static ui_action screen_settings_page(unsigned edges)
          /* Auto says what it is doing when the look governor eased it */
          const char *eased = g_pcfg.quality == PCFG_QUALITY_AUTO
                              ? ui_host_look_label() : NULL;
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   eased ? eased : pcfg_quality_name(g_pcfg.quality));
          break;
       }
       case SET_REFRESH:
-         set_item(y, g_cursor == i, 1, set_rows[i].label, "scan now");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), tr("settings.value.scan_now"));
          break;
       case SET_COVERS:
       {
          char v[80];
          int seen = 0, total = 0, have = 0;
          if (ui_cover_progress(&seen, &total, &have))
-            snprintf(v, sizeof(v), "Checking %d of %d - %d have covers", seen, total, have);
+            snprintf(v, sizeof(v), tr("settings.value.checking_of_have_covers"), seen, total, have);
          else if (total)
-            snprintf(v, sizeof(v), "%d of %d games have covers", have, total);
+            snprintf(v, sizeof(v), tr("settings.value.of_games_have_covers"), have, total);
          else
-            snprintf(v, sizeof(v), "%s", "Not checking");
-         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+            snprintf(v, sizeof(v), "%s", tr("settings.value.not_checking"));
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), v);
          break;
       }
 #endif
       case SET_FPS:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
              g_pcfg.show_fps ? "on" : "off");
          break;
 #ifdef VITA
       case SET_CPU:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-             ui_host_cpu_fast() ? "500 MHz (fast)" : "444 MHz (standard)");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+             ui_host_cpu_fast() ? tr("settings.value.500_mhz_fast") : tr("settings.value.444_mhz_standard"));
          break;
       case SET_STEADY:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   g_pcfg.steady_pacing ? "on" : "off");
          break;
       case SET_QUICK:
       {
          const int q = g_pcfg.quick_response < 0 ? 1 : g_pcfg.quick_response;
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  q == 0 ? "Off" : q == 1 ? "Auto" : "On");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  q == 0 ? tr("settings.value.off") : q == 1 ? tr("settings.value.auto") : tr("settings.value.on"));
          break;
       }
       case SET_REARTOUCH:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pcfg.rear_touch ? "On" : "Off");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pcfg.rear_touch ? tr("settings.value.on") : tr("settings.value.off"));
          break;
       case SET_REARGAME:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pgame.rear < 0 ? "Settings" : g_pgame.rear ? "On" : "Off");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pgame.rear < 0 ? tr("settings.value.settings") : g_pgame.rear ? tr("settings.value.on") : tr("settings.value.off"));
          break;
       case SET_PORT2:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pgame.nes_port2 == PCFG_PORT2_ZAPPER ? "Zapper"
-                  : g_pgame.nes_port2 == PCFG_PORT2_PAD ? "Controller" : "Auto");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pgame.nes_port2 == PCFG_PORT2_ZAPPER ? tr("settings.value.zapper")
+                  : g_pgame.nes_port2 == PCFG_PORT2_PAD ? tr("settings.value.controller") : tr("settings.value.auto"));
          break;
       case SET_BTNTEST:
-         set_item(y, g_cursor == i, 1, set_rows[i].label, "");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), "");
          break;
       case SET_QUICKGAME:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pgame.quick < 0 ? "Settings" : g_pgame.quick == 0 ? "Off"
-                  : g_pgame.quick == 1 ? "Auto" : "On");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pgame.quick < 0 ? tr("settings.value.settings") : g_pgame.quick == 0 ? tr("settings.value.off")
+                  : g_pgame.quick == 1 ? tr("settings.value.auto") : tr("settings.value.on"));
          break;
       case SET_HANDOFF:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   g_pcfg.smooth_handoff ? "on" : "off");
          break;
       case SET_CORE4:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   g_pcfg.core4_off ? "off" : "auto");
          break;
       case SET_SPEED:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
              g_pcfg.full_speed ? "on" : "off");
          break;
       case SET_SGB:
       {
          int en = set_row_enabled(i);
-         set_item(y, g_cursor == i, en, set_rows[i].label,
-                  !en ? "GB only" : g_pcfg.sgb_border ? "on" : "off");
+         set_item(y, g_cursor == i, en, tr(set_rows[i].label),
+                  !en ? tr("settings.value.gb_only") : g_pcfg.sgb_border ? "on" : "off");
          break;
       }
       case SET_RA_ACCOUNT:
@@ -5320,41 +5341,41 @@ static ui_action screen_settings_page(unsigned edges)
          if (st == RA_ACCT_IN)
             snprintf(v, sizeof(v), "%s", nm);
          else if (st == RA_ACCT_BUSY)
-            snprintf(v, sizeof(v), "signing in...");
+            snprintf(v, sizeof(v), tr("settings.value.signing_in"));
          else
-            snprintf(v, sizeof(v), "sign in");
-         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+            snprintf(v, sizeof(v), tr("settings.value.sign_in"));
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), v);
          break;
       }
       case SET_RA_HARDCORE:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  ra_hardcore_pref() ? "on (from the next game)" : "off");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  ra_hardcore_pref() ? tr("settings.value.on_from_the_next_game") : "off");
          break;
       case SET_RA_INDIC:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  ra_indicators_pref() ? "On" : "Off");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  ra_indicators_pref() ? tr("settings.value.on") : tr("settings.value.off"));
          break;
       case SET_RA_LIST:
       {
          unsigned have = 0, total = 0;
          char v[32];
          ra_summary(&have, &total, NULL, NULL, NULL);
-         snprintf(v, sizeof(v), "%u of %u", have, total);
-         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         snprintf(v, sizeof(v), tr("settings.value.of"), have, total);
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), v);
          break;
       }
       case SET_COVERPIC:
-         set_item(y, g_cursor == i, g_cover_row != 0, set_rows[i].label,
-                  g_cover_row == 2 ? "your own" :
-                  g_cover_row == 1 ? "automatic" : "no game");
-         set_row_trace(g_cursor == i, "cover", set_rows[i].label);
+         set_item(y, g_cursor == i, g_cover_row != 0, tr(set_rows[i].label),
+                  g_cover_row == 2 ? tr("settings.value.your_own") :
+                  g_cover_row == 1 ? "automatic" : tr("settings.value.no_game"));
+         set_row_trace(g_cursor == i, "cover", tr(set_rows[i].label));
          break;
       case SET_FOLDERS:
       {
          char v[96];
          int k, n = ui_host_extra_roots();
          if (!n)
-            snprintf(v, sizeof(v), "only roms/");
+            snprintf(v, sizeof(v), tr("settings.value.only_roms"));
          else
          {
             size_t u = (size_t)snprintf(v, sizeof(v), "roms/");
@@ -5362,76 +5383,76 @@ static ui_action screen_settings_page(unsigned edges)
                u += (size_t)snprintf(v + u, sizeof(v) - u, ", %s",
                                      ui_host_extra_root(k));
          }
-         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), v);
          break;
       }
       case SET_SYNCRA:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   ui_host_sync_ra_on() ? "on" : "off");
-         set_row_trace(g_cursor == i, "sync", set_rows[i].label);
+         set_row_trace(g_cursor == i, "sync", tr(set_rows[i].label));
          break;
       case SET_NAMES:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pcfg.lib_names ? "File name" : "Game title");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pcfg.lib_names ? tr("settings.value.file_name") : tr("settings.value.game_title"));
          break;
       case SET_SORT:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-             g_pcfg.lib_sort == 1 ? "last played first" :
-             g_pcfg.lib_sort == 2 ? "most played first" : "by name");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+             g_pcfg.lib_sort == 1 ? tr("settings.value.last_played_first") :
+             g_pcfg.lib_sort == 2 ? tr("settings.value.most_played_first") : tr("settings.value.by_name"));
          break;
       case SET_OWN_LOOK:
       {
          char v[48];
          if (g_pgame.override)
-            snprintf(v, sizeof(v), "just this game");
+            snprintf(v, sizeof(v), tr("settings.value.just_this_game"));
          else
-            snprintf(v, sizeof(v), "all %s games",
+            snprintf(v, sizeof(v), tr("settings.value.all_games"),
                      pcfg_console_tag(pcfg_display_console()));
-         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), v);
          break;
       }
       case SET_MOTION:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   pcfg_sensor_mode_name(g_pgame.sensor_mode));
          break;
       case SET_SENS:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   pcfg_sens_name(g_pgame.sensor_sens));
          break;
       case SET_REVERSE:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   g_pgame.sensor_rev ? "reversed" : "normal");
          break;
       case SET_LEVEL:
-         set_item(y, g_cursor == i, set_row_enabled(i), set_rows[i].label,
-                  g_pgame.level_set ? "set" : "as held at the start");
+         set_item(y, g_cursor == i, set_row_enabled(i), tr(set_rows[i].label),
+                  g_pgame.level_set ? "set" : tr("settings.value.as_held_at_the_start"));
          break;
       case SET_SUN:
       {
          char v[40];
          if (g_pgame.sunlight == PCFG_SUN_CLOCK)
-            snprintf(v, sizeof(v), "follows the clock");
+            snprintf(v, sizeof(v), tr("settings.value.follows_the_clock"));
          else if (g_pgame.sunlight == 0)
-            snprintf(v, sizeof(v), "none (shade)");
+            snprintf(v, sizeof(v), tr("settings.value.none_shade"));
          else
-            snprintf(v, sizeof(v), "%d of 10%s", g_pgame.sunlight,
-                     g_pgame.sunlight == 10 ? " (full sun)" : "");
-         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+            snprintf(v, sizeof(v), tr("settings.value.of_10"), g_pgame.sunlight,
+                     g_pgame.sunlight == 10 ? tr("settings.value.full_sun") : "");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), v);
          break;
       }
       case SET_SAVETYPE:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   pcfg_save_type_name(g_pgame.save_type));
          break;
       case SET_CLOCK:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
                   pcfg_rtc_mode_name(g_pgame.rtc_mode));
          break;
 #endif
 #ifdef REWIND
       case SET_REWIND:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-             g_pcfg.rewind ? "on (from the next game)"
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+             g_pcfg.rewind ? tr("settings.value.on_from_the_next_game")
                            : "off");
          break;
       case SET_REWIND_MB:
@@ -5440,14 +5461,14 @@ static ui_action screen_settings_page(unsigned edges)
           * this build (psp_rewind_product), so how far back a megabyte
           * reaches depends on the scene.  The megabytes are in the footer
           * while the cursor is here. */
-         set_item(y, g_cursor == i, g_pcfg.rewind, set_rows[i].label,
+         set_item(y, g_cursor == i, g_pcfg.rewind, tr(set_rows[i].label),
                   pcfg_rewind_mb_name(g_pcfg.rewind_mb));
          break;
       }
 #endif
 #ifndef VITA
       case SET_STICK:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
              g_pcfg.stick == CTL_STICK_MOVE ? "moves (as the d-pad)" :
              g_pcfg.stick == CTL_STICK_CUSTOM ? "custom (see Button mapping)"
                                               : "off");
@@ -5458,8 +5479,8 @@ static ui_action screen_settings_page(unsigned edges)
          int gp = g_pcfg.gb_palette < fe_host_gb_palette_count()
                   ? g_pcfg.gb_palette : 0;
          int en = set_row_enabled(i);
-         set_item(y, g_cursor == i, en, set_rows[i].label,
-             en ? fe_host_gb_palette_name(gp) : "GB / GBC only");
+         set_item(y, g_cursor == i, en, tr(set_rows[i].label),
+             en ? fe_host_gb_palette_name(gp) : tr("settings.value.gb_gbc_only"));
          if (en)
             gbpal_swatch(440 - vid_text_w(fe_host_gb_palette_name(gp)) - 8,
                          y, gp);
@@ -5478,19 +5499,19 @@ static ui_action screen_settings_page(unsigned edges)
 #ifdef VITA
    set_help_draw(set_help(g_cursor));
    footer(g_cursor == SET_LEVEL
-          ? VID_GLYPH_X " set level now   DPAD move   " VID_GLYPH_O " back"
+          ? tr("hint.x_set_level_now_dpad_move")
           : g_cursor == SET_EXPORT
-          ? VID_GLYPH_X " export   DPAD move/choose   " VID_GLYPH_O " back"
+          ? tr("hint.x_export_dpad_move_choose_o")
           : g_cursor == SET_NAME || g_cursor == SET_CONTROLS ||
             g_cursor == SET_BTNTEST
-          ? VID_GLYPH_X " open   DPAD move   " VID_GLYPH_O " back"
+          ? tr("hint.x_open_dpad_move_o_back")
           : g_cursor == SET_COVERS
-          ? VID_GLYPH_X " retry missing   DPAD move   " VID_GLYPH_O " back"
+          ? tr("hint.x_retry_missing_dpad_move_o")
           : g_cursor == SET_COVERPIC
-          ? VID_GLYPH_X " open   DPAD move   " VID_GLYPH_O " back"
+          ? tr("hint.x_open_dpad_move_o_back")
           : g_cursor == SET_ABOUT_UPDATE
-          ? VID_GLYPH_X " check now   DPAD change   " VID_GLYPH_O " back"
-          : VID_GLYPH_X " change   DPAD move/change   " VID_GLYPH_O " back");
+          ? tr("hint.x_check_now_dpad_change_o")
+          : tr("hint.x_change_dpad_move_change_o"));
 #else
    if (g_cursor == SET_FASTLINK)
       footer("For a strong connection. The host's setting is used.");
@@ -5505,7 +5526,7 @@ static ui_action screen_settings_page(unsigned edges)
                 : "Long: 4 MB. Needs the extra memory of a PSP-2000, 3000 or Go.");
 #endif
    else
-      footer("DPAD move/change   " VID_GLYPH_X " select   " VID_GLYPH_O " back");
+      footer("DPAD move/change   \x81 select   \x80 back");
 #endif
    return UI_ACT_NONE;
 }
@@ -5554,7 +5575,7 @@ static const ctl_row CTL_ROWS[] = {
    /* The four turbo actions have a rate and a mode each, which a chip row
     * cannot hold, and the columns are full: this row opens their own page
     * (screen_turbo), still SCR_CONTROLS. */
-   { CR_TURBO, 0, -1, "Turbo buttons", NULL },
+   { CR_TURBO, 0, -1, TR_KEY("ui.turbo_buttons"), NULL },
    { CR_ACT, 1, CTL_SC_FF, NULL, NULL },
 #ifdef VITA
    { CR_ACT, 1, CTL_SC_REWIND, NULL, NULL },
@@ -5577,21 +5598,21 @@ static const ctl_row CTL_ROWS[] = {
     * read it, so the menu button is not a choice here: the toggle row and
     * the "Home" row are hidden, and one fixed row says how the menu opens
     * (ctl_load_ini pins menu_button to start_select). */
-   { CR_FIXED, 1, -1, "Menu", "START+SELECT" },
+   { CR_FIXED, 1, -1, TR_KEY("ui.menu"), "START+SELECT" },
 #else
    { CR_MENU, 1, -1, "Menu", NULL },
    /* Fixed.  Its words follow the menu row: with the menu on HOME, what a
     * player needs to read here is how to QUIT (ctl_fixed_row). */
    { CR_FIXED, 1, -1, "Home", "HOME" },
 #endif
-   { CR_RESET, 1, -1, "Reset to defaults", NULL },
+   { CR_RESET, 1, -1, TR_KEY("ui.reset_to_defaults"), NULL },
 };
 #define CTL_ROWS_N ((int)(sizeof(CTL_ROWS) / sizeof(CTL_ROWS[0])))
 
 /* The two columns: x, width, title (the design's numbers). */
 static const struct { int x, w; const char *title; } CTL_COLS[2] = {
-   {  20, 170, "GAME BUTTONS" },
-   { 206, 254, "SHORTCUTS" },
+   {  20, 170, TR_KEY("ui.game_buttons") },
+   { 206, 254, TR_KEY("ui.shortcuts") },
 };
 /* Column titles at CTL_COL_Y; rows from CTL_ROW_Y0.  The design's 19 px
  * pitch fits its eight rows a column; the real table has ten (the d-pad is
@@ -5618,7 +5639,7 @@ static struct { int on, row, col; } g_tp;
  * turbo_frame), and both pages say so in the Cheats page's words. */
 static int g_turbo_locked;
 #define TURBO_LOCK_MSG \
-   "Turbo is off during link play. It comes back when it ends."
+   tr("ui.turbo_is_off_during_link_play")
 
 #ifdef GPSP_PERF_RIG
 /* Harness `ui_turbo_lock = 1`: the pages as a link session shows them, for a
@@ -5747,15 +5768,15 @@ static int chord_parts(unsigned mask, const char **out)
 static void ctl_note_result(int a, unsigned mask, int err, int stolen)
 {
    char v[40];
-   const char *lbl = ctl_info(a)->label;
+   const char *lbl = tr(ctl_info(a)->label);
    ctl_value(mask, v, sizeof(v));
    if (err != CTL_OK)
-      snprintf(g_ctl_note, sizeof(g_ctl_note), "%s unchanged: %s", lbl,
+      snprintf(g_ctl_note, sizeof(g_ctl_note), tr("ui.unchanged"), lbl,
                ctl_error_text(err));
    else if (stolen >= 0)
       snprintf(g_ctl_note, sizeof(g_ctl_note),
-               "%s was %s  -  %s is now blank (disabled)", v,
-               ctl_info(stolen)->label, ctl_info(stolen)->label);
+               tr("ui.was_is_now_blank_disabled"), v,
+               tr(ctl_info(stolen)->label), tr(ctl_info(stolen)->label));
    else
       g_ctl_note[0] = '\0';
 }
@@ -5771,36 +5792,42 @@ void ui_ctl_warn_inject(int on) { g_ctl_warn = on ? 1 : 0; }
 #else
 void ui_ctl_warn_inject(int on) { (void)on; }
 #endif
-static const char *const CTL_WARN_LINES[] = {
-#ifdef VITA
-   /* (UX review G9: the 3.x wording named the PSP and joked) */
-   "Careful: quick save or quick load is now on a",
-   "stick direction by itself. A Vita put down on a",
-   "bed or in a bag can press it and replace a state.",
-   "You won't see this again.",
-#else
-   "Hey man, I'm not gonna tell you how to live your life",
-   "but be careful. Last thing you'd want is to lose",
-   "progress by accidentally saving or loading a state by",
-   "doing something as simple as tossing your PSP on the",
-   "bed. You won't see this again.",
-#endif
-};
-#define CTL_WARN_N ((int)(sizeof(CTL_WARN_LINES) / sizeof(CTL_WARN_LINES[0])))
+/* The warning is one text (lang/en.txt ui.quick_warn); its lines break at \n. */
+#define CTL_WARN_MAXL 8
+static int ctl_warn_lines(const char *lines[], int len[])
+{
+   const char *t = tr("ui.quick_warn"), *e;
+   int n = 0;
+   while (*t && n < CTL_WARN_MAXL)
+   {
+      e = strchr(t, '\n');
+      lines[n] = t;
+      len[n] = e ? (int)(e - t) : (int)strlen(t);
+      n++;
+      t += len[n - 1] + (e ? 1 : 0);
+   }
+   return n;
+}
 
 static void ctl_warn_draw(void)
 {
    const int lh = FE_FONT_H + 2;
-   const int w = 400, h = 16 + CTL_WARN_N * lh + 10 + lh + 12;
+   const char *wl[CTL_WARN_MAXL];
+   int wn[CTL_WARN_MAXL], WN = ctl_warn_lines(wl, wn);
+   const int w = 400, h = 16 + WN * lh + 10 + lh + 12;
    const int x = (VID_SCR_W - w) / 2, y = (VID_SCR_H - h) / 2;
    int i;
    vid_rect(0, 0, VID_SCR_W, VID_SCR_H, C_BG_BOT, 120);
    vid_rect(x, y, w, h, C_BG_BOT, 245);
    vid_rect(x, y, w, 1, C_ACCENT, 255);
    vid_rect(x, y + h - 1, w, 1, C_ACCENT_DK, 255);
-   for (i = 0; i < CTL_WARN_N; i++)
-      vid_text_center(y + 16 + i * lh, CTL_WARN_LINES[i], C_ITEM);
-   vid_text_center(y + 16 + CTL_WARN_N * lh + 10, VID_GLYPH_X " OK", C_SEL);
+   for (i = 0; i < WN; i++)
+   {
+      char one[160];
+      snprintf(one, sizeof(one), "%.*s", wn[i] < 159 ? wn[i] : 159, wl[i]);
+      vid_text_center(y + 16 + i * lh, one, C_ITEM);
+   }
+   vid_text_center(y + 16 + WN * lh + 10, tr("ui.x_ok"), C_SEL);
 }
 
 static void ctl_apply(int a, unsigned mask, const char *via)
@@ -5870,8 +5897,8 @@ static void ctl_capture_step(unsigned pad)
    }
    if (++g_cap.timer >= CTL_CAP_TIMEOUT)
    {
-      snprintf(g_ctl_note, sizeof(g_ctl_note), "%s unchanged: nothing pressed",
-               ctl_info(g_cap.act)->label);
+      snprintf(g_ctl_note, sizeof(g_ctl_note), tr("ui.unchanged_nothing_pressed"),
+               tr(ctl_info(g_cap.act)->label));
       g_cap.on = 0;
    }
 }
@@ -5895,22 +5922,22 @@ static void ctl_capture_plate(void)
    char t[112], v[40];
    int secs = (CTL_CAP_TIMEOUT - g_cap.timer + 59) / 60;
    const char *ask = (in->flags & (CTL_F_GAME | CTL_F_TURBO))
-                                              ? "Press a button for"
-                                              : "Press a button or combo for";
+                                              ? tr("ui.press_a_button_for")
+                                              : tr("ui.press_a_button_or_combo_for");
    vid_rect(0, OV_PLATE_Y, VID_SCR_W, FTR_H, C_ACCENT, 40);
    if (g_cap.phase == 2)
    {
       ctl_value(g_cap.got, v, sizeof(v));
-      snprintf(t, sizeof(t), "%s      let go to set", v);
+      snprintf(t, sizeof(t), tr("ui.let_go_to_set"), v);
       vid_text_center(OV_PLATE_Y + 2, t, C_SEL);
       return;
    }
    /* "O cancel" is not offered: O is a legal answer (A is on O by
     * default), so capture ends on any press or on the timeout. */
-   snprintf(t, sizeof(t), "%s %s      cancels in 5 s", ask, in->label);
+   snprintf(t, sizeof(t), tr("ui.cancels_in_5_s"), ask, in->label);
    {
       int x = (VID_SCR_W - vid_text_w(t)) / 2;
-      snprintf(t, sizeof(t), "%s %s      cancels in %d s", ask, in->label,
+      snprintf(t, sizeof(t), tr("ui.cancels_in_s"), ask, in->label,
                secs);
       vid_text(x, OV_PLATE_Y + 2, t, C_SEL);
    }
@@ -5928,12 +5955,12 @@ static const char *ctl_fixed_row(const ctl_row *ri, const char **chip,
    if (chip)
       *chip = quit ? "START+SELECT" : ri->chord;
    if (tag)
-      *tag = quit ? "hold 1.5 s" : "fixed";
+      *tag = quit ? tr("ui.hold_1_5_s") : "fixed";
 #ifdef VITA
    if (tag)
       *tag = "hold";              /* the one fixed row is the menu chord */
 #endif
-   return quit ? "Quit" : ri->label;
+   return quit ? tr("ui.quit") : tr(ri->label);
 }
 
 /* ----- the Turbo buttons page (docs/CONTROL-REMAP.md section 13) -----------
@@ -5948,15 +5975,15 @@ static const char *ctl_fixed_row(const ctl_row *ri, const char **chip,
 #define TP_PITCH   22
 #define TP_HELP_Y  188
 static const struct { int xr; const char *head; } TP_CELLS[3] = {
-   { 250, "Button" }, { 350, "Rate" }, { 450, "Mode" },
+   { 250, TR_KEY("ui.button") }, { 350, TR_KEY("ui.rate") }, { 450, TR_KEY("ui.mode") },
 };
 static const char *const TP_HELP[3][2] = {
-   { "A turbo button presses A (or B) over and over for you.",
-     "Each of the four has its own button, rate and mode." },
-   { "Presses a second: 10, 15 or 30.",
-     "Counted in game frames, so fast-forward speeds it up too." },
-   { "Hold: fires for as long as you hold the button.",
-     "Toggle: press to start, press again to stop." },
+   { TR_KEY("ui.a_turbo_button_presses_a_or"),
+     TR_KEY("ui.each_of_the_four_has_its") },
+   { TR_KEY("ui.presses_a_second_10_15_or"),
+     TR_KEY("ui.counted_in_game_frames_so_fast") },
+   { TR_KEY("ui.hold_fires_for_as_long_as"),
+     TR_KEY("ui.toggle_press_to_start_press_again") },
 };
 
 static int tp_bound_count(void)
@@ -6031,14 +6058,14 @@ static ui_action screen_turbo(unsigned edges)
    }
 
    ov_backdrop(OV_SCRIM_DENSE);
-   ov_head(NULL, "CONTROLS");
+   ov_head(NULL, tr("ui.controls"));
    {
-      int lx = 20 + vid_text_w("TURBO BUTTONS") + FE_FONT_W;
-      vid_text(20, CTL_COL_Y, "TURBO BUTTONS", C_ACCENT);
+      int lx = 20 + vid_text_w(tr("ui.turbo_buttons_2")) + FE_FONT_W;
+      vid_text(20, CTL_COL_Y, tr("ui.turbo_buttons_2"), C_ACCENT);
       vid_rect(lx, CTL_COL_Y + FE_FONT_H / 2, 450 - lx, 1, C_ACCENT_DK, 120);
    }
    for (c = 0; c < 3; c++)
-      ov_text_right(TP_CELLS[c].xr, CTL_COL_Y + 20, TP_CELLS[c].head, C_DIM);
+      ov_text_right(TP_CELLS[c].xr, CTL_COL_Y + 20, tr(TP_CELLS[c].head), C_DIM);
    for (i = 0; i < CTL_TURBO_N; i++)
    {
       int y = TP_ROW_Y0 + i * TP_PITCH, sel = (i == g_tp.row);
@@ -6051,7 +6078,7 @@ static ui_action screen_turbo(unsigned edges)
          vid_rect(12, by, 446, TP_PITCH, C_ACCENT, 40);
          vid_rect(12, by, 3, TP_PITCH, C_ACCENT, 255);
       }
-      vid_text(24, y, ctl_info(a)->label, sel ? C_SEL : C_ITEM);
+      vid_text(24, y, tr(ctl_info(a)->label), sel ? C_SEL : C_ITEM);
       for (c = 0; c < 3; c++)
       {
          int xr = TP_CELLS[c].xr, w, n;
@@ -6076,10 +6103,10 @@ static ui_action screen_turbo(unsigned edges)
          {
             const char *v = rate;
             if (c == 1)
-               snprintf(rate, sizeof(rate), "%d / sec",
+               snprintf(rate, sizeof(rate), tr("ui.sec"),
                         ctl_turbo_rate(m->turbo_half[i]));
             else
-               v = m->turbo_toggle[i] ? "Toggle" : "Hold";
+               v = m->turbo_toggle[i] ? tr("ui.toggle") : tr("ui.hold");
             w = chip_w(v);
             chip(xr - w, y, v, CHIP_BOUND, 255);
          }
@@ -6088,8 +6115,8 @@ static ui_action screen_turbo(unsigned edges)
             ov_outline(xr - w - 2, cy - 2, w + 4, CHIP_H + 4, C_ACCENT, 255);
       }
    }
-   vid_text(24, TP_HELP_Y, TP_HELP[g_tp.col][0], C_DIM);
-   vid_text(24, TP_HELP_Y + FE_FONT_H + 2, TP_HELP[g_tp.col][1], C_DIM);
+   vid_text(24, TP_HELP_Y, tr(TP_HELP[g_tp.col][0]), C_DIM);
+   vid_text(24, TP_HELP_Y + FE_FONT_H + 2, tr(TP_HELP[g_tp.col][1]), C_DIM);
 
    if (g_cap.on)
       ctl_capture_plate();
@@ -6098,12 +6125,12 @@ static ui_action screen_turbo(unsigned edges)
    else if (g_turbo_locked)
       ov_plate(TURBO_LOCK_MSG);
    else if (g_tp.col == 0)
-      footer(VID_GLYPH_X " rebind   " VID_GLYPH_SQ " none   "
-             VID_GLYPH_TRI " default   " VID_GLYPH_O " back      "
-             "blank = disabled");
+      footer(tr("hint.x_rebind_sq_none_tri_default")
+
+);
    else
-      footer(VID_GLYPH_X " change   " VID_GLYPH_TRI " default   "
-             VID_GLYPH_O " back");
+      footer(tr("hint.x_change_tri_default_o_back")
+);
    return UI_ACT_NONE;
 }
 
@@ -6181,8 +6208,8 @@ static ui_action screen_controls(unsigned edges, unsigned pad)
          g_settings_dirty = 1;
       snprintf(g_ctl_note, sizeof(g_ctl_note), "%s",
                g_pcfg.controls.menu_home
-                  ? "In game HOME opens the menu  -  hold START+SELECT to quit"
-                  : "START+SELECT (hold) opens the menu  -  HOME is the system's");
+                  ? tr("ui.in_game_home_opens_the_menu")
+                  : tr("ui.start_select_hold_opens_the_menu"));
       fe_evt("ctl_menu_button value=%s",
              ctl_menu_name(g_pcfg.controls.menu_home));
    }
@@ -6201,7 +6228,7 @@ static ui_action screen_controls(unsigned edges, unsigned pad)
       {
          g_ctl_reset_armed = 1;
          snprintf(g_ctl_note, sizeof(g_ctl_note),
-                  "Press " VID_GLYPH_X " again to reset every control");
+                  tr("ui.press_x_again_to_reset_every"));
       }
       else
       {
@@ -6209,19 +6236,19 @@ static ui_action screen_controls(unsigned edges, unsigned pad)
          g_ctl_reset_armed = 0;
          g_settings_dirty = 1;
          snprintf(g_ctl_note, sizeof(g_ctl_note),
-                  "Every control is back to its default");
+                  tr("ui.every_control_is_back_to_its"));
          fe_evt("ctl_reset");
       }
    }
 
    ov_backdrop(OV_SCRIM_DENSE);
-   ov_head(NULL, "CONTROLS");
+   ov_head(NULL, tr("ui.controls"));
    pitch = ctl_pitch();
    for (c = 0; c < 2; c++)
    {
       int cx = CTL_COLS[c].x, cw = CTL_COLS[c].w;
-      int lx = cx + vid_text_w(CTL_COLS[c].title) + FE_FONT_W;
-      vid_text(cx, CTL_COL_Y, CTL_COLS[c].title, C_ACCENT);
+      int lx = cx + vid_text_w(tr(CTL_COLS[c].title)) + FE_FONT_W;
+      vid_text(cx, CTL_COL_Y, tr(CTL_COLS[c].title), C_ACCENT);
       vid_rect(lx, CTL_COL_Y + FE_FONT_H / 2, cx + cw - 10 - lx, 1,
                C_ACCENT_DK, 120);
       for (i = 0; i < CTL_ROWS_N; i++)
@@ -6242,9 +6269,9 @@ static ui_action screen_controls(unsigned edges, unsigned pad)
             UI_TCH_ROW(i, cx - 8, vid_band_y(y, pitch + 1), cw + 6, pitch);
 #endif
          vid_text(cx + 4, y,
-                  ri->kind == CR_ACT ? ctl_info(ri->act)->label :
+                  ri->kind == CR_ACT ? tr(ctl_info(ri->act)->label) :
                   ri->kind == CR_FIXED ? ctl_fixed_row(ri, NULL, NULL)
-                                       : ri->label,
+                                       : tr(ri->label),
                   ri->kind == CR_FIXED ? C_DIM : (sel ? C_SEL : C_ITEM));
          switch (ri->kind)
          {
@@ -6260,7 +6287,7 @@ static ui_action screen_controls(unsigned edges, unsigned pad)
             parts[0] = g_pcfg.controls.menu_home ? "HOME" : "START+SELECT";
             w = combo_right(xr, y, parts, 1, CHIP_BOUND, 255);
             ov_text_right(xr - w - 8, y,
-                          g_pcfg.controls.menu_home ? "in game" : "hold",
+                          g_pcfg.controls.menu_home ? tr("ui.in_game") : "hold",
                           C_DIM);
             break;
          case CR_TURBO:
@@ -6268,7 +6295,7 @@ static ui_action screen_controls(unsigned edges, unsigned pad)
             /* How many are set; the page behind the row has the rest. */
             char t[20];
             n = tp_bound_count();
-            snprintf(t, sizeof(t), "%d set", n);
+            snprintf(t, sizeof(t), tr("ui.set"), n);
             parts[0] = t;
             combo_right(xr, y, parts, n ? 1 : 0,
                         g_turbo_locked ? CHIP_LOCKED : CHIP_BOUND, 255);
@@ -6308,17 +6335,17 @@ static ui_action screen_controls(unsigned edges, unsigned pad)
    else if (r->kind == CR_TURBO && g_turbo_locked)
       ov_plate(TURBO_LOCK_MSG);
    else if (r->kind == CR_TURBO)
-      footer(VID_GLYPH_X " open   " VID_GLYPH_O " back      "
-             "auto-fire for A and B");
+      footer(tr("hint.x_open_o_back_auto_fire")
+);
    else if (r->kind == CR_RESET)
-      footer(VID_GLYPH_X " reset   " VID_GLYPH_O " back      blank = disabled");
+      footer(tr("hint.x_reset_o_back_blank_disabled"));
    else if (r->kind == CR_MENU)
-      footer(VID_GLYPH_X " change   " VID_GLYPH_TRI " default   "
-             VID_GLYPH_O " back");
+      footer(tr("hint.x_change_tri_default_o_back")
+);
    else
-      footer(VID_GLYPH_X " rebind   " VID_GLYPH_SQ " none   "
-             VID_GLYPH_TRI " default   " VID_GLYPH_O " back      "
-             "blank = disabled");
+      footer(tr("hint.x_rebind_sq_none_tri_default")
+
+);
    return UI_ACT_NONE;
 }
 
@@ -6380,17 +6407,22 @@ static int wl_rows(int ids[WL_COUNT])
 }
 #endif
 
-/* "prefix<name>suffix", the name clipped so the line fits `px`. */
-static void wl_line_name(char *out, size_t cap, const char *prefix,
-                         const char *name, const char *suffix, int px)
+/* A sentence with one %s for a game's name (lang/en.txt), the name clipped so
+ * the line fits `px`. */
+static void wl_line_name(char *out, size_t cap, const char *fmt,
+                         const char *name, int px)
 {
-   char nm[64];
-   int room = px - vid_text_w(prefix) - vid_text_w(suffix);
-   snprintf(nm, sizeof(nm), "%s", name && name[0] ? name : "this game");
+   char nm[64], pre[160], suf[160];
+   const char *at = strstr(fmt, "%s");
+   int room;
+   snprintf(pre, sizeof(pre), "%.*s", at ? (int)(at - fmt) : 0, fmt);
+   snprintf(suf, sizeof(suf), "%s", at ? at + 2 : "");
+   room = px - vid_text_w(pre) - vid_text_w(suf);
+   snprintf(nm, sizeof(nm), "%s", name && name[0] ? name : tr("ui.this_game"));
    if (room < 40)
       room = 40;
    clip_title(nm, room);
-   snprintf(out, cap, "%s%s%s", prefix, nm, suffix);
+   snprintf(out, cap, "%s%s%s", pre, nm, suf);
 }
 
 #ifndef VITA   /* ---- the PSP's Wireless screens, down to screen_host ---- */
@@ -6401,7 +6433,7 @@ static void wl_explain(char *l1, size_t c1, char *l2, size_t c2,
    int ov = fe_linkmode_get(&g_lm, g_game_key);
    if (g_pcfg.console != FE_CONSOLE_GBA)
    {
-      wl_line_name(l1, c1, "Link Cable game. The other " UI_DEV " needs ",
+      wl_line_name(l1, c1, "Link Cable game. The other Vita needs ",
                    own_game_name(), ",", 436);
       snprintf(l2, c2, "or receives it over the link.");
       *host_value = "Link Cable";
@@ -6410,7 +6442,7 @@ static void wl_explain(char *l1, size_t c1, char *l2, size_t c2,
    switch (ui_host_mode())
    {
    case UI_HOST_CABLE:
-      wl_line_name(l1, c1, "Link Cable game: both " UI_DEVS " need ",
+      wl_line_name(l1, c1, "Link Cable game: both Vitas need ",
                    own_game_name(), " open.", 436);
       snprintf(l2, c2, "%s", ov == FE_LM_CABLE
                ? "Link mode: Link Cable (set in Settings).  2 players."
@@ -6418,14 +6450,14 @@ static void wl_explain(char *l1, size_t c1, char *l2, size_t c2,
       *host_value = "Link Cable";
       break;
    case UI_HOST_ASK:
-      snprintf(l1, c1, "This game links two ways. The host chooses; Join "
-               "follows.");
-      snprintf(l2, c2, "Both " UI_DEVS " must be in the same room.");
+      snprintf(l1, c1, "This game links two ways. The host chooses; Join follows."
+);
+      snprintf(l2, c2, "Both Vitas must be in the same room.");
       *host_value = "Link Cable / Wireless Adapter";
       break;
    default:
-      snprintf(l1, c1, "Wireless Adapter game. Both " UI_DEVS " need the same "
-               "room.");
+      snprintf(l1, c1, "Wireless Adapter game. Both Vitas need the same room."
+);
       snprintf(l2, c2, "%s", ov == FE_LM_ADAPTER
                ? "Link mode: Wireless Adapter (set in Settings)."
                : "The game decides who plays with whom.");
@@ -6537,8 +6569,8 @@ static ui_action wl_session(unsigned edges, const char *session_info)
    l2[0] = l3[0] = '\0';
    if (hosting)
    {
-      snprintf(l2, sizeof(l2), "Hosting %s by Link Cable. Waiting for the "
-               "other " UI_DEV ".", g_link.room);
+      snprintf(l2, sizeof(l2), "Hosting %s by Link Cable. Waiting for the other Vita."
+, g_link.room);
       wl_line_name(l3, sizeof(l3), "They open ", own_game_name(),
                    ", then Wireless > Join.", 436);
    }
@@ -6549,8 +6581,8 @@ static ui_action wl_session(unsigned edges, const char *session_info)
                   g_link.player);
       else
          snprintf(l2, sizeof(l2), "Link Cable, %s.", g_link.room);
-      snprintf(l3, sizeof(l3), "The other " UI_DEV " is linked. Only buttons "
-               "cross the air.");
+      snprintf(l3, sizeof(l3), "The other Vita is linked. Only buttons cross the air."
+);
    }
    else if (g_link.state == UI_LINK_LINKED)
    {
@@ -6563,7 +6595,7 @@ static ui_action wl_session(unsigned edges, const char *session_info)
       else
       {
          snprintf(l2, sizeof(l2), "Wireless Adapter, %s.", g_link.room);
-         snprintf(l3, sizeof(l3), "The other " UI_DEV " is in the room.");
+         snprintf(l3, sizeof(l3), "The other Vita is in the room.");
       }
    }
    else
@@ -6588,7 +6620,7 @@ static ui_action wl_session(unsigned edges, const char *session_info)
                 : g_link.fast_src == FE_GBLINK_FL_OLD_PEER
                    ? "off (other PSP: older version)"
                    : (g_link.fast ? "on" : "off"));
-   footer(VID_GLYPH_X " select   " VID_GLYPH_O " back");
+   footer("\x81 select   \x80 back");
    return UI_ACT_NONE;
 }
 
@@ -6698,9 +6730,9 @@ static ui_action screen_wireless(unsigned edges, int session_active,
       }
    }
    if (id == WL_FAST)
-      footer("DPAD change   " VID_GLYPH_O " back");
+      footer("DPAD change   \x80 back");
    else
-      footer(VID_GLYPH_X " select   DPAD change room   " VID_GLYPH_O " back");
+      footer("\x81 select   DPAD change room   \x80 back");
    return UI_ACT_NONE;
 }
 
@@ -6744,18 +6776,18 @@ static ui_action screen_host(unsigned edges)
    }
    ov_backdrop(OV_SCRIM);
    ov_head(g_ov_title, "HOST");
-   vid_text(22, 72, "How will the other " UI_DEV " connect?", C_ITEM);
+   vid_text(22, 72, tr("ui.how_will_the_other_vita_connect"), C_ITEM);
    /* 460 wide, not the Wireless rows' 300: "Wireless Adapter" and its note
     * do not both fit in 300 px (the design's own render overlapped them). */
-   wl_row_at_w(104, 460, g_cursor == HC_CABLE, 1, "Link Cable",
-               "both " UI_DEVS " need this game");
-   wl_row_at_w(126, 460, g_cursor == HC_ADAPTER, 1, "Wireless Adapter",
-               "the game's wireless mode");
-   wl_row_at_w(148, 460, g_cursor == HC_BACK, 1, "Back", NULL);
+   wl_row_at_w(104, 460, g_cursor == HC_CABLE, 1, tr("ui.link_cable"),
+               tr("ui.both_vitas_need_this_game"));
+   wl_row_at_w(126, 460, g_cursor == HC_ADAPTER, 1, tr("ui.wireless_adapter"),
+               tr("ui.the_game_s_wireless_mode"));
+   wl_row_at_w(148, 460, g_cursor == HC_BACK, 1, tr("ui.back"), NULL);
    UI_TCH_BAND(HC_CABLE, 104, 460);
    UI_TCH_BAND(HC_ADAPTER, 126, 460);
    UI_TCH_BAND(HC_BACK, 148, 460);
-   footer(VID_GLYPH_X " host   " VID_GLYPH_O " back");
+   footer(tr("hint.x_host_o_back"));
    return UI_ACT_NONE;
 }
 
@@ -6797,7 +6829,7 @@ static ui_action screen_joinask(unsigned edges)
    wl_row_at_w(126, 460, g_cursor == JA_ADAPTER, 1, "Wireless Adapter",
                "the game's wireless mode");
    wl_row_at_w(148, 460, g_cursor == JA_BACK, 1, "Back", NULL);
-   footer(VID_GLYPH_X " join   " VID_GLYPH_O " back");
+   footer("\x81 join   \x80 back");
    return UI_ACT_NONE;
 }
 #endif /* !VITA */
@@ -6897,8 +6929,8 @@ static ui_action screen_mgift(unsigned edges)
        * and the listener uses whatever Wi-Fi the console is on. */
       vid_text(22, 196, "Phone hotspot:  Mystery Gift   (open, 2.4 GHz)",
                C_DIM);
-      vid_text(22, 196 + FE_FONT_H + 2, "Join it first in the " UI_DEV
-               "'s Settings > Network.", C_DIM);
+      vid_text(22, 196 + FE_FONT_H + 2, "Join it first in the Vita's Settings > Network."
+, C_DIM);
 #else
       vid_text(22, 196, "Phone: Mobile Hotspot named  Mystery Gift", C_DIM);
       vid_text(22, 196 + FE_FONT_H + 2, "Security: Open    Band: 2.4 GHz",
@@ -6912,7 +6944,7 @@ static ui_action screen_mgift(unsigned edges)
 #ifdef VITA
    /* One network: the one the console is on (see the hotspot lines above). */
    g_mg_conf = 0;
-   snprintf(cname, sizeof(cname), "the " UI_DEV "'s Wi-Fi");
+   snprintf(cname, sizeof(cname), "the Vita's Wi-Fi");
 #else
    if (g_mg_conf == 0)
       snprintf(cname, sizeof(cname), "Automatic (Mystery Gift)");
@@ -6929,13 +6961,13 @@ static ui_action screen_mgift(unsigned edges)
    UI_TCH_BAND(MGF_BACK, WL_ROW_Y0 + 44, 300);
 
    if (running)
-      footer(VID_GLYPH_X " select   " VID_GLYPH_O " back (keeps listening)");
+      footer("\x81 select   \x80 back (keeps listening)");
    else if (g_mg_conf == 0)
-      footer("SELECT+DOWN toggles in game.  " VID_GLYPH_X " start   "
-             VID_GLYPH_O " back");
+      footer("SELECT+DOWN toggles in game.  \x81 start   \x80 back"
+);
    else
-      footer("DPAD pick network   " VID_GLYPH_X " start   " VID_GLYPH_O
-             " back");
+      footer("DPAD pick network   \x81 start   \x80 back"
+);
    return UI_ACT_NONE;
 }
 
@@ -7097,13 +7129,13 @@ static ui_action screen_scan(unsigned edges)
    {
       vid_text(22, 72, "No rooms answered the scan.", C_DIM);
       vid_text(22, 72 + FE_FONT_H + 2,
-               "Have the other " UI_DEV " host first, then rescan.", C_DIM);
+               "Have the other Vita host first, then rescan.", C_DIM);
       wl_row(0, 1, "Back", NULL);
    }
    if (g_scan_note[0])
       ov_plate(g_scan_note);
    else
-      footer(VID_GLYPH_X " join   " VID_GLYPH_O " back");
+      footer("\x81 join   \x80 back");
    return UI_ACT_NONE;
 }
 #else  /* VITA */
@@ -7242,11 +7274,11 @@ static void cht_page_reset(void)
    /* A list that was cut says so as the page opens (the browser's lesson:
     * a cap that is hit silently reads as "broken", not "full"). */
    if (fe_cheats_found() > fe_cheats_count())
-      snprintf(g_cht_note, sizeof(g_cht_note), "Showing %u of %u cheats",
+      snprintf(g_cht_note, sizeof(g_cht_note), tr("ui.showing_of_cheats"),
                fe_cheats_count(), fe_cheats_found());
    else if (fe_cheats_truncated())
       snprintf(g_cht_note, sizeof(g_cht_note),
-               "The file is over %d KB: showing the first %u cheats",
+               tr("ui.the_file_is_over_kb_showing"),
                FE_CHEATS_FILE_MAX / 1024, fe_cheats_count());
 }
 
@@ -7255,12 +7287,12 @@ static const char *cht_menu_value(char *out, size_t cap)
 {
    unsigned on = fe_cheats_enabled_count();
    if (fe_cheats_status() != FE_CHEATS_LOADED)
-      return "none for this game";
+      return tr("ui.none_for_this_game");
    if (fe_cheats_locked())
-      return on ? "paused for link play" : "off for link play";
+      return on ? tr("ui.paused_for_link_play") : tr("ui.off_for_link_play");
    if (!on)
-      return "all off";
-   snprintf(out, cap, "%u on", on);
+      return tr("ui.all_off");
+   snprintf(out, cap, tr("ui.on"), on);
    return out;
 }
 
@@ -7315,21 +7347,21 @@ static void cht_empty(void)
 {
    char t[PSP_FILE_PATH_CAP + 8];
    int have_file = g_cht_file[0] != '\0';
-   const char *head = have_file ? "No cheats in this game's file"
-                                : "No cheats for this game yet";
+   const char *head = have_file ? tr("ui.no_cheats_in_this_game_s")
+                                : tr("ui.no_cheats_for_this_game_yet");
    vid_text_hd((VID_SCR_W - vid_text_hd_w(head)) / 2, 84, head, C_SEL);
    if (have_file)
    {
-      vid_text_center(118, "Nothing in it reads as a cheat:", C_ITEM);
+      vid_text_center(118, tr("ui.nothing_in_it_reads_as_a"), C_ITEM);
       snprintf(t, sizeof(t), "%s", g_cht_file);
    }
    else
    {
-      vid_text_center(118, "Put a cheat file on the Memory Stick:", C_ITEM);
+      vid_text_center(118, tr("ui.put_a_cheat_file_on_the"), C_ITEM);
       snprintf(t, sizeof(t), "%s/", g_cht_dir);
    }
    if (vid_text_w(t) > 440)
-      snprintf(t, sizeof(t), "%s", have_file ? "cheats/" : "cheats/ in the GBAdhoc folder");
+      snprintf(t, sizeof(t), "%s", have_file ? "cheats/" : tr("ui.cheats_in_the_gbadhoc_folder"));
    vid_text_center(140, t, C_VALUE);
    if (!have_file)
    {
@@ -7337,11 +7369,11 @@ static void cht_empty(void)
       clip_title(t, 440);
       vid_text_center(158, t, C_VALUE);
    }
-   vid_text_center(184, "A text file: a name on one line, its codes under it.",
+   vid_text_center(184, tr("ui.a_text_file_a_name_on"),
                    C_DIM);
    vid_text_center(202, fe_cheats_system() == FE_CHEATS_SYS_GBA
-                           ? "GBA: CodeBreaker codes, e.g. 82025BC4 E0FF"
-                           : "GB / GBC: GameShark codes, e.g. 010AD5C1",
+                           ? tr("ui.gba_codebreaker_codes_e_g_82025bc4")
+                           : tr("ui.gb_gbc_gameshark_codes_e_g"),
                    C_DIM);
 }
 
@@ -7362,8 +7394,8 @@ static int screen_cheats(unsigned edges, const char *game)
          {
             fe_cheats_all_off();
             snprintf(g_cht_note, sizeof(g_cht_note),
-                     cht_state_save() == 0 ? "All cheats are off"
-                                           : "All off (could not save that)");
+                     cht_state_save() == 0 ? tr("ui.all_cheats_are_off")
+                                           : tr("ui.all_off_could_not_save_that"));
             fe_evt("cheats_all_off");
          }
          if (edges)
@@ -7388,15 +7420,15 @@ static int screen_cheats(unsigned edges, const char *game)
          else if (e->error)
             snprintf(g_cht_note, sizeof(g_cht_note), "%s",
                      e->error == 6 /* CheatErrorGameShark */
-                        ? "Choose a format: GS1:, AR3:, GS1RAW: or AR3RAW:"
+                        ? tr("ui.choose_a_format_gs1_ar3_gs1raw")
                      : e->error == 7 /* CheatErrorRegion */ ||
                        e->error == FE_CHEAT_ERR_GB_REGION
-                        ? "Only codes that write the game's RAM can be used"
+                        ? tr("ui.only_codes_that_write_the_game")
                      : e->error == FE_CHEAT_ERR_GB_GENIE
-                        ? "Game Genie codes patch the ROM: cannot be used"
+                        ? tr("ui.game_genie_codes_patch_the_rom")
                      : e->error == FE_CHEAT_ERR_GB_TYPE
-                        ? "Only GameShark codes that start 01 can be used"
-                        : "This code is not one GBAdhoc can read");
+                        ? tr("ui.only_gameshark_codes_that_start_01")
+                        : tr("ui.this_code_is_not_one_gbadhoc"));
          else
          {
             int want = !e->enabled;
@@ -7404,10 +7436,10 @@ static int screen_cheats(unsigned edges, const char *game)
             int rc = cht_state_save();
             if (err)
                snprintf(g_cht_note, sizeof(g_cht_note),
-                        "Too many cheats on at once: switch one off first");
+                        tr("ui.too_many_cheats_on_at_once"));
             else if (rc != 0)
                snprintf(g_cht_note, sizeof(g_cht_note),
-                        "Changed, but the choice could not be saved");
+                        tr("ui.changed_but_the_choice_could_not"));
             fe_evt("cheats_set i=%d on=%d err=%d now_on=%u hash=%08lx",
                    g_cht_cur, want, err, fe_cheats_enabled_count(),
                    (unsigned long)e->hash);
@@ -7430,22 +7462,22 @@ static int screen_cheats(unsigned edges, const char *game)
    ov_backdrop(OV_SCRIM_DENSE);
    if (n <= 0)
    {
-      ov_head(game, "CHEATS");
+      ov_head(game, tr("ui.cheats"));
       cht_empty();
-      footer(VID_GLYPH_O " back");
+      footer(tr("hint.o_back"));
       return leave;
    }
    /* Line 2: the game's name, clipped short of the count ("3 of 12 on") and
     * of the room when a session has put it there.  Locked, the plate says
     * why, so the count gives its place back to the name. */
-   ov_head(NULL, "CHEATS");
+   ov_head(NULL, tr("ui.cheats"));
    {
       char t[100];
       int right = g_ov_room2_w ? 460 - g_ov_room2_w - 14 : 460;
       st[0] = '\0';
       if (!locked)
       {
-         snprintf(st, sizeof(st), "%u of %d on", fe_cheats_enabled_count(),
+         snprintf(st, sizeof(st), tr("ui.of_on"), fe_cheats_enabled_count(),
                   n);
          ov_status_right(st);
          right -= vid_text_w(st) + 14;
@@ -7460,26 +7492,26 @@ static int screen_cheats(unsigned edges, const char *game)
    ov_scrollbar(470, CHT_ROW_Y0, CHT_ROWS * CHT_PITCH, g_cht_top * CHT_PITCH,
                 CHT_ROWS * CHT_PITCH, n * CHT_PITCH);
    if (locked)
-      ov_plate("Cheats are off during link play. They come back when it ends.");
+      ov_plate(tr("ui.cheats_are_off_during_link_play"));
    else if (g_cht_ask)
    {
       char q[72];
       unsigned on = fe_cheats_enabled_count();
       if (on == 1)
-         snprintf(q, sizeof(q), VID_GLYPH_X " switch it off     "
-                  VID_GLYPH_O " keep it on");
+         snprintf(q, sizeof(q), tr("ui.x_switch_it_off_o_keep")
+);
       else
-         snprintf(q, sizeof(q), VID_GLYPH_X " switch all %u off     "
-                  VID_GLYPH_O " keep them on", on);
+         snprintf(q, sizeof(q), tr("ui.x_switch_all_off_o_keep")
+, on);
       ov_plate(q);
    }
    else if (g_cht_note[0])
       ov_plate(g_cht_note);
    else
       footer(fe_cheats_enabled_count()
-                ? VID_GLYPH_X " on/off     " VID_GLYPH_SQ " all off     "
-                  VID_GLYPH_O " back"
-                : VID_GLYPH_X " on/off     " VID_GLYPH_O " back");
+                ? tr("hint.x_on_off_sq_all_off")
+
+                : tr("hint.x_on_off_o_back"));
    return leave;
 }
 #endif /* GPSP_CHEATS */
@@ -7518,10 +7550,10 @@ enum { M_RESUME, M_SAVESTATES, M_WIRELESS, M_SETTINGS,
 
 static ui_action screen_menu(unsigned edges, int session_active)
 {
-   static const char *labels[M_COUNT] = {
+   const char *labels[M_COUNT] = {
 #ifdef VITA
-      "Resume", "Save states", "Play together", "Cheats", "Settings",
-      "Save clip", "Quit to game list", "Exit VitAdhoc"
+      tr("ui.resume"), tr("ui.save_states"), tr("ui.play_together"), tr("ui.cheats_2"), tr("ui.settings_2"),
+      tr("ui.save_clip"), tr("ui.quit_to_game_list"), tr("ui.exit_vitadhoc")
 #else
       "Resume", "Save states", "Wireless", "Settings",
 #ifdef GPSP_CHEATS
@@ -7577,8 +7609,8 @@ static ui_action screen_menu(unsigned edges, int session_active)
 #ifdef VITA
             /* On the page's plate, where the eye is: a toast would sit on
              * the wordmark. */
-            snprintf(g_menu_note, sizeof(g_menu_note), "Save states are off "
-                     "while linked to another console.");
+            snprintf(g_menu_note, sizeof(g_menu_note), tr("ui.save_states_are_off_while_linked")
+);
 #else
             osd_toast("Savestates locked during wireless session");
 #endif
@@ -7611,14 +7643,14 @@ static ui_action screen_menu(unsigned edges, int session_active)
          /* nothing recorded: say which of the three reasons it is (the
           * recording is the previews', and a link keeps none) */
          snprintf(g_menu_note, sizeof(g_menu_note), "%s",
-                  rc == 0 ? "Saving the last ten seconds as a clip..."
+                  rc == 0 ? tr("ui.saving_the_last_ten_seconds_as")
                   : rc == 1 && !g_pcfg.previews
-                     ? "Turn on Game previews in Settings to save clips."
+                     ? tr("ui.turn_on_game_previews_in_settings")
                   : rc == 1 && (session_active || ls.active)
-                     ? "Clips are off while linked."
-                  : rc == 1 ? "No clip yet: play for a few seconds first."
-                  : rc == 2 ? "A clip is still being saved."
-                  : "A clip could not be saved.");
+                     ? tr("ui.clips_are_off_while_linked")
+                  : rc == 1 ? tr("ui.no_clip_yet_play_for_a")
+                  : rc == 2 ? tr("ui.a_clip_is_still_being_saved")
+                  : tr("ui.a_clip_could_not_be_saved"));
          break;
       }
       case M_GAMELIST:
@@ -7687,11 +7719,11 @@ static ui_action screen_menu(unsigned edges, int session_active)
          ui_host_local_state(&ls);
          st[0] = '\0';
          if (ls.active)
-            snprintf(st, sizeof(st), "two players on this " UI_DEV);
+            snprintf(st, sizeof(st), tr("ui.two_players_on_this"));
          else if (g_link.state == UI_LINK_HOSTING)
-            snprintf(st, sizeof(st), "hosting %s, waiting", g_link.room);
+            snprintf(st, sizeof(st), tr("ui.hosting_waiting"), g_link.room);
          else if (g_link.state == UI_LINK_LINKED && g_link.player)
-            snprintf(st, sizeof(st), "linked, Player %d", g_link.player);
+            snprintf(st, sizeof(st), tr("ui.linked_player"), g_link.player);
          else if (g_link.state == UI_LINK_LINKED || session_active)
             snprintf(st, sizeof(st), "linked");
          if (st[0])
@@ -7703,8 +7735,8 @@ static ui_action screen_menu(unsigned edges, int session_active)
       {
          char st[32];
          vid_text(18 + vid_text_w(labels[i]) + 12, y,
-                  cheats_suspended() == 2 ? "off in Hardcore"
-                  : cheats_suspended() ? "off while linked"
+                  cheats_suspended() == 2 ? tr("ui.off_in_hardcore")
+                  : cheats_suspended() ? tr("ui.off_while_linked")
                                      : ch_summary(st, sizeof(st)),
                   mix565(C_ACCENT_DK, C_BG_BOT, fade));
          continue;
@@ -7716,14 +7748,14 @@ static ui_action screen_menu(unsigned edges, int session_active)
          vid_text(18 + vid_text_w(labels[i]) + 12, y,
                   g_link.state == UI_LINK_HOSTING ? "hosting" :
                   g_link.state == UI_LINK_LINKED
-                     ? (g_link.cable ? "Link Cable" : "Wireless Adapter")
+                     ? (g_link.cable ? tr("ui.link_cable") : tr("ui.wireless_adapter"))
                      : "linked",
                   mix565(C_ACCENT_DK, C_BG_BOT, fade));
       /* Save states: how many slots hold a state (the open-time stat). */
       if (i == M_SAVESTATES && enabled)
       {
          char used[24];
-         snprintf(used, sizeof(used), "%d of %d used", g_ov_used,
+         snprintf(used, sizeof(used), tr("ui.of_used"), g_ov_used,
                   PSP_STATE_SLOT_COUNT);
          vid_text(18 + vid_text_w(labels[i]) + 12, y, used,
                   mix565(C_ACCENT_DK, C_BG_BOT, fade));
@@ -7745,10 +7777,10 @@ static ui_action screen_menu(unsigned edges, int session_active)
       char q[96];
       /* What is at stake, in the question: the link for both players, or
        * whatever the game has not saved. */
-      snprintf(q, sizeof(q), "%s     " VID_GLYPH_X " %s     " VID_GLYPH_O
-               " stay",
-               session_active ? "This ends the link for both players."
-                              : "Progress the game has not saved is lost.",
+      snprintf(q, sizeof(q), tr("ui.x_o_stay")
+,
+               session_active ? tr("ui.this_ends_the_link_for_both")
+                              : tr("ui.progress_the_game_has_not_saved"),
                g_menu_ask == M_EXIT ? "exit" : "quit");
       tch_modal(PSP_CTRL_CIRCLE);    /* a tap anywhere else stays */
       ov_plate(q);
@@ -7760,7 +7792,7 @@ static ui_action screen_menu(unsigned edges, int session_active)
       return UI_ACT_NONE;
    }
 #endif
-   footer(VID_GLYPH_X " select     " VID_GLYPH_O " resume");
+   footer(tr("hint.x_select_o_resume"));
    return UI_ACT_NONE;
 }
 
@@ -7790,7 +7822,7 @@ static int state_delete(const char *slot1_path, unsigned slot)
    /* A leftover replacement backup must not resurrect a deleted slot. */
    {
       char old[PSP_FILE_PATH_CAP + 4];
-      snprintf(old, sizeof(old), "%s.old", st);
+      snprintf(old, sizeof(old), tr("ui.old"), st);
       (void)sceIoRemove(old);
       if (sceIoGetstat(old, &sst) >= 0)
          return -1;
@@ -7846,8 +7878,8 @@ static int state_thumb_read(const char *state_path, uint16_t *dst)
  * the fields are not a date. */
 static void ov_stamp(char *out, size_t n, const ScePspDateTime *t)
 {
-   static const char *mon[12] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+   const char *mon[12] = { tr("ui.jan"), tr("ui.feb"), tr("ui.mar"), tr("ui.apr"), tr("ui.may"), tr("ui.jun"),
+                                  tr("ui.jul"), tr("ui.aug"), tr("ui.sep"), tr("ui.oct"), tr("ui.nov"), tr("ui.dec") };
    if (!t || t->month < 1 || t->month > 12 || t->day < 1 || t->day > 31 ||
        t->hour > 23 || t->minute > 59)
    {
@@ -7868,7 +7900,7 @@ static void ov_slots_stat_io(void)
    g_ov_used = 0;
    {
       char u[PSP_FILE_PATH_CAP + 8];
-      snprintf(u, sizeof(u), "%s.undo", g_state_base);
+      snprintf(u, sizeof(u), tr("ui.undo"), g_state_base);
       g_ov_undo_load = g_state_base[0] && sceIoGetstat(u, &st) >= 0;
    }
    for (i = 0; i < PSP_STATE_SLOT_COUNT; i++)
@@ -7882,15 +7914,15 @@ static void ov_slots_stat_io(void)
          continue;
       {
          char side[PSP_FILE_PATH_CAP + 8];
-         snprintf(side, sizeof(side), "%s.lock", path);
+         snprintf(side, sizeof(side), tr("ui.lock"), path);
          g_ov_lock[i] = sceIoGetstat(side, &st) >= 0;
-         snprintf(side, sizeof(side), "%s.bak", path);
+         snprintf(side, sizeof(side), tr("ui.bak"), path);
          g_ov_bak[i] = sceIoGetstat(side, &st) >= 0;
       }
       if (sceIoGetstat(path, &st) < 0)
       {
          char old[PSP_FILE_PATH_CAP + 4];
-         snprintf(old, sizeof(old), "%s.old", path);
+         snprintf(old, sizeof(old), tr("ui.old"), path);
          if (sceIoGetstat(old, &st) < 0) continue;
       }
       g_ov_slot[i] = 1;
@@ -8041,8 +8073,8 @@ int ui_state_save_done(int rc)
    if (!g_active || g_screen != SCR_STATE_SLOTS || !s)
       return 0;
    snprintf(g_slot_note, sizeof(g_slot_note),
-            rc == 0 ? "Slot %d saved" : rc == -3 ? "Slot %d is locked"
-                                                  : "Slot %d could not be saved",
+            rc == 0 ? tr("ui.slot_saved") : rc == -3 ? tr("ui.slot_is_locked")
+                                                  : tr("ui.slot_could_not_be_saved"),
             s);
    g_slots_dirty = 1;
    return 1;
@@ -8059,9 +8091,9 @@ int ui_state_load_done(int rc)
    }
    if (rc == -2)
       snprintf(g_slot_note, sizeof(g_slot_note),
-               "Hardcore mode: states cannot be loaded");
+               tr("ui.hardcore_mode_states_cannot_be_loaded"));
    else
-      snprintf(g_slot_note, sizeof(g_slot_note), "Slot %d could not be loaded",
+      snprintf(g_slot_note, sizeof(g_slot_note), tr("ui.slot_could_not_be_loaded"),
                g_state_slot);
    return 1;
 }
@@ -8111,8 +8143,8 @@ static void ss_panel(int i)
    vid_rect(x + 3, y + 3, w, h, C_SHADOW, 90);
    if (!g_ov_slot[i])
    {
-      static const char l1[] = "Nothing saved here";
-      static const char l2[] = VID_GLYPH_X " save";
+      const char *l1 = tr("ui.nothing_saved_here");
+      const char *l2 = tr("ui.x_save");
 #ifdef VITA
       if (g_pcfg.theme != 1)
       {
@@ -8155,13 +8187,13 @@ static void ss_panel(int i)
                         PSP_STATE_THUMB_WIDTH, PSP_STATE_THUMB_HEIGHT);
    else
    {
-      static const char np[] = "No preview";
+      const char *np = tr("ui.no_preview");
       vid_text(x + (w - vid_text_w(np)) / 2, vid_text_y_in(y, h) - 8, np,
                C_DIM);
    }
    if (g_ov_shot_none[i])
    {
-      static const char cap[] = "saved by 3.1: small preview only";
+      const char *cap = tr("ui.saved_by_3_1_small_preview");
       vid_text(x + (w - vid_text_w(cap)) / 2, y + h - 22, cap, C_DIM);
    }
 }
@@ -8211,8 +8243,8 @@ static ui_action screen_state_slots(unsigned edges)
                                            (unsigned)s) == 0)
                   urc = fe_host_state_undo_save(sp);
                snprintf(g_slot_note, sizeof(g_slot_note), urc == 0
-                        ? "Slot %d is as it was before the save" : urc == 1
-                        ? "Slot %d is empty again" : "Slot %d could not be undone",
+                        ? tr("ui.slot_is_as_it_was_before") : urc == 1
+                        ? tr("ui.slot_is_empty_again") : tr("ui.slot_could_not_be_undone"),
                         s);
                ov_slots_scan();
             }
@@ -8223,14 +8255,14 @@ static ui_action screen_state_slots(unsigned edges)
          {
             int drc = state_delete(g_state_base, (unsigned)s);
             if (drc == 0)
-               snprintf(g_slot_note, sizeof(g_slot_note), "Slot %d deleted",
+               snprintf(g_slot_note, sizeof(g_slot_note), tr("ui.slot_deleted"),
                         s);
             else if (drc == -2)
                snprintf(g_slot_note, sizeof(g_slot_note),
-                        "Slot %d is locked", s);
+                        tr("ui.slot_is_locked"), s);
             else
                snprintf(g_slot_note, sizeof(g_slot_note),
-                        "Slot %d could not be deleted", s);
+                        tr("ui.slot_could_not_be_deleted"), s);
             ov_slots_scan();
          }
          else
@@ -8304,7 +8336,7 @@ static ui_action screen_state_slots(unsigned edges)
       {
          if (g_ov_lock[cur])
             snprintf(g_slot_note, sizeof(g_slot_note),
-                     "Slot %d is locked: L unlocks it", g_state_slot);
+                     tr("ui.slot_is_locked_l_unlocks_it"), g_state_slot);
          else if (g_ov_slot[cur])
          {
             g_slot_ask = SLOT_ASK_OVERWRITE;
@@ -8320,7 +8352,7 @@ static ui_action screen_state_slots(unsigned edges)
       {
          if (g_ov_lock[cur])
             snprintf(g_slot_note, sizeof(g_slot_note),
-                     "Slot %d is locked: L unlocks it", g_state_slot);
+                     tr("ui.slot_is_locked_l_unlocks_it"), g_state_slot);
          else
          {
             g_slot_ask = SLOT_ASK_DELETE;
@@ -8338,11 +8370,11 @@ static ui_action screen_state_slots(unsigned edges)
          {
             g_ov_lock[cur] = !g_ov_lock[cur];
             snprintf(g_slot_note, sizeof(g_slot_note), g_ov_lock[cur]
-                     ? "Slot %d locked" : "Slot %d unlocked", g_state_slot);
+                     ? tr("ui.slot_locked") : tr("ui.slot_unlocked"), g_state_slot);
          }
          else
             snprintf(g_slot_note, sizeof(g_slot_note),
-                     "Slot %d could not be locked", g_state_slot);
+                     tr("ui.slot_could_not_be_locked"), g_state_slot);
       }
       else if (edges & PSP_CTRL_RTRIGGER)
       {
@@ -8355,7 +8387,7 @@ static ui_action screen_state_slots(unsigned edges)
          }
          else
             snprintf(g_slot_note, sizeof(g_slot_note),
-                     "Nothing to undo");
+                     tr("ui.nothing_to_undo"));
       }
    }
 
@@ -8375,7 +8407,7 @@ static ui_action screen_state_slots(unsigned edges)
    }
 
    ov_backdrop(OV_SCRIM);
-   ov_head(g_ov_title, "SAVE STATES");
+   ov_head(g_ov_title, tr("ui.save_states_2"));
    psp_state_slot_top(cur, &g_ss_top);
    for (i = g_ss_top; i < PSP_STATE_SLOT_COUNT &&
                       i < g_ss_top + PSP_STATE_SLOTS_SHOWN; i++)
@@ -8413,7 +8445,7 @@ static ui_action screen_state_slots(unsigned edges)
       else
 #endif
          vid_rect(20, by + 4, 36, 24, C_CARD, 255);
-      snprintf(lbl, sizeof(lbl), "Slot %d", i + 1);
+      snprintf(lbl, sizeof(lbl), tr("ui.slot"), i + 1);
       vid_text(64, y, lbl, sel ? C_SEL : C_ITEM);
       if (g_ov_lock[i])
          ss_padlock(192, y + 10, sel ? C_SEL : C_DIM);
@@ -8431,10 +8463,10 @@ static ui_action screen_state_slots(unsigned edges)
    ss_panel(cur);
    {
       char cap[48];
-      snprintf(cap, sizeof(cap), "Slot %d of %d  -  %s%s", cur + 1,
+      snprintf(cap, sizeof(cap), tr("ui.slot_of"), cur + 1,
                PSP_STATE_SLOT_COUNT, !g_ov_slot[cur] ? "empty"
                : g_ov_stamp[cur][0] ? g_ov_stamp[cur] : "saved",
-               g_ov_lock[cur] ? "  -  locked" : "");
+               g_ov_lock[cur] ? tr("ui.locked") : "");
       clip_title(cap, VID_SCR_W - SS_PX - 10);   /* Text size Large: the date is long */
       vid_text(SS_PX, 228, cap, C_DIM);
    }
@@ -8445,23 +8477,23 @@ static ui_action screen_state_slots(unsigned edges)
       {
          const int us = g_ov_bak[g_slot_ask_n - 1];
          if (us && g_ov_undo_load)
-            snprintf(q, sizeof(q), "Undo?      " VID_GLYPH_X " the save in "
-                     "Slot %d     " VID_GLYPH_SQ " the last load     "
-                     VID_GLYPH_O " keep", g_slot_ask_n);
+            snprintf(q, sizeof(q), tr("ui.undo_x_the_save_in_slot")
+
+, g_slot_ask_n);
          else if (us)
-            snprintf(q, sizeof(q), "Undo the save in Slot %d?      "
-                     VID_GLYPH_X " undo     " VID_GLYPH_O " keep",
+            snprintf(q, sizeof(q), tr("ui.undo_the_save_in_slot_x")
+,
                      g_slot_ask_n);
          else
-            snprintf(q, sizeof(q), "Undo the last load?      " VID_GLYPH_X
-                     " undo     " VID_GLYPH_O " keep");
+            snprintf(q, sizeof(q), tr("ui.undo_the_last_load_x_undo")
+);
       }
       else if (g_slot_ask == SLOT_ASK_DELETE)
-         snprintf(q, sizeof(q), "Delete Slot %d?      " VID_GLYPH_X
-                  " delete     " VID_GLYPH_O " keep", g_slot_ask_n);
+         snprintf(q, sizeof(q), tr("ui.delete_slot_x_delete_o_keep")
+, g_slot_ask_n);
       else
-         snprintf(q, sizeof(q), "Overwrite Slot %d?      " VID_GLYPH_X
-                  " overwrite     " VID_GLYPH_O " keep", g_slot_ask_n);
+         snprintf(q, sizeof(q), tr("ui.overwrite_slot_x_overwrite_o_keep")
+, g_slot_ask_n);
 #ifdef VITA
       tch_modal(PSP_CTRL_CIRCLE);    /* a tap anywhere else keeps the slot */
 #endif
@@ -8470,10 +8502,10 @@ static ui_action screen_state_slots(unsigned edges)
    else if (g_slot_note[0])
       ov_plate(g_slot_note);
    else if (g_ov_slot[cur])
-      footer(VID_GLYPH_X " load   " VID_GLYPH_SQ " save   " VID_GLYPH_TRI
-             " delete   L lock   R undo   " VID_GLYPH_O " back");
+      footer(tr("hint.x_load_sq_save_tri_delete")
+);
    else
-      footer(VID_GLYPH_SQ " save   R undo   " VID_GLYPH_O " back");
+      footer(tr("hint.sq_save_r_undo_o_back"));
    return act;
 }
 
@@ -8927,8 +8959,8 @@ static int browser_find_matches(const char *name, const char *query)
 static void find_fold(const char *in, char *out, size_t cap, int is_file)
 {
    static const char *const latin1 =   /* U+00C0..U+00FF, folded */
-      "aaaaaaaceeeeiiii" "dnooooo ouuuuyts"
-      "aaaaaaaceeeeiiii" "dnooooo ouuuuyty";
+      "aaaaaaaceeeeiiiidnooooo ouuuuytsaaaaaaaceeeeiiiidnooooo ouuuuyty"
+;
    const unsigned char *p = (const unsigned char *)in;
    const unsigned char *end = p + strlen(in);
    size_t n = 0;
@@ -9578,7 +9610,7 @@ static void browser_header(int n_scan)
    if (!g_ui_shell && n_scan > 0)
    {
       char buf[24];
-      snprintf(buf, sizeof(buf), "%d games", n_scan);
+      snprintf(buf, sizeof(buf), tr("ui.games"), n_scan);
       i = x - 16 - vid_text_w(buf);
       if (i >= HDR_LOGO_X + VID_LOGO_W + 12)
          vid_text(i, HDR_TEXT_Y, buf, C_DIM);
@@ -9660,31 +9692,31 @@ static void browser_footer(int n_view, int cur_is_fav)
    {
 #ifdef VITA
       if (g_find[0])
-         hint[count++] = VID_GLYPH_O " clear";
+         hint[count++] = tr("ui.o_clear");
       /* An empty console: X looks in the folder again. */
       else if (!g_browser_favs)
-         hint[count++] = VID_GLYPH_X " look again";
+         hint[count++] = tr("ui.x_look_again");
 #endif
 #ifdef VITA
       if (!g_find[0] || g_browser_favs)
 #endif
 #ifdef VITA
          hint[count++] = g_browser_favs && g_view_kind > VK_STAR
-                         ? "SELECT next view"
-                         : g_browser_favs ? "SELECT all games"
-                                          : VID_GLYPH_O " exit";
+                         ? tr("ui.select_next_view")
+                         : g_browser_favs ? tr("ui.select_all_games")
+                                          : tr("ui.o_exit");
 #else
          hint[count++] = g_browser_favs ? "SELECT all games"
-                                        : VID_GLYPH_O " exit";
+                                        : "\x80 exit";
 #endif
-      hint[count++] = "START settings";
+      hint[count++] = tr("ui.start_settings");
    }
    else
    {
-      hint[count++] = VID_GLYPH_X " play";
+      hint[count++] = tr("ui.x_play");
 #ifdef VITA
-      hint[count++] = n_view >= LIST_LETTER_MIN ? "L/R A-Z" : "L/R page";
-      hint[count++] = "Left: states";
+      hint[count++] = n_view >= LIST_LETTER_MIN ? "L/R A-Z" : tr("ui.l_r_page");
+      hint[count++] = tr("ui.left_states");
 #elif defined(GPSP_CHEATS)
       /* "L/R page" gave its place to the cheats hint: the row is full (the
        * shoulder buttons still page the list). */
@@ -9694,8 +9726,8 @@ static void browser_footer(int n_view, int cur_is_fav)
       hint[count++] = "L/R page";
       hint[count++] = "Left: states";
 #endif
-      hint[count++] = cur_is_fav ? VID_GLYPH_SQ " unstar" : VID_GLYPH_SQ " star";
-      hint[count++] = "START settings";
+      hint[count++] = cur_is_fav ? tr("ui.sq_unstar") : tr("ui.sq_star");
+      hint[count++] = tr("ui.start_settings");
    }
    for (i = 0; i < count; i++)
    {
@@ -9824,7 +9856,7 @@ static int rom_has_sav(int idx)
             g_pcfg.console == FE_CONSOLE_NES ||
             g_pcfg.console == FE_CONSOLE_WSWAN ||
             ui_console_is_sega(g_pcfg.console))   /* Game.srm */
-         ? snprintf(sav, sizeof(sav), "%.*s.srm",
+         ? snprintf(sav, sizeof(sav), tr("ui.srm"),
                     (int)ui_rom_stem_length(rom), rom)
          : snprintf(sav, sizeof(sav), "%s.sav", rom);
 #else
@@ -9910,11 +9942,11 @@ static void scan_ui_frame(void)
       g_scan_stop = 1;
    vid_overlay_begin(1);
    page(UI_APP_NAME, NULL);
-   snprintf(msg, sizeof(msg), "Finding games... %d found", g_rom_found);
+   snprintf(msg, sizeof(msg), tr("ui.finding_games_found"), g_rom_found);
    vid_text_center(104, msg, C_SEL);
-   vid_text_center(134, g_scan_last[0] ? g_scan_last : "Reading the memory card",
+   vid_text_center(134, g_scan_last[0] ? g_scan_last : tr("ui.reading_the_memory_card"),
                    C_ITEM);
-   vid_text_center(178, "CIRCLE: stop and show what is found", C_ITEM);
+   vid_text_center(178, tr("ui.circle_stop_and_show_what_is"), C_ITEM);
    vid_overlay_end();
    sceDisplayWaitVblankStart();
    vid_swap();
@@ -10626,8 +10658,8 @@ static int rom_scan_boot(const char *rom_dir, fe_console_t console)
           g_scan_input_us == (unsigned)-1 ? 0u : g_scan_input_us / 1000u,
           done / 1000u, !hit, g_scan_stop, g_scan_ui_frames);
    if (g_scan_stop)
-      osd_toast(g_scan_stop == 1 ? "Scan stopped: showing what was found"
-                                 : "The card is slow: showing what was found");
+      osd_toast(g_scan_stop == 1 ? tr("toast.scan_stopped_showing_what_was_found")
+                                 : tr("toast.the_card_is_slow_showing_what"));
    return n;
 }
 #else
@@ -11525,7 +11557,7 @@ static void ui_ascii_fold(char *s)
 static void ui_ascii_fold(char *s)
 {
    static const char *const up =     /* U+00C0..U+00DF */
-      "AAAAAAACEEEEIIII" "DNOOOOOxOUUUUYTs";
+      "AAAAAAACEEEEIIIIDNOOOOOxOUUUUYTs";
    static const char *const lo =     /* U+00E0..U+00FF */
       "aaaaaaaceeeeiiii" "dnooooo/ouuuuyty";
    unsigned char *r = (unsigned char *)s, *w = (unsigned char *)s;
@@ -12057,7 +12089,7 @@ static void art_prefetch(const char *rom_dir, int cur, int n)
 static void meta_line(const rom_entry *r, char *out, size_t sz)
 {
    unsigned mb = (unsigned)((r->size + (1u << 19)) >> 20);
-   snprintf(out, sz, "%u MB", mb ? mb : 1u);
+   snprintf(out, sz, tr("ui.mb"), mb ? mb : 1u);
 }
 
 /* Trim to a PIXEL budget: the face is proportional, so a column count
@@ -12292,11 +12324,11 @@ void ui_loading_update(const char *stage, unsigned done, unsigned total)
          vs_rrect(240, 322, 480, 8, 4, HC_GLASS_HI);
          vs_rrect(240, 322, 480.0f * f < 8 ? 8 : 480.0f * f, 8, 4,
                   hm_tint(g_pcfg.console, 255));
-         snprintf(amount, sizeof(amount), "%u / %u KiB", done / 1024,
+         snprintf(amount, sizeof(amount), tr("ui.kib"), done / 1024,
                   (total + 1023) / 1024);
          vs_text_c(VS_CAPTION, VS_W * 0.5f, 342, amount, HC_TEXT3);
       }
-      snprintf(amount, sizeof(amount), "In the game, hold %s for the menu",
+      snprintf(amount, sizeof(amount), tr("ui.in_the_game_hold_for_the"),
                ui_menu_chord_text(g_pcfg.console));
       vs_text_c(VS_CAPTION, VS_W * 0.5f, VS_H - 52, amount, HC_TEXT3);
    }
@@ -12329,7 +12361,7 @@ void ui_loading_update(const char *stage, unsigned done, unsigned total)
    if (total)
    {
       if (done > total) done = total;
-      snprintf(amount, sizeof(amount), "%u / %u KiB", done / 1024,
+      snprintf(amount, sizeof(amount), tr("ui.kib"), done / 1024,
                (total + 1023) / 1024);
       vid_text(460 - vid_text_w(amount), 102, amount, C_DIM);
       vid_rect(20, 126, 440, 3, C_ACCENT_DK, 160);
@@ -12339,7 +12371,7 @@ void ui_loading_update(const char *stage, unsigned done, unsigned total)
 #ifdef VITA
    /* The one thing a first-time player has to be told, while there is
     * nothing else to read. */
-   snprintf(amount, sizeof(amount), "In the game, hold %s for the menu.",
+   snprintf(amount, sizeof(amount), tr("ui.in_the_game_hold_for_the_2"),
             ui_menu_chord_text(g_pcfg.console));
    vid_text_center(250, amount, C_DIM);
    }
@@ -12381,7 +12413,7 @@ void ui_loading_begin(const char *path)
    dot = strrchr(g_loading.title, '.');
    if (dot) *dot = 0;
    clip_title_hd(g_loading.title, 440);
-   ui_loading_update("Remembering game", 0, 0);
+   ui_loading_update(tr("ui.remembering_game"), 0, 0);
 }
 
 /* A full-screen notice for a boot that cannot continue (docs/MEMORY-BUDGET.md:
@@ -12400,7 +12432,7 @@ void ui_notice(const char *title, const char *l1, const char *l2,
       if (l1) vid_text_center(96, l1, C_WARN);
       if (l2) vid_text_center(124, l2, C_ITEM);
       if (l3) vid_text_center(152, l3, C_ITEM);
-      vid_text_center(200, "Press any button to return to " UI_SHELL_NAME ".",
+      vid_text_center(200, tr("ui.press_any_button_to_return_to"),
                       C_DIM);
       vid_overlay_end();
       vid_swap();
@@ -12619,7 +12651,7 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int n_scan,
       meta_line(&g_roms[rom], buf, sizeof(buf));
       vid_text(ART_X, bot + 10, buf, mix565(C_DIM, C_BG_TOP, g_fx_fade));
       vid_text(ART_X, bot + 28,
-               rom_has_sav(rom) ? "save present" : "no save",
+               rom_has_sav(rom) ? tr("ui.save_present") : tr("ui.no_save"),
                mix565(rom_has_sav(rom) ? C_VALUE : C_DIM, C_BG_TOP,
                       g_fx_fade));
    }
@@ -12699,7 +12731,7 @@ static int browser_rom_has_state(const char *rom_dir, int rom_idx)
       if (!g_browser_state_exists[slot - 1])
       {
          char old[PSP_FILE_PATH_CAP + 4];
-         if (path[0] && snprintf(old, sizeof(old), "%s.old", path) < (int)sizeof(old))
+         if (path[0] && snprintf(old, sizeof(old), tr("ui.old"), path) < (int)sizeof(old))
             g_browser_state_exists[slot - 1] = sceIoGetstat(old, &st) >= 0;
       }
       any |= g_browser_state_exists[slot - 1];
@@ -12796,7 +12828,7 @@ static void browser_state_panel(const char *rom_dir, int cur, int n)
    if (g_browser_state_open)
       tch_modal(PSP_CTRL_CIRCLE);
 #endif
-   vid_text(x + 14, 12, "SAVE STATES", C_SEL);
+   vid_text(x + 14, 12, tr("ui.save_states_2"), C_SEL);
    rom_display_name(&g_roms[cur], title, sizeof(title), 1);
    clip_title(title, 174);
    vid_text(x + 14, 34, title, C_DIM);
@@ -12828,7 +12860,7 @@ static void browser_state_panel(const char *rom_dir, int cur, int n)
       }
       {
          char slot[16];
-         snprintf(slot, sizeof(slot), "Slot %d", i + 1);
+         snprintf(slot, sizeof(slot), tr("ui.slot"), i + 1);
          vid_text(x + 66, ty, slot, C_SEL);
       }
       vid_text(x + 66, ty + 14, exists ? "saved" : "empty",
@@ -12844,33 +12876,33 @@ static void browser_state_panel(const char *rom_dir, int cur, int n)
       /* The question is a plate, as in game: the panel's hint lines give
        * way to it, so the answer keys are where the eye already is. */
       char q[32];
-      snprintf(q, sizeof(q), "Delete Slot %d?", g_shelf_del);
+      snprintf(q, sizeof(q), tr("ui.delete_slot"), g_shelf_del);
       vid_rect(x + 2, 239, 480 - x - 2, 33, C_ACCENT, 40);
       vid_text(x + 14, 241, q, C_SEL);
-      vid_text(x + 14, 254, UI_KEY_X ": delete   " UI_KEY_O ": keep", C_SEL);
+      vid_text(x + 14, 254, tr("ui.x_delete_o_keep"), C_SEL);
 #ifdef VITA
-      tch_hints_box(x + 14, UI_KEY_X ": delete   " UI_KEY_O ": keep", 240, 32);
+      tch_hints_box(x + 14, tr("ui.x_delete_o_keep"), 240, 32);
 #endif
    }
    else if (g_shelf_note[0])
    {
       vid_rect(x + 2, 239, 480 - x - 2, 33, C_ACCENT, 40);
       vid_text(x + 14, 241, g_shelf_note, C_SEL);
-      vid_text(x + 14, 254, UI_KEY_X ": load   " UI_KEY_O ": close", C_DIM);
+      vid_text(x + 14, 254, tr("ui.x_load_o_close"), C_DIM);
    }
    else
    {
       vid_text(x + 14, 241, g_browser_state_exists[g_browser_state_slot - 1]
-                  ? "UP/DN: slot   " VID_GLYPH_SQ ": delete" : "UP/DN: slot",
+                  ? tr("ui.up_dn_slot_sq_delete") : tr("ui.up_dn_slot"),
                C_DIM);
-      vid_text(x + 14, 254, UI_KEY_X ": load   " UI_KEY_O ": close", C_DIM);
+      vid_text(x + 14, 254, tr("ui.x_load_o_close"), C_DIM);
 #ifdef VITA
       if (g_browser_state_open)
       {
          if (g_browser_state_exists[g_browser_state_slot - 1])
-            tch_hints_box(x + 14, "UP/DN: slot   " VID_GLYPH_SQ ": delete",
+            tch_hints_box(x + 14, tr("ui.up_dn_slot_sq_delete"),
                           232, 20);
-         tch_hints_box(x + 14, UI_KEY_X ": load   " UI_KEY_O ": close", 252,
+         tch_hints_box(x + 14, tr("ui.x_load_o_close"), 252,
                        20);
       }
 #endif
@@ -12949,7 +12981,7 @@ static void shell_marquee(const char *rom_dir, int cur, int n, int n_scan,
    meta_line(&g_roms[rom], buf, sizeof(buf));
    vid_text(20, 102 - g_fx_dy, buf, mix565(C_ITEM, C_BG_TOP, g_fx_fade));
    vid_text(20 + vid_text_w(buf) + 14, 102 - g_fx_dy,
-            rom_has_sav(rom) ? "save present" : "no save",
+            rom_has_sav(rom) ? tr("ui.save_present") : tr("ui.no_save"),
             mix565(rom_has_sav(rom) ? C_VALUE : C_DIM, C_BG_TOP, g_fx_fade));
 
    /* FIVE rows, not three.  At 24 px pitch they span 128..224, which clears
@@ -13065,11 +13097,11 @@ static void browser_empty(const char *rom_dir, int n_scan)
    {
       char query[96];
       browser_header(n_scan);
-      vid_text_center(112, "No games match", sel);
+      vid_text_center(112, tr("ui.no_games_match"), sel);
       snprintf(query, sizeof(query), "\"%s\"", g_find);
       clip_title(query, 440);
       vid_text_center(146, query, item);
-      vid_text_center(188, VID_GLYPH_O " clear", dim);
+      vid_text_center(188, tr("ui.o_clear"), dim);
       UI_TCH_BTN(PSP_CTRL_CIRCLE, 150, 176, 180, 36);
       browser_footer(0, 0);
       return;
@@ -13094,24 +13126,24 @@ static void browser_empty(const char *rom_dir, int n_scan)
 #ifdef VITA
       if (g_view_kind > VK_STAR)
       {
-         snprintf(msg, sizeof(msg), "No %s games in this view", s->id);
+         snprintf(msg, sizeof(msg), tr("ui.no_games_in_this_view"), s->id);
          vid_text_hd((480 - vid_text_hd_w(msg)) / 2, 126, msg, sel);
          vid_text_center(160, g_view_kind == VK_COLL
-                         ? "SELECT + " VID_GLYPH_SQ " on a game adds it to a collection"
+                         ? tr("ui.select_sq_on_a_game_adds")
                          : g_view_kind == VK_LPL
-                         ? "A RetroArch playlist: it cannot be changed here"
+                         ? tr("ui.a_retroarch_playlist_it_cannot_be")
                          : g_view_kind == VK_MOST
-                         ? "The games you play show up here"
-                         : "The games you have not started show up here", item);
-         vid_text_center(182, "SELECT: next view", dim);
+                         ? tr("ui.the_games_you_play_show_up")
+                         : tr("ui.the_games_you_have_not_started"), item);
+         vid_text_center(182, tr("ui.select_next_view_2"), dim);
       }
       else
       {
 #endif
-      snprintf(msg, sizeof(msg), "No %s favourites yet", s->id);
+      snprintf(msg, sizeof(msg), tr("ui.no_favourites_yet"), s->id);
       vid_text_hd((480 - vid_text_hd_w(msg)) / 2, 126, msg, sel);
-      vid_text_center(160, "Press " VID_GLYPH_SQ " on a game to star it", item);
-      vid_text_center(182, "SELECT: all games", dim);
+      vid_text_center(160, tr("ui.press_sq_on_a_game_to"), item);
+      vid_text_center(182, tr("ui.select_all_games_2"), dim);
 #ifdef VITA
       }
 #endif
@@ -13119,20 +13151,20 @@ static void browser_empty(const char *rom_dir, int n_scan)
    else
    {
       browser_cart(240, 104, s);
-      snprintf(msg, sizeof(msg), "No .%s ROMs found", s->ext);
+      snprintf(msg, sizeof(msg), tr("ui.no_roms_found"), s->ext);
       vid_text_hd((480 - vid_text_hd_w(msg)) / 2, 130, msg, sel);
       /* The folder on one line when it fits, on its own line when not:
        * a memory stick path can be long. */
-      snprintf(msg, sizeof(msg), "Copy them to %s", rom_dir);
+      snprintf(msg, sizeof(msg), tr("ui.copy_them_to"), rom_dir);
       if (vid_text_w(msg) <= 440)
          vid_text_center(164, msg, item);
       else
       {
-         vid_text_center(160, "Copy them to:", item);
+         vid_text_center(160, tr("ui.copy_them_to_2"), item);
          vid_text_center(180, rom_dir, item);
       }
       vid_text_center(vid_text_w(msg) <= 440 ? 186 : 204,
-                      VID_GLYPH_TRI " change console", dim);
+                      tr("ui.tri_change_console"), dim);
    }
    browser_footer(0, 0);
 }
@@ -13582,7 +13614,7 @@ static void ret_chip(int a, unsigned now)
    static const signed char ring[8][2] = {
       {0,-7}, {5,-5}, {7,0}, {5,5}, {0,7}, {-5,5}, {-7,0}, {-5,-5}
    };
-   static const char msg[] = "Returning to game list...";
+   const char *msg = tr("ui.returning_to_game_list");
    int tw = vid_text_w(msg), w = 12 + 16 + 10 + tw + 14, i;
    int x = (VID_SCR_W - w) / 2, y = (VID_SCR_H - RET_CHIP_H) / 2;
    int cx = x + 12 + 8, cy = y + RET_CHIP_H / 2;
@@ -14011,8 +14043,8 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       {
          vid_overlay_begin(1);
          page(UI_APP_NAME, NULL);
-         vid_text_center(110, "ROM path is too long", C_WARN);
-         vid_text_center(140, "Shorten the folder or filename", C_ITEM);
+         vid_text_center(110, tr("ui.rom_path_is_too_long"), C_WARN);
+         vid_text_center(140, tr("ui.shorten_the_folder_or_filename"), C_ITEM);
          vid_overlay_end();
          sceDisplayWaitVblankStart();
          vid_swap();
@@ -14035,17 +14067,17 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       char        cap_msg[48];
       const char *detail;
       g_ret_on = 0;   /* a full-screen notice: nothing to fade from */
-      snprintf(cap_msg, sizeof(cap_msg), "This build lists %d at a time.",
+      snprintf(cap_msg, sizeof(cap_msg), tr("ui.this_build_lists_at_a_time"),
                BROWSER_MAX);
       detail = g_rom_scan_path_errors
-         ? "Some paths were too long and were skipped."
+         ? tr("ui.some_paths_were_too_long_and")
          : (n_scan == BROWSER_MAX ? cap_msg
-                                  : "The name storage limit was reached.");
+                                  : tr("ui.the_name_storage_limit_was_reached"));
       if (g_rom_found > n_scan)
-         snprintf(msg, sizeof(msg), "Showing %d of %d games", n_scan,
+         snprintf(msg, sizeof(msg), tr("ui.showing_of_games"), n_scan,
                   g_rom_found);
       else
-         snprintf(msg, sizeof(msg), "Some ROM folders were skipped");
+         snprintf(msg, sizeof(msg), tr("ui.some_rom_folders_were_skipped"));
       for (i = 0; i < 150 && g_running; i++)
       {
          vid_overlay_begin(1);
@@ -14053,13 +14085,13 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          vid_text_center(104, msg, C_WARN);
          vid_text_center(134, detail, C_ITEM);
          if (g_rom_scan_path_errors)
-            vid_text_center(156, "Shorten folders or filenames to browse them.", C_ITEM);
+            vid_text_center(156, tr("ui.shorten_folders_or_filenames_to_browse"), C_ITEM);
          else
          {
 #ifdef VITA
-            vid_text_center(156, "The others are still on the card: nothing",
+            vid_text_center(156, tr("ui.the_others_are_still_on_the"),
                             C_ITEM);
-            vid_text_center(178, "is lost. Fewer per console shows them all.",
+            vid_text_center(178, tr("ui.is_lost_fewer_per_console_shows"),
                             C_ITEM);
 #else
             vid_text_center(156, "Please open an issue on GitHub -- I want", C_ITEM);
@@ -14496,8 +14528,8 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             browser_state_cache_free();
             g_scroll_cur = g_art_fade_idx = g_marq_idx = -1;
          }
-         else if (ui_text_open(TXT_BROWSER_FIND, "Find a game", g_find, 63) != 0)
-            osd_toast("The keyboard is not available");
+         else if (ui_text_open(TXT_BROWSER_FIND, tr("ui.find_a_game"), g_find, 63) != 0)
+            osd_toast(tr("toast.the_keyboard_is_not_available"));
          edges = 0;
          idle = 0;
          tch_reset();
@@ -14616,7 +14648,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             pop_begin(cur, 1);
          }
          else
-            osd_toast("Favourites list is full");
+            osd_toast(tr("toast.favourites_list_is_full"));
          if (rc == 0)
             rc = favs_save(rom_dir);
          fe_evt("ui_browser_fav op=%s rom=%s n=%u rc=%d",
@@ -14663,7 +14695,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                if (ok && g_ui_home) hm_cards_drop();
 #endif
                snprintf(g_shelf_note, sizeof(g_shelf_note),
-                        ok ? "Slot %d deleted" : "Slot %d not deleted", s);
+                        ok ? tr("ui.slot_deleted") : tr("ui.slot_not_deleted"), s);
                /* Refresh what the shelf shows: the slot list from the stick,
                 * and the deleted slot's preview dropped (status 2 = none),
                 * so not even the closing slide shows it.  An empty shelf has
@@ -14732,7 +14764,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 #ifdef VITA
             home_state_invalidate(rom);
 #endif
-            osd_toast("No saved state in this slot");
+            osd_toast(tr("toast.no_saved_state_in_this_slot"));
          }
       }
       else if (n <= 0)
@@ -14834,7 +14866,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                con = ui_sega_two_ok(pcfg_display_console()) ? (fe_console_t)pcfg_display_console() : FE_CONSOLE_SNES;
             g_oc.launch = 0;
             if (strlen(g_oc.open_path) >= out_sz)
-               osd_toast("ROM path is too long");
+               osd_toast(tr("toast.rom_path_is_too_long"));
             else
             {
                snprintf(out, out_sz, "%s", g_oc.open_path);
@@ -14932,7 +14964,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 #ifdef VITA
             if (manual_refresh)
             {
-               osd_toast(n_scan == 1 ? "%d game found" : "%d games found", n_scan);
+               osd_toast(n_scan == 1 ? tr("toast.game_found") : tr("toast.games_found"), n_scan);
                fe_evt("library_refresh_done console=%d roms=%d", g_pcfg.console, n_scan);
             }
 #endif
@@ -14981,7 +15013,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             continue;
          if (psp_rom_path_join(out, out_sz, rom_dir, g_roms[rom].name) != 0)
          {
-            osd_toast("ROM path is too long");
+            osd_toast(tr("toast.rom_path_is_too_long"));
             fe_evt("ui_browser_pick rejected=path_too_long rel=%s",
                    g_roms[rom].name);
             continue;
@@ -15057,10 +15089,10 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             g_empty_for = -1;
             g_scroll_cur = -1;
             if (n_scan)
-               osd_toast(n_scan == 1 ? "%d game found" : "%d games found",
+               osd_toast(n_scan == 1 ? tr("toast.game_found") : tr("toast.games_found"),
                          n_scan);
             else
-               osd_toast("Still no .%s files in that folder",
+               osd_toast(tr("toast.still_no_files_in_that_folder"),
                          skin_of(g_pcfg.console)->ext);
             fe_evt("ui_browser_rescan console=%d roms=%d", g_pcfg.console,
                    n_scan);

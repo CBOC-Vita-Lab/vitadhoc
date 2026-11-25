@@ -122,8 +122,8 @@ static void ch_open(void)
    g_ch.marq_row = -1;
    ch_build();
    if (g_ch.n && cheats_db_match() == CH_MATCH_TITLE)
-      snprintf(g_ch.note, sizeof(g_ch.note), "Found by the game's title: "
-               "these codes may be another region's.");
+      snprintf(g_ch.note, sizeof(g_ch.note), tr("cheats.found_by_the_game_s_title")
+);
 }
 
 /* "3 on" / "214 available" / "none": the menu row's value and the page's
@@ -132,9 +132,9 @@ static const char *ch_summary(char *out, size_t cap)
 {
    int on = cheats_enabled_count(), n = cheats_count();
    if (on > 0)
-      snprintf(out, cap, "%d on", on);
+      snprintf(out, cap, tr("cheats.on"), on);
    else if (n > 0)
-      snprintf(out, cap, "%d available", n);
+      snprintf(out, cap, tr("cheats.available"), n);
    else
       snprintf(out, cap, "none");
    return out;
@@ -187,7 +187,7 @@ static ui_action screen_cheats_page(unsigned edges, unsigned pad)
       {
          int rc = cheats_remove(g_ch.ask_del);
          if (rc == CHEATS_OK)
-            snprintf(g_ch.note, sizeof(g_ch.note), "Deleted");
+            snprintf(g_ch.note, sizeof(g_ch.note), tr("cheats.deleted"));
          else
             snprintf(g_ch.note, sizeof(g_ch.note), "%s",
                      cheats_error_text(rc));
@@ -244,8 +244,8 @@ static ui_action screen_cheats_page(unsigned edges, unsigned pad)
    }
    if (suspended && (edges & PSP_CTRL_START))
       snprintf(g_ch.note, sizeof(g_ch.note), "%s", suspended == 2
-               ? "Cheats are off in Hardcore mode (RetroAchievements)."
-               : "Cheats are off while linked to another console.");
+               ? tr("cheats.cheats_are_off_in_hardcore_mode")
+               : tr("cheats.cheats_are_off_while_linked_to"));
    else if (edges & PSP_CTRL_START)
    {
       cs_open();
@@ -253,8 +253,8 @@ static ui_action screen_cheats_page(unsigned edges, unsigned pad)
    }
    else if (suspended && (edges & (PSP_CTRL_CROSS | PSP_CTRL_TRIANGLE |
                               PSP_CTRL_SQUARE)))
-      snprintf(g_ch.note, sizeof(g_ch.note), "Cheats are off while linked "
-               "to another console.");
+      snprintf(g_ch.note, sizeof(g_ch.note), tr("cheats.cheats_are_off_while_linked_to")
+);
    else if ((edges & PSP_CTRL_CROSS) && sel)
    {
       if (!sel->usable)
@@ -264,8 +264,8 @@ static ui_action screen_cheats_page(unsigned edges, unsigned pad)
          if (why && why[0])
             snprintf(g_ch.note, sizeof(g_ch.note), "%s", why);
          else
-            snprintf(g_ch.note, sizeof(g_ch.note), "This %s code cannot be "
-                     "run by this emulator.", cheats_kind_name(sel->kind));
+            snprintf(g_ch.note, sizeof(g_ch.note), tr("cheats.this_code_cannot_be_run_by")
+, cheats_kind_name(sel->kind));
       }
       else
       {
@@ -291,8 +291,8 @@ static ui_action screen_cheats_page(unsigned edges, unsigned pad)
    else if ((edges & PSP_CTRL_SQUARE) && sel)
    {
       if (sel->builtin)
-         snprintf(g_ch.note, sizeof(g_ch.note), "Built-in cheats cannot be "
-                  "deleted, only left off.");
+         snprintf(g_ch.note, sizeof(g_ch.note), tr("cheats.built_in_cheats_cannot_be_deleted")
+);
       else
          g_ch.ask_del = g_ch.order[g_ch.cur];
    }
@@ -303,9 +303,9 @@ static ui_action screen_cheats_page(unsigned edges, unsigned pad)
          g_ch.find[0] = '\0';
          ch_build();
       }
-      else if (ui_text_open(TXT_CHEAT_FIND, "Find a cheat", "", 24) != 0)
-         snprintf(g_ch.note, sizeof(g_ch.note), "The keyboard is not "
-                  "available.");
+      else if (ui_text_open(TXT_CHEAT_FIND, tr("cheats.find_a_cheat"), "", 24) != 0)
+         snprintf(g_ch.note, sizeof(g_ch.note), tr("cheats.the_keyboard_is_not_available")
+);
    }
 
    /* Scroll: the scrollbar under a finger, a drag, or follow the cursor. */
@@ -351,22 +351,22 @@ static ui_action screen_cheats_page(unsigned edges, unsigned pad)
       int on = cheats_enabled_count(), total = cheats_count();
       snprintf(sub, sizeof(sub), "%s", dbn && dbn[0] ? dbn : g_ov_title);
       clip_title(sub, 300);
-      vw_head(suspended ? NULL : sub, "CHEATS");
+      vw_head(suspended ? NULL : sub, tr("cheats.cheats"));
       if (suspended)
       {
          /* Where the game's name was, and it stays: the plate under the
           * list is cleared by the next key. */
          vid_text(22, 48, suspended == 2
-                  ? "Cheats are off in Hardcore mode (RetroAchievements)."
-                  : "Cheats are off while linked to another console.",
+                  ? tr("cheats.cheats_are_off_in_hardcore_mode")
+                  : tr("cheats.cheats_are_off_while_linked_to"),
                   C_VALUE);
          ov_text_right(460, 48, "OFF", C_DIM);
       }
       else if (g_ch.find[0])
-         snprintf(sum, sizeof(sum), "\"%s\": %d of %d", g_ch.find, g_ch.n,
+         snprintf(sum, sizeof(sum), tr("cheats.of"), g_ch.find, g_ch.n,
                   total);
       else if (total)
-         snprintf(sum, sizeof(sum), "%d on  -  %d in all", on, total);
+         snprintf(sum, sizeof(sum), tr("cheats.on_in_all"), on, total);
       else
          snprintf(sum, sizeof(sum), "%s", ch_summary(cnt, sizeof(cnt)));
       ov_text_right(460, 48, sum, on && !suspended ? C_VALUE : C_DIM);
@@ -377,15 +377,15 @@ static ui_action screen_cheats_page(unsigned edges, unsigned pad)
       if (g_ch.find[0])
       {
          char t[80];
-         snprintf(t, sizeof(t), "No cheat's name contains \"%s\".",
+         snprintf(t, sizeof(t), tr("cheats.no_cheat_s_name_contains"),
                   g_ch.find);
          vid_text(22, 84, t, C_ITEM);
-         vid_text(22, 84 + FE_FONT_H + 4, "SELECT shows the whole list "
-                  "again.", C_DIM);
+         vid_text(22, 84 + FE_FONT_H + 4, tr("cheats.select_shows_the_whole_list_again")
+, C_DIM);
       }
       else
       {
-         vid_text(22, 84, "No cheats for this game yet.", C_ITEM);
+         vid_text(22, 84, tr("cheats.no_cheats_for_this_game_yet"), C_ITEM);
          vw_wrap(22, 84 + FE_FONT_H + 4, 436, "The built-in list has none "
                  "for it. Add a code of your own with " VID_GLYPH_TRI
                  ", or copy a .cht file into the cheats folder beside "
@@ -412,7 +412,7 @@ static ui_action screen_cheats_page(unsigned edges, unsigned pad)
          vw_switch(18, y + 3, e->enabled && e->usable, live);
          col = !live ? C_DIM : cur ? C_SEL : e->enabled ? C_VALUE : C_ITEM;
          snprintf(nm, sizeof(nm), "%s", e->name && e->name[0] ? e->name
-                                                              : "(no name)");
+                                                              : tr("cheats.no_name"));
          if (cur && vid_text_w(nm) > CH_NAME_W)
          {
             /* The highlighted name slides to show its end, as the game
@@ -485,25 +485,25 @@ static ui_action screen_cheats_page(unsigned edges, unsigned pad)
    {
       const cheat_entry *e = cheats_get(g_ch.ask_del);
       char q[112], nm[40];
-      vw_clip(nm, sizeof(nm), e && e->name ? e->name : "this code", 170);
-      snprintf(q, sizeof(q), "Delete \"%s\"?      " VID_GLYPH_X
-               " delete     " VID_GLYPH_O " keep", nm);
+      vw_clip(nm, sizeof(nm), e && e->name ? e->name : tr("cheats.this_code"), 170);
+      snprintf(q, sizeof(q), tr("cheats.delete_x_delete_o_keep")
+, nm);
       tch_modal(PSP_CTRL_CIRCLE);
       ov_plate(q);
    }
    else if (g_ch.note[0])
       vw_plate(g_ch.note);
    else if (suspended)
-      footer("L/R page   " VID_GLYPH_O " back");   /* START search is refused */
+      footer(tr("hint.l_r_page_o_back"));   /* START search is refused */
    else if (sel && !sel->builtin)
-      footer(VID_GLYPH_X " on/off   " VID_GLYPH_TRI " add   " VID_GLYPH_SQ
-             " delete   SELECT find   START search");
+      footer(tr("hint.x_on_off_tri_add_sq")
+);
    else if (sel)
-      footer(VID_GLYPH_X " on/off   " VID_GLYPH_TRI " add   SELECT find   "
-             "START search   " VID_GLYPH_O " back");
+      footer(tr("hint.x_on_off_tri_add_select")
+);
    else
-      footer(VID_GLYPH_TRI " add a code   " "SELECT find   START search   "
-             VID_GLYPH_O " back");
+      footer(tr("hint.tri_add_a_code_select_find")
+);
    return UI_ACT_NONE;
 }
 
@@ -523,15 +523,15 @@ static ui_action screen_cheats_page(unsigned edges, unsigned pad)
 static const kp_key CA_KEYS[] = {
    { "1", '1', KP_CHAR, 0, 0, 1 }, { "2", '2', KP_CHAR, 1, 0, 1 },
    { "3", '3', KP_CHAR, 2, 0, 1 }, { "A", 'A', KP_CHAR, 3, 0, 1 },
-   { "B", 'B', KP_CHAR, 4, 0, 1 }, { "Del", 0, KP_DEL, 5, 0, 1 },
+   { "B", 'B', KP_CHAR, 4, 0, 1 }, { TR_KEY("cheats.del"), 0, KP_DEL, 5, 0, 1 },
    { "4", '4', KP_CHAR, 0, 1, 1 }, { "5", '5', KP_CHAR, 1, 1, 1 },
    { "6", '6', KP_CHAR, 2, 1, 1 }, { "C", 'C', KP_CHAR, 3, 1, 1 },
-   { "D", 'D', KP_CHAR, 4, 1, 1 }, { "Line", '\n', KP_CHAR, 5, 1, 1 },
+   { "D", 'D', KP_CHAR, 4, 1, 1 }, { TR_KEY("cheats.line"), '\n', KP_CHAR, 5, 1, 1 },
    { "7", '7', KP_CHAR, 0, 2, 1 }, { "8", '8', KP_CHAR, 1, 2, 1 },
    { "9", '9', KP_CHAR, 2, 2, 1 }, { "E", 'E', KP_CHAR, 3, 2, 1 },
    { "F", 'F', KP_CHAR, 4, 2, 1 }, { "-", '-', KP_CHAR, 5, 2, 1 },
-   { "0", '0', KP_CHAR, 0, 3, 1 }, { "Space", ' ', KP_CHAR, 1, 3, 2 },
-   { "Save", 0, KP_OK, 3, 3, 3 },
+   { "0", '0', KP_CHAR, 0, 3, 1 }, { TR_KEY("cheats.space"), ' ', KP_CHAR, 1, 3, 2 },
+   { TR_KEY("cheats.save"), 0, KP_OK, 3, 3, 3 },
 };
 #define CA_NKEYS  ((int)(sizeof(CA_KEYS) / sizeof(CA_KEYS[0])))
 /* The keys as this console has them: the dash key types the colon of a NES
@@ -634,8 +634,8 @@ static ui_action screen_cheat_add_page(unsigned edges)
       for (i = 0; i < g_ca.len; i++)
          now[i] = g_ca.code[i] == '\n' ? '+' : g_ca.code[i];
       now[g_ca.len] = '\0';
-      if (ui_text_open(TXT_CHEAT_CODE, "Cheat code", now, CA_CODE_CAP - 1) != 0)
-         snprintf(g_ca.note, sizeof(g_ca.note), "No keyboard: use the keys.");
+      if (ui_text_open(TXT_CHEAT_CODE, tr("cheats.cheat_code"), now, CA_CODE_CAP - 1) != 0)
+         snprintf(g_ca.note, sizeof(g_ca.note), tr("cheats.no_keyboard_use_the_keys"));
    }
 
    if (g_ca.ask_discard)
@@ -690,8 +690,8 @@ static ui_action screen_cheat_add_page(unsigned edges)
       ch = g_ca_keys[g_cursor].ch;
       if (act == KP_CHAR && ch == '-' && !gb)
       {
-         snprintf(g_ca.note, sizeof(g_ca.note), "The dash belongs to Game "
-                  "Boy Game Genie codes.");
+         snprintf(g_ca.note, sizeof(g_ca.note), tr("cheats.the_dash_belongs_to_game_boy")
+);
          act = -1;
       }
    }
@@ -723,9 +723,9 @@ static ui_action screen_cheat_add_page(unsigned edges)
    if ((edges & PSP_CTRL_SELECT) ||
        ((edges & PSP_CTRL_CROSS) && g_cursor == CA_NAME_ROW))
    {
-      if (ui_text_open(TXT_CHEAT_NAME, "Cheat name", g_ca.name, 40) != 0)
-         snprintf(g_ca.note, sizeof(g_ca.note), "No keyboard: the cheat "
-                  "gets a number for a name.");
+      if (ui_text_open(TXT_CHEAT_NAME, tr("cheats.cheat_name"), g_ca.name, 40) != 0)
+         snprintf(g_ca.note, sizeof(g_ca.note), tr("cheats.no_keyboard_the_cheat_gets_a")
+);
    }
    if ((edges & (PSP_CTRL_TRIANGLE | PSP_CTRL_START)) || act == KP_OK)
    {
@@ -746,14 +746,14 @@ static ui_action screen_cheat_add_page(unsigned edges)
             for (i = 0; i < g_ch.n; i++)
                if (g_ch.order[i] == rc)
                   g_ch.cur = i;
-            snprintf(g_ch.note, sizeof(g_ch.note), "Added, and switched on");
+            snprintf(g_ch.note, sizeof(g_ch.note), tr("cheats.added_and_switched_on"));
             return screen_cheats(0, 0);
          }
          snprintf(g_ca.note, sizeof(g_ca.note), "%s", cheats_error_text(rc));
       }
       else
          snprintf(g_ca.note, sizeof(g_ca.note), "%s", !g_ca.len
-                  ? "Type the code first."
+                  ? tr("cheats.type_the_code_first")
                   : cheats_error_text(g_ca.verdict));
    }
    if (edges & PSP_CTRL_CIRCLE)
@@ -770,10 +770,10 @@ static ui_action screen_cheat_add_page(unsigned edges)
    ov_backdrop(OV_SCRIM_DENSE);
    {
       char sub[120];
-      snprintf(sub, sizeof(sub), "%s codes: %s", pcfg_console_tag(g_pcfg.console),
+      snprintf(sub, sizeof(sub), tr("cheats.codes"), pcfg_console_tag(g_pcfg.console),
                cheats_format_hint((fe_console_t)g_pcfg.console));
       clip_title(sub, 436);
-      vw_head(sub, "ADD A CHEAT");
+      vw_head(sub, tr("cheats.add_a_cheat"));
    }
    kp_draw(&pad, g_cursor == CA_NAME_ROW ? -1 : g_cursor,
            (g_ca.verdict > 0 ? 0u : 1u << CA_KEY_OK) |
@@ -795,7 +795,7 @@ static ui_action screen_cheat_add_page(unsigned edges)
       if (g_ca.name[0])
          vid_text(x, 84, vw_clip(nm, sizeof(nm), g_ca.name, 172), C_VALUE);
       else
-         vid_text(x, 84, vw_clip(nm, sizeof(nm), "a number, unless named", 172), C_DIM);
+         vid_text(x, 84, vw_clip(nm, sizeof(nm), tr("cheats.a_number_unless_named"), 172), C_DIM);
       tch_row(CA_NAME_ROW, bx - 2, 64, bw + 2, 40);
       vw_box(bx, by, bw, bh, g_cursor != CA_NAME_ROW);
       line[0] = p;
@@ -820,37 +820,37 @@ static ui_action screen_cheat_add_page(unsigned edges)
             vw_caret(bx + 5 + (len[i] - skip) * CA_CELL + 1, ly + 1, 14);
       }
       if (!g_ca.len)
-         vid_text(bx + 12, by + 4, "the code", C_DIM);
+         vid_text(bx + 12, by + 4, tr("cheats.the_code"), C_DIM);
       /* What the engine makes of it. */
       if (g_ca.verdict > 0)
       {
          char v[64];
-         snprintf(v, sizeof(v), "%s, %d line%s", cheats_kind_name(g_ca.verdict),
+         snprintf(v, sizeof(v), tr("cheats.line_2"), cheats_kind_name(g_ca.verdict),
                   nl + 1, nl ? "s" : "");
          vid_text(x, by + bh + 6, vw_clip(nm, sizeof(nm), v, 176), C_VALUE);
-         vid_text(x, by + bh + 6 + FE_FONT_H, "ready to save", C_DIM);
+         vid_text(x, by + bh + 6 + FE_FONT_H, tr("cheats.ready_to_save"), C_DIM);
       }
       else if (g_ca.len)
       {
          vid_text(x, by + bh + 6, g_ca.verdict == CHEATS_E_UNSUPPORTED
-                  ? "recognised, not supported" : "not a whole code yet",
+                  ? tr("cheats.recognised_not_supported") : tr("cheats.not_a_whole_code_yet"),
                   C_ITEM);
       }
    }
    if (g_ca.ask_discard)
    {
       tch_modal(PSP_CTRL_CIRCLE);
-      ov_plate("Throw this code away?      " VID_GLYPH_X " discard     "
-               VID_GLYPH_O " keep typing");
+      ov_plate(tr("cheats.throw_this_code_away_x_discard")
+);
    }
    else if (g_ca.note[0])
       vw_plate(g_ca.note);
    else
       footer(g_cursor == CA_NAME_ROW
-             ? VID_GLYPH_X " name it   " VID_GLYPH_TRI " save   "
-               VID_GLYPH_O " back"
-             : VID_GLYPH_X " type   " VID_GLYPH_SQ " delete   L keyboard   "
-               "SELECT name   " VID_GLYPH_TRI " save   " VID_GLYPH_O " back");
+             ? tr("hint.x_name_it_tri_save_o")
+
+             : tr("hint.x_type_sq_delete_l_keyboard")
+);
    return UI_ACT_NONE;
 }
 
@@ -959,10 +959,10 @@ static void cs_open(void)
        * read while the pair runs (the read answers nothing) */
       pk_cs_free(&g_cs.cs);
       g_cs.ready = 0;
-      cs_note("Search memory is not available in two-player mode");
+      cs_note(tr("cheats.search_memory_is_not_available_in"));
    }
    else if (!g_cs.ready && !cs_setup())
-      cs_note("There is no memory to search in this game");
+      cs_note(tr("cheats.there_is_no_memory_to_search"));
 }
 
 /* The rows now: size, new search, then (a search is on) results, the steps,
@@ -997,9 +997,9 @@ static void cs_step(int op, uint32_t v)
    fe_evt("cheat_search results=%d op=%s size=%d", (int)n, pk_cs_op_name(op),
           g_cs.cs.width);
    if (n < 0)
-      cs_note("There is no search to narrow down");
+      cs_note(tr("cheats.there_is_no_search_to_narrow"));
    else if (n == 0)
-      cs_note("No results. Start a new search");
+      cs_note(tr("cheats.no_results_start_a_new_search"));
    else
       cs_note("%d %s", (int)n, n == 1 ? "result" : "results");
 }
@@ -1012,15 +1012,15 @@ static void cs_add(int i)
       return;
    if (!pk_cs_code(&g_cs.cs, g_cs.addr[i], g_cs.val[i], code, sizeof(code)))
    {
-      cs_note("This place cannot be made into a cheat here");
+      cs_note(tr("cheats.this_place_cannot_be_made_into"));
       return;
    }
    pk_cs_addr_text(&g_cs.cs, g_cs.addr[i], at, sizeof(at));
-   snprintf(name, sizeof(name), "Found at %s", at);
+   snprintf(name, sizeof(name), tr("cheats.found_at"), at);
    rc = cheats_count() >= CHEATS_MAX ? CHEATS_E_FULL : cheats_add(name, code);
    fe_evt("cheat_search add rc=%d code=\"%s\"", rc, code);
    if (rc >= 0)
-      cs_note("Cheat added and on: %s", name);
+      cs_note(tr("cheats.cheat_added_and_on"), name);
    else
       cs_note("%s", cheats_error_text(rc));
 }
@@ -1040,7 +1040,7 @@ static ui_action screen_cheat_search_page(unsigned edges, unsigned pad)
       if (pk_cs_parse(typed, g_cs.cs.width, &v))
          cs_step(g_cs.op, v);
       else
-         cs_note("Type a whole number from 0 to %u (or 0x and hex)",
+         cs_note(tr("cheats.type_a_whole_number_from_0"),
                  (unsigned)pk_cs_max_value(g_cs.cs.width));
    }
    if (r != 0)
@@ -1076,8 +1076,8 @@ static ui_action screen_cheat_search_page(unsigned edges, unsigned pad)
    }
    if (!g_cs.ready && (edges & PSP_CTRL_CROSS))
       cs_note(fe_host_gb_local_active()
-              ? "Search memory is not available in two-player mode"
-              : "There is no memory to search in this game");
+              ? tr("cheats.search_memory_is_not_available_in")
+              : tr("cheats.there_is_no_memory_to_search"));
    if (g_cs.ready && (edges & (PSP_CTRL_CROSS | PSP_CTRL_LEFT |
                                PSP_CTRL_RIGHT)))
    {
@@ -1085,8 +1085,8 @@ static ui_action screen_cheat_search_page(unsigned edges, unsigned pad)
       const int susp = cheats_suspended();
       if (susp && (edges & PSP_CTRL_CROSS) && k != CSR_SIZE)
          cs_note("%s", susp == 2
-                 ? "Cheats are off in Hardcore mode (RetroAchievements)."
-                 : "Cheats are off while linked to another console.");
+                 ? tr("cheats.cheats_are_off_in_hardcore_mode")
+                 : tr("cheats.cheats_are_off_while_linked_to"));
       else if (k == CSR_SIZE)
          g_cs.size = (g_cs.size + ((edges & PSP_CTRL_LEFT)
                       ? pk_cs_size_count(&g_cs.cs) - 1 : 1)) %
@@ -1102,9 +1102,9 @@ static ui_action screen_cheat_search_page(unsigned edges, unsigned pad)
          fe_evt("cheat_search new size=%d results=%d any=%d", cs_width(),
                 (int)c, g_cs.cs.any);
          if (c < 0)
-            cs_note("The search could not start: not enough memory");
+            cs_note(tr("cheats.the_search_could_not_start_not"));
          else
-            cs_note("Search started: %d places. Play on, then narrow it down",
+            cs_note(tr("cheats.search_started_places_play_on_then"),
                     (int)c);
          g_cs.cur = 1;
       }
@@ -1115,12 +1115,12 @@ static ui_action screen_cheat_search_page(unsigned edges, unsigned pad)
          else
          {
             char title[48];
-            snprintf(title, sizeof(title), "%s (a number)", pk_cs_op_name(a));
+            snprintf(title, sizeof(title), tr("cheats.a_number"), pk_cs_op_name(a));
             g_cs.op = a;
             if (ui_text_open(TXT_SEARCH_VALUE, title, "", 11) != 0)
             {
                g_cs.op = -1;
-               cs_note("The keyboard is not available.");
+               cs_note(tr("cheats.the_keyboard_is_not_available"));
             }
          }
       }
@@ -1158,7 +1158,7 @@ static ui_action screen_cheat_search_page(unsigned edges, unsigned pad)
       char sub[100];
       snprintf(sub, sizeof(sub), "%s", dbn && dbn[0] ? dbn : g_ov_title);
       clip_title(sub, 300);
-      vw_head(sub, "SEARCH MEMORY");
+      vw_head(sub, tr("cheats.search_memory"));
       if (pk_cs_active(&g_cs.cs))
       {
          char c[40];
@@ -1179,22 +1179,22 @@ static ui_action screen_cheat_search_page(unsigned edges, unsigned pad)
       switch (kind[i])
       {
       case CSR_SIZE:
-         snprintf(label, sizeof(label), "Size of the number");
+         snprintf(label, sizeof(label), tr("cheats.size_of_the_number"));
          snprintf(value, sizeof(value), "%s", pk_cs_size_choice(g_cs.size));
          break;
       case CSR_NEW:
-         snprintf(label, sizeof(label), "New search");
+         snprintf(label, sizeof(label), tr("cheats.new_search"));
          snprintf(value, sizeof(value), "%s", pk_cs_active(&g_cs.cs)
-                  ? "Start again" : "Look at the game's memory now");
+                  ? tr("cheats.start_again") : tr("cheats.look_at_the_game_s_memory"));
          break;
       case CSR_RESULTS:
-         snprintf(label, sizeof(label), "Results");
+         snprintf(label, sizeof(label), tr("cheats.results"));
          snprintf(value, sizeof(value), "%u", (unsigned)g_cs.cs.count);
          break;
       case CSR_OP:
          snprintf(label, sizeof(label), "%s", pk_cs_op_name(arg[i]));
          snprintf(value, sizeof(value), "%s", pk_cs_op_needs_value(arg[i])
-                  ? "A number you type" : "Since the last step");
+                  ? tr("cheats.a_number_you_type") : tr("cheats.since_the_last_step"));
          break;
       default:
          pk_cs_addr_text(&g_cs.cs, g_cs.addr[arg[i]], label, sizeof(label));
@@ -1214,18 +1214,18 @@ static ui_action screen_cheat_search_page(unsigned edges, unsigned pad)
       switch (kind[g_cs.cur])
       {
       case CSR_SIZE: h = pk_cs_size_count(&g_cs.cs) > 3
-                         ? "Most counters are 1 byte; money and scores often 2. Any address looks at odd places too."
-                         : "Most counters are 1 byte; money and scores often 2."; break;
-      case CSR_NEW: h = "Remember the memory, play on, then narrow it down."; break;
+                         ? tr("cheats.most_counters_are_1_byte_money")
+                         : tr("cheats.most_counters_are_1_byte_money_2"); break;
+      case CSR_NEW: h = tr("cheats.remember_the_memory_play_on_then"); break;
       case CSR_RESULTS:
-         h = g_cs.cs.count == 0 ? "Nothing matched: start a new search."
+         h = g_cs.cs.count == 0 ? tr("cheats.nothing_matched_start_a_new_search")
            : g_cs.cs.count <= PK_CS_LIST_MAX
-             ? "Choose a result to make it a cheat."
-             : "Narrow it down to 50 or fewer to see them."; break;
+             ? tr("cheats.choose_a_result_to_make_it")
+             : tr("cheats.narrow_it_down_to_50_or"); break;
       case CSR_OP: h = pk_cs_op_needs_value(arg[g_cs.cur])
-                       ? "Keeps the places that match the number you type."
-                       : "Compared with the memory at the last step."; break;
-      default: h = "Makes a cheat that keeps this value."; break;
+                       ? tr("cheats.keeps_the_places_that_match_the")
+                       : tr("cheats.compared_with_the_memory_at_the"); break;
+      default: h = tr("cheats.makes_a_cheat_that_keeps_this"); break;
       }
       /* the note's plate sits where this line is: one or the other */
       if (!g_cs.note[0])
@@ -1237,7 +1237,7 @@ static ui_action screen_cheat_search_page(unsigned edges, unsigned pad)
    if (g_cs.note[0])
       vw_plate(g_cs.note);
    else
-      footer(VID_GLYPH_X " choose   L/R page   " VID_GLYPH_O " back");
+      footer(tr("hint.x_choose_l_r_page_o"));
    return UI_ACT_NONE;
 }
 

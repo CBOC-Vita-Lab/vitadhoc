@@ -44,11 +44,11 @@ static int s2_room_is_ours(const ui_room *r)
 static const char *s2_room_why(const ui_room *r)
 {
    if (!r->compatible)
-      return "different version";
+      return tr("snes.different_version");
    if (r->max_players > 0 && r->players >= r->max_players)
       return "full";
    if (!r->open)
-      return "already playing";
+      return tr("snes.already_playing");
    return NULL;
 }
 
@@ -164,8 +164,8 @@ static int s2_frame(unsigned edges)
    snprintf(sub, sizeof(sub), "%s", g_s2.title);
    if (g_s2.page == S2_MAIN || g_s2.page == S2_HOST || g_s2.page == S2_JOIN)
    {
-      static const char *const l_main[2] = { "Host a game", "Join a game" };
-      static const char *const l_conn[2] = { "Same Wi-Fi", "Online" };
+      const char *const l_main[2] = { tr("snes.host_a_game"), tr("snes.join_a_game") };
+      const char *const l_conn[2] = { tr("snes.same_wi_fi"), tr("snes.online") };
       const char *const *lab = g_s2.page == S2_MAIN ? l_main : l_conn;
       const char *v[2];
 
@@ -231,18 +231,18 @@ static int s2_frame(unsigned edges)
       v[0] = v[1] = NULL;
       if (g_s2.page == S2_MAIN)
       {
-         v[0] = "you start the room";
-         v[1] = "a friend's room";
+         v[0] = tr("snes.you_start_the_room");
+         v[1] = tr("snes.a_friend_s_room");
       }
       else
       {
-         v[0] = g_s2.page == S2_HOST ? "a room on this Wi-Fi" : "rooms on this Wi-Fi";
-         v[1] = g_s2.page == S2_HOST ? "a code to share" : "type your friend's code";
+         v[0] = g_s2.page == S2_HOST ? tr("snes.a_room_on_this_wi_fi") : tr("snes.rooms_on_this_wi_fi");
+         v[1] = g_s2.page == S2_HOST ? tr("snes.a_code_to_share") : tr("snes.type_your_friend_s_code");
       }
       if (g_s2.page == S2_ROOMS)
          goto rooms;                 /* chosen just now: draw it this frame */
       ov_backdrop(OV_SCRIM_DENSE);
-      vw_head(sub, g_s2.page == S2_MAIN ? "TWO PLAYERS" : g_s2.page == S2_HOST ? "HOST A GAME" : "JOIN A GAME");
+      vw_head(sub, g_s2.page == S2_MAIN ? tr("snes.two_players") : g_s2.page == S2_HOST ? tr("snes.host_a_game_2") : tr("snes.join_a_game_2"));
       play_status_draw(50, g_s2.page == S2_MAIN ? g_pcfg.net_conn : g_s2.cur == 1 ? UI_CONN_ONLINE : UI_CONN_WIFI,
                        play_net(0));
       for (i = 0; i < 2; i++)
@@ -250,7 +250,7 @@ static int s2_frame(unsigned edges)
       if (g_s2.note[0])
          vw_plate(g_s2.note);
       else
-         footer(VID_GLYPH_X " select   " VID_GLYPH_O " back");
+         footer(tr("hint.x_select_o_back"));
       return 0;
    }
 
@@ -296,10 +296,10 @@ rooms:
          if (why)
          {
             if (!r->compatible)
-               snprintf(g_s2.note, sizeof(g_s2.note), "%s runs a different version of VitAdhoc.",
-                        r->nick[0] ? r->nick : "That player");
+               snprintf(g_s2.note, sizeof(g_s2.note), tr("snes.runs_a_different_version_of_vitadhoc"),
+                        r->nick[0] ? r->nick : tr("snes.that_player"));
             else
-               snprintf(g_s2.note, sizeof(g_s2.note), "%s is %s.", r->nick[0] ? r->nick : "That room", why);
+               snprintf(g_s2.note, sizeof(g_s2.note), tr("snes.is"), r->nick[0] ? r->nick : tr("snes.that_room"), why);
             fe_evt("snes_two_refused id=%u why=\"%s\"", r->id, why);
          }
          else
@@ -324,13 +324,13 @@ rooms:
 
       net = play_net(0);
       ov_backdrop(OV_SCRIM_DENSE);
-      vw_head(sub, "JOIN A GAME");
+      vw_head(sub, tr("snes.join_a_game_2"));
       {
          char st[32];
          if (n > 0)
-            snprintf(st, sizeof(st), "%d FOUND", n);
+            snprintf(st, sizeof(st), tr("snes.found"), n);
          else
-            snprintf(st, sizeof(st), "%s", g_s2.open ? "SEARCHING" : "WAITING");
+            snprintf(st, sizeof(st), "%s", g_s2.open ? tr("snes.searching") : tr("snes.waiting"));
          ov_text_right(460, 48, st, C_DIM);
          if (g_s2.open)
             vw_ring(460 - vid_text_w(st) - 14, 48 + 8, C_TITLE);
@@ -341,27 +341,27 @@ rooms:
          l1[0] = l2[0] = '\0';
          if (!g_s2.open && (g_s2.err == UI_ROOMS_E_NO_WIFI || net->wifi != UI_WIFI_CONNECTED))
          {
-            snprintf(l1, sizeof(l1), "This " UI_DEV " is not connected to Wi-Fi.");
-            snprintf(l2, sizeof(l2), "Connect in the " UI_DEV "'s Settings > Network. This page carries on by itself "
-                     "as soon as it is.");
+            snprintf(l1, sizeof(l1), tr("snes.this_vita_is_not_connected_to"));
+            snprintf(l2, sizeof(l2), tr("snes.connect_in_the_vita_s_settings")
+);
          }
          else if (!g_s2.open && g_s2.err == UI_ROOMS_E_BUSY)
          {
-            snprintf(l1, sizeof(l1), "The radio is busy with another link.");
-            snprintf(l2, sizeof(l2), "End it first (Play together > Disconnect).");
+            snprintf(l1, sizeof(l1), tr("snes.the_radio_is_busy_with_another"));
+            snprintf(l2, sizeof(l2), tr("snes.end_it_first_play_together_disconnect"));
          }
          else if (!g_s2.open)
          {
-            snprintf(l1, sizeof(l1), "The search could not start.");
-            snprintf(l2, sizeof(l2), "Trying again by itself. If this stays, check the " UI_DEV "'s Wi-Fi.");
+            snprintf(l1, sizeof(l1), tr("snes.the_search_could_not_start"));
+            snprintf(l2, sizeof(l2), tr("snes.trying_again_by_itself_if_this"));
          }
          else if (g_s2.frames < 90)
-            snprintf(l1, sizeof(l1), "Looking for games on this Wi-Fi...");
+            snprintf(l1, sizeof(l1), tr("snes.looking_for_games_on_this_wi"));
          else
          {
-            snprintf(l1, sizeof(l1), "No Two players room for this game yet.");
-            snprintf(l2, sizeof(l2), "The other " UI_DEV " hosts the same game (Settings > Two players), on the same "
-                     "Wi-Fi. Still looking.");
+            snprintf(l1, sizeof(l1), tr("snes.no_two_players_room_for_this"));
+            snprintf(l2, sizeof(l2), tr("snes.the_other_vita_hosts_the_same")
+);
          }
          vid_text(22, 76, l1, C_ITEM);
          if (l2[0])
@@ -380,16 +380,16 @@ rooms:
                vid_rect(0, y - 3, 460, ROW_H - 2, C_ACCENT, 40);
                vid_rect(0, y - 3, 4, ROW_H - 2, C_ACCENT, 255);
             }
-            vid_text(18, y, vw_clip(t, sizeof(t), r->nick[0] ? r->nick : "a player", 236),
+            vid_text(18, y, vw_clip(t, sizeof(t), r->nick[0] ? r->nick : tr("snes.a_player"), 236),
                      !why ? (sel ? C_SEL : C_ITEM) : C_DIM);
             snprintf(pl, sizeof(pl), "%d/%d", r->players, r->max_players > 0 ? r->max_players : 2);
             ov_text_right(452, y, pl, !why ? C_VALUE : C_DIM);
             if (!why && r->rtt_ms >= 0)
-               snprintf(d, sizeof(d), ROOM_LABEL_WORD " %d  -  %d ms", r->number, r->rtt_ms);
+               snprintf(d, sizeof(d), tr("snes.room_ms"), r->number, r->rtt_ms);
             else if (!why)
-               snprintf(d, sizeof(d), ROOM_LABEL_WORD " %d", r->number);
+               snprintf(d, sizeof(d), tr("snes.room"), r->number);
             else
-               snprintf(d, sizeof(d), ROOM_LABEL_WORD " %d  -  %s", r->number, why);
+               snprintf(d, sizeof(d), tr("snes.room_2"), r->number, why);
             vid_text(18, y + 14, vw_clip(t, sizeof(t), d, 430), !why ? (sel ? C_VALUE : C_ACCENT_DK) : C_ACCENT_DK);
             tch_row(i, 0, y - 4, 460, ROW_H);
          }
@@ -399,9 +399,9 @@ rooms:
       if (g_s2.note[0])
          vw_plate(g_s2.note);
       else if (n > 0)
-         footer(VID_GLYPH_X " join   " VID_GLYPH_O " back");
+         footer(tr("hint.x_join_o_back"));
       else
-         footer(VID_GLYPH_O " back");
+         footer(tr("hint.o_back"));
    }
    return 0;
 }

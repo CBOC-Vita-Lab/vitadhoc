@@ -10,6 +10,8 @@
 #ifdef VITA
 #include <stdlib.h>
 #include "pspcompat.h"        /* pspcompat_user_name: the default nick */
+#include "i18n.h"
+#include "plat.h"
 #include "ui_host_hooks.h"   /* ui_host_link_direct */
 #endif
 
@@ -33,10 +35,11 @@ static char cfg_path[256];
  * and both players, so they live in <root>/display.ini (the folder of
  * config.ini) which snes.bin and md.bin read too (playerkit/src/
  * pk_uiprefs.h is the same file from their side).  screen=auto|oled|lcd|pstv
- * text_size=normal|large  contrast=off|on.  Written only when a value
+ * text_size=normal|large  contrast=off|on  language=auto|en|es|fr|de|it|
+ * pt-BR|ja|zh-Hans (i18n.h; xx-long is the pseudo-locale of the tests).  Written only when a value
  * changed, with the safe write of fe_ini_set. */
 static const char *const ui_screen_tag[4] = { "auto", "oled", "lcd", "pstv" };
-static int g_ui_saved[3] = { -1, -1, -1 };   /* what the file holds */
+static int g_ui_saved[4] = { -1, -1, -1, -1 };   /* what the file holds */
 
 static void ui_path(char *out, size_t n)
 {
@@ -66,6 +69,14 @@ static int ui_get_lower(const char *path, const char *key, char *v, size_t n)
    return 1;
 }
 
+/* The catalogue of display.ini's language, loaded: at start and when Settings
+ * changes the row.  English whenever the file is not there. */
+void pcfg_language_apply(void)
+{
+   i18n_dir(plat_app_dir());
+   i18n_use(g_pcfg.language, pspcompat_system_lang());
+}
+
 static void ui_prefs_load(void)
 {
    char path[300], v[24];
@@ -74,6 +85,9 @@ static void ui_prefs_load(void)
    g_pcfg.screen = 0;
    g_pcfg.text_large = 0;
    g_pcfg.contrast = 0;
+   g_pcfg.language = I18N_AUTO;
+   if (ui_get_lower(path, "language", v, sizeof(v)))
+      g_pcfg.language = i18n_index(v);
    if (ui_get_lower(path, "screen", v, sizeof(v)))
       for (i = 0; i < 4; i++)
          if (!strcmp(v, ui_screen_tag[i]))
@@ -85,6 +99,8 @@ static void ui_prefs_load(void)
    g_ui_saved[0] = g_pcfg.screen;
    g_ui_saved[1] = g_pcfg.text_large;
    g_ui_saved[2] = g_pcfg.contrast;
+   g_ui_saved[3] = g_pcfg.language;
+   pcfg_language_apply();
 }
 
 static void ui_prefs_save(void)
@@ -94,16 +110,20 @@ static void ui_prefs_save(void)
       g_pcfg.screen = 0;
    g_pcfg.text_large = g_pcfg.text_large ? 1 : 0;
    g_pcfg.contrast = g_pcfg.contrast ? 1 : 0;
+   if (g_pcfg.language < 0 || g_pcfg.language >= I18N_LANGS)
+      g_pcfg.language = I18N_AUTO;
    if (g_ui_saved[0] == g_pcfg.screen && g_ui_saved[1] == g_pcfg.text_large &&
-       g_ui_saved[2] == g_pcfg.contrast)
+       g_ui_saved[2] == g_pcfg.contrast && g_ui_saved[3] == g_pcfg.language)
       return;
    ui_path(path, sizeof(path));
    fe_ini_set(path, "screen", ui_screen_tag[g_pcfg.screen]);
    fe_ini_set(path, "text_size", g_pcfg.text_large ? "large" : "normal");
    fe_ini_set(path, "contrast", g_pcfg.contrast ? "on" : "off");
+   fe_ini_set(path, "language", i18n_code[g_pcfg.language]);
    g_ui_saved[0] = g_pcfg.screen;
    g_ui_saved[1] = g_pcfg.text_large;
    g_ui_saved[2] = g_pcfg.contrast;
+   g_ui_saved[3] = g_pcfg.language;
 }
 #endif
 

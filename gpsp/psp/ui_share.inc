@@ -158,7 +158,7 @@ static uint32_t sh_stat_time(const SceIoStat *st)
 
 static void sh_kb(char *out, size_t n, uint32_t bytes)
 {
-   snprintf(out, n, "%u KB", (unsigned)((bytes + 1023) / 1024));
+   snprintf(out, n, tr("share.kb"), (unsigned)((bytes + 1023) / 1024));
 }
 
 /* ---- small drawings -------------------------------------------------------- */
@@ -308,7 +308,7 @@ static void sh_plate(const char *l1, const char *l2, const char *l3,
 static void sh_wait_frame(const char *title, const char *group,
                           const char *l1, const char *l2)
 {
-   static const char *const hint[] = { "please wait" };
+   const char *const hint[] = { tr("share.please_wait") };
    (void)sh_begin();
    sh_backdrop(-1, 0);
    sh_header(title, NULL, group, 0, 0);
@@ -323,7 +323,7 @@ static void sh_wait_frame(const char *title, const char *group,
 static void sh_notice(const char *title, const char *group, const char *l1,
                       const char *l2)
 {
-   static const char *const hint[] = { VID_GLYPH_O " back" };
+   const char *const hint[] = { tr("share.o_back") };
    int k = 0;
    g_prev_pad = 0xFFFFFFFFu;
    while (g_running && !g_sh_quit)
@@ -349,48 +349,48 @@ static const char *sh_net_error(int rc)
    if (rc == ADHOC_ERR_ONLINE)
       return share_online_error_text();
 #endif
-   return rc == ADHOC_ERR_WLAN_OFF ? UI_RADIO_OFF "." :
-          rc == ADHOC_ERR_NO_GROUP ? "The room was not found. Is it still "
-                                     "sharing?" :
-          rc == ADHOC_ERR_NP_START ? "Not enough memory to start the radio." :
-                                     "The radio could not start.";
+   return rc == ADHOC_ERR_WLAN_OFF ? tr("share.wi_fi_is_off") :
+          rc == ADHOC_ERR_NO_GROUP ? tr("share.the_room_was_not_found_is")
+ :
+          rc == ADHOC_ERR_NP_START ? tr("share.not_enough_memory_to_start_the") :
+                                     tr("share.the_radio_could_not_start");
 }
 
 #ifdef VITA
 #include "online_vita.h"          /* ON_* */
 /* Online (2.0): while the sharer's room forms, share_net_up_online calls this
  * once a frame: the code to tell the friend, and O to stop.  1 = cancel. */
-static const char *g_sh_on_title = "SHARE GAME DATA";
+static const char *g_sh_on_title = TR_KEY("share.share_game_data");
 static int g_sh_on_guest;            /* the code is the player's, not ours */
 static int sh_online_wait(int stage, const char *code, int ttl_s)
 {
-   static const char *const hint[] = { VID_GLYPH_O " cancel" };
+   const char *const hint[] = { tr("share.o_cancel") };
    unsigned edges = sh_begin();
    char l[64];
    int bad = !g_running || g_sh_quit;
    sh_backdrop(-1, 0);
-   sh_header(g_sh_on_title, NULL, "Online", 0, 0);
+   sh_header(tr(g_sh_on_title), NULL, tr("share.online"), 0, 0);
    if (g_sh_on_guest)
    {
-      snprintf(l, sizeof(l), "Joining %s...", code && code[0] ? code : "");
+      snprintf(l, sizeof(l), tr("share.joining"), code && code[0] ? code : "");
       vid_text_center(104, l, C_SEL);
-      vid_text_center(128, stage >= ON_PUNCH ? "Connecting..."
-                                             : "Finding your friend...", SH_DIM);
+      vid_text_center(128, stage >= ON_PUNCH ? tr("share.connecting")
+                                             : tr("share.finding_your_friend"), SH_DIM);
    }
    else if (code && code[0])
    {
-      vid_text_center(70, "Tell your friend this code", C_ITEM);
+      vid_text_center(70, tr("share.tell_your_friend_this_code"), C_ITEM);
       vid_text_hd((480 - vid_text_hd_w(code)) / 2, 100, code, C_SEL);
-      snprintf(l, sizeof(l), "Waiting for your friend...  %d:%02d", ttl_s / 60,
+      snprintf(l, sizeof(l), tr("share.waiting_for_your_friend"), ttl_s / 60,
                ttl_s % 60);
       vid_text_center(150, l, SH_DIM);
-      vid_text_center(170, "Join online > Settings > Join a share", SH_DIM);
+      vid_text_center(170, tr("share.join_online_settings_join_a_share"), SH_DIM);
    }
    else
-      vid_text_center(104, stage <= ON_STUN ? "Checking your connection..."
-                                            : "Getting a code...", C_SEL);
+      vid_text_center(104, stage <= ON_STUN ? tr("share.checking_your_connection")
+                                            : tr("share.getting_a_code"), C_SEL);
    if (stage >= ON_RELAY_CREDS && stage <= ON_RELAY_WAIT)
-      vid_text_center(196, "Connecting through the relay.", SH_DIM);
+      vid_text_center(196, tr("share.connecting_through_the_relay"), SH_DIM);
    sh_hints(hint, 1);
    sh_end();
    return bad || (edges & PSP_CTRL_CIRCLE);
@@ -803,7 +803,7 @@ static void shh_close(void *user)
 /* Settings > Share game data.  Returns when the player stops sharing. */
 static void share_host_run(const char *rom_dir)
 {
-   static const char *const hint[] = { VID_GLYPH_O " stop sharing" };
+   const char *const hint[] = { tr("share.o_stop_sharing") };
    static const fe_share_server_io io_proto = { NULL, share_net_send,
                                                 shh_open, shh_read,
                                                 shh_close };
@@ -822,26 +822,26 @@ static void share_host_run(const char *rom_dir)
    room_make(ROOM_SHARE, nn < 0 ? 7 : nn, NULL, h->group, sizeof(h->group));
    room_label(h->group, lbl, sizeof(lbl));
 
-   sh_wait_frame("SHARE GAME DATA", h->group, "Reading your saves and states...",
+   sh_wait_frame(tr("share.share_game_data"), h->group, tr("share.reading_your_saves_and_states"),
                  NULL);
    art_free_all();               /* the scans below re-key the ROM list */
    browser_state_cache_free();
    rc = shh_scan(h);
    if (rc != 0 || h->n == 0)
    {
-      sh_notice("SHARE GAME DATA", h->group,
-                rc ? "Could not read the game folder."
-                   : "There are no saves or states to share yet.",
-                rc ? NULL : "Play a game first; its save will show up here.");
+      sh_notice(tr("share.share_game_data"), h->group,
+                rc ? tr("share.could_not_read_the_game_folder")
+                   : tr("share.there_are_no_saves_or_states"),
+                rc ? NULL : tr("share.play_a_game_first_its_save"));
       shh_free(h);
       return;
    }
    dg = (uint8_t *)malloc(FE_SHARE_DGRAM_MAX + 8);
-   snprintf(l1, sizeof(l1), "Starting %s...", lbl);
-   sh_wait_frame("SHARE GAME DATA", h->group, l1, NULL);
+   snprintf(l1, sizeof(l1), tr("share.starting"), lbl);
+   sh_wait_frame(tr("share.share_game_data"), h->group, l1, NULL);
 #ifdef VITA
    share_online_set_wait(sh_online_wait);
-   g_sh_on_title = "SHARE GAME DATA";
+   g_sh_on_title = tr("share.share_game_data");
    g_sh_on_guest = 0;
 #endif
    rc = dg ? share_net_up(1, h->group) : ADHOC_ERR_NP_START;
@@ -857,7 +857,7 @@ static void share_host_run(const char *rom_dir)
 #endif
    if (rc != ADHOC_OK)
    {
-      sh_notice("SHARE GAME DATA", h->group, "Sharing could not start.",
+      sh_notice(tr("share.share_game_data"), h->group, tr("share.sharing_could_not_start"),
                 sh_net_error(rc));
       free(dg);
       shh_free(h);
@@ -889,15 +889,15 @@ static void share_host_run(const char *rom_dir)
       }
 
       sh_backdrop(-1, 0);
-      sh_header("SHARE GAME DATA", NULL, h->group, 0, 0);
-      snprintf(l2, sizeof(l2), "%u save%s  -  %u state%s  -  GBA %u / GB %u "
-               "/ GBC %u", s->n_saves, s->n_saves == 1 ? "" : "s",
+      sh_header(tr("share.share_game_data"), NULL, h->group, 0, 0);
+      snprintf(l2, sizeof(l2), tr("share.save_state_gba_gb_gbc")
+, s->n_saves, s->n_saves == 1 ? "" : "s",
                s->n_states, s->n_states == 1 ? "" : "s", h->per_con[0],
                h->per_con[1], h->per_con[2]);
       l3[0] = '\0';
       if (s->state == FE_SHARE_SRV_CONNECTED)
       {
-         snprintf(l1, sizeof(l1), "A " UI_DEV " joined %s and is browsing.", lbl);
+         snprintf(l1, sizeof(l1), tr("share.a_vita_joined_and_is_browsing"), lbl);
          if (s->have_obj && (s->obj.kind == FE_SHARE_OBJ_SAVE ||
                              s->obj.kind == FE_SHARE_OBJ_STATE))
          {
@@ -908,17 +908,17 @@ static void share_host_run(const char *rom_dir)
             snprintf(nm, sizeof(nm), "%s", h->e[s->obj.entry].name);
             clip_title(nm, 200);
             if (s->obj.kind == FE_SHARE_OBJ_SAVE)
-               snprintf(l3, sizeof(l3), "%s %s  -  save file  -  %s",
-                        pm >= 1000 ? "Sent" : "Sending", nm, kb);
+               snprintf(l3, sizeof(l3), tr("share.save_file"),
+                        pm >= 1000 ? tr("share.sent") : tr("share.sending"), nm, kb);
             else
-               snprintf(l3, sizeof(l3), "%s %s  -  Slot %u state  -  %s",
-                        pm >= 1000 ? "Sent" : "Sending", nm, s->obj.slot, kb);
+               snprintf(l3, sizeof(l3), tr("share.slot_state"),
+                        pm >= 1000 ? tr("share.sent") : tr("share.sending"), nm, s->obj.slot, kb);
             vid_rect(60, 172, 360, 5, C_ACCENT_DK, 110);
             vid_rect(60, 172, 360 * pm / 1000, 5, C_CON, 255);
          }
       }
       else
-         snprintf(l1, sizeof(l1), "Sharing on %s. Waiting for another " UI_DEV ".",
+         snprintf(l1, sizeof(l1), tr("share.sharing_on_waiting_for_another_vita"),
                   lbl);
       /* the pulse: the link host's dot, breathing while it waits */
       {
@@ -937,14 +937,14 @@ static void share_host_run(const char *rom_dir)
       {
 #ifdef VITA
          if (share_online_selected())
-            snprintf(l3, sizeof(l3), "Connected over the internet.");
+            snprintf(l3, sizeof(l3), tr("share.connected_over_the_internet"));
          else
 #endif
-         snprintf(l3, sizeof(l3), "On the other " UI_DEV ": join %s as usual.", lbl);
+         snprintf(l3, sizeof(l3), tr("share.on_the_other_vita_join_as"), lbl);
          vid_text_center(150, l3, SH_DIM);
       }
       if (h->dropped)
-         vid_text_center(196, "Some games did not fit in the list.", SH_DIM);
+         vid_text_center(196, tr("share.some_games_did_not_fit_in"), SH_DIM);
       sh_hints(hint, 1);
       sh_end();
       frame++;
@@ -956,8 +956,8 @@ static void share_host_run(const char *rom_dir)
          fe_evt("share_host_radio_lost");
          fe_share_server_stop(&h->srv);
          share_net_down();
-         sh_notice("SHARE GAME DATA", h->group, "The radio dropped the room.",
-                   "Sharing has stopped.");
+         sh_notice(tr("share.share_game_data"), h->group, tr("share.the_radio_dropped_the_room"),
+                   tr("share.sharing_has_stopped"));
          break;
       }
    }
@@ -966,7 +966,7 @@ static void share_host_run(const char *rom_dir)
           h->srv.tx_data, h->srv.objects_served);
    if (share_net_is_up())
    {
-      sh_wait_frame("SHARE GAME DATA", h->group, "Closing the room...", NULL);
+      sh_wait_frame(tr("share.share_game_data"), h->group, tr("share.closing_the_room"), NULL);
       fe_share_server_stop(&h->srv);
       sceKernelDelayThread(60000);      /* let the BYE leave the radio */
       share_net_down();
@@ -1426,28 +1426,28 @@ static void shj_xf_fail(share_join_t *j, int err)
           j->xf_kind, j->xf_src, j->xf_dst, j->xf_stage,
           fe_share_err_name(err), pct);
    if (j->xf_kind == FE_SHARE_OBJ_SAVE)
-      snprintf(j->fail2, sizeof(j->fail2), "Your save was not changed.");
+      snprintf(j->fail2, sizeof(j->fail2), tr("share.your_save_was_not_changed"));
    else
-      snprintf(j->fail2, sizeof(j->fail2), "Your Slot %d was not changed.",
+      snprintf(j->fail2, sizeof(j->fail2), tr("share.your_slot_was_not_changed"),
                j->xf_dst);
    if (err == FE_SHARE_E_LOST || err == FE_SHARE_E_CLOSED)
    {
       snprintf(j->fail1, sizeof(j->fail1), err == FE_SHARE_E_CLOSED
-               ? "The other " UI_DEV " stopped sharing at %d%%."
-               : "The transfer stopped at %d%%.", pct);
+               ? tr("share.the_other_vita_stopped_sharing_at")
+               : tr("share.the_transfer_stopped_at"), pct);
       j->modal = JM_LOST;
       return;
    }
    snprintf(j->fail1, sizeof(j->fail1), "%s",
-            err == FE_SHARE_E_WRITE ? "Could not write it here. Is the "
-                                      "Memory Stick full?" :
-            err == FE_SHARE_E_CHANGED ? "The file changed on the other " UI_DEV " "
-                                        "while it was sent." :
-            err == FE_SHARE_E_GONE ? "The other " UI_DEV " no longer has that file." :
-            err == FE_SHARE_E_TOO_BIG ? "That file is too large to fetch." :
-            err == FE_SHARE_E_FORMAT ? "That is not a state this version "
-                                       "can load." :
-                                        "The transfer did not complete.");
+            err == FE_SHARE_E_WRITE ? tr("share.could_not_write_it_here_is")
+ :
+            err == FE_SHARE_E_CHANGED ? tr("share.the_file_changed_on_the_other")
+ :
+            err == FE_SHARE_E_GONE ? tr("share.the_other_vita_no_longer_has") :
+            err == FE_SHARE_E_TOO_BIG ? tr("share.that_file_is_too_large_to") :
+            err == FE_SHARE_E_FORMAT ? tr("share.that_is_not_a_state_this")
+ :
+                                        tr("share.the_transfer_did_not_complete"));
    j->modal = JM_FAIL;
 }
 
@@ -1529,8 +1529,8 @@ static void shj_xf_commit(share_join_t *j)
       if (lost)
          snprintf(j->fail2, sizeof(j->fail2),
                   j->xf_kind == FE_SHARE_OBJ_SAVE
-                     ? "Your old save is kept as a .bak file."
-                     : "Your old Slot %d is kept as a .old file.", j->xf_dst);
+                     ? tr("share.your_old_save_is_kept_as")
+                     : tr("share.your_old_slot_is_kept_as"), j->xf_dst);
       return;
    }
    fe_evt("share_xfer_done kind=%d src=%d dst=%d bytes=%u ms=%u kbps=%u "
@@ -1541,13 +1541,13 @@ static void shj_xf_commit(share_join_t *j)
    {
       j->mark[j->ent] |= MARK_SAVE;
       snprintf(j->note, sizeof(j->note), j->y_save
-               ? "Save file replaced yours" : "Save file saved");
+               ? tr("share.save_file_replaced_yours") : tr("share.save_file_saved"));
       g_roms[j->rom].has_sav = -1;
    }
    else
    {
       j->mark[j->ent] |= (unsigned char)(1u << j->xf_src);
-      snprintf(j->note, sizeof(j->note), "Saved to your Slot %d", j->xf_dst);
+      snprintf(j->note, sizeof(j->note), tr("share.saved_to_your_slot"), j->xf_dst);
    }
    j->note_ok = 1;
    j->modal = JM_NONE;
@@ -1600,7 +1600,7 @@ static void shj_xf_cancel(share_join_t *j)
  * 0 = j->e / j->n hold the sharer's list. */
 static int shj_connect(share_join_t *j)
 {
-   static const char *const hint[] = { VID_GLYPH_O " cancel" };
+   const char *const hint[] = { tr("share.o_cancel") };
    fe_share_client_io io = { NULL, share_net_send };
    int stage = 0, rc = -1;
    char l1[80];
@@ -1650,9 +1650,9 @@ static int shj_connect(share_join_t *j)
          }
       }
       sh_backdrop(-1, 0);
-      sh_header("GAME DATA", NULL, j->group, 0, 0);
-      snprintf(l1, sizeof(l1), stage ? "Reading what %s shares..."
-                                     : "Looking for the " UI_DEV " sharing on %s...",
+      sh_header(tr("share.game_data"), NULL, j->group, 0, 0);
+      snprintf(l1, sizeof(l1), stage ? tr("share.reading_what_shares")
+                                     : tr("share.looking_for_the_vita_sharing_on"),
                j->room);
       vid_text_center(104, l1, C_SEL);
       if (stage && j->cl.nchunks)
@@ -1693,19 +1693,19 @@ static void shj_connect_notice(share_join_t *j)
    case 0:
       return;                                        /* the player's O */
    case FE_SHARE_E_REFUSED:
-      snprintf(l2, sizeof(l2), "Update " UI_APP " on both " UI_DEVS " (theirs: %.24s).",
-               j->cl.host.build[0] ? j->cl.host.build : "another version");
-      sh_notice("GAME DATA", j->group,
-                "The two " UI_DEVS " run versions that cannot share.", l2);
+      snprintf(l2, sizeof(l2), tr("share.update_vitadhoc_on_both_vitas_theirs"),
+               j->cl.host.build[0] ? j->cl.host.build : tr("share.another_version"));
+      sh_notice(tr("share.game_data"), j->group,
+                tr("share.the_two_vitas_run_versions_that"), l2);
       break;
    case FE_SHARE_E_BUSY:
-      sh_notice("GAME DATA", j->group, "Another " UI_DEV " is already in that room.",
-                "Try again when it has left.");
+      sh_notice(tr("share.game_data"), j->group, tr("share.another_vita_is_already_in_that"),
+                tr("share.try_again_when_it_has_left"));
       break;
    default:
-      snprintf(l2, sizeof(l2), "Ask them to choose Share game data again.");
-      sh_notice("GAME DATA", j->group,
-                "The " UI_DEV " sharing on that room did not answer.", l2);
+      snprintf(l2, sizeof(l2), tr("share.ask_them_to_choose_share_game"));
+      sh_notice(tr("share.game_data"), j->group,
+                tr("share.the_vita_sharing_on_that_room"), l2);
       break;
    }
 }
@@ -1742,13 +1742,13 @@ static void shj_holds(const fe_share_entry *x, int states_ok, char *out,
    for (k = 0; k < FE_SHARE_SLOTS; k++)
       st += x->st[k].size != 0;
    if (x->save_size && st)
-      snprintf(out, n, "SAVE  -  %d state%s%s", st, st == 1 ? "" : "s",
-               states_ok ? "" : " (not for this build)");
+      snprintf(out, n, tr("share.save_state"), st, st == 1 ? "" : "s",
+               states_ok ? "" : tr("share.not_for_this_build"));
    else if (x->save_size)
       snprintf(out, n, "SAVE");
    else
-      snprintf(out, n, "%d state%s%s", st, st == 1 ? "" : "s",
-               states_ok ? "" : " (not for this build)");
+      snprintf(out, n, tr("share.state"), st, st == 1 ? "" : "s",
+               states_ok ? "" : tr("share.not_for_this_build"));
 }
 
 static void shj_took(unsigned mark, char *out, size_t n)
@@ -1757,45 +1757,45 @@ static void shj_took(unsigned mark, char *out, size_t n)
    for (k = 1; k <= FE_SHARE_SLOTS; k++)
       st += (mark >> k) & 1;
    if ((mark & MARK_SAVE) && st)
-      snprintf(out, n, "save, %d state%s", st, st == 1 ? "" : "s");
+      snprintf(out, n, tr("share.save_state_2"), st, st == 1 ? "" : "s");
    else if (mark & MARK_SAVE)
       snprintf(out, n, "save");
    else if (st)
-      snprintf(out, n, "%d state%s", st, st == 1 ? "" : "s");
+      snprintf(out, n, tr("share.state_2"), st, st == 1 ? "" : "s");
    else
       out[0] = '\0';
 }
 
 static void shj_draw_list(share_join_t *j)
 {
-   static const char *const hint[] = { VID_GLYPH_X " their states", "L/R page",
-                                       VID_GLYPH_TRI " console",
-                                       VID_GLYPH_O " leave" };
-   static const char *const hint_empty[] = { VID_GLYPH_TRI " console",
-                                             VID_GLYPH_O " leave" };
+   const char *const hint[] = { tr("share.x_their_states"), tr("share.l_r_page"),
+                                       tr("share.tri_console"),
+                                       tr("share.o_leave") };
+   const char *const hint_empty[] = { tr("share.tri_console"),
+                                             tr("share.o_leave") };
    char sub[96], t[100], r[64];
    int i, hero_shell = SHARE_LIST_FOLLOWS_SHELL ? g_ui_shell : 1;
    int states_ok = fe_share_states_ok(&j->me, &j->cl.host, g_pcfg.console);
 
    if (states_ok)
-      snprintf(sub, sizeof(sub), "Shared by %s", j->room);
+      snprintf(sub, sizeof(sub), tr("share.shared_by"), j->room);
    else
-      snprintf(sub, sizeof(sub), "%s  -  their build %.20s, yours %.20s",
+      snprintf(sub, sizeof(sub), tr("share.their_build_yours"),
                j->room, j->cl.host.build, j->me.build);
    if (j->view_n == 0)
    {
       const ui_skin *s = skin_of(g_pcfg.console);
       sh_backdrop(-1, 0);
-      sh_header("GAME DATA", sub, j->group, 1, 1);
+      sh_header(tr("share.game_data"), sub, j->group, 1, 1);
       browser_cart(240, 100, s);
       snprintf(t, sizeof(t), j->hidden
-               ? "Nothing here for your %s games" : "No %s saves or states on %s",
+               ? tr("share.nothing_here_for_your_games") : tr("share.no_saves_or_states_on"),
                s->full, j->room);
       vid_text_center(138, t, mix565(C_SEL, C_BG_TOP, g_fx_fade));
       if (j->others)
-         vid_text_center(160, "They share some for the other consoles.",
+         vid_text_center(160, tr("share.they_share_some_for_the_other"),
                          mix565(C_ITEM, C_BG_TOP, g_fx_fade));
-      vid_text_center(184, VID_GLYPH_TRI " change console",
+      vid_text_center(184, tr("share.tri_change_console"),
                       mix565(SH_DIM, C_BG_TOP, g_fx_fade));
       sh_hints(hint_empty, 2);
       return;
@@ -1804,7 +1804,7 @@ static void shj_draw_list(share_join_t *j)
       int e = j->view[j->cur], rom = j->local[e];
       const fe_share_entry *x = &j->e[e];
       sh_backdrop(rom, hero_shell && j->idle >= IDLE_HERO);
-      sh_header("GAME DATA", sub, j->group, 1, 1);
+      sh_header(tr("share.game_data"), sub, j->group, 1, 1);
       rom_display_name(&g_roms[rom], t, sizeof(t), 1);
       clip_title(t, 380);
       vid_text_hd(20, 54 - g_fx_dy, t, mix565(C_SEL, C_BG_TOP, g_fx_fade));
@@ -1812,13 +1812,13 @@ static void shj_draw_list(share_join_t *j)
       if (j->mark[e])
       {
          shj_took(j->mark[e], r, sizeof(r));
-         snprintf(t + strlen(t), sizeof(t) - strlen(t), "  -  you took the %s",
+         snprintf(t + strlen(t), sizeof(t) - strlen(t), tr("share.you_took_the"),
                   r);
       }
       else if (states_ok)
          snprintf(t + strlen(t), sizeof(t) - strlen(t), "  -  %s",
-                  rom_has_sav(rom) ? "you have a save for this game"
-                                   : "you have no save for this game");
+                  rom_has_sav(rom) ? tr("share.you_have_a_save_for_this")
+                                   : tr("share.you_have_no_save_for_this"));
       vid_text(20, 80 - g_fx_dy, t, mix565(C_ITEM, C_BG_TOP, g_fx_fade));
    }
    if (j->cur < j->top)
@@ -1895,7 +1895,7 @@ static void shj_panel_hero(share_join_t *j)
    }
    else
    {
-      static const char sf[] = "SAVE FILE";
+      const char *sf = tr("share.save_file_2");
       sh_save_icon(SS_PX + (SS_PW - 32) / 2, SS_PY + 50, 4, C_ITEM, C_CON);
       vid_text(SS_PX + (SS_PW - vid_text_w(sf)) / 2, SS_PY + 82, sf, SH_DIM);
    }
@@ -1919,9 +1919,9 @@ static void shj_panel_their(share_join_t *j, int slot)
                         PSP_STATE_THUMB_WIDTH, PSP_STATE_THUMB_HEIGHT);
    else
    {
-      const char *m = !j->states_ok ? "needs the same build" :
+      const char *m = !j->states_ok ? tr("share.needs_the_same_build") :
                       (x->st[s].flags & FE_SHARE_ST_THUMB) &&
-                      j->t_th[s] != TH_FAIL ? "preview arriving" : "No preview";
+                      j->t_th[s] != TH_FAIL ? tr("share.preview_arriving") : tr("share.no_preview");
       vid_text(SS_PX + (SS_PW - vid_text_w(m)) / 2,
                vid_text_y_in(SS_PY, SS_PH) - 8, m, SH_DIM);
    }
@@ -1937,7 +1937,7 @@ static void shj_draw_their(share_join_t *j)
    rom_display_name(&g_roms[j->rom], t, sizeof(t), 1);
    snprintf(sub, sizeof(sub), "%s  -  %s", t, j->room);
    sh_backdrop(j->rom, 1);
-   sh_header("THEIR STATES", sub, j->group, 0, 1);
+   sh_header(tr("share.their_states"), sub, j->group, 0, 1);
 
    /* the save row */
    sel = j->row == 0;
@@ -1958,11 +1958,11 @@ static void shj_draw_their(share_join_t *j)
       else if (sel)
          f = j->icon_t / 7 > 7 ? 7 : j->icon_t / 7;
       sh_save_icon(22, by + 4, f, sel ? C_SEL : C_ITEM, C_CON);
-      vid_text(64, y, "Save file", sel ? C_SEL : C_ITEM);
+      vid_text(64, y, tr("share.save_file_3"), sel ? C_SEL : C_ITEM);
       if (j->mark[j->ent] & MARK_SAVE)
       {
          sh_tick(64, y + 18, sh_ok_col());
-         vid_text(76, y + 14, "replaced yours", sh_ok_col());
+         vid_text(76, y + 14, tr("share.replaced_yours"), sh_ok_col());
       }
       else
       {
@@ -1975,8 +1975,8 @@ static void shj_draw_their(share_join_t *j)
    else
    {
       vid_rect(20, by + 3, 36, 24, C_CARD, 200);
-      vid_text(64, y, "No save file shared", SH_DIM);
-      vid_text(64, y + 14, "states only", SH_DIM);
+      vid_text(64, y, tr("share.no_save_file_shared"), SH_DIM);
+      vid_text(64, y + 14, tr("share.states_only"), SH_DIM);
    }
    vid_rect(20, SHT_SLOT_Y(0) - 2, SHT_LIST_W - 20, 1, C_ACCENT_DK, 110);
 
@@ -2003,14 +2003,14 @@ static void shj_draw_their(share_join_t *j)
                    live ? 255 : 110);
       else
          vid_rect(20, by + 3, 36, 24, C_CARD, have ? 255 : 150);
-      snprintf(t, sizeof(t), "Slot %d", i + 1);
+      snprintf(t, sizeof(t), tr("share.slot"), i + 1);
       vid_text(64, y, t, c1);
       if (!have)
          vid_text(64, y + 14, "empty", SH_DIM);
       else if (j->mark[j->ent] & (1u << (i + 1)))
       {
          sh_tick(64, y + 18, sh_ok_col());
-         vid_text(76, y + 14, "got it", sh_ok_col());
+         vid_text(76, y + 14, tr("share.got_it"), sh_ok_col());
       }
       else
       {
@@ -2030,10 +2030,10 @@ static void shj_draw_their(share_join_t *j)
          fe_share_time_text(x->save_time, 0, d1, sizeof(d1));
          fe_share_time_text(j->y_save_time, 0, d2, sizeof(d2));
          if (j->y_save)
-            snprintf(t, sizeof(t), "Theirs %s   Yours %s",
+            snprintf(t, sizeof(t), tr("share.theirs_yours"),
                      d1[0] ? d1 : "?", d2[0] ? d2 : "?");
          else
-            snprintf(t, sizeof(t), "Theirs %s   you have none",
+            snprintf(t, sizeof(t), tr("share.theirs_you_have_none"),
                      d1[0] ? d1 : "?");
          shj_runner(t);
       }
@@ -2043,7 +2043,7 @@ static void shj_draw_their(share_join_t *j)
       shj_panel_their(j, j->row);
       sh_kb(kb, sizeof(kb), x->st[j->row - 1].size);
       fe_share_time_text(x->st[j->row - 1].time, 1, d1, sizeof(d1));
-      snprintf(t, sizeof(t), "Slot %d   %s   %s", j->row, d1, kb);
+      snprintf(t, sizeof(t), tr("share.slot_2"), j->row, d1, kb);
       shj_runner(t);
    }
    ov_outline(SS_PX, SS_PY, SS_PW, SS_PH, C_CON, 140);
@@ -2055,7 +2055,7 @@ static void shj_draw_their(share_join_t *j)
       vid_text(SS_PX + 14, 228, j->note, C_SEL);
    }
    else if (!j->states_ok)
-      vid_text(SS_PX, 228, "States need the same build.", SH_DIM);
+      vid_text(SS_PX, 228, tr("share.states_need_the_same_build"), SH_DIM);
 }
 
 static void shj_draw_yours(share_join_t *j)
@@ -2065,8 +2065,8 @@ static void shj_draw_yours(share_join_t *j)
    int i;
    rom_display_name(&g_roms[j->rom], sub, sizeof(sub), 1);
    sh_backdrop(j->rom, 1);
-   sh_header("YOUR SLOTS", sub, j->group, 0, 1);
-   snprintf(t, sizeof(t), "Put their Slot %d in:", j->xf_src);
+   sh_header(tr("share.your_slots"), sub, j->group, 0, 1);
+   snprintf(t, sizeof(t), tr("share.put_their_slot_in"), j->xf_src);
    vid_text(20, 54, t, C_ITEM);
    for (i = 0; i < FE_SHARE_SLOTS; i++)
    {
@@ -2083,7 +2083,7 @@ static void shj_draw_yours(share_join_t *j)
                    PSP_STATE_THUMB_WIDTH, PSP_STATE_THUMB_HEIGHT, 255);
       else
          vid_rect(20, by + 4, 36, 24, C_CARD, j->y_have[i] ? 255 : 150);
-      snprintf(t, sizeof(t), "Slot %d", i + 1);
+      snprintf(t, sizeof(t), tr("share.slot"), i + 1);
       vid_text(64, y, t, sel ? C_SEL : C_ITEM);
       if (j->y_have[i])
       {
@@ -2095,7 +2095,7 @@ static void shj_draw_yours(share_join_t *j)
    }
    shj_panel_their(j, j->xf_src);
    fe_share_time_text(x->st[j->xf_src - 1].time, 0, d1, sizeof(d1));
-   snprintf(t, sizeof(t), "Incoming   their Slot %d   %s", j->xf_src, d1);
+   snprintf(t, sizeof(t), tr("share.incoming_their_slot"), j->xf_src, d1);
    shj_runner(t);
    ov_outline(SS_PX, SS_PY, SS_PW, SS_PH, C_CON, 140);
 }
@@ -2109,13 +2109,13 @@ static void shj_draw_modal(share_join_t *j)
       rom_display_name(&g_roms[j->rom], l3, sizeof(l3), 1);
       short_game_name(l3, nm, sizeof(nm));
       clip_title(nm, 170);
-      snprintf(l1, sizeof(l1), "Replace your %s save?", nm);
+      snprintf(l1, sizeof(l1), tr("share.replace_your_save"), nm);
       fe_share_time_text(j->y_save_time, 0, d2, sizeof(d2));
       fe_share_time_text(x->save_time, 0, d1, sizeof(d1));
-      snprintf(l2, sizeof(l2), "Yours is from %s, theirs from %s.",
-               d2[0] ? d2 : "an unknown date", d1[0] ? d1 : "an unknown date");
-      sh_plate(l1, l2, "The game loads theirs next time you play.",
-               "Your current save is kept as a backup.", -1);
+      snprintf(l2, sizeof(l2), tr("share.yours_is_from_theirs_from"),
+               d2[0] ? d2 : tr("share.an_unknown_date"), d1[0] ? d1 : tr("share.an_unknown_date"));
+      sh_plate(l1, l2, tr("share.the_game_loads_theirs_next_time"),
+               tr("share.your_current_save_is_kept_as"), -1);
    }
    else if (j->modal == JM_XFER)
    {
@@ -2123,29 +2123,29 @@ static void shj_draw_modal(share_join_t *j)
       sh_kb(kb, sizeof(kb), j->xf_kind == FE_SHARE_OBJ_SAVE
                                ? x->save_size : x->st[j->xf_src - 1].size);
       if (j->xf_kind == FE_SHARE_OBJ_SAVE)
-         snprintf(l1, sizeof(l1), "Fetching their save file");
+         snprintf(l1, sizeof(l1), tr("share.fetching_their_save_file"));
       else
-         snprintf(l1, sizeof(l1), "Fetching their Slot %d into your Slot %d",
+         snprintf(l1, sizeof(l1), tr("share.fetching_their_slot_into_your_slot"),
                   j->xf_src, j->xf_dst);
       if (j->xf_stage > 0)
-         snprintf(l2, sizeof(l2), "%s  -  and its preview", kb);
+         snprintf(l2, sizeof(l2), tr("share.and_its_preview"), kb);
       else if (j->xf_pm >= 80 && el >= 500)
-         snprintf(l2, sizeof(l2), "%s  -  about %u s left", kb,
+         snprintf(l2, sizeof(l2), tr("share.about_s_left"), kb,
                   (unsigned)((uint64_t)el * (1000 - j->xf_pm) / j->xf_pm /
                              1000) + 1);
       else
          snprintf(l2, sizeof(l2), "%s", kb);
       snprintf(l3, sizeof(l3), j->xf_kind == FE_SHARE_OBJ_SAVE
-               ? (j->y_save ? "Yours is replaced when it finishes."
-                            : "It is saved when it finishes.")
-               : "Your slot changes only when it has all arrived.");
+               ? (j->y_save ? tr("share.yours_is_replaced_when_it_finishes")
+                            : tr("share.it_is_saved_when_it_finishes"))
+               : tr("share.your_slot_changes_only_when_it"));
       sh_plate(l1, l2, NULL, l3, (int)j->xf_pm);
    }
    else if (j->modal == JM_LOST)
-      sh_plate("Lost the other " UI_DEV, j->fail1, j->fail2,
-               "Move the " UI_DEVS " closer, or ask them to share again.", -1);
+      sh_plate(tr("share.lost_the_other"), j->fail1, j->fail2,
+               tr("share.move_the_vitas_closer_or_ask"), -1);
    else if (j->modal == JM_FAIL)
-      sh_plate("Not fetched", j->fail1, j->fail2, NULL, -1);
+      sh_plate(tr("share.not_fetched"), j->fail1, j->fail2, NULL, -1);
 }
 
 static void shj_draw_footer(share_join_t *j)
@@ -2154,29 +2154,29 @@ static void shj_draw_footer(share_join_t *j)
    int n = 0;
    if (j->modal == JM_ASK)
    {
-      h[n++] = VID_GLYPH_X " replace";
-      h[n++] = VID_GLYPH_O " keep mine";
+      h[n++] = tr("share.x_replace");
+      h[n++] = tr("share.o_keep_mine");
    }
    else if (j->modal == JM_XFER)
-      h[n++] = VID_GLYPH_O " cancel";
+      h[n++] = tr("share.o_cancel");
    else if (j->modal == JM_LOST)
    {
-      h[n++] = VID_GLYPH_X " try again";
-      h[n++] = VID_GLYPH_O " games";
+      h[n++] = tr("share.x_try_again");
+      h[n++] = tr("share.o_games");
    }
    else if (j->modal == JM_FAIL)
-      h[n++] = VID_GLYPH_O " back";
+      h[n++] = tr("share.o_back");
    else if (j->page == JP_YOURS)
    {
-      h[n++] = j->y_have[j->yslot - 1] ? VID_GLYPH_X " overwrite"
-                                       : VID_GLYPH_X " put it here";
-      h[n++] = VID_GLYPH_O " back";
+      h[n++] = j->y_have[j->yslot - 1] ? tr("share.x_overwrite")
+                                       : tr("share.x_put_it_here");
+      h[n++] = tr("share.o_back");
    }
    else
    {
       if (shj_row_ok(j, j->row))
-         h[n++] = j->row == 0 ? VID_GLYPH_X " get save" : VID_GLYPH_X " get";
-      h[n++] = VID_GLYPH_O " games";
+         h[n++] = j->row == 0 ? tr("share.x_get_save") : tr("share.x_get");
+      h[n++] = tr("share.o_games");
    }
    sh_hints(h, n);
 }
@@ -2218,7 +2218,7 @@ static int shj_rejoin(share_join_t *j)
    shj_bg_stop(j);
    if (!share_net_connected())
    {
-      sh_wait_frame("GAME DATA", j->group, "Looking for the room again...",
+      sh_wait_frame(tr("share.game_data"), j->group, tr("share.looking_for_the_room_again"),
                     NULL);
       share_net_down();
       if (share_net_up(0, j->group) != ADHOC_OK)
@@ -2277,14 +2277,14 @@ static void share_join_run(const char *rom_dir, const char *group)
       }
       share_online_set_code(code);
       share_online_set_wait(sh_online_wait);
-      g_sh_on_title = "GAME DATA";
+      g_sh_on_title = tr("share.game_data");
       g_sh_on_guest = 1;
-      snprintf(l1, sizeof(l1), "Joining %s...", code);
+      snprintf(l1, sizeof(l1), tr("share.joining"), code);
    }
    else
 #endif
-   snprintf(l1, sizeof(l1), "Joining %s...", j->room);
-   sh_wait_frame("GAME DATA", j->group, l1, NULL);
+   snprintf(l1, sizeof(l1), tr("share.joining"), j->room);
+   sh_wait_frame(tr("share.game_data"), j->group, l1, NULL);
    rc = j->dg ? share_net_up(0, j->group) : ADHOC_ERR_NP_START;
 #ifdef VITA
    share_online_set_wait(NULL);
@@ -2297,7 +2297,7 @@ static void share_join_run(const char *rom_dir, const char *group)
 #endif
    if (rc != ADHOC_OK)
    {
-      sh_notice("GAME DATA", j->group, "Could not join the room.",
+      sh_notice(tr("share.game_data"), j->group, tr("share.could_not_join_the_room"),
                 sh_net_error(rc));
       shj_free(j);
       return;
@@ -2334,9 +2334,9 @@ static void share_join_run(const char *rom_dir, const char *group)
          shj_bg_stop(j);
          j->bg_kind = 0;
          snprintf(j->fail1, sizeof(j->fail1), j->cl.err == FE_SHARE_E_CLOSED
-                  ? "The other " UI_DEV " stopped sharing."
-                  : "The other " UI_DEV " is not answering.");
-         snprintf(j->fail2, sizeof(j->fail2), "Nothing of yours was changed.");
+                  ? tr("share.the_other_vita_stopped_sharing")
+                  : tr("share.the_other_vita_is_not_answering"));
+         snprintf(j->fail2, sizeof(j->fail2), tr("share.nothing_of_yours_was_changed"));
          j->xf_kind = 0;
          j->modal = JM_LOST;
          fe_evt("share_join_lost err=%s", fe_share_err_name(j->cl.err));
@@ -2384,7 +2384,7 @@ static void share_join_run(const char *rom_dir, const char *group)
             }
             else
                snprintf(j->fail1, sizeof(j->fail1),
-                        "Still no answer from the other " UI_DEV ".");
+                        tr("share.still_no_answer_from_the_other"));
          }
          else if (edges & PSP_CTRL_CIRCLE)
          {
@@ -2517,7 +2517,7 @@ leave:
    fe_evt("share_join_leave rx_ok=%u rx_bad=%u dup=%u gets=%u retries=%u",
           j->cl.rx_ok, j->cl.rx_bad, j->cl.rx_dup, j->cl.tx_get,
           j->cl.retries);
-   sh_wait_frame("GAME DATA", j->group, "Leaving the room...", NULL);
+   sh_wait_frame(tr("share.game_data"), j->group, tr("share.leaving_the_room"), NULL);
    shj_drop_tmps(j);
    fe_share_client_bye(&j->cl);
    sceKernelDelayThread(60000);

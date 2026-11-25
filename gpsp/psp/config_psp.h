@@ -160,6 +160,9 @@ typedef struct
     * players read too.  screen: PK_SCREEN_* (0 Auto); text_large 0 Normal /
     * 1 Large; contrast 0 Off / 1 On. */
    int  screen, text_large, contrast;
+   /* Interface language: I18N_AUTO (the system's) .. I18N_ZHS, I18N_PSEUDO (vita/i18n.h);
+    * display.ini `language=`, read by the players too. */
+   int  language;
    /* Game-list shell: 0 = Shelf (default, list + art panel),
     * 1 = Marquee (art fills the screen).  The browser reads it once at
     * startup, so like me_mode it applies on the next launch. */
@@ -634,6 +637,10 @@ int  pcfg_fps_x100(const char *ini, const char *key, int def);
  * falls back to the per-key file reads, which answer the same.  pcfg_load
  * loads its own. */
 void pcfg_load(const char *ini_path);
+#ifdef VITA
+/* Loads the catalogue of g_pcfg.language (vita/i18n.h); pcfg_load does it too. */
+void pcfg_language_apply(void);
+#endif
 void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc);
 /* Rewrites all keys to the load path: ONE atomic write (path.tmp, renames),
  * nothing at all when no value changed.  A file too big to hold is left

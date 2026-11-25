@@ -4522,7 +4522,7 @@ def near(px, want, tol=40):
 # Settings by wrapping UP: Button mapping, Game order, Game folders, then it.
 # start, then up: Button mapping, Game order, Game folders, Sync RetroArch
 # saves, Cover picture
-COVER_ROW = "60:start\n+30:up\n" + "+8:up\n" * 5
+COVER_ROW = "60:start\n+30:up\n" + "+8:up\n" * 6
 
 
 def t_cover_menu(S):

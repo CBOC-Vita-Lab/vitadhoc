@@ -7361,8 +7361,13 @@ static void game_loop(void)
             toast_now("Hardcore mode: states cannot be loaded");
          }
          else
-            toast_now(state_load_slot(1, "chord") == 0 ? "State loaded"
-                                                        : "No saved state");
+         {
+            int lrc = state_load_slot(1, "chord");
+            toast_now(lrc == 0 ? "State loaded"
+                      : fe_host_state_other_core_take()
+                          ? "This state is from the other Game Boy core"
+                          : "No saved state");
+         }
       }
       /* A state picked on the game list's shelf: once, as soon as the core
        * has run a frame. */
@@ -7412,10 +7417,17 @@ static void game_loop(void)
             else if (state_load_path(sidecar_read_path(g_res.path,
                         g_game.legacy_state_path, g_game.state_path, pt,
                         sizeof(pt)), "continue") != 0)
-               toast_now("Could not continue: starting from the save");
+               toast_now(fe_host_state_other_core_take()
+                         ? "That state is from the other Game Boy core: starting from the save"
+                         : "Could not continue: starting from the save");
          }
          else if (state_load_slot((unsigned)slot, "shelf") != 0)
-            toast_now("Could not load state %d", slot);
+         {
+            if (fe_host_state_other_core_take())
+               toast_now("This state is from the other Game Boy core");
+            else
+               toast_now("Could not load state %d", slot);
+         }
       }
       /* Not on the press that asked for the pause screen: with the default
        * bindings (TRIANGLE, and SELECT+TRIANGLE) that press is both, and a

@@ -1521,8 +1521,8 @@ def t_gb_type(S):
     S.check(r.has(r"^EVT game rom=.*gbsave\.gb size=\d+ console=GB code="),
             "no override: the cartridge header decides (a Game Boy)")
     # three presses: Game Boy, Game Boy Color, back to Auto
-    # (23 DOWN: the Quick response row comes before the game's own Game Boy type for a Game Boy game)
-    steps = menu_pick(4, wait=60) + set_down(23) + "+10:shot=row.png\n"
+    # (24 DOWN: the Quick response and Game Boy core rows come before the game's own Game Boy type for a Game Boy game)
+    steps = menu_pick(4, wait=60) + set_down(24) + "+10:shot=row.png\n"
     r = S.run("gb_type_row", steps + "+6:cross\n+30:quit\n", autoboot="gbsave.gb",
               extra={"gb_override.txt": keep})
     S.clean(r)
@@ -1547,6 +1547,167 @@ def t_gb_type(S):
     S.clean(r)
     S.check(r.has(r"^EVT game rom=.*gbsave\.gb size=\d+ console=GBC code="),
             "the next start plays it as a Game Boy Color")
+
+
+def gb_cart(kind="mbc1", code=None):
+    """A tiny Game Boy cartridge made here (no ROM files).  MBC1+RAM+battery: it enables the RAM, then in a loop copies
+    WRAM 0xC000 to cartridge RAM 0xA000 and counts in WRAM 0xC001 (a cheat on 0xC000 shows in the battery file)."""
+    rom = bytearray(0x8000)
+    rom[0x100:0x103] = bytes([0xC3, 0x50, 0x01])
+    body = code or bytes([0x3E, 0x0A, 0xEA, 0x00, 0x00,          # LD A,0A ; LD (0000),A
+                          0xAF, 0xEA, 0x00, 0xC0,                # XOR A ; LD (C000),A  (WRAM starts as the machine likes)
+                          0x21, 0x01, 0xC0,                      # LD HL,C001
+                          0xFA, 0x00, 0xC0, 0xEA, 0x00, 0xA0,    # LD A,(C000) ; LD (A000),A
+                          0x34, 0x7E, 0xEA, 0x01, 0xA0,          # INC (HL) ; LD A,(HL) ; LD (A001),A
+                          0x18, 0xF3])                           # JR loop
+    rom[0x150:0x150 + len(body)] = body
+    t = {"mbc1": (0x03, 0x02), "mbc7": (0x22, 0x03), "camera": (0xFC, 0x05), "mbc3rtc": (0x10, 0x02)}[kind]
+    rom[0x147], rom[0x148], rom[0x149] = t[0], 0, t[1]
+    x = 0
+    for i in range(0x134, 0x14D):
+        x = (x - rom[i] - 1) & 0xFF
+    rom[0x14D] = x
+    return bytes(rom)
+
+
+def gb_state_norm(d):
+    """A Gambatte state without the PPU's endx byte: a frame that is not drawn (the real frame behind a Quick response
+    picture) leaves the picture unit's last-line column at 168 where a drawn one has it reset; the next line sets it
+    before it reads it (video/ppu.cpp), as with TGB's window line counter (ahead_check.sh)."""
+    i = d.find(b"endx\0\0\0\1")
+    return d if i < 0 else d[:i + 8] + b"\0" + d[i + 9:]
+
+
+def t_gb_core(S):
+    """Settings > Game Boy core (Standard / Accurate = Gambatte), global and per game: which core runs; a Game Boy game
+    boots on Accurate; the battery file is the same on both; a state is refused by the other core (with the message);
+    rewind and cheats work on Accurate; Quick response leaves the run unchanged; a cartridge Accurate cannot run starts on
+    Standard.  (A tiny cartridge made here; link play is checked by link_tests.py.)"""
+    rom = gb_cart()
+    cr = {"roms/core.gb": rom}
+
+    def core(r):
+        e = [d for d in r.evt("gb_core") if "running" in d]
+        return e[0].get("running") if e else None
+
+    # the setting: Standard is the default, the global key and the per-game key choose
+    r = S.run("gb_core_default", "80:quit\n", autoboot="core.gb", extra=cr)
+    S.clean(r)
+    S.check(core(r) == "standard", "default: Standard (TGB Dual) runs the game (%s)" % core(r))
+    r = S.run("gb_core_global", "80:quit\n", autoboot="core.gb", config={"gb_core": 1}, extra=cr)
+    S.clean(r)
+    S.check(core(r) == "accurate", "Settings Accurate: Gambatte runs it (%s)" % core(r))
+    sav = os.path.join(r.root, "roms", "core.gb.sav")
+    S.check(os.path.exists(sav) and os.path.getsize(sav) == 8192,
+            "...and the game ran: its battery file is 8192 bytes")
+    r = S.run("gb_core_game_std", "80:quit\n", autoboot="core.gb", config={"gb_core": 1},
+              extra=dict(cr, **{"games/core.gb.ini": "gb_core=0\n"}))
+    S.clean(r)
+    S.check(core(r) == "standard", "this game's own Standard beats Settings Accurate (%s)" % core(r))
+    r = S.run("gb_core_game_acc", "80:quit\n", autoboot="core.gb", config={"gb_core": 0},
+              extra=dict(cr, **{"games/core.gb.ini": "gb_core=1\n"}))
+    S.clean(r)
+    S.check(core(r) == "accurate", "this game's own Accurate beats Settings Standard (%s)" % core(r))
+
+    # the battery file: the same on both cores (the game writes 0x55 in RAM; the file carries on)
+    saves = {}
+    for name, cfg in (("std", 0), ("acc", 1)):
+        pre = b"\x11" * 8192 + bytes(range(1, 9))
+        r = S.run("gb_core_sav_" + name, "120:quit\n", autoboot="core.gb", config={"gb_core": cfg},
+                  extra={"roms/core.gb": rom, "roms/core.gb.sav": pre})
+        S.clean(r)
+        d = open(os.path.join(r.root, "roms", "core.gb.sav"), "rb").read()
+        saves[name] = d
+        S.check(len(d) == 8192 + 8 and d[8192:] == bytes(range(1, 9)) and d[2:8192] == b"\x11" * 8190,
+                "%s: the RAM is the file's, and the 8 bytes after it are kept" % name)
+    S.check(saves["std"][0] == saves["acc"][0] == 0 and saves["std"][2:] == saves["acc"][2:],
+            "the two cores leave the same file (byte 1 is the game's own counter)")
+    # a file the Accurate core wrote is read by Standard (and the other way): the game finds its RAM
+    r = S.run("gb_core_sav_swap", "120:quit\n", autoboot="core.gb", config={"gb_core": 0},
+              extra={"roms/core.gb": rom, "roms/core.gb.sav": saves["acc"]})
+    S.clean(r)
+    S.check(open(os.path.join(r.root, "roms", "core.gb.sav"), "rb").read()[2:] == saves["acc"][2:],
+            "Standard reads the file Accurate wrote")
+
+    # a clock cartridge: the 48-byte trailer is the same layout
+    clk = gb_cart("mbc3rtc")
+    tr = bytearray(48)
+    for i, v in enumerate((30, 20, 10, 5, 0)):
+        tr[4 * i] = v
+        tr[20 + 4 * i] = v
+    import time as _t
+    now = int(_t.time())
+    tr[40:48] = now.to_bytes(8, "little")
+    trailers = {}
+    for name, cfg in (("std", 0), ("acc", 1)):
+        r = S.run("gb_core_rtc_" + name, "120:quit\n", autoboot="clk.gb", config={"gb_core": cfg},
+                  extra={"roms/clk.gb": clk, "roms/clk.gb.sav": b"\x22" * 8192 + bytes(tr)})
+        S.clean(r)
+        d = open(os.path.join(r.root, "roms", "clk.gb.sav"), "rb").read()
+        trailers[name] = d[8192:]
+        S.check(len(d) == 8192 + 48 and d[2:8192] == b"\x22" * 8190 and 30 <= d[8192] <= 40 and d[8192 + 8] == 10,
+                "%s: the clock trailer is 48 bytes and the clock kept time (%r)" % (name, d[8192:8192 + 12].hex()))
+    S.check(trailers["std"] == trailers["acc"], "the two cores write the same clock trailer")
+
+    # states: one slot written by a core is refused by the other, and read by its own
+    for first, second in ((1, 0), (0, 1)):
+        nm = "gb_core_state_%d%d" % (first, second)
+        r = S.run(nm + "_a", "100:select+l:3\n+20:quit\n", autoboot="core.gb", config={"gb_core": first}, extra=cr)
+        S.clean(r)
+        S.check(r.has(r"state_save slot=1 "), "%s: the state was saved" % nm)
+        out_b = os.path.join(S.outdir, nm + "_b")
+        shutil.rmtree(out_b, ignore_errors=True)
+        os.makedirs(out_b)
+        S.make_root(os.path.join(out_b, "root"), {"gb_core": second}, "core.gb", None, cr)
+        shutil.copytree(os.path.join(r.root, "states"), os.path.join(out_b, "root", "states"), dirs_exist_ok=True)
+        r2 = S.run(nm + "_b", "100:select+r:3\n+30:shot=refused.png\n+10:quit\n", prepared=True)
+        S.clean(r2, allow=r"state_load")
+        S.check(r2.has(r"state_load slot=1 via=chord rc=-\d"), "%s: the other core refused the state" % nm)
+        S.check(not r2.has(r"state_load slot=1 via=chord rc=0"), "%s: ...and did not load it" % nm)
+        S.check(r2.has(r"^EVT gb_core running=%s" % ("accurate" if second else "standard")),
+                "%s: the game kept running on its own core" % nm)
+    r = S.run("gb_core_state_same", "100:select+l:3\n+30:select+r:3\n+30:quit\n", autoboot="core.gb",
+              config={"gb_core": 1}, extra=cr)
+    S.clean(r)
+    S.check(r.has(r"state_load slot=1 via=chord rc=0"), "Accurate loads its own state")
+
+    # rewind on Accurate
+    r = S.run("gb_core_rewind", "200:rstick-left:60\n+60:quit\n", autoboot="core.gb",
+              config={"gb_core": 1, "rewind": 30}, extra=cr)
+    S.clean(r)
+    S.check(r.has(r"^EVT rewind on ") and r.has(r"^EVT rewind begin") and r.has(r"^EVT rewind end") and
+            not r.has(r"rewind FAILED"), "rewind runs on Accurate")
+
+    # cheats: a GameShark RAM code (01 42 at 0xC000) shows in the battery file
+    cht = 'cheats = 1\n\ncheat0_desc = "Poke"\ncheat0_code = "014200C0"\ncheat0_enable = true\n'
+    for name, cfg in (("std", 0), ("acc", 1)):
+        r = S.run("gb_core_cheat_" + name, "150:quit\n", autoboot="core.gb", config={"gb_core": cfg},
+                  extra=dict(cr, **{"cheats/core.cht": cht}))
+        S.clean(r)
+        d = open(os.path.join(r.root, "roms", "core.gb.sav"), "rb").read()
+        S.check(d[0] == 0x42, "%s: the cheat code poked RAM (battery byte 0 = %02x)" % (name, d[0]))
+
+    # Quick response: forced on, the run is the one without it (sound, battery file, state)
+    out = {}
+    for mode in (0, 2):
+        r = S.run("gb_core_ahead%d" % mode, "100:select+l:3\n+200:quit\n", autoboot="core.gb", config={"gb_core": 1},
+                  extra=cr, env={"GBADHOC_AHEAD": str(mode)})
+        S.clean(r)
+        w = os.path.join(r.out, "audio.wav")
+        out[mode] = (open(w, "rb").read() if os.path.exists(w) else b"",
+                     open(os.path.join(r.root, "roms", "core.gb.sav"), "rb").read(),
+                     [gb_state_norm(open(f, "rb").read()) for f in sorted(glob.glob(os.path.join(r.root, "states", "**", "*.st0"), recursive=True))],
+                     r)
+    S.check(out[2][3].has(r"ahead_frames n=[1-9]"), "Quick response really ran ahead on Accurate")
+    S.check(out[0][0] == out[2][0] and len(out[0][0]) > 1000, "Quick response: the sound is the same")
+    S.check(out[0][1] == out[2][1], "Quick response: the battery file is the same")
+    S.check(out[0][2] and out[0][2] == out[2][2], "Quick response: the saved state is the same")
+
+    # cartridges Accurate does not run start on Standard, with the notice
+    for kind in ("mbc7", "camera"):
+        r = S.run("gb_core_fallback_" + kind, "80:quit\n", autoboot="odd.gb", config={"gb_core": 1},
+                  extra={"roms/odd.gb": gb_cart(kind)})
+        S.check(r.rc == 0 and core(r) == "standard", "%s cartridge: starts on Standard (%s)" % (kind, core(r)))
 
 
 def t_gb_save_soon(S):
@@ -8746,7 +8907,7 @@ def t_export_row(S):
     rom = "gbadhoc-test"
     ra = "retroarch/savefiles/%s.srm" % rom
     mine = bytes((i * 7 + 21) & 0xFF for i in range(32768))
-    row = menu_pick(4, wait=60) + set_down(25) + "+10:shot=row.png\n"
+    row = menu_pick(4, wait=60) + set_down(24) + "+10:shot=row.png\n"
     r = S.run("export_row_ra", "30:left:2\n" + row + "+10:cross\n+20:shot=toast.png\n+6:circle\n+10:circle\n+30:quit\n",
               autoboot=rom + ".gba", extra={"roms/%s.sav" % rom: mine,
                                             "retroarch/savefiles/Other Game.srm": b"\x01" * 64},
@@ -10211,7 +10372,7 @@ TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicato
          ("wide_auto", t_wide_auto), ("wide_top", t_wide_top),
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("biossound", t_biossound), ("chain", t_chain), ("objprio", t_objprio), ("smc", t_smc),
          ("realtime", t_realtime),
-         ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_heal", t_save_heal), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("gb_type", t_gb_type), ("launch_param", t_launch_param),
+         ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_heal", t_save_heal), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("gb_type", t_gb_type), ("gb_core", t_gb_core), ("launch_param", t_launch_param),
          ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("archives", t_archives), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("screen_crt_text", t_screen_crt_text), ("text_large", t_text_large), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("hand_set_rows", t_hand_set_rows), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
          ("controls_defaults", t_controls_defaults),
          ("names_cjk", t_names_cjk),

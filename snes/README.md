@@ -433,6 +433,66 @@ line, `not_rendered=` and `pace=<mode> drawn= over= max= changes=`. `twin/pace_c
 does not change: with odd frames not rendered (and both workers on) the audio, the RAM at the end and every
 rendered frame are identical to the normal run, on the owner's 15 games (3000 frames).
 
+### Quick response (run-ahead by one frame)
+
+Settings > Speed > Quick response (Off / Auto / On; `snes/player.ini` `quick_response`, Auto by default; the launch file's
+`ovr.quick_response` for one session) shows a button press one frame sooner, as in the app and the Sega player: the real frame runs
+without being drawn (its sound goes out), the machine is saved, the next frame runs drawn and silent with the same buttons and is shown,
+and the machine goes back (`frontend/host.cpp` `snes_host_run_frame_ahead`; the decision is `playerkit/src/pk_ahead.h`, the same
+thresholds as everywhere: it starts when the projected cost is at most half a frame, stops over 70 % or after 3 late frames in 120, and
+holds off while the drawing thread runs late). It is off in linked and online play, in fast forward, in rewind, in Steady pacing's half
+mode and while the Super FX chip is slowed to keep a game at full speed (and a pass that ran a frame ahead does not count for that chip
+pacing, so Quick response never slows the chip). RetroAchievements see the real frame only.
+
+The save is not Snes9x's state (its load resets the machine, makes the picture thread wait and take the whole video memory again and
+clears every tile cache) but a light snapshot in memory (`core/ahead.cpp`): exactly what a frame can change, found from the program
+itself (every static and global variable of the core objects, `nm`, each one classified in the file's header), copied raw; video RAM is
+compared in 32-byte blocks and only the blocks the look-ahead frame changed go back, losing only their tiles from the tile cache, marked for
+the picture thread's private copy and for the wide view's strip cache; the sprite tables (the range and time-over flags come out of them)
+are copied aside only when the look-ahead frame rebuilds them; the sound side (SPC700, DSP, ports, the samples not taken yet) is saved and
+put back by jobs in the APU thread's command stream, so nothing waits for that thread; the wide view's write stamps go back and its clock
+goes on. Chips: Super FX (with the Winter Gold cel hold), SA-1 (with the replay engine and the memory map it changes), DSP-1 to DSP-4, C4,
+OBC1, S-DD1, ST010 and MSU-1 (registers, sample position and track; the files are moved back only when the look-ahead frame moved them).
+Not offered (the row says Auto, the log says why and it never runs) for SPC7110, S-RTC, ST011 / ST018, BS-X and Sufami Turbo
+cartridges: their state is in local variables of their decoders or follows the real-time clock.
+
+Cost on the PC build (host x86_64, ms of the emulating thread's CPU per refresh, 1200 frames; host numbers only):
+
+| ROM | plain | run ahead | save + way back |
+| --- | ---: | ---: | ---: |
+| WaveHDMA (PeterLemon) | 0.43 | 0.66 | 0.018 |
+| FFVIIPrelude (SPC700 music) | 0.28 | 0.62 | 0.024 |
+| Mode 7 StarWars | 0.46 | 0.79 | 0.026 |
+| GSU 8BPP FillPoly (Super FX) | 0.58 | 1.12 | 0.041 |
+| SA-1 work cartridge (`twin/tests/make_chip_work_rom.py`) | 1.13 | 2.21 | 0.076 |
+| same, APU and picture threads on: StarWars / GSU / SA-1 | 0.21 / 0.42 / 0.87 | 0.41 / 0.76 / 1.88 | 0.024 / 0.033 / 0.077 |
+
+Snes9x's own state save and load on the same machine: 0.09 to 0.10 ms + 0.23 to 0.27 ms single thread, 0.24 to 0.28 ms + 0.6 to
+2.1 ms with the threads (the load waits for the picture thread), so the light snapshot costs 10 to 40 times less. On a Vita (model,
+docs/PERFORMANCE.md: the game thread is 3.0 to 8.3 ms a frame at IPC 1.0 and 4.2 to 11.8 ms at IPC 0.7 for the owner's 15 games) a frame
+run ahead is about twice that, so by Auto's rule (2.3 x plain + 0.6 ms at most half of 16.7 ms: a plain frame of 3.4 ms or less) it
+can start only for the lightest games at the optimistic end of the model (Super Metroid, F-Zero, Zelda, Mega Man X2, Super Mario Kart at
+IPC 1.0) and for none at IPC 0.7; everywhere else Auto simply does not start and the game runs as before. Nothing of this ran on a Vita:
+the console's log has an `ahead:` line every second (`plain_ms`, `ahead_ms`, `save_ms`, `back_ms`, starts and stops).
+
+Proof (`twin/ahead_check.sh`, gate step `snes-ahead`): per ROM a plain run and runs with every frame from frame 10 on run ahead, single
+thread and with the APU and picture threads: the sound, the work and battery RAM and the machine's digest after every frame
+(Snes9x's state but the drawing flag `PPU.RecomputeClipWindows`, the pads' state, the sprite flags) equal the plain run's; every way
+back gives the machine that was saved; the picture shown at frame n is the plain frame n + 1 (but on the first frame run ahead, which
+follows an undrawn frame as after fast forward, where the buttons change, and, in an interlaced picture, the frame after that too: its
+other field is the one of the picture before); with the wide view (single thread, threads, capture composed on another thread) the wide
+picture, margins included, equals the plain run's next frame when that run leaves frame 10 undrawn too; a small cartridge that shows the
+pad a frame after it reads it shows a press 1 frame after it plain and 0 with Quick response. All 164 public PeterLemon test programs
+(`git clone https://github.com/PeterLemon/SNES`, commit 350b394: 47 PPU programs with Mode 7, HDMA and interlace, 30 CPU and SPC700
+instruction tests, 9 SPC700 music programs, 8 MSU-1 programs (six stream their video or audio from their files; the two Bad Apple ones ship them packed and run without), 58 Super FX programs) and the
+test's own cartridges (latency, an SA-1 and a DSP-1 kept busy with real work) pass, 300 frames each (the MSU-1 ones also 600). Negative controls (`ahead.cpp`
+`AHEAD_NEGATIVE_CONTROL`, built by hand): leaving out the sound side, the SA-1 registers, the video RAM compare, the sprite tables, the
+DSP-1 or the work RAM each fails the proof; leaving out the pads' state does not show on these programs (none reads the pads serially
+across a frame end), it is kept all the same. `player_twin ahead` (in `selftest.sh`) runs it through the player: Off, On, Auto light and
+Auto heavy give the same machine after every refresh through presses, fast forward, rewind, a quick save and a quick load; never under
+fast forward; Auto leaves a heavy game alone; the row and `player.ini`; the drawing thread holding it off. Not covered by a test program:
+DSP-2/3/4, C4, OBC1, S-DD1 and ST010 (their whole state is in the structures the snapshot copies; no free ROM uses them).
+
 ### Smoothness governor (off)
 
 `frontend/picture.cpp` still has a governor that would skip drawing every other frame after 24 slow ones

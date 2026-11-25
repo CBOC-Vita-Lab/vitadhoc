@@ -46,8 +46,8 @@ are what we built and aim for, not measured results.
   sprite flicker on the 8-bit Sega consoles, and a much faster exact Super FX
   core for Doom and Stunt Race FX.
 - **Quick response** shows a button press one frame sooner on Game Boy, Game
-  Boy Color, NES, WonderSwan and the Sega consoles (not on Game Boy Advance or
-  the Super NES: see [Known Issues](KNOWN-ISSUES.md)).
+  Boy Color, NES, WonderSwan, the Sega consoles and the Super NES (not on Game
+  Boy Advance: see [Known Issues](KNOWN-ISSUES.md)).
 - **Names in every alphabet:** Japanese, Korean, Greek, Cyrillic and accented
   names show as written.
 - **A console picker, undo and lock for save states,** and a home screen that

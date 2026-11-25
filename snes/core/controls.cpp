@@ -3455,6 +3455,30 @@ void S9xGetControllerCrosshair (enum crosscontrols ctl, int8 *idx, const char **
 		*bg = color_names[c->bg];
 }
 
+// CBOC-Vita: run-ahead (ahead.cpp) keeps the controller side as it is in memory: the serial read positions, the latch,
+// the pads' and devices' own state. buf NULL: the size; save 1 copies into buf, 0 copies back.
+size_t S9xControlAheadCopy (uint8 *buf, int save)
+{
+	struct { void *p; size_t n; } part[] = {
+		{ joypad, sizeof(joypad) }, { mouse, sizeof(mouse) }, { &superscope, sizeof(superscope) }, { &justifier, sizeof(justifier) },
+		{ mp5, sizeof(mp5) }, { &macsrifle, sizeof(macsrifle) }, { read_idx, sizeof(read_idx) }, { &FLAG_LATCH, sizeof(FLAG_LATCH) },
+		{ &pad_read, sizeof(pad_read) }, { &pad_read_last, sizeof(pad_read_last) }
+	};
+	size_t o = 0;
+	for (size_t i = 0; i < sizeof(part) / sizeof(part[0]); i++)
+	{
+		if (buf)
+		{
+			if (save)
+				memcpy(buf + o, part[i].p, part[i].n);
+			else
+				memcpy(part[i].p, buf + o, part[i].n);
+		}
+		o += part[i].n;
+	}
+	return o;
+}
+
 void S9xControlPreSaveState (struct SControlSnapshot *s)
 {
 	memset(s, 0, sizeof(*s));

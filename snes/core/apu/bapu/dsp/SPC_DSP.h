@@ -107,6 +107,7 @@ public:
 	enum { extra_size = 16 };
 	sample_t* extra()               { return m.extra; }
 	sample_t const* out_pos() const { return m.out; }
+	uint8_t* ahead_echo() { return m.separate_echo_buffer; }   // CBOC-Vita: run-ahead (apu.cpp) leaves this buffer out unless it is in use
 	void disable_surround( bool ) { } // not supported
 public:
 	BLARGG_DISABLE_NOTHROW

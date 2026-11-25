@@ -286,6 +286,7 @@ struct SControlSnapshot
 };
 
 void S9xControlPreSaveState (struct SControlSnapshot *s);
+size_t S9xControlAheadCopy (uint8 *buf, int save);	// CBOC-Vita: run-ahead (ahead.cpp)
 void S9xControlPostLoadState (struct SControlSnapshot *s);
 
 #endif

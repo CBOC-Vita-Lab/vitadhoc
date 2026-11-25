@@ -138,6 +138,9 @@ static void usage(void)
 	    "  --render-half      steady pacing's half mode: only even frames are rendered (the core's render-off path for the\n"
 	    "                     others); --hashes then lists the rendered frames only. Emulation and audio must not change.\n"
 	    "  --render-mod N     render only every Nth frame (fast forward draws 1 in 3); emulation and audio must not change\n"
+	    "  --ahead N          from frame N on run every drawn frame ahead (Quick response): the picture is the next frame's\n"
+	    "  --ahead-verify     with --ahead: every way back compares the machine with the one saved\n"
+	    "  --digests FILE     the machine's digest after every frame (snes_host_machine_digest)\n"
 	    "  --peek-sum         print a hash of all work RAM and battery RAM at the end\n"
 	    "  --opt NAME=VALUE   core option (block_vram sprite_tiles interp superfx_clock gsu_cycles gsu_fast transparency echo_buffer), repeatable\n"
 	    "  --audio-sim SCEN   audio pacing simulation in virtual time (S1..S7, S2+, S2-, all); ROM may be '-' for none.\n"
@@ -160,6 +163,9 @@ int main(int argc, char **argv)
 	std::vector<Opt> opts;
 	bool nowait = false, render_half = false, peek_sum = false;
 	int render_mod = 0;
+	int ahead_from = -1;
+	bool ahead_verify = false;
+	const char *digests = 0;
 	const char *backup_dir = 0, *unblock = 0;
 	bool srm_async = false;
 	bool summary = false;
@@ -216,6 +222,9 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--render-half")) render_half = true;
 		else if (!strcmp(argv[i], "--peek-sum")) peek_sum = true;
 		else if (arg("--render-mod")) render_mod = atoi(argv[++i]);
+		else if (arg("--ahead")) ahead_from = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "--ahead-verify")) ahead_verify = true;
+		else if (arg("--digests")) digests = argv[++i];
 		else { usage(); return 2; }
 	}
 	if (!cheat_decode.empty()) {
@@ -265,6 +274,9 @@ int main(int argc, char **argv)
 		if (snes_host_cheat_error(et, sizeof et)) printf("cheat file: %s\n", et);
 	}
 	FILE *hf = hashes ? fopen(hashes, "w") : 0;
+	FILE *df = digests ? fopen(digests, "w") : 0;
+	if (ahead_verify) snes_host_ahead_verify(1);
+	int ahead_plain = 0;
 	FILE *tf = timing ? fopen(timing, "w") : 0;
 	if (tf) fprintf(tf, "frame,total_us,cpu_us,apu_us,ppu_us,chip_us,front_us\n");
 	std::vector<int16_t> pcm;
@@ -297,8 +309,10 @@ int main(int argc, char **argv)
 		if (render_mod > 1) snes_host_set_render(f % render_mod == 0);
 		uint64_t t0 = now_ns(), c0 = cpu_ns();
 		if (prof_on) { memset(g_s9xp.acc, 0, sizeof g_s9xp.acc); memset(g_s9xp.cnt, 0, sizeof g_s9xp.cnt); g_s9xp.cur = S9XP_CPU; g_s9xp.sp = 0; g_s9xp.last = s9xp_now(); }
-		snes_host_run_frame();
+		if (ahead_from >= 0 && f >= ahead_from) { if (snes_host_run_frame_ahead() != 0) ahead_plain++; }
+		else snes_host_run_frame();
 		if (prof_on) s9xp_enter(S9XP_FRONT), s9xp_leave();
+		if (df) fprintf(df, "%d %016llx\n", f, (unsigned long long) snes_host_machine_digest());
 		uint64_t t1 = now_ns(), c1 = cpu_ns();
 		tot_ns += t1 - t0;
 		wall_tot_ns += t1 - t0;
@@ -361,7 +375,15 @@ int main(int argc, char **argv)
 			printf("cheat %d: %s | %s | %s%s\n", k, ci.label, ci.code, ci.enabled ? "on" : "off", ci.usable ? "" : " (not a code)");
 		}
 	if (hf) fclose(hf);
+	if (df) fclose(df);
 	if (tf) fclose(tf);
+	if (ahead_from >= 0) {
+		uint64_t as[8];
+		snes_host_ahead_stat(as);
+		printf("ahead: frames=%llu plain=%d vram_blocks=%llu obj_rebuilds=%llu save_bytes=%llu verified=%llu differed=%llu save_us=%.1f back_us=%.1f why=%s\n",
+		    (unsigned long long) as[0], ahead_plain, (unsigned long long) as[1], (unsigned long long) as[2], (unsigned long long) as[3],
+		    (unsigned long long) as[4], (unsigned long long) as[5], as[0] ? as[6] / 1e3 / as[0] : 0.0, as[0] ? as[7] / 1e3 / as[0] : 0.0, snes_host_ahead_why());
+	}
 	if (wav) write_wav(wav, pcm);
 	int save_rc = 0;
 	if (srm && snes_host_sram_dirty()) {

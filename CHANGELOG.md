@@ -41,11 +41,14 @@ and in emulators; none of it has run on a real Vita yet (see
   sprites on a line are drawn, not every other frame. The game itself runs
   exactly the same.
 - **Quick response** shows a button press one frame sooner, with the game
-  running exactly as without it. Game Boy, Game Boy Color, NES, WonderSwan
-  and the Sega consoles have it (Settings, and per game); it is on Auto by
-  default where a frame is cheap enough and off in linked and online play, in
-  fast forward and in rewind. Not offered for Game Boy Advance or for the
-  Super NES (its player does not have it yet): see Known Issues.
+  running exactly as without it. Game Boy, Game Boy Color, NES, WonderSwan,
+  the Sega consoles and the Super NES have it (Settings, and per game); it is
+  on Auto by default where a frame is cheap enough and off in linked and
+  online play, in fast forward and in rewind. The Super NES player keeps the
+  machine with a light copy of its own, so the picture thread and the caches
+  go on as they were (heavy Super NES games have no room for it on a Vita, and
+  Auto then does not start). Not offered for Game Boy Advance: see Known
+  Issues.
 
 **Cheat search**
 

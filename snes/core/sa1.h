@@ -112,6 +112,7 @@ void S9xSA1MainLoop (void);
 void S9xSA1ReplayReset (void);
 extern bool8 S9xSA1RomPatched;	/* a cheat has written into the ROM image: the replay engine assumes ROM code never changes, so it stays off */
 void S9xSA1ReplaySync (void);
+size_t S9xSA1AheadCopy (uint8 *buf, int save);	/* CBOC-Vita: run-ahead (ahead.cpp) */
 void S9xSA1ReplayAdvance (void);	/* SA1_FAST_RUN & 8: bring a lazily replayed SA-1 up to the last target */
 void S9xSA1ReplayDrop (void);
 void S9xSA1Run (void);

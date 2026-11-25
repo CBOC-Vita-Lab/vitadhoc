@@ -563,6 +563,112 @@ void S9xSoftResetAPU(void)
     S9xClearSamples();
 }
 
+/* CBOC-Vita: run-ahead (core/ahead.cpp). The sound side as it is in memory: the SPC700 (its object and its 64 KB), the DSP (all of
+ * it but the separate echo buffer when that option is off), the four ports, the samples waiting in the resampler (and the MSU-1's)
+ * and the 65816 side's clock. The save and the way back are put in the APU thread's command stream when it is on, so they happen at
+ * exactly the point of the emulation they belong to and the 65816 side never waits for them. */
+namespace apuahead {
+struct RsKeep { int end, start; float r_frac; int r_left[4], r_right[4]; std::vector<int16_t> buf; };
+static std::vector<uint8> smp_obj, ram, dsp_obj;
+static uint8 ports[4];
+static RsKeep rs, rs_msu;
+static bool8 in_sync;
+static int32 ref_time;
+static uint32 rem;
+static unsigned jobs;
+
+/* the 64 KB of the SPC700 change little in a frame: a chunk already equal is only read (core/ahead.cpp has the same) */
+static void sync(uint8 *dst, const uint8 *src, size_t n)
+{
+	for (size_t o = 0; o < n; o += 256)
+	{
+		uint64 x = 0;
+		for (int i = 0; i < 256; i += 16)
+		{
+			uint64 a0, a1, b0, b1;
+			memcpy(&a0, dst + o + i, 8); memcpy(&a1, dst + o + i + 8, 8);
+			memcpy(&b0, src + o + i, 8); memcpy(&b1, src + o + i + 8, 8);
+			x |= (a0 ^ b0) | (a1 ^ b1);
+		}
+		if (x)
+			memcpy(dst + o, src + o, 256);
+	}
+}
+
+static void rs_copy(Resampler &r, RsKeep &k, bool save)
+{
+	if (save)
+	{
+		k.end = r.end; k.start = r.start; k.r_frac = r.r_frac;
+		memcpy(k.r_left, r.r_left, sizeof k.r_left); memcpy(k.r_right, r.r_right, sizeof k.r_right);
+		k.buf.resize(r.buffer_size > 0 ? r.buffer_size : 0);
+		if (r.buffer && r.buffer_size > 0) memcpy(&k.buf[0], r.buffer, r.buffer_size * 2);
+	}
+	else
+	{
+		r.end = k.end; r.start = k.start; r.r_frac = k.r_frac;
+		memcpy(r.r_left, k.r_left, sizeof k.r_left); memcpy(r.r_right, k.r_right, sizeof k.r_right);
+		if (r.buffer && (int) k.buf.size() == r.buffer_size && r.buffer_size > 0) memcpy(r.buffer, &k.buf[0], r.buffer_size * 2);
+	}
+}
+
+static void job(void *arg)
+{
+	const bool save = arg != 0;
+	uint8 *dsp = (uint8 *) &SNES::dsp;
+	const size_t dsp_n = sizeof(SNES::dsp);
+	const size_t echo_at = SNES::dsp.spc_dsp.ahead_echo() - dsp, echo_n = 0x10000;
+	const bool echo = Settings.SeparateEchoBuffer != 0;
+	if (save)
+	{
+		smp_obj.resize(sizeof(SNES::smp));
+		ram.resize(0x10000);
+		dsp_obj.resize(dsp_n);
+		memcpy(&smp_obj[0], &SNES::smp, sizeof(SNES::smp));
+		sync(&ram[0], SNES::smp.apuram, 0x10000);
+		memcpy(&dsp_obj[0], dsp, echo_at);
+		if (echo) memcpy(&dsp_obj[echo_at], dsp + echo_at, echo_n);
+		memcpy(&dsp_obj[echo_at + echo_n], dsp + echo_at + echo_n, dsp_n - echo_at - echo_n);
+		memcpy(ports, SNES::cpu.registers, 4);
+		in_sync = spc::sound_in_sync;
+	}
+	else
+	{
+		memcpy(&SNES::smp, &smp_obj[0], sizeof(SNES::smp));
+		sync(SNES::smp.apuram, &ram[0], 0x10000);
+		memcpy(dsp, &dsp_obj[0], echo_at);
+		if (echo) memcpy(dsp + echo_at, &dsp_obj[echo_at], echo_n);
+		memcpy(dsp + echo_at + echo_n, &dsp_obj[echo_at + echo_n], dsp_n - echo_at - echo_n);
+		memcpy(SNES::cpu.registers, ports, 4);
+		spc::sound_in_sync = in_sync;
+	}
+	rs_copy(spc::resampler, rs, save);
+	if (Settings.MSU1)
+		rs_copy(msu::resampler, rs_msu, save);
+	jobs++;
+}
+} // namespace apuahead
+
+void S9xAPUAheadSave(void)
+{
+	apuahead::ref_time = spc::reference_time;
+	apuahead::rem = spc::remainder;
+	if (apumt::on)
+		S9xAPUMTPost(apuahead::job, (void *) 1);
+	else
+		apuahead::job((void *) 1);
+}
+
+void S9xAPUAheadRestore(void)
+{
+	spc::reference_time = apuahead::ref_time;
+	spc::remainder = apuahead::rem;
+	if (apumt::on)
+		S9xAPUMTPost(apuahead::job, (void *) 0);
+	else
+		apuahead::job((void *) 0);
+}
+
 void S9xAPUSaveState(uint8 *block)
 {
     S9xAPUMTSync();

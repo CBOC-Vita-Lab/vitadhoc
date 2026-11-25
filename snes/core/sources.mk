@@ -2,6 +2,7 @@
 # (upstream libretro/Makefile.common list, minus libretro.cpp and the NTSC filter;
 # the apu/bapu .cpp files not listed here are #included by smp.cpp / sdsp.cpp.)
 CORE_SRCS := \
+ahead.cpp \
 apu/apu.cpp \
 apu/bapu/dsp/sdsp.cpp \
 apu/bapu/smp/smp.cpp \

@@ -31,6 +31,7 @@
 #include "pk_uiprefs.h"
 #include "pk_speed.h"
 #include "pk_ra.h"
+#include "pk_ahead.h"
 
 namespace snesp {
 
@@ -164,6 +165,19 @@ public:
 	/* two-player or online play, Hardcore: rewind and fast forward are off (a press gives `why` as its notice) */
 	void set_speed_locked(bool locked, const char *why = 0) { speed_.set_locked(locked, why); }
 	const pk::Speed &speed() const { return speed_; }
+	/* ---- "Quick response": run-ahead by one frame (snes_host_run_frame_ahead, playerkit pk_ahead.h) ----
+	 * run_frame() runs a drawn frame at normal speed ahead when the governor wants it (never linked, in fast forward, rewind or Steady
+	 * pacing's half mode). The platform tells it the emulating thread's time of a drawn frame at normal speed (ahead_cost) and, once
+	 * per refresh, what the drawing thread did (ahead_picture: Auto holds off and stops while the picture side runs late);
+	 * set_ahead_hold: something else needs the room now (the Super FX chip is slowed to keep the game at full speed). */
+	void ahead_cost(uint32_t emu_us);
+	void ahead_picture(uint32_t draw_us, uint32_t missed);
+	void ahead_picture_reset() { ahead_.picture_reset(); }
+	void set_ahead_hold(bool hold) { ahead_hold_ = hold; }
+	bool ahead_ran() const { return ahead_ran_; }           /* the last run_frame() ran ahead */
+	int quick() const { return quick_; }
+	const pk::AheadGovernor &ahead() const { return ahead_; }
+	std::string ahead_line();                               /* one census line for the log; counters start over */
 	pk::PaceMode pace_mode() const { return pacer_.mode(); }
 	/* cost of a drawn frame (us): the frame's own work, for the pacing decision */
 	void drawn_cost(uint32_t cost_us);
@@ -227,7 +241,7 @@ public:
 	bool steady_pacing() const { return steady_; }
 	/* "Smooth hand-over" (Speed page, default on): pictures are drawn and presented by their own thread through
 	 * playerkit's mailbox (pipe.h) so the game never waits for the picture. Ignored while the platform has no such thread. */
-	enum { ROW_HANDOFF = pk::ROW_HOST_BASE + 40, ROW_PALSPEED = pk::ROW_HOST_BASE + 41, ROW_LOOK = pk::ROW_HOST_BASE + 42 };
+	enum { ROW_HANDOFF = pk::ROW_HOST_BASE + 40, ROW_PALSPEED = pk::ROW_HOST_BASE + 41, ROW_LOOK = pk::ROW_HOST_BASE + 42, ROW_QUICK = pk::ROW_HOST_BASE + 43 };
 	/* "PAL games speed" (Speed page, key pal_speed in player.ini): false = true 50 Hz (default: 5 frames in 6 refreshes), true = Fast 60 Hz
 	 * (one frame per refresh, the game and its sound run 20 % fast, as before 1.4). Read by the platform each pass. */
 	bool pal_fast() const { return pal_mode_ == 1; }
@@ -321,6 +335,13 @@ private:
 	/* Speed page: fast forward 0 = 2x 1 = 3x, with sound, hold or toggle; rewind on, its length (0 = 30 s, 1 = 60 s) and memory (MB) */
 	bool qsync_ = false;       /* Image quality / Video filter rows to be brought in line after the menu's own change */
 	int ff_speed_ = 0, ff_sound_ = 1, ff_toggle_ = 0, rewind_on_ = 1, rewind_len_ = 1, rewind_mb_ = 12;
+	/* Quick response: 0 Off, 1 Auto (default), 2 On (player.ini quick_response) */
+	int quick_ = 1;
+	pk::AheadGovernor ahead_;
+	bool ahead_ran_ = false, ahead_hold_ = false;
+	uint64_t ahead_st0_[3] = { 0, 0, 0 };       /* frames run ahead, ns saving, ns going back at the last census */
+	void ahead_update_blocked();
+	void set_quick(int mode);
 	struct SpeedGlue : pk::SpeedHost {
 		SnesPlayer *p;
 		explicit SpeedGlue(SnesPlayer *pl) : p(pl) {}

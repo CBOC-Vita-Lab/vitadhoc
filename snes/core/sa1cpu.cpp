@@ -174,6 +174,19 @@ static inline void sa1_put (const SA1Point &p)
 
 bool8 S9xSA1RomPatched = FALSE;
 
+// CBOC-Vita: run-ahead (ahead.cpp): the replay engine's own state, raw (its pointers are into memory that does not move)
+size_t S9xSA1AheadCopy (uint8 *buf, int save)
+{
+	if (buf)
+	{
+		if (save)
+			memcpy(buf, &SA1L, sizeof(SA1L));
+		else
+			memcpy(&SA1L, buf, sizeof(SA1L));
+	}
+	return sizeof(SA1L);
+}
+
 static inline bool sa1_code_in_rom (void)
 {
 	if (S9xSA1RomPatched)

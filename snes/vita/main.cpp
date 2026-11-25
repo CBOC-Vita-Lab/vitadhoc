@@ -1022,6 +1022,7 @@ static double thread_cpu_ms(SceUID id)
 }
 static bool g_hd_ok;                                   /* the drawing thread runs */
 static std::atomic<unsigned> g_hd_drawn(0), g_hd_failed(0), g_hd_draw_us(0);   /* this second, read and cleared by main */
+static std::atomic<unsigned> g_hd_cum_us(0), g_hd_cum_n(0);       /* never drained: the draw time and the pictures finished in total (Quick response's picture check takes deltas) */
 static pk::SpinLock g_hd_lk;                           /* guards the notice snapshot */
 static pk::Notices g_hd_notices;
 static std::atomic<int> g_hd_notice_on(0);
@@ -1082,6 +1083,8 @@ static int hd_draw_thread(SceSize, void *)
 		if (drew) finish_pic(); else g_hd_failed++;
 		const uint64_t dt = sceKernelGetProcessTimeWide() - t0;       /* the cost reported is this picture's own draw, not the repeat after it */
 		g_hd_draw_us += (unsigned) dt;
+		g_hd_cum_us += (unsigned) dt;
+		g_hd_cum_n += 1;
 		if (drew && have && s.mix && g_mix_valid) {
 			/* Smooth 50 Hz: this picture was the early frame's, shown mixed for one refresh; the next refresh shows it alone */
 				PicSrc pure;
@@ -1550,6 +1553,8 @@ int main(int argc, char **argv)
 	double s_stall = 0, s_work = 0, s_agap = 0;
 	uint32_t emu_frame = 0;
 	uint64_t render_emu_us = 0;
+	pk::PictureTotals pp;               /* Quick response: the drawing thread's totals, taken once per refresh */
+	bool pp_hd = false, pp_rebase = true;
 	pk::ExitReason why = pk::EXIT_NORMAL;
 	g_pl->log_flush(false);
 
@@ -1636,6 +1641,7 @@ int main(int argc, char **argv)
 		}
 		bool fresh = false, rendered_any = false, want_menu = false, link_over = false;
 		uint64_t emu_pass_us = 0;
+		unsigned fx_ahead_frames = 0;      /* frames of this pass run ahead (Quick response): not what a frame costs the Super FX pacing */
 		if (pal && to_run == 0 && tapped && g_pl->input(pads, true, loop0 / 1000, emu_frame)) want_menu = true;   /* a tap on a refresh that runs no frame still counts */
 		for (int i = 0; i < to_run; i++) {
 			if (g_pl->input(pads, tapped && i == 0, loop0 / 1000, emu_frame)) { want_menu = true; break; }
@@ -1669,6 +1675,9 @@ int main(int argc, char **argv)
 			emu_us += t1 - t0;
 			last_frame_us = t1 - t0;
 			emu_pass_us += t1 - t0;
+			/* Quick response decides from the emulating thread's time for a drawn frame at normal speed (with the hand-over the drawing is not on it) */
+			if (!g_link && hd && !half && to_run == 1 && render) g_pl->ahead_cost((uint32_t) (t1 - t0));
+			if (g_pl->ahead_ran()) fx_ahead_frames++;
 			frames_run++;
 			emu_frame++;
 			if (render) { render_emu_us = t1 - t0; rendered_any = true; } else not_rendered++;
@@ -1720,6 +1729,20 @@ int main(int argc, char **argv)
 			while (g_pipe.box().poll_cost(&hc)) g_pl->drawn_cost(hc);
 			hd_publish_notices();
 		}
+		{
+			/* once per refresh: what the drawing thread did since the last one (average work for a picture, refreshes it missed: pictures
+			 * dropped and waits at the gate that ran out). Taken every refresh so the interval is short whatever blocks Quick response, but
+			 * told to it only for a plain single refresh of a game the hand-over draws. */
+			const unsigned cs = g_hd_cum_us.load(std::memory_order_relaxed), cn = g_hd_cum_n.load(std::memory_order_relaxed);
+			unsigned cm = 0;
+			if (hd) { const pk::HandoffCensus k = g_pipe.box().census(); cm = k.dropped + k.gate_timeouts; }
+			if (hd != pp_hd || pp_rebase) { pp_hd = hd; pp_rebase = false; pp.rebase(cs, cn, cm); }
+			else {
+				uint32_t du, dm;
+				pp.take(cs, cn, cm, &du, &dm);
+				if (hd && !g_link && !half && !g_pl->speed_busy() && to_run == 1) g_pl->ahead_picture(du, dm);
+			}
+		}
 		if (link_over) break;
 		if (want_menu && g_link) {
 			/* a linked game has no menu (a state, a cheat or a reset would change one console's machine): the menu button asks for the clean end */
@@ -1733,6 +1756,7 @@ int main(int argc, char **argv)
 			if (ev == pk::MENU_GAME_LIST) { why = pk::EXIT_GAME_LIST; break; }
 			if (ev == pk::MENU_EXIT) { why = pk::EXIT_NORMAL; break; }
 			hd_after_menu();
+			pp_rebase = true;
 			snes_host_set_multitap(g_pl->multitap_wanted());
 			last_vc = sceDisplayGetVcount();
 			speed_meter.reset();
@@ -1777,9 +1801,12 @@ int main(int argc, char **argv)
 		/* Super FX pacing (see snes/README.md): the chip's speed is matched to what this Vita manages so the
 		 * game, its music and its controls keep full speed. Only for Super FX carts. */
 		if (superfx && !g_link) {           /* linked: both consoles run the chip at full speed (the adaptive clock would desync them) */
-			fx_emu_us += emu_pass_us;
-			fx_chip_us += snes_host_superfx_take_us();
-			if ((fx_frames += to_run) >= 30) {
+			const uint64_t chip_pass_us = snes_host_superfx_take_us();
+			/* a pass with a frame run ahead did two frames' work: it is not counted, so Quick response never slows the chip; and it holds
+			 * off while the chip is slowed (the game needs the time to keep full speed) */
+			if (!fx_ahead_frames) { fx_emu_us += emu_pass_us; fx_chip_us += chip_pass_us; fx_frames += to_run; }
+			g_pl->set_ahead_hold(fx_pct < 100);
+			if (fx_frames >= 30) {
 				const double avg = fx_emu_us / (double) fx_frames, chip = fx_chip_us / (double) fx_frames;
 				const double rest = avg - chip, target = 1e6 / vita_hz * 0.90;
 				int want = fx_pct;
@@ -1914,6 +1941,7 @@ int main(int argc, char **argv)
 			}
 #endif
 			logf_("\n");
+			if (g_pl->quick() && !g_link) logf_("%s\n", g_pl->ahead_line().c_str());
 			sec_start = now;
 			vblanks = frames_run = 0;
 			emu_us = main_us = fetch_us = draw_us = finish_us = vwait_us = 0;

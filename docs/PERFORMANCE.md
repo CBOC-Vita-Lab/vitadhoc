@@ -537,3 +537,30 @@ alone went down by about 39 % on Super Metroid. The Vita time of these changes i
 do not translate directly to NEON. Merging margin batches of many lines was not done (cannot be exact in a streaming renderer); the scrolling
 games pay about 0.7 % for hashing lines that never hit.
 
+
+## Super NES: Quick response (run-ahead) (25 Nov 2026; host numbers and a model, nothing here ran on a Vita)
+
+A refresh run ahead is the real frame (not drawn), a light save of the machine in memory (`snes/core/ahead.cpp`), the next frame (drawn,
+silent) and the way back. Snes9x's own state save and load were not used: on the PC build they cost 0.09 to 0.28 ms and 0.23 to 2.1 ms
+(the load resets the machine, waits for the picture thread and gives it the whole video memory again), the light save and way back 0.02
+to 0.12 ms together (host wall time, a shared 2-core machine; the numbers vary by a factor of two between runs). Emulating thread, host
+x86_64, CPU ms per refresh over 1200 frames:
+
+| ROM | plain | run ahead | ratio |
+| --- | ---: | ---: | ---: |
+| WaveHDMA (PeterLemon) | 0.43 | 0.66 | 1.5 |
+| FFVIIPrelude (SPC700 music) | 0.28 | 0.62 | 2.2 |
+| Mode 7 StarWars | 0.46 | 0.79 | 1.7 |
+| GSU 8BPP FillPoly (Super FX) | 0.58 | 1.12 | 1.9 |
+| SA-1 work cartridge | 1.13 | 2.21 | 2.0 |
+| StarWars / GSU / SA-1, APU and picture threads on | 0.21 / 0.42 / 0.87 | 0.41 / 0.76 / 1.88 | 2.0 / 1.8 / 2.2 |
+
+Instructions (callgrind, x86_64, 300 frames all run ahead): the save and the way back are 0.30 M instructions a refresh for StarWars, 0.38 M
+for the Super FX program and 0.68 M for the SA-1 cartridge (its 260 KB of BW-RAM and the SA-1's own memory map), against 4.5, 7.0 and 13 M for
+one frame of emulation. Model (x86 instructions as ARM instructions, 444 MHz, IPC 1.0 / 0.7): 0.7 / 1.0 ms, 0.9 / 1.2 ms and 1.5 / 2.2 ms a
+refresh on a Vita, an estimate only (the copies are memory bound: the save and the way back compare in chunks of 256 bytes and write only
+what changed, which keeps the writes to what one frame changed). With the game thread of the 15 owner games at 3.0 to 8.3 ms a frame (IPC 1.0,
+table above) and 4.2 to 11.8 ms (IPC 0.7), Auto's rule (2.3 x plain + 0.6 ms at most half of 16.7 ms) lets it start only where a plain
+frame is about 3.4 ms or less: Super Metroid, F-Zero, Zelda, Mega Man X2 and Super Mario Kart at IPC 1.0, none at IPC 0.7. Elsewhere Auto does
+not start and the game runs as without it; On forces it and drops frames there. The console log's `ahead:` line (`plain_ms`, `ahead_ms`,
+`save_ms`, `back_ms`) gives the real numbers.

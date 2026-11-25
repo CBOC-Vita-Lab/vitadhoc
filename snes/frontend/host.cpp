@@ -27,6 +27,7 @@
 #include "fxemu.h"
 #include "host.h"
 #include "s9x_mt.h"
+#include "s9x_ahead.h"
 #include <atomic>
 #include <errno.h>
 #include <unistd.h>
@@ -35,6 +36,7 @@
 #define BTN_PAD(port, btn) (((port) << 4) | (btn))
 
 static bool g_inited, g_loaded;
+static bool g_ahead_broken;     /* a way back failed: run-ahead stays off for this game (snes_host_run_frame_ahead) */
 static std::string g_srm_path;
 static void cheats_forget(void);
 static void cheats_suspend(std::vector<int> &on);
@@ -284,6 +286,8 @@ int snes_host_load_rom_mem(const uint8_t *data, size_t size, const char *rom_pat
 	cheats_forget();   /* the old game's codes (restores its memory) and Snes9x's own .cht lookup, which this host does not use */
 	Cheat.enabled = FALSE;
 	if (!Memory.LoadROMMem(p, (uint32) n, base)) { snprintf(err, errlen, "Not a valid SNES ROM"); return 3; }
+	S9xAheadReset();
+	g_ahead_broken = false;
 	S9xDeleteCheats();
 	S9xCheatsEnable();   /* the engine is on; with no group it does nothing, so a game without codes runs bit for bit as before */
 	g_rom_stem = base;
@@ -361,6 +365,104 @@ void snes_host_run_frame(void)
 	g_frame_done = false;
 	S9xMainLoop();
 }
+
+/* ---- run-ahead ("Quick response") --------------------------------------------------------------------------------------
+ * 1. the real frame, not drawn, its sound kept; 2. the machine saved in memory (core/ahead.cpp: no reset, the picture thread
+ * and the caches go on); 3. the next frame with the same buttons, drawn, silent; 4. back to the saved machine. The picture
+ * that snes_host_video / snes_host_video_nowait give is then the look-ahead frame's. */
+static uint64_t g_ahead_frames, g_ahead_verify_bad, g_ahead_verified, g_ahead_save_ns, g_ahead_back_ns;
+static int g_ahead_verify, g_ahead_tail;
+static uint64_t machine_digest(void);
+
+int snes_host_ahead_possible(void)
+{
+	return g_loaded && !g_ahead_broken && !S9xAheadUnsupported();
+}
+
+const char *snes_host_ahead_why(void)
+{
+	if (!g_loaded) return "no game";
+	if (g_ahead_broken) return "a way back failed";
+	const char *w = S9xAheadUnsupported();
+	return w ? w : "";
+}
+
+int snes_host_run_frame_ahead(void)
+{
+	if (!snes_host_ahead_possible() || !IPPU.RenderThisFrame) { snes_host_run_frame(); return 1; }
+	S9xAheadBegin();
+	if (!g_ahead_tail) {
+		IPPU.RenderThisFrame = FALSE;
+		snes_host_run_frame();
+		IPPU.RenderThisFrame = TRUE;
+	}
+	uint64_t d0 = g_ahead_verify ? machine_digest() : 0;
+	const uint64_t s0 = s9xmt::now_ns();
+	if (!S9xAheadSave()) { g_ahead_broken = true; return 2; }       /* (cannot happen: the cartridge was checked) the real frame stands */
+	g_ahead_save_ns += s9xmt::now_ns() - s0;
+	const bool audio = g_audio_on;
+	g_audio_on = false;
+	snes_host_run_frame();
+	g_audio_on = audio;
+	const uint64_t b0 = s9xmt::now_ns();
+	if (!S9xAheadRestore()) { g_ahead_broken = true; return 2; }
+	g_ahead_back_ns += s9xmt::now_ns() - b0;
+	if (g_ahead_verify) {
+		g_ahead_verified++;
+		if (machine_digest() != d0) g_ahead_verify_bad++;
+	}
+	g_ahead_frames++;
+	return 0;
+}
+
+int snes_host_ahead_debug_tail(void)
+{
+	g_ahead_tail = 1;
+	int r = snes_host_run_frame_ahead();
+	g_ahead_tail = 0;
+	return r;
+}
+
+void snes_host_ahead_verify(int on) { g_ahead_verify = on ? 1 : 0; }
+
+void snes_host_ahead_stat(uint64_t out[8])
+{
+	S9xAheadStats s;
+	S9xAheadGetStats(&s);
+	out[0] = g_ahead_frames;
+	out[1] = s.vram_blocks;
+	out[2] = s.obj_restores;
+	out[3] = s.bytes;
+	out[4] = g_ahead_verified;
+	out[5] = g_ahead_verify_bad;
+	out[6] = g_ahead_save_ns;
+	out[7] = g_ahead_back_ns;
+}
+
+/* the machine as a number (tests): the state Snes9x saves (but PPU.RecomputeClipWindows, a drawing flag that frames that are drawn
+ * and frames that are not leave differently, snes/twin/skip_check.sh), the pads' own state and the sprite tables' flags */
+static uint64_t machine_digest(void)
+{
+	const bool8 clip = PPU.RecomputeClipWindows;
+	PPU.RecomputeClipWindows = 0;
+	static std::vector<uint8> fb;
+	const size_t n = S9xFreezeSize();
+	fb.resize(n + 64);
+	memStream ms(&fb[0], fb.size());
+	S9xFreezeToStream(&ms);
+	PPU.RecomputeClipWindows = clip;
+	uint64_t h = 1469598103934665603ull;
+	auto mix = [&](const void *p, size_t k) { const uint8 *q = (const uint8 *) p; for (size_t i = 0; i < k; i++) { h ^= q[i]; h *= 1099511628211ull; } };
+	mix(&fb[0], n);
+	std::vector<uint8> c(S9xControlAheadCopy(NULL, 0));
+	S9xControlAheadCopy(&c[0], 1);
+	mix(&c[0], c.size());
+	for (int y = 0; y < SNES_HEIGHT_EXTENDED; y++) mix(&GFX.OBJLines[y].RTOFlags, 1);
+	const uint8 ip[3] = { IPPU.Interlace, IPPU.InterlaceOBJ, IPPU.PseudoHires };
+	mix(ip, 3);
+	return h;
+}
+uint64_t snes_host_machine_digest(void) { return g_loaded ? machine_digest() : 0; }
 
 const uint16_t *snes_host_video(int *w, int *h, int *pitch)
 {

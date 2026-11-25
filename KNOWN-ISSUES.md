@@ -160,19 +160,25 @@ sharing).
   next frame ahead; the game runs exactly the same and states, rewind and saves
   are unaffected. It costs about twice a plain frame (1.2 to 1.7 times on the
   Game Boy, NES and WonderSwan test games, host counts), so Auto is the default
-  on Game Boy, Game Boy Color, NES, WonderSwan, Master System, Game Gear and
-  SG-1000 (it runs only while the game leaves the room, and stops when frames
-  run late) and Off on the Mega Drive, where the heavy games do not fit (On
-  there forces it and can drop frames). It is off in linked and online play,
-  in fast forward, in rewind and in Steady pacing's half mode. A game that
+  on Game Boy, Game Boy Color, NES, WonderSwan, Master System, Game Gear,
+  SG-1000 and Super NES (it runs only while the game leaves the room, and stops
+  when frames run late) and Off on the Mega Drive, where the heavy games do not
+  fit (On there forces it and can drop frames). It is off in linked and online
+  play, in fast forward, in rewind and in Steady pacing's half mode. A game that
   already answers a button in the same frame it reads it gains nothing from it.
-  It is not in the Super NES player in 2.0 (so that player has no Quick
-  response row). It was assessed: on the PC build a Super NES state save costs
-  0.1 to 0.2 ms and a load 0.25 to 0.5 ms next to a 1.0 to 2.0 ms frame (host
-  counts), but Snes9x's state load resets the machine and makes the picture
-  thread wait and redo its whole video memory, so a look-ahead frame is expected to
-  cost too much for Auto to start (an estimate: not measured on a Vita); it needs a
-  lighter way back in the core first. It is not offered for Game Boy Advance:
+  On the Super NES a frame run ahead costs about twice a plain one (1.5 to 2.2
+  times on the PC build, host counts; the save and the way back are 0.02 to
+  0.08 ms there, a light copy in memory and not Snes9x's state load). By the
+  model of docs/PERFORMANCE.md most Super NES games on a Vita have no room for
+  the second frame, so Auto will not start in them and they run as before
+  (nothing was measured on a Vita: the log's `ahead:` line says what it found).
+  It also holds off while a Super FX game runs its chip slowed. It is not
+  offered for SPC7110, S-RTC, ST011 / ST018, BS-X and Sufami Turbo cartridges
+  (the row shows, the game runs without it). In an interlaced picture the lines
+  of the other field come from the picture shown before, so after a button
+  change they show it one refresh later than the rest; the first picture after
+  Quick response starts follows an undrawn frame, as after fast forward. It is
+  not offered for Game Boy Advance:
   a state is 416 KB and loading one
   throws away the translated code that ran from RAM (see docs/PERFORMANCE.md,
   numbers measured on the PC build only), and a frame costs more than half of

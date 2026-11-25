@@ -1616,6 +1616,14 @@ Also in 2.0, from the commit record:
   worked out ahead and shown, and the machine runs exactly as without it (sound, state, memory and battery save equal on 105 test games, PC
   build; a small test cartridge shows a press 1 frame after it plain and 0 frames after it with Quick response). Auto is the default on the
   Master System, Game Gear and SG-1000 and starts only while the game leaves the room; the Mega Drive is Off by default.
+- **Quick response for the Super NES.** Speed > Quick response (Off / Auto / On, Auto by default) in the SNES player, the same run-ahead
+  with a light snapshot of the machine in memory (`snes/core/ahead.cpp`) instead of Snes9x's state load, which resets the machine and
+  makes the picture thread wait and take the whole video memory again: only what a frame can change is copied (the list was taken from
+  the core's own static and global variables), video RAM goes back only where the look-ahead frame changed it (and only those tiles leave
+  the tile cache), the sprite tables are copied aside when the look-ahead frame rebuilds them, the sound side is saved and put back in
+  the APU thread's own command stream. Save and way back cost 0.02 to 0.08 ms on the PC build (Snes9x's save and load 0.3 to 2.4 ms).
+  Proof: `snes/twin/ahead_check.sh` (gate `snes-ahead`): machine, sound, memory identical every frame, the next frame's picture, one
+  frame less latency, on 164 public test programs and own SA-1, DSP-1 and wide view cartridges (snes/README.md, "Quick response").
 - **Quick response in the app (Game Boy, Game Boy Color, NES, WonderSwan).** The same run-ahead for the cores the app runs itself
   (`fe_host.c` `gb_ahead_frame`, decision by `playerkit/src/pk_ahead.h` through `gpsp/vita/ahead_glue.cpp`, one frame at a time): real frame
   undrawn, `gbcore_ahead_save` (the machine's state plus a carry block), the next frame drawn and silent, `gbcore_ahead_load`. What the

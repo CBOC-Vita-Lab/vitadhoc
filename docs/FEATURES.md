@@ -323,6 +323,45 @@ NES (Game Genie 6 or 8 letters, Pro Action Replay, `AAAA:VV`, `AAAA?CC:VV`),
 WonderSwan (`AAAAA:VV`: a RAM address, 00000-0FFFF the console's memory,
 10000 on the cartridge's save memory, and a byte).
 
+### Search memory
+
+Every console's Cheats page has **Search memory** (START on the Vita app's
+page; a row on the Super NES and Sega players' Cheats page), the way
+RetroArch and mGBA find a cheat for lives, money or health. The words and the
+steps are the same everywhere:
+
+1. **Size of the number**: 1, 2 or 4 bytes (unsigned). Most counters are 1
+   byte; money and scores are often 2.
+2. **New search** remembers the game's work RAM as it is now (the game is
+   paused while the menu is open, so a step never costs a frame).
+3. Narrow it down, as often as you like, with **Equal to**, **Not equal to**,
+   **Greater than** or **Less than** a number you type (decimal, or hex with
+   `0x`), or **Changed**, **Unchanged**, **Increased** or **Decreased** since
+   the last step. Close the menu, play (lose a life, spend a coin), open it
+   again and take the next step: the search is kept until the game ends or
+   you start a new one.
+4. The page shows how many results are left. With 50 or fewer it lists each
+   address with its value now; choosing one makes a cheat that **keeps that
+   value** ("Found at ADDRESS", switched on), saved and listed like a typed
+   code.
+
+A result becomes the same typed code each console already takes: GBA `03000010 63`
+(raw: a 2 byte value is `VVVV`, a 4 byte value `03000010:VVVVVVVV`), Game Boy and Game Boy
+Color GameShark `01VVAAAA` (`91VVAAAA` in D000-DFFF: work RAM bank 1, the bank
+the search reads), NES `AAAA:VV`, WonderSwan `AAAAA:VV`, Super NES
+`7E1234:56`, Genesis and Sega CD `FF1234:ABCD` (a word; a byte is `FF1234:56`,
+and a word under 0100 also names its high byte, `FF1234:0003+FF1234:00`, so the
+whole word is kept), Master System, Game Gear and SG-1000 `C123:56`. On the
+consoles whose codes poke one byte a 2 or 4 byte result is several pokes
+joined by `+`. It searches the work RAM a typed code can reach (GBA IWRAM and
+EWRAM; Game Boy C000-DFFF and the top RAM; NES 0000-07FF; WonderSwan system
+RAM; Super NES $7E0000-$7FFFFF; Genesis $FF0000-$FFFFFF; the 8 bit Sega
+consoles $C000-$DFFF), through the same memory maps RetroAchievements uses;
+cartridge (save) RAM and banked Game Boy Color RAM are not searched. It is off
+while linked and in RetroAchievements Hardcore, with the same messages as the
+Cheats page. Memory: the snapshot is one byte per searched byte plus one bit
+per address, held only while a search exists (GBA: about 324 KB).
+
 ## Settings added or changed in 1.4
 
 | Where | Row | What it does |

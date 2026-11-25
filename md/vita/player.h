@@ -190,6 +190,9 @@ public:
 	void menu_drawn();      /* the menu's first frame is on screen: now the battery RAM may be written */
 	pk::Menu &menu() { return menu_; }
 	void cheat_entered(bool ok, const std::string &code, const std::string &name);
+	/* "Search memory": after add_cheat's keyboard hook asked, the platform asks for the number instead when this says so */
+	bool search_value_wanted(std::string *title) { if (!search_ask_) return false; search_ask_ = false; if (title) *title = search_title_; return true; }
+	void search_value_entered(bool ok, const std::string &text) { menu_.search_value_entered(ok, text); }
 
 	/* in-game notices (drawn by the platform over the game) */
 	pk::Notices &notices() { return menu_.notices(); }
@@ -299,6 +302,10 @@ public:
 	void on_state_touched(int slot);
 	void on_controls_changed(pk::WriteResult rc);
 	void add_cheat();
+	bool search_setup(pk_cs *cs);
+	void add_cheat_code(const std::string &code, const std::string &name);
+	void ask_search_value(const std::string &title);
+	const char *search_refused();
 	bool delete_cheat(int index);
 	bool queue_state_write(pk::StateJob &job);
 	void wait_state_writes() { wait_writer(); }
@@ -365,6 +372,8 @@ private:
 	bool speed_was_busy_ = false;
 	pk::Ra ra_;
 	std::string ra_server_;
+	bool search_ask_ = false;                 /* ask_search_value: the keyboard is for a number */
+	std::string search_title_;
 	bool ra_blocks_ = false;               /* Hardcore is in force (or not known yet): no rewind, no cheats, no state loads */
 	uint64_t ra_toast_until_ = 0;
 	void ra_begin(const uint8_t *rom, size_t n);

@@ -17,6 +17,7 @@
 #ifndef PK_MENU_H
 #define PK_MENU_H
 
+#include "pk_csearch.h"
 #include "pk_gfx.h"
 #include "pk_input.h"
 #include "pk_notice.h"
@@ -48,6 +49,7 @@ enum Caps : uint32_t {
 	CAP_CHEATS = 1u << 16,
 	CAP_PLAY_TOGETHER = 1u << 17,
 	CAP_CHEAT_EDIT = 1u << 18,    /* the host can add (add_cheat) and delete (delete_cheat) codes */
+	CAP_CHEAT_SEARCH = 1u << 19,  /* "Search memory" (pk_csearch.h): the host gives the machine's memory (search_setup) and takes a code (add_cheat_code) */
 	CAP_ALL_BASIC = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_GLOW |
 	                CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO
 };
@@ -111,6 +113,16 @@ public:
 	 * and calls Menu::refresh() when the list changed); a code was confirmed for deletion */
 	virtual void add_cheat() {}
 	virtual bool delete_cheat(int index) { (void) index; return false; }
+	/* CAP_CHEAT_SEARCH. search_setup() fills the search's machine (pk_cs_init: the read callback in the console's RetroAchievements
+	 * address space, the regions of work RAM, the console's code kind); false = the machine has nothing to search. The Menu owns the
+	 * search and keeps it while the game runs (the menu may be closed and opened between two steps). A result becomes a code with
+	 * pk_cs_code and goes to add_cheat_code (true = added and on, the list was saved like a typed code). ask_search_value() opens the
+	 * keyboard for a number; the answer comes back through Menu::search_value_entered(). search_refused(): non-NULL = no search now
+	 * and why (a link session says it as the Cheats page does; Hardcore is cheats_refused()). */
+	virtual bool search_setup(pk_cs *cs) { (void) cs; return false; }
+	virtual void add_cheat_code(const std::string &code, const std::string &name) { (void) code; (void) name; }
+	virtual void ask_search_value(const std::string &title) { (void) title; }
+	virtual const char *search_refused() { return cheats_refused(); }
 	/* Writing a state on another thread: return true to take the job (the host runs States::commit(job)
 	 * there and calls Menu::state_write_done() on the game thread when it has finished); false (the default)
 	 * makes the menu write it now. wait_state_writes() must return only when no write is running; the menu
@@ -166,6 +178,11 @@ public:
 	                  const std::vector<std::string> &choices, int value, int before_row = -1);
 	/* the cheat list (or anything the host changed) is read again */
 	void refresh();
+	/* the answer to MenuHost::ask_search_value (ok = the keyboard was confirmed) */
+	void search_value_entered(bool ok, const std::string &text);
+	/* introspection for tests: the search's state */
+	bool search_active() const { return pk_cs_active(&cs_); }
+	int search_count() const { return (int) cs_.count; }
 	/* the host finished a write it took with queue_state_write */
 	void state_write_done(int slot, const SaveReport &rep);
 
@@ -178,7 +195,7 @@ public:
 	Notices &notices() { return notices_; }
 
 	/* introspection, for tests */
-	enum PageId { PAGE_TOP = 0, PAGE_STATES, PAGE_SETTINGS, PAGE_PICTURE, PAGE_CONTROLS, PAGE_MAPPING, PAGE_SPEED, PAGE_CHEATS };
+	enum PageId { PAGE_TOP = 0, PAGE_STATES, PAGE_SETTINGS, PAGE_PICTURE, PAGE_CONTROLS, PAGE_MAPPING, PAGE_SPEED, PAGE_CHEATS, PAGE_CHEAT_SEARCH };
 	PageId page() const { return page_; }
 	int cursor() const { return cursor_; }
 	void goto_page(PageId p);
@@ -301,6 +318,18 @@ private:
 	int modal_, modal_arg_;
 	std::vector<Row> rows_;
 	std::vector<CheatItem> cheats_;
+	/* Search memory */
+	pk_cs cs_;
+	bool cs_ready_;                  /* search_setup() was done */
+	int cs_size_;                    /* 0..2 = 1, 2, 4 bytes (the Size row) */
+	int cs_op_;                      /* the step waiting for its typed number, -1 none */
+	int cs_n_;                       /* results listed (<= PK_CS_LIST_MAX) */
+	uint32_t cs_addr_[PK_CS_LIST_MAX], cs_val_[PK_CS_LIST_MAX];
+	void search_new();
+	void search_ask(int op);
+	void search_apply(int op, uint32_t v);
+	void search_add(int i);
+	bool search_open();
 	std::vector<Region> regions_;
 	float scroll_, scroll_target_;
 	int age_ms_;

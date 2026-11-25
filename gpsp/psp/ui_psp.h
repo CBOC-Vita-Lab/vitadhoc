@@ -115,6 +115,9 @@ int ui_state_load_done(int rc);
  * EVT shot_read n= us=. */
 void ui_shot_probe_arm(int on);
 
+/* the game ended: Search memory's snapshot goes (Vita; ui_vita_cheats.h) */
+void ui_cheat_search_free(void);
+
 #ifdef GPSP_CHEATS
 /* ---- cheats (docs/CHEATS.md) ---------------------------------------------
  * The cheat list of the game at rom_path (only its file name matters):

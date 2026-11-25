@@ -22,6 +22,7 @@ const float CARD_W = 104, CARD_H = 124, CARD_GAP = 8, SHEET_H = 262;
 const int SHEET_MS = 150;
 const int ID_MAP_PLAYER = -100;
 const int ID_CHEAT_ADD = -200;
+const int ID_CHEAT_SEARCH = -201, ID_CS_SIZE = -202, ID_CS_NEW = -203, ID_CS_RESULTS = -204, ID_CS_OP = -210 /* .. -217 */;
 const int TAG_MAP_RESET = -2;
 
 uint32_t col(uint32_t rgb, int a = 255) { return PK_HEX(rgb, a); }
@@ -47,6 +48,8 @@ Menu::Menu()
 	  t_scrolling_(false), t_slider_(false), flash_ms_(0), have_flash_(false), shot_w_(0), shot_h_(0), shot_slot_(0), undo_avail_(false),
 	  gfx_(0), shot_tex_(0), tex_dirty_(false), cap_action_(-1), cap_ms_(0), cap_window_ms_(0), cap_bits_(0), pending_(MENU_NONE)
 {
+	memset(&cs_, 0, sizeof cs_);
+	cs_ready_ = false; cs_size_ = 0; cs_op_ = -1; cs_n_ = 0;
 	memset(vals_, 0, sizeof vals_);
 	memset(allowed_, 0, sizeof allowed_);
 	used_slots_ = 0;
@@ -59,7 +62,7 @@ Menu::Menu()
 	vals_[ROW_SPD_SOUND] = 1;
 }
 
-Menu::~Menu() { release_textures(); }
+Menu::~Menu() { release_textures(); pk_cs_free(&cs_); }
 
 void Menu::release_textures()
 {
@@ -197,6 +200,7 @@ void Menu::goto_page(PageId p)
 	cursor_stack_.clear();
 	if (p == PAGE_PICTURE || p == PAGE_CONTROLS || p == PAGE_SPEED) { stack_.push_back(PAGE_TOP); cursor_stack_.push_back(CARD_SETTINGS); stack_.push_back(PAGE_SETTINGS); cursor_stack_.push_back(0); }
 	else if (p == PAGE_MAPPING) { stack_.push_back(PAGE_TOP); cursor_stack_.push_back(CARD_SETTINGS); stack_.push_back(PAGE_SETTINGS); cursor_stack_.push_back(1); stack_.push_back(PAGE_CONTROLS); cursor_stack_.push_back(3); }
+	else if (p == PAGE_CHEAT_SEARCH) { stack_.push_back(PAGE_TOP); cursor_stack_.push_back(CARD_CHEATS); stack_.push_back(PAGE_CHEATS); cursor_stack_.push_back(0); }
 	else if (p != PAGE_TOP) { stack_.push_back(PAGE_TOP); cursor_stack_.push_back(p == PAGE_STATES ? CARD_STATES : p == PAGE_CHEATS ? CARD_CHEATS : CARD_SETTINGS); }
 	set_page(p, false);
 }
@@ -496,7 +500,14 @@ void Menu::build_rows()
 			r.help = "Type a Game Genie, Pro Action Replay or address=value code with the keyboard.";
 			rows_.push_back(r);
 		}
-		if (cheats_.empty() && !((cfg_.caps & CAP_CHEATS) && (cfg_.caps & CAP_CHEAT_EDIT))) {
+		if ((cfg_.caps & CAP_CHEATS) && (cfg_.caps & CAP_CHEAT_SEARCH)) {
+			Row r;
+			r.id = ID_CHEAT_SEARCH; r.kind = K_ACTION; r.label = "Search memory"; r.enabled = true;
+			r.value_text = pk_cs_active(&cs_) ? strf("%d %s", (int) cs_.count, cs_.count == 1 ? "result" : "results") : "Find a value's address";
+			r.help = "Find where the game keeps lives, money or health: note the number, then narrow it down as it changes. Make a result a cheat.";
+			rows_.push_back(r);
+		}
+		if (cheats_.empty() && !((cfg_.caps & CAP_CHEATS) && ((cfg_.caps & CAP_CHEAT_EDIT) || (cfg_.caps & CAP_CHEAT_SEARCH)))) {
 			Row r;
 			r.kind = K_INFO; r.enabled = false; r.label = "No cheats for this game";
 			r.reason = (cfg_.caps & CAP_CHEATS) ? "" : unsup;
@@ -511,6 +522,55 @@ void Menu::build_rows()
 			if (!r.enabled) r.reason = "Not usable here";
 			r.help = (cfg_.caps & CAP_CHEAT_EDIT) ? "Turn this cheat on or off. Triangle or Delete removes it." : "Turn this cheat on or off.";
 			rows_.push_back(r);
+		}
+		break;
+	}
+	case PAGE_CHEAT_SEARCH: {
+		static const char *const kSizes[] = { "1 byte", "2 bytes", "4 bytes" };
+		const bool active = pk_cs_active(&cs_);
+		Row r;
+		r.id = ID_CS_SIZE; r.kind = K_CHOICE; r.label = "Size of the number";
+		r.choices.assign(kSizes, kSizes + 3); r.vmin = 0; r.vmax = 2; r.value = cs_size_; r.enabled = true;
+		r.help = "Most counters are 1 byte. Try 2 bytes for money and scores, 4 bytes for big numbers. Used by the next New search.";
+		rows_.push_back(r);
+		Row n;
+		n.id = ID_CS_NEW; n.kind = K_ACTION; n.label = "New search"; n.enabled = true;
+		n.value_text = active ? "Start again" : "Look at the game's memory now";
+		n.help = "Remember the game's memory as it is now. Play on, then narrow the list down with the steps below.";
+		rows_.push_back(n);
+		if (active) {
+			Row c;
+			c.id = ID_CS_RESULTS; c.kind = K_INFO; c.enabled = false; c.label = "Results";
+			c.value_text = strf("%d", (int) cs_.count);
+			c.help = cs_.count == 0 ? "Nothing matched. Start a new search."
+			       : (int) cs_.count <= PK_CS_LIST_MAX ? "Pick a result to make it a cheat that keeps its value."
+			       : strf("Narrow it down to %d or fewer to see them.", PK_CS_LIST_MAX);
+			rows_.push_back(c);
+			if (cs_.count > 0)
+				for (int op = 0; op < PK_CS_OPS; op++) {
+					Row o;
+					o.id = ID_CS_OP + op; o.kind = K_ACTION; o.enabled = true;
+					o.label = pk_cs_op_name(op);
+					o.value_text = pk_cs_op_needs_value(op) ? "A number you type" : "Since the last step";
+					o.help = op == PK_CS_EQ ? "Keep the places that hold the number you type. Look at the game for it."
+					       : op == PK_CS_NE ? "Keep the places that do not hold the number you type."
+					       : op == PK_CS_GT ? "Keep the places that hold more than the number you type."
+					       : op == PK_CS_LT ? "Keep the places that hold less than the number you type."
+					       : op == PK_CS_CHANGED ? "Keep the places that are not what they were at the last step."
+					       : op == PK_CS_UNCHANGED ? "Keep the places that are just what they were at the last step."
+					       : op == PK_CS_INC ? "Keep the places that went up since the last step."
+					       : "Keep the places that went down since the last step.";
+					rows_.push_back(o);
+				}
+			for (int i = 0; i < cs_n_; i++) {
+				Row h;
+				char at[24];
+				pk_cs_addr_text(&cs_, cs_addr_[i], at, sizeof at);
+				h.kind = K_ACTION; h.tag = i; h.enabled = true; h.label = at;
+				h.value_text = strf("%u (0x%X)", (unsigned) cs_val_[i], (unsigned) cs_val_[i]);
+				h.help = "Make this a cheat that keeps the value it has now.";
+				rows_.push_back(h);
+			}
 		}
 		break;
 	}
@@ -642,6 +702,10 @@ void Menu::apply_value(Row &r, int v)
 		if (host_) host_->on_change(r.id, v);
 		return;
 	}
+	if (page_ == PAGE_CHEAT_SEARCH) {
+		if (r.id == ID_CS_SIZE) cs_size_ = v;
+		return;
+	}
 	if (page_ == PAGE_CHEATS) {
 		if (r.tag >= 0 && r.tag < (int) cheats_.size()) {
 			if (v != 0 && host_ && host_->cheats_refused()) { notify(host_->cheats_refused(), NOTICE_ERROR); r.value = 0; cheats_[(size_t) r.tag].on = false; return; }
@@ -708,7 +772,15 @@ void Menu::activate_row(int i)
 	case K_SLIDER: apply_value(r, r.value >= r.vmax ? r.vmin : r.value + 1); break;
 	case K_LINK: set_page((PageId) r.tag, true); break;
 	case K_ACTION:
-		if (r.id == ID_CHEAT_ADD) { if (host_ && host_->cheats_refused()) notify(host_->cheats_refused(), NOTICE_ERROR); else if (host_) host_->add_cheat(); }
+		if (r.id == ID_CHEAT_SEARCH) { if (search_open()) set_page(PAGE_CHEAT_SEARCH, true); }
+		else if (page_ == PAGE_CHEAT_SEARCH) {
+			const char *why = host_ ? host_->search_refused() : 0;
+			if (why) { notify(why, NOTICE_ERROR); return; }
+			if (r.id == ID_CS_NEW) search_new();
+			else if (r.id >= ID_CS_OP && r.id < ID_CS_OP + PK_CS_OPS) search_ask(r.id - ID_CS_OP);
+			else if (r.id == -1 && r.tag >= 0) search_add(r.tag);
+		}
+		else if (r.id == ID_CHEAT_ADD) { if (host_ && host_->cheats_refused()) notify(host_->cheats_refused(), NOTICE_ERROR); else if (host_) host_->add_cheat(); }
 		else if (r.id == ROW_CTL_RESET) open_modal(M_CTL_RESET, 0);
 		else if (page_ == PAGE_MAPPING && r.tag == TAG_MAP_RESET) {
 			if (profile_ && model_) {
@@ -722,6 +794,79 @@ void Menu::activate_row(int i)
 		break;
 	default: break;
 	}
+}
+
+/* ---- Search memory (pk_csearch.h) ------------------------------------------------------- */
+
+bool Menu::search_open()
+{
+	const char *why = host_ ? host_->search_refused() : 0;
+	if (why) { notify(why, NOTICE_ERROR); return false; }
+	if (!cs_ready_) {
+		pk_cs_free(&cs_);
+		memset(&cs_, 0, sizeof cs_);
+		if (!host_ || !host_->search_setup(&cs_) || cs_.total == 0) { notify("There is no memory to search in this game", NOTICE_ERROR); return false; }
+		cs_ready_ = true;
+	}
+	return true;
+}
+
+void Menu::search_new()
+{
+	cs_op_ = -1;
+	cs_n_ = 0;
+	int32_t n = pk_cs_start(&cs_, cs_size_ == 0 ? 1 : cs_size_ == 1 ? 2 : 4);
+	if (n < 0) notify("The search could not start: not enough memory", NOTICE_ERROR);
+	else notify(strf("Search started: %d places. Play on, then narrow it down", (int) n), NOTICE_OK);
+	build_rows();
+	clamp_cursor();
+	ensure_visible();
+	layout();
+}
+
+void Menu::search_ask(int op)
+{
+	if (!pk_cs_active(&cs_)) return;
+	if (!pk_cs_op_needs_value(op)) { search_apply(op, 0); return; }
+	cs_op_ = op;
+	if (host_) host_->ask_search_value(std::string(pk_cs_op_name(op)) + " (a number)");
+}
+
+void Menu::search_value_entered(bool ok, const std::string &text)
+{
+	int op = cs_op_;
+	cs_op_ = -1;
+	if (!ok || op < 0 || !pk_cs_active(&cs_)) return;
+	uint32_t v = 0;
+	if (!pk_cs_parse(trim(text).c_str(), cs_.width, &v)) {
+		notify(strf("Type a whole number from 0 to %u (or 0x and hex)", (unsigned) pk_cs_max_value(cs_.width)), NOTICE_ERROR);
+		return;
+	}
+	search_apply(op, v);
+}
+
+void Menu::search_apply(int op, uint32_t v)
+{
+	int32_t n = pk_cs_step(&cs_, op, v);
+	cs_n_ = 0;
+	if (n >= 0 && n <= PK_CS_LIST_MAX) cs_n_ = pk_cs_list(&cs_, PK_CS_LIST_MAX, cs_addr_, cs_val_);
+	if (n < 0) notify("There is no search to narrow down", NOTICE_ERROR);
+	else if (n == 0) notify("No results. Start a new search", NOTICE_INFO);
+	else notify(strf("%d %s", (int) n, n == 1 ? "result" : "results"), NOTICE_OK);
+	build_rows();
+	clamp_cursor();
+	ensure_visible();
+	layout();
+}
+
+void Menu::search_add(int i)
+{
+	if (i < 0 || i >= cs_n_ || !host_) return;
+	char code[160], at[24];
+	if (!pk_cs_code(&cs_, cs_addr_[i], cs_val_[i], code, sizeof code)) { notify("This place cannot be made into a cheat here", NOTICE_ERROR); return; }
+	pk_cs_addr_text(&cs_, cs_addr_[i], at, sizeof at);
+	std::string name = std::string("Found at ") + at;
+	host_->add_cheat_code(code, name);        /* the host says what happened, as for a typed code */
 }
 
 /* ---- states -------------------------------------------------------------------------- */
@@ -1416,7 +1561,7 @@ void Menu::draw_top(Gfx *g, Text *t)
 void Menu::draw_rows(Gfx *g, Text *t)
 {
 	const char *title = page_ == PAGE_SETTINGS ? "Settings" : page_ == PAGE_PICTURE ? "Picture" : page_ == PAGE_CONTROLS ? "Controls" :
-	                    page_ == PAGE_MAPPING ? "Button mapping" : page_ == PAGE_SPEED ? "Speed" : "Cheats";
+	                    page_ == PAGE_MAPPING ? "Button mapping" : page_ == PAGE_SPEED ? "Speed" : page_ == PAGE_CHEAT_SEARCH ? "Search memory" : "Cheats";
 	std::string sub = cfg_.game_name;
 	draw_header(g, t, title, sub.c_str());
 	draw_hints(g, t);

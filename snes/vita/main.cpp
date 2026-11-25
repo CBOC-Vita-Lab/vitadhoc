@@ -1337,10 +1337,16 @@ static pk::MenuEvent menu_loop(int player)
 		ev = g_pl->menu_update(in);
 		if (g_ime_wanted) {
 			g_ime_wanted = false;
-			std::string code, name;
+			std::string code, name, stitle;
+			if (g_pl->search_value_wanted(&stitle)) {
+				/* Search memory: a number (the same keyboard) */
+				bool sok = ime_ask(stitle.c_str(), "", code);
+				g_pl->search_value_entered(sok, code);
+			} else {
 			bool ok = ime_ask("Cheat code (Game Genie, Pro Action Replay or address=value)", "", code);
 			if (ok && !code.empty()) ime_ask("A name for it (you can leave it empty)", "", name);
 			g_pl->cheat_entered(ok, code, name);
+			}
 		}
 		if (ev != pk::MENU_NONE && ev != pk::MENU_RESET_DONE && ev != pk::MENU_RESUME) break;
 		if (!g_pl->menu_open()) break;

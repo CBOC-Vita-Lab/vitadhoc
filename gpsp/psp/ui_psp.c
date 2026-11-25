@@ -459,7 +459,9 @@ enum { SCR_MENU, SCR_SETTINGS, SCR_WIRELESS, SCR_SCAN, SCR_MGIFT,
        , SCR_JOIN, SCR_ADDR, SCR_ADHOC, SCR_LOCAL, SCR_CONN, SCR_HELP,
        SCR_CHEAT_ADD, SCR_RA,
        /* 2.0 online play (vita/ui_vita_online.h): the code pad, the room card */
-       SCR_ONLINE_CODE, SCR_ONLINE_CARD
+       SCR_ONLINE_CODE, SCR_ONLINE_CARD,
+       /* Search memory (vita/ui_vita_cheats.h) */
+       SCR_CHEAT_SEARCH
 #endif
      };
 
@@ -1416,7 +1418,7 @@ static void screen_to(int scr)
         "controls", "host", "join_ask", "cheats"
 #ifdef VITA
         , "join", "address", "adhoc", "local", "connection", "help",
-        "cheat_add", "ra", "online_code", "online_card"
+        "cheat_add", "ra", "online_code", "online_card", "cheat_search"
 #endif
       };
 #ifdef VITA
@@ -8200,6 +8202,9 @@ ui_action ui_frame(unsigned pad, int session_active, const char *session_info)
       break;
    case SCR_CHEAT_ADD:
       act = screen_cheat_add(edges);
+      break;
+   case SCR_CHEAT_SEARCH:
+      act = screen_cheat_search(edges, pad);
       break;
    case SCR_RA:
       act = screen_ra(edges);

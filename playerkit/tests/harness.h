@@ -121,6 +121,30 @@ public:
 	void set_cheat(int i, bool on) { cheat_sets.push_back(std::make_pair(i, on)); if (i >= 0 && i < (int) cheat_list.size()) cheat_list[(size_t) i].on = on; }
 	void on_state_touched(int slot) { touched.push_back(slot); }
 	void on_controls_changed(pk::WriteResult) { controls_changed_count++; }
+	/* Search memory: a fake machine of `mem` (addresses 0..), what the menu asked, the codes it made */
+	std::vector<uint8_t> mem;
+	bool search_ok = false;
+	std::string refused;
+	std::vector<std::string> asked;
+	std::vector<std::pair<std::string, std::string> > added;
+	static uint32_t rd(void *ud, uint32_t a, uint8_t *o, uint32_t n)
+	{
+		MockHost *h = (MockHost *) ud;
+		if (a >= h->mem.size()) return 0;
+		if (n > h->mem.size() - a) n = (uint32_t) h->mem.size() - a;
+		memcpy(o, &h->mem[a], n);
+		return n;
+	}
+	bool search_setup(pk_cs *cs)
+	{
+		if (!search_ok) return false;
+		pk_cs_region r[1] = { { 0, (uint32_t) mem.size() } };
+		pk_cs_init(cs, &MockHost::rd, this, PK_CS_SNES, PK_CS_LE, r, 1);
+		return true;
+	}
+	const char *search_refused() { return refused.empty() ? 0 : refused.c_str(); }
+	void ask_search_value(const std::string &t) { asked.push_back(t); }
+	void add_cheat_code(const std::string &code, const std::string &name) { added.push_back(std::make_pair(code, name)); }
 };
 
 inline pk::MenuInput idle(int dt = 16)

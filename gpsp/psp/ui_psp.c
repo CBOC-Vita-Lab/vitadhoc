@@ -14001,7 +14001,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
    g_swap_to = -1;
    g_view_kind = VK_ALL;
    g_view_which = 0;
-   g_sel_pending = 0;
+   g_sel_stepped = g_sel_lists = 0;
 #endif
    favs_load(rom_dir);
 #ifdef VITA
@@ -14288,6 +14288,50 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          idle = 0;
          edges &= PSP_CTRL_START;
       }
+#ifdef VITA
+      /* SELECT stepped the view when it went down.  SQUARE (the Lists page)
+       * or any other button while it is still held takes that step back: the
+       * animation is cancelled before the list changed, or the previous view
+       * is set again.  Seen here, before the animation drops the buttons. */
+      if (g_sel_stepped)
+      {
+         if (!(pd.Buttons & PSP_CTRL_SELECT))
+            g_sel_stepped = 0;
+         else if ((edges & PSP_CTRL_SQUARE) ||
+                  (pd.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER |
+                                 PSP_CTRL_CROSS | PSP_CTRL_CIRCLE |
+                                 PSP_CTRL_TRIANGLE | PSP_CTRL_START)) ||
+                  g_browser_state_open || find_owns_input)
+         {
+            g_sel_stepped = 0;
+            if (edges & PSP_CTRL_SQUARE)
+            {
+               g_sel_lists = 1;
+               edges &= ~PSP_CTRL_SQUARE;
+            }
+            if (g_swap.active && !g_swap.rebuild && g_swap.f < SWAP_FRAMES / 2)
+            {
+               g_swap.active = 0;       /* the list had not changed yet */
+               fx_reset();
+            }
+            else
+            {
+               int keep_rom = n > 0 ? view_rom(cur) : -1;
+               lib_view_set(g_sel_prev_kind, g_sel_prev_which, n_scan);
+               lib_view_evt(view_count(n_scan));
+               n = view_count(n_scan);
+               cur = 0;
+               for (i = 0; i < n; i++)
+                  if (view_rom(i) == keep_rom)
+                     cur = i;
+               g_swap.active = 0;
+               fx_reset();
+               browser_state_cache_free();
+               g_scroll_cur = g_art_fade_idx = g_marq_idx = -1;
+            }
+         }
+      }
+#endif
       if (g_swap.active)
       {
          if (swap_step())
@@ -14385,35 +14429,31 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       /* SELECT swaps the list for the favourites subset and back.  Not
        * while L+R are held: that is the screenshot chord above. */
 #ifdef VITA
-      /* SELECT steps through the views -- on its release, so that SELECT +
-       * SQUARE can be the game's Collections page instead (the Home's Lists
-       * button is the same page). */
+      /* SELECT steps through the views when it goes down.  If SQUARE comes
+       * while it is held the step is taken back above and the game's
+       * Collections page opens instead (the Home's Lists button is the same
+       * page). */
       {
-         int lists = (edges & BROWSER_LISTS_BUTTON) != 0;
+         int lists = (edges & BROWSER_LISTS_BUTTON) != 0 || g_sel_lists;
          edges &= ~BROWSER_LISTS_BUTTON;
+         g_sel_lists = 0;
          if ((edges & PSP_CTRL_SELECT) && !g_browser_state_open &&
              !(pd.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER)))
-            g_sel_pending = 1;
-         /* SELECT held and another button pressed is not a step: the game
-          * started, Settings, the console list, Find or the save states took
-          * the press, and the view must not change behind them or later */
-         if (g_sel_pending &&
-             ((pd.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER |
-                             PSP_CTRL_CROSS | PSP_CTRL_CIRCLE |
-                             PSP_CTRL_TRIANGLE | PSP_CTRL_START)) ||
-              g_browser_state_open || find_owns_input))
-            g_sel_pending = 0;
-         if (g_sel_pending && (edges & PSP_CTRL_SQUARE))
          {
-            lists = 1;
-            edges &= ~PSP_CTRL_SQUARE;
-            g_sel_pending = 0;
-         }
-         if (g_sel_pending && !(pd.Buttons & PSP_CTRL_SELECT))
-         {
-            g_sel_pending = 0;
-            if (!g_swap.active && !g_sw.active)
+            if (edges & PSP_CTRL_SQUARE)
+            {
+               lists = 1;               /* both at once: no step at all */
+               edges &= ~PSP_CTRL_SQUARE;
+            }
+            else if (!find_owns_input && !g_swap.active && !g_sw.active &&
+                     !(pd.Buttons & (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE |
+                                     PSP_CTRL_TRIANGLE | PSP_CTRL_START)))
+            {
+               g_sel_prev_kind = g_view_kind;
+               g_sel_prev_which = g_view_which;
+               g_sel_stepped = 1;
                swap_begin(0);
+            }
          }
          if (lists && n > 0 && !g_browser_state_open && !g_pop.active &&
              !g_swap.active && !g_sw.active && !g_pick_on)

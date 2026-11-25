@@ -39,7 +39,9 @@ static fe_lpl_rom    g_lrom[BROWSER_MAX];       /* match keys of the scan    */
 static int           g_lrom_n = -1;
 static char          g_lib_rom_dir[PSP_FILE_PATH_CAP];
 static int           g_lpl_read;        /* the playlists were read this run  */
-static int           g_sel_pending;     /* SELECT is down: it steps when let go */
+static int           g_sel_stepped;     /* SELECT is down and has stepped it */
+static int           g_sel_lists;       /* SQUARE came with it: open Lists   */
+static int           g_sel_prev_kind, g_sel_prev_which;  /* the view it left */
 
 static const char *const LIB_VIEW_ID[] = {
    "all", "starred", "recent", "most_played", "not_played", "collection",

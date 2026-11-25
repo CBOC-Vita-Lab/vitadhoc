@@ -3356,6 +3356,25 @@ def t_collections(S):
     S.check(not r.evt("library") and picked(r, "gbadhoc-test.gba"),
             "SELECT + START opens Settings and steps no view, then or afterwards")
 
+    # SELECT steps when it goes down; SQUARE while it is held takes the step
+    # back and opens Lists.  Soon after: the animation is cancelled before the
+    # list changed (no view event at all); later: the previous view is set again.
+    r = run("sel_square_soon", "90:select:30\n93:square:3\n+40:circle\n+60:select\n+60:quit\n")
+    S.check(r.has(r"^EVT ui_screen name=collections from=browser") and
+            r.evt("library") and
+            r.evt("library")[0]["_"].startswith("EVT library view=starred") and len(r.evt("library")) == 1,
+            "SQUARE 3 frames after SELECT: the step is cancelled before the list changed, Lists opens")
+    r = run("sel_square_late", "90:select:40\n104:square:3\n+40:circle\n+60:select\n+60:quit\n")
+    lib = [e["_"] for e in r.evt("library")]
+    S.check(r.has(r"^EVT ui_screen name=collections from=browser") and
+            len(lib) >= 3 and lib[0].startswith("EVT library view=starred") and
+            lib[1].startswith("EVT library view=all") and lib[2].startswith("EVT library view=starred"),
+            "SQUARE after the step showed: the view goes back to Games, Lists opens, then SELECT steps once (%s)" % lib)
+    r = run("sel_start_late", "90:select:40\n104:start:3\n+40:circle\n+60:quit\n")
+    lib = [e["_"] for e in r.evt("library")]
+    S.check(len(lib) == 2 and lib[1].startswith("EVT library view=all"),
+            "START with SELECT held takes the step back too (%s)" % lib)
+
     keep = "#collection A\nzzz.gba\n"
     r = run("failed", "90:select+square:3\n+40:cross\n+30:shot=failed.png\n+4:circle\n+30:quit\n",
             {"collections.txt": keep, "collections.txt.tmp/keep": "x"})

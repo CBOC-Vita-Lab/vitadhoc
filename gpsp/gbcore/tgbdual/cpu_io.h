@@ -86,7 +86,9 @@ static byte cpu_io_read_0D( word adr ){ return 0; }
 static byte cpu_io_read_0E( word adr ){ return 0; }
 static byte cpu_io_read_0F( word adr ){ return g_regs.IF|0xE0 ; } /* GBAdhoc: the top three bits read 1 */
 
-static byte cpu_io_read_10_3F( word adr ){ return apu_read(adr) ; }
+/* GBAdhoc: the APU sees a register access at its M-cycle (the last one of
+ * the instruction), not at the instruction's first clock. */
+static byte cpu_io_read_10_3F( word adr ){ byte v; cpu_access_off=tmp_clocks>4?tmp_clocks-4:0; v=apu_read(adr); cpu_access_off=0; return v; }
 /*
 static byte cpu_io_read_10( word adr ){  ; }
 static byte cpu_io_read_11( word adr ){  ; }
@@ -546,7 +548,7 @@ static void cpu_io_write_03( word adr,byte dat ){ ; }
 static void cpu_io_write_04( word adr,byte dat ){
     static const unsigned short timer_bits[]={512,8,32,128};
     /* Resetting a selected high divider bit creates a TIMA falling edge. */
-    apu_div_reset();
+    cpu_access_off=tmp_clocks>4?tmp_clocks-4:0;apu_div_reset();cpu_access_off=0;
     if ((g_regs.TAC&4) && (((g_regs.DIV<<8)+div_clock)&timer_bits[g_regs.TAC&3])) {
       cpu_timer_increment();
     }
@@ -576,7 +578,7 @@ static void cpu_io_write_0D( word adr,byte dat ){ ; }
 static void cpu_io_write_0E( word adr,byte dat ){ ; }
 static void cpu_io_write_0F( word adr,byte dat ){ g_regs.IF=dat; cpu_irq_check(); }
 
-static void cpu_io_write_10_3F( word adr,byte dat ){ apu_write(adr,dat,total_clock); }
+static void cpu_io_write_10_3F( word adr,byte dat ){ cpu_access_off=tmp_clocks>4?tmp_clocks-4:0; apu_write(adr,dat,total_clock); cpu_access_off=0; }
 /*
 static void cpu_io_write_10( word adr,byte dat ){ ; }
 static void cpu_io_write_11( word adr,byte dat ){ ; }

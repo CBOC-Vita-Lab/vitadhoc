@@ -322,6 +322,14 @@ and in emulators; none of it has run on a real Vita yet (see
   all 11, and dmg-acid2 and cgb-acid2 now draw the reference picture. Some
   games draw a line differently when more than ten sprites share it, as on a
   real Game Boy. Host results; see docs/COMPATIBILITY.md.
+- **Game Boy sound registers are exact.** The last sound tests that failed
+  (blargg dmg_sound and cgb_sound: 8 and 9 of 13 passing) pass now, 13 of 13
+  each. The sweep of square channel 1 writes its new pitch back where the next
+  write to its registers finds it; channel 3 has its own clock, so reading or
+  writing wave RAM while it plays gives what the real console gives, and a
+  retrigger on a Game Boy corrupts the start of wave RAM as it does there.
+  Ordinary games sound the same (a sound register write now takes effect a few
+  clocks later, well under one sample). Old save states load. Host results.
 
 **Names in every alphabet**
 

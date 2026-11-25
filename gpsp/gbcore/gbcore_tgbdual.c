@@ -1899,6 +1899,12 @@ uint64_t gbcore_sync_hash(gbcore_t *core)
     h = sync_bytes(h, timing, sizeof(timing));
   }
   {
+    /* the channel 3 clock decides what a wave RAM read returns while it plays */
+    uint8_t timing[12];
+    apu_save_wave_timing(timing);
+    h = sync_bytes(h, timing, sizeof(timing));
+  }
+  {
     uint8_t timing[8];
     cpu_save_timer_timing(timing);
     h = sync_bytes(h, timing, sizeof(timing));

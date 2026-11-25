@@ -52,7 +52,7 @@ void snd_update(void)
 				if (apu_timer->sweep_enabled && snd_stat.sq1_sw_time) {
 					int next = sweep_calculate();
 					if (next <= 2047 && snd_stat.sq1_sw_shift) {
-						apu_timer->sweep_shadow = snd_stat.sq1_freq = next;
+						apu_timer->sweep_shadow = snd_stat.sq1_freq = snd_stat.sq1_init_freq = next; /* the sweep rewrites NR13/NR14's frequency */
 						sweep_calculate();
 					}
 				}
@@ -67,8 +67,42 @@ void snd_update(void)
 	}
 }
 
+/* GBAdhoc: the CPU-side wave channel, clocked in T-cycles, so that wave RAM
+ * reads, writes and retriggers behave as on hardware while it plays (the
+ * audio generator keeps its own sample-rate position).  wave_cd counts down
+ * to the channel's next fetch; wave_since counts the clocks after the last. */
+static dword wave_cd, wave_pos, wave_since;
+static void wave_advance(unsigned c)
+{
+	if (!snd_stat.wav_playing) { wave_since = 0xffff; return; }
+	if (!c) return;
+	if (c >= wave_cd) {
+		unsigned period = (2048 - (snd_stat.wav_freq & 0x7ff)) * 2;
+		c -= wave_cd;
+		wave_pos = (wave_pos + 1 + c / period) & 31;
+		c %= period;
+		wave_cd = period - c;
+		wave_since = c;
+	} else {
+		wave_cd -= c;
+		if (wave_since < 0xffff) wave_since += c;
+	}
+}
+
 static void apu_advance(unsigned cycles)
 {
+	if (apu_timer == &cpu_timing) {
+		while (apu_timer->phase + cycles >= 8192) {
+			unsigned part = 8192 - apu_timer->phase;
+			cycles -= part;
+			wave_advance(part);
+			apu_timer->phase = 0;
+			snd_update();
+		}
+		apu_timer->phase += cycles;
+		wave_advance(cycles);
+		return;
+	}
 	apu_timer->phase += cycles;
 	while (apu_timer->phase >= 8192) {
 		apu_timer->phase -= 8192;
@@ -76,16 +110,24 @@ static void apu_advance(unsigned cycles)
 	}
 }
 
-void apu_update(void)
+/* GBAdhoc: bring the CPU-side APU to the clock of a register access, which
+ * lies "off" clocks after the start of the running instruction. */
+static void apu_update_at(int off)
 {
-	int clock = cpu_get_clock();
+	int clock = cpu_get_clock() + off;
 	int elapsed = clock - apu_cpu_clock;
-	apu_cpu_clock = clock;
-	if (elapsed > 0) {
+	if (elapsed < -64) apu_cpu_clock = clock;
+	else if (elapsed > 0) {
 		unsigned cycles = (unsigned)elapsed >> (cpu_get_speed() ? 1 : 0);
+		apu_cpu_clock = clock;
 		apu_time += cycles;
 		apu_advance(cycles);
 	}
+}
+
+void apu_update(void)
+{
+	apu_update_at(0);
 }
 
 static void apu_enqueue(word adr, byte dat)
@@ -100,7 +142,7 @@ static void apu_enqueue(word adr, byte dat)
 
 void apu_div_reset(void)
 {
-	apu_update();
+	apu_update_at(cpu_access_off);
 	apu_enqueue(0xff04, 0);
 	if (cpu_timing.phase & 4096) snd_update();
 	cpu_timing.phase = 0;
@@ -185,6 +227,11 @@ void apu_save_cpu_timing(byte *out)
 	apu_put32(&p, cpu_timing.sweep_timer); apu_put32(&p, cpu_timing.sweep_shadow);
 	apu_put32(&p, cpu_timing.sweep_enabled); apu_put32(&p, cpu_timing.sweep_negated);
 }
+void apu_save_wave_timing(byte *out)
+{
+	byte *p = out;
+	apu_put32(&p, wave_cd); apu_put32(&p, wave_pos); apu_put32(&p, wave_since);
+}
 void apu_save_timing(byte *out)
 {
 	byte *p = out + 40;
@@ -195,6 +242,9 @@ void apu_save_timing(byte *out)
 	apu_put32(&p, sq1_sample); apu_put32(&p, sq2_sample);
 	apu_put32(&p, wav_index); apu_put32(&p, wav_sample);
 	apu_put32(&p, (dword)noi_sample); apu_put32(&p, noise_index);
+	/* CPU-side wave channel (added after APU1; old states lack the tag) */
+	memcpy(out + 96, "WAV1", 4);
+	apu_save_wave_timing(out + 100);
 }
 void apu_load_timing(const byte *in)
 {
@@ -203,6 +253,7 @@ void apu_load_timing(const byte *in)
 	sq1_cur_pos = sq2_cur_pos = wav_cur_pos = noi_cur_pos = 0;
 	sq1_sample = sq2_sample = wav_index = wav_sample = noise_index = 0;
 	noi_sample = 10000;
+	wave_cd = 0; wave_pos = 0; wave_since = 0xffff;
 	if (!memcmp(in, "APU1", 4)) {
 		cpu_timing.phase = apu_get32(&p) & 8191; cpu_timing.step = apu_get32(&p) & 7;
 		cpu_timing.envelope[0] = apu_get32(&p) % 9; cpu_timing.envelope[1] = apu_get32(&p) % 9; cpu_timing.envelope[2] = apu_get32(&p) % 9;
@@ -214,6 +265,12 @@ void apu_load_timing(const byte *in)
 		wav_index = apu_get32(&p) & 31; wav_sample = apu_get32(&p) & 15;
 		noi_sample = (int32_t)apu_get32(&p); noise_index = apu_get32(&p);
 		if (noi_sample < -10000 || noi_sample > 12000) noi_sample = 10000;
+		if (!memcmp(in + 96, "WAV1", 4)) {
+			p = in + 100;
+			wave_cd = apu_get32(&p); wave_pos = apu_get32(&p) & 31; wave_since = apu_get32(&p);
+			if (wave_cd > 4096 + 8) wave_cd = 4096 + 8;
+			if (wave_since > 0xffff) wave_since = 0xffff;
+		}
 	}
 	apu_timer = &cpu_timing;
 	apu_cpu_clock = cpu_get_clock(); apu_time = 0;

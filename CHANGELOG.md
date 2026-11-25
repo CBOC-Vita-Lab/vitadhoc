@@ -344,6 +344,10 @@ and in emulators; none of it has run on a real Vita yet (see
   small room service they talk to.
 - New shared kits, `playerkit` (menus, pacing, look governor, link) and
   `widekit` (wide view), so every console behaves the same way.
+- The experimental GPU xBRZ (off by default and too slow) is gone, so the
+  whole main app can be one GPL-2.0 program. The CPU xBRZ filter and every
+  other picture choice are unchanged. An old `gpu_xbrz = 1` line in `vita.ini`
+  is ignored; no saved setting selected it.
 - A fuzz-tested state loader on every core, a test gate, and a lot more
   testing than any earlier version.
 

@@ -251,22 +251,9 @@ static struct
                                * line by line / jit / sound), `EVT
                                * core_phase` every ten seconds (main.h has
                                * what each level costs); 0 = off        */
-   int      gpu_xbrz;         /* gpu_xbrz = 1: xBRZ drawn by the GPU where
-                               * it can be (video_vita.c, "xBRZ on the
-                               * GPU"); 0 = the CPU's cores, the default:
-                               * on the console the GPU took 31 ms a
-                               * frame for it                            */
    int      gpu_time;         /* gpu_time = 1: each present waits for the
                                * GPU to finish, and the log's vita_gpu
                                * line says how long (measuring only)     */
-   int      gpu_probe;        /* gpu_probe = 1: at start, compile test
-                               * programs and log what the shader
-                               * compiler says (`gpu_probe` lines); N >=
-                               * 2: what GPU xBRZ's first passes left in
-                               * their targets at its Nth picture
-                               * (`gpu_rt` lines)                       */
-   int      gpu_view;         /* gpu_xbrz_view = 1/2: the screen shows GPU
-                               * xBRZ's passes 1/0 (video_vita.c)       */
    /* FASTER LINK PLAY (GBAdhoc 4.0; the PSP's PLAY_* defaults): the GBA
     * Link Cable's fast path with the lean hooks (gba_link_fast = 0..3; 0 =
     * every bus walk, as up to build 19) and a network session's partner
@@ -302,7 +289,7 @@ static struct
                                * (it asks nobody without it) */
    int      update_timeout;   /* update_timeout = ms: the twin's tests */
 } g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, -1, 1, 1,
-           "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 1, 1, 1, -1, 1, 0x60,
+           "", 0, 2, 1, 0, 0, 3, 2, 1, 1, 1, 1, 1, -1, 1, 0x60,
            "", "", 0, "", 0 };
 
 /* The A/B keys of 1.4's layers, so the owner can run a "1.3 baseline"
@@ -2588,10 +2575,7 @@ static void read_switches(void)
    g_sw.render_thread   = (int)fe_ini_get_int(ini, "render_thread", 1);
    if (g_sw.render_thread < 0 || g_sw.render_thread > 2)
       g_sw.render_thread = 1;
-   g_sw.gpu_xbrz        = (int)fe_ini_get_int(ini, "gpu_xbrz", 0) ? 1 : 0;
    g_sw.gpu_time        = (int)fe_ini_get_int(ini, "gpu_time", 0) ? 1 : 0;
-   g_sw.gpu_probe       = (int)fe_ini_get_int(ini, "gpu_probe", 0);
-   g_sw.gpu_view        = (int)fe_ini_get_int(ini, "gpu_xbrz_view", 0);
    g_sw.core_phase      = (int)fe_ini_get_int(ini, "core_phase", 0);
    if (g_sw.core_phase < 0 || g_sw.core_phase > 3)
       g_sw.core_phase = 0;
@@ -5306,18 +5290,12 @@ static void window_begin(void)
                    rs.wait_avg_us, rs.wait_max_us, rs.checked,
                    rs.bad_frames, rs.bad_px, rs.log_entries, rs.log_overflows);
       }
-      /* xBRZ drawn by the GPU this window (pictures), and the GPU's time
-       * over a frame as last measured (its guard's samples, or every frame
-       * with gpu_time = 1). */
+      /* The GPU's time over a frame as last measured (gpu_time = 1). */
       {
-         static unsigned gx_last;
-         unsigned gx, gn, gavg, gmax;
-         int gon = vid_gpu_xbrz(&gx);
+         unsigned gn, gavg, gmax;
          vid_gpu_time_stats(&gn, &gavg, &gmax);
-         if (gon || gx != gx_last || gn)
-            fe_evt("vita_gpu xbrz=%d pictures=%u samples=%u gpu_us=%u/%u",
-                   gon, gx - gx_last, gn, gavg, gmax);
-         gx_last = gx;
+         if (gn)
+            fe_evt("vita_gpu samples=%u gpu_us=%u/%u", gn, gavg, gmax);
       }
       /* The slowest of each part of drawing the picture this window
        * (video_vita.h vid_draw_parts): what makes a frame's `blt` long. */
@@ -7764,7 +7742,6 @@ int main(int argc, char **argv)
    if (g_sw.up_slide != 2)
       upscale_slide_mode(g_sw.up_slide);
    vid_set_tex_mem(g_sw.tex_mem);
-   vid_set_gpu_xbrz(g_sw.gpu_xbrz);
    vid_set_gpu_time(g_sw.gpu_time);
    upscale_fade_drop(g_sw.fade_drop);
    /* The fourth CPU core (docs/FOURTH-CORE.md): probed once, here, before
@@ -7790,17 +7767,13 @@ int main(int argc, char **argv)
    app_wide_apply();
    fe_evt("switches2 up_bench=%d xbrz_dist=%d wide=%d vm_probe=%d pad_trace=%d "
           "keys_script=%d up_slide=%d main_cpu=%d tex_mem=%d drain=%d "
-          "core_phase=%d fade_drop=%d render_thread=%d gpu_xbrz=%d "
+          "core_phase=%d fade_drop=%d render_thread=%d "
           "gpu_time=%d mhz=%u mhz_measured=%u",
           g_sw.up_bench, g_sw.xbrz_dist, g_sw.wide, g_sw.vm_probe,
           g_sw.pad_trace, g_sw.keys_script, g_sw.up_slide, g_sw.main_cpu,
           g_sw.tex_mem, g_sw.drain, g_sw.core_phase, g_sw.fade_drop,
-          g_sw.render_thread, g_sw.gpu_xbrz, g_sw.gpu_time, plat_arm_mhz(),
+          g_sw.render_thread, g_sw.gpu_time, plat_arm_mhz(),
           plat_arm_mhz_measured());
-   if (g_sw.gpu_probe == 1)
-      vid_gpu_probe();
-   vid_set_gpu_debug(g_sw.gpu_probe >= 2 ? g_sw.gpu_probe : 0);
-   vid_set_gpu_view(g_sw.gpu_view);
    if (g_sw.vm_probe > 0)
    {
       static char path[APP_PATH_CAP];

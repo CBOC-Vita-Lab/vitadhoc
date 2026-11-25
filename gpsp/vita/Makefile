@@ -147,19 +147,6 @@ endif
 # What the app calls, each list after what uses it: the UI and the renderer
 # (ui.mk), the transports (net.mk), then plat_vita.c's own.  arm-vita-eabi-
 # gcc's specs add newlib's needs (SceLibKernel, SceIofilemgr, SceNet, ...).
-# The GPU programs' text (shaders/*.inc) as C strings for vback_vita2d.c,
-# which hands it to the console's own Cg compiler at run time.
-GPU_SHADERS := shaders/xbrz_common.inc shaders/xbrz_pass0.inc \
-               shaders/xbrz_pass1.inc shaders/xbrz_pass2.inc
-$(B)/gen/gpu_shaders.h: $(GPU_SHADERS)
-	@mkdir -p $(dir $@)
-	@{ echo "/* generated from $(GPU_SHADERS): do not edit */"; \
-	   for f in $^; do n=$$(basename $$f .inc); \
-	     echo "static const char gpu_src_$$n[] ="; \
-	     sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' $$f; \
-	     echo ";"; done; } > $@.tmp && mv $@.tmp $@
-$(B)/app/vita/vback_vita2d.o: $(B)/gen/gpu_shaders.h
-$(B)/app/vita/vback_vita2d.o: APP_FILE_FLAGS := -I$(B)/gen
 # The HTTPS client's own objects use Mbed TLS structs, so they take the library's enum size (-fno-short-enums,
 # gpsp/vita/deps/Makefile.mbedtls; arm-vita-eabi-gcc defaults to 1-byte enums, and mbedtls_ssl_config is then 4
 # bytes shorter than the library's). Their public header (np_https.h) keeps every enum 4 bytes wide, so the rest of
@@ -173,7 +160,6 @@ $(B)/app/nethttps/np_https.o $(B)/app/nethttps/np_https_sys.o $(B)/app/nethttps/
 $(B)/app/vita/upscale_vita.o: APP_FILE_FLAGS := -O3 -ftree-vectorize
 
 LIBS     := $(APP_LIBS_VITA) $(VITA_UI_LIBS) $(NET_VITA_LIBS) $(MBEDTLS_LIBS) \
-            -lSceShaccCg_stub_weak \
             -lSceAppUtil_stub -lSceCommonDialog_stub -lSceDisplay_stub \
             -lSceCtrl_stub -lSceAudio_stub -lScePower_stub -lSceRtc_stub \
             -lSceMotion_stub -lSceCamera_stub \

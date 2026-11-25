@@ -345,8 +345,9 @@ void pspcompat_user_name(char *out, size_t cap)
       ime_text(out, cap, (const unsigned char *)name);
 }
 
-/* ---- the system keyboard (after VitaShell's ime_dialog.c, TheFloW, GPLv3:
- * the parameter block and the UTF-16 <-> UTF-8 steps) -------------------- */
+/* ---- the system keyboard (written from the SDK's ImeDialog API: the
+ * parameter block is filled as vita-headers' psp2/ime_dialog.h describes it,
+ * and the UTF-16 <-> UTF-8 steps are our own, on playerkit's pk_u8 helpers) -- */
 static struct
 {
    int       on;

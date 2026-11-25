@@ -485,13 +485,8 @@ int vb_readback(uint32_t *dst)
    return 0;
 }
 
-/* ---- GPU programs (vback.h vb_prog) ------------------------------------
- * The shader text itself, compiled as C++ (vback_soft_prog.cpp) and run
- * once per output pixel: slow (a fit-sized xBRZ frame is ~0.4 M programs),
- * so only when the twin is asked for it (--gpu-progs sets
- * GBADHOC_SOFT_PROGS); without it the twin answers as a console without
- * the shader compiler does, and every picture takes the CPU's path. */
-/* No GPU here: a timed present takes GBADHOC_SOFT_GPU_US (--gpu-us). */
+/* ---- GPU timing (vback.h vb_gpu_time) ----------------------------------
+ * No GPU here: a timed present takes GBADHOC_SOFT_GPU_US (--gpu-us). */
 static int g_gpu_time;
 static unsigned g_gpu_n;
 
@@ -515,78 +510,4 @@ void vb_gpu_stats(unsigned *frames, unsigned *avg_us, unsigned *max_us)
    if (avg_us) *avg_us = g_gpu_n ? us : 0;
    if (max_us) *max_us = g_gpu_n ? us : 0;
    g_gpu_n = 0;
-}
-
-struct vb_prog { int which; };
-static struct vb_prog g_progs[VB_PROGS] = { { VB_PROG_XBRZ0 }, { VB_PROG_XBRZ1 },
-                                             { VB_PROG_XBRZ2 } };
-
-uint32_t vbsp_run(int which, const uint32_t *t0, int w0, int h0,
-                  const uint32_t *t1, int w1, int h1, float u, float v,
-                  const float uni[4][4]);
-
-static int progs_on(void)
-{
-   static int on = -1;
-   if (on < 0)
-   {
-      const char *e = getenv("GBADHOC_SOFT_PROGS");
-      on = e && *e && *e != '0';
-   }
-   return on;
-}
-
-vb_prog *vb_prog_get(int which)
-{
-   if (which < 0 || which >= VB_PROGS || !progs_on())
-      return NULL;
-   return &g_progs[which];
-}
-
-int vb_prog_probe(int n, char *out, size_t outlen)
-{
-   (void)n; (void)out; (void)outlen;
-   return 0;
-}
-
-const char *vb_prog_status(int which)
-{
-   if (which < 0 || which >= VB_PROGS)
-      return "none";
-   return progs_on() ? "soft" : "off";
-}
-
-void vb_pquads(vb_prog *p, vb_tex *t0, vb_tex *t1, const vb_tquad *q, int n,
-               const float uni[VB_PROG_UNIFORMS][4])
-{
-   int i;
-   if (!p || !t0 || !q || n <= 0 || !uni)
-      return;
-   if (t0->px == g_tgt || (t1 && t1->px == g_tgt))
-      return;
-   for (i = 0; i < n; i++)
-   {
-      float x0 = q[i].x0, y0 = q[i].y0, x1 = q[i].x1, y1 = q[i].y1;
-      float du, dv;
-      int ix0, ix1, iy0, iy1, x, y;
-      if (!(x1 > x0) || !(y1 > y0))
-         continue;
-      if (!span(x0, x1, g_tw, g_sc_x0, g_sc_x1, &ix0, &ix1) ||
-          !span(y0, y1, g_th, g_sc_y0, g_sc_y1, &iy0, &iy1))
-         continue;
-      du = (q[i].u1 - q[i].u0) / (x1 - x0);
-      dv = (q[i].v1 - q[i].v0) / (y1 - y0);
-      for (y = iy0; y < iy1; y++)
-      {
-         uint32_t *d = g_tgt + (size_t)y * g_tw;
-         float v = (q[i].v0 + ((float)y + 0.5f - y0) * dv) / (float)t0->h;
-         for (x = ix0; x < ix1; x++)
-         {
-            float u = (q[i].u0 + ((float)x + 0.5f - x0) * du) / (float)t0->w;
-            d[x] = vbsp_run(p->which, t0->px, t0->w, t0->h,
-                            t1 ? t1->px : NULL, t1 ? t1->w : 0,
-                            t1 ? t1->h : 0, u, v, uni);
-         }
-      }
-   }
 }

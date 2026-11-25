@@ -27,9 +27,8 @@ emulator. Original gpSP, GBAdhoc and dependency notices remain in the source.
   FPS are different measurements; a log counter alone is not a benchmark.
 - Presentation waits before input sampling to avoid filling the display queue.
   Audio starts with a 60 ms cushion and can adapt up to 120 ms after underruns.
-- Experimental GPU xBRZ is off by default: earlier Vita measurements were
-  slower than CPU xBRZ. It needs the user's own shader compiler module and has
-  a slow-frame fallback. No proprietary compiler is distributed.
+- xBRZ runs on the CPU only. An experimental GPU version (31 ms a frame on a
+  console, against 2.6 ms) was removed in 2.0 for speed and licensing.
 
 GBA Wide view can draw beyond the original viewport using game profiles,
 Mode 7 support or an experimental background cache/scout. Emerald has prior
@@ -760,7 +759,7 @@ app test `save_clock`.
 ## Diagnostics
 
 Switches include `drc = 0`, `render_thread = 2` for comparison,
-`gpu_xbrz = 1` for experiments, `clips = 0` / `art = 0` to turn off optional
+`clips = 0` / `art = 0` to turn off optional
 work, and `ra_host = http://host:port` for a test RetroAchievements server.
 Logs under `ux0:data/GBAdhoc/log/` may contain ROM paths and network
 addresses; review them before sharing. The package does not install a clock

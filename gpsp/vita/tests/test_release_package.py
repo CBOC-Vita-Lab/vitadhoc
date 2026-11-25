@@ -28,7 +28,7 @@ SNES_SHA256 = "19f4adb8c0d99c0793757cba92632dbf7f406bfc27f73eab0d61a15d339f92b4"
 NOTICES = {"licenses/GPL-2.0.txt", "licenses/MPL-2.0.txt", "licenses/Inter-OFL.txt",
            "licenses/Outfit-OFL.txt", "licenses/CC-BY-SA-4.0.txt", "notices/THIRD-PARTY.md",
            "notices/WIKIPEDIA-ATTRIBUTION.md", "licenses/GPL-3.0.txt",
-           "licenses/GPU-xBRZ-notices.txt", "licenses/CPU-xBRZ-notice.txt",
+           "licenses/CPU-xBRZ-notice.txt",
            "licenses/vita2d-MIT.txt", "licenses/stb.txt",
            "licenses/VitaSDK-Headers-MIT.txt", "licenses/Newlib-Notices.txt",
            "licenses/GCC-Runtime-Exception.txt", "notices/VitaSDK-build-lock.json",

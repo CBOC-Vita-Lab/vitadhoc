@@ -438,11 +438,7 @@ Ambient glow, Scanlines, LCD grid, LCD ghosting and LCD colours are separate row
 0..10 (0 is off), the same as in the players (docs/LOOKS.md). Demanding combinations can cost more time than Original pixels.
 
 CPU xBRZ and Scale3x use worker cores and changed regions; the GBA picture
-can be drawn by a separate render worker. **GPU xBRZ is an experiment, not
-the recommended faster option.** It is off by default, was slower in earlier
-Vita measurements and needs a separately supplied shader compiler module.
-No proprietary compiler is distributed. Its licensing/provenance caveats are
-recorded in [Licensing](../LICENSING.md).
+can be drawn by a separate render worker. All smoothing filters run on the CPU.
 
 Keep full speed can run up to two undrawn catch-up frames to maintain game
 timing through short hitches.
@@ -794,7 +790,6 @@ Most settings belong in the UI. The following keys in
 | `grid_strength = 5` | LCD/scanline strength, 1 to 10 |
 | `overlays = 0` | Disable PNG screen overlays |
 | `screenshots = ux0:...` | Select a screenshot folder |
-| `gpu_xbrz = 0` | Keep experimental GPU smoothing disabled |
 | `render_thread = 2` | Diagnostic comparison mode; not a general performance recommendation |
 | `drc = 0` | Diagnostic interpreter mode, not a recommended speed setting |
 

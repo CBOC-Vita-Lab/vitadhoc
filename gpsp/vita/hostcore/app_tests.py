@@ -3646,12 +3646,11 @@ def t_settings_order(S):
 
 
 def t_quality(S):
-    """Native, 2x and 3x processing share fitted output; manual quality avoids GPU setup."""
+    """Native, 2x and 3x processing share fitted output; manual quality uses its CPU factor."""
     for quality in [1, 2, 3]:
         r = S.run("quality_%d" % quality, "120:shot=game.png\n+20:quit\n",
                   autoboot="gbadhoc-test.gba",
-                  config={"scale_gba": 1, "filter_gba": 4, "quality_gba": quality},
-                  vita_ini={"gpu_xbrz": 1})
+                  config={"scale_gba": 1, "filter_gba": 4, "quality_gba": quality})
         S.clean(r)
         S.check(r.has(r"display_quality console=GBA quality=%d" % quality),
                 "the active GBA profile applies quality %d" % quality)
@@ -3659,7 +3658,6 @@ def t_quality(S):
         S.check((not textures) if quality == 1 else
                 bool(textures and all(d.get("f") == str(quality) for d in textures)),
                 "quality %d uses its selected CPU intermediate factor, not output zoom" % quality)
-        S.check(not r.evt("gpu_xbrz"), "manual quality does not initialize the GPU shader path")
         S.picture(r, "game.png")
 
 
@@ -5025,138 +5023,19 @@ def t_upfade(S):
 
 
 def t_gpu_xbrz(S):
-    """xBRZ drawn by the GPU (video_vita.c "xBRZ on the GPU"; the shaders
-    in shaders/ run per pixel by the twin with --gpu-progs, as the console's
-    GPU runs them), asked for with vita.ini gpu_xbrz = 1: the CPU upscalers
-    stay idle, every frame is smoothed at the final size, and the picture
-    is xBRZ's -- next to the CPU's 4x one (same place and size, edges
-    smoothed where the CPU smooths them), not the sharp one.  By default
-    (the console's GPU is too slow for it) and without --gpu-progs (a
-    console without the shader compiler) xBRZ is the CPU's as before."""
-    if S.arch != "x86":
-        # (the programs are plain C++ per pixel: nothing of the ARM
-        # recompiler in them, and very slow under qemu)
-        S.note("gpu_xbrz: x86 only")
-        return
-    rom = os.path.join(HERE, "testrom", "gbadhoc-top.gba")
-    if not os.path.exists(rom):
-        S.note("no testrom/gbadhoc-top.gba: skipped")
-        return
-    extra = {"roms/gbadhoc-top.gba": open(rom, "rb").read()}
-    # (the GPU run goes on past the log's first ten-second window)
-    script = "150:shot=a.png\n+2:right:40\n+4:shot=b.png\n"
-    conf = {"scale_gba": 1, "filter_gba": 4, "last_rom": "gbadhoc-top.gba"}
-    # the CPU's pictures all at 4x (fade_drop = 0): the one to be near
-    runs = (("gpu", conf, ("--gpu-progs",), {"gpu_xbrz": 1}, "620:quit\n"),
-            ("cpu", conf, ("--gpu-progs",), {"fade_drop": 0}, "+10:quit\n"),
-            ("off", conf, (), {"gpu_xbrz": 1}, "+10:quit\n"),
-            ("near", dict(conf, filter_gba=0), (), None, "+10:quit\n"))
-    shots, logs = {}, {}
-    for name, cfg, args, ini, end in runs:
-        r = S.run("gpux_" + name, script + end, extra=extra, config=cfg,
-                  autoboot="gbadhoc-top.gba", args=args, vita_ini=ini)
-        S.clean(r)
-        shots[name] = [S.picture(r, n) for n in ("a.png", "b.png")]
-        logs[name] = r
-    g = logs["gpu"]
-    on = g.evt("gpu_xbrz")
-    S.check(on and on[0].get("on") == "1",
-            "--gpu-progs: the GPU draws xBRZ (%s)" % (on[0]["_"] if on else
-                                                      "no gpu_xbrz line"))
-    pics = sum(int(e.get("pictures", 0)) for e in g.evt("vita_gpu"))
-    S.check(pics >= 150, "every frame smoothed on the GPU (%d pictures)" % pics)
-    S.check(not g.evt("up_tex") and
-            not any(int(e.get("jobs", 0)) for e in g.evt("vita_upscale")),
-            "the CPU upscalers did nothing (%d up_tex, jobs %s)" %
-            (len(g.evt("up_tex")),
-             [e.get("jobs") for e in g.evt("vita_upscale")]))
-    for name in ("cpu", "off"):
-        r = logs[name]
-        S.check(len(r.evt("up_tex")) >= 1 and
-                not any(int(e.get("pictures", 0)) for e in r.evt("vita_gpu")),
-                "%s: xBRZ on the CPU as before" % name)
-
-    def stats(a, b):
-        # the game's rect at fit (3.4x: 816 x 544, centred)
-        a = a.convert("RGB").crop((72, 0, 888, 544))
-        b = b.convert("RGB").crop((72, 0, 888, 544))
-        pa, pb = list(a.tobytes()), list(b.tobytes())
-        pa = list(zip(pa[0::3], pa[1::3], pa[2::3]))
-        pb = list(zip(pb[0::3], pb[1::3], pb[2::3]))
-        diff = [max(abs(x - y) for x, y in zip(p, q)) for p, q in zip(pa, pb)]
-        ga = a.resize((48, 32), Image.BOX)
-        gb = b.resize((48, 32), Image.BOX)
-        blk = max(max(abs(x - y) for x, y in zip(ga.getpixel((i, j)),
-                                                  gb.getpixel((i, j))))
-                  for j in range(32) for i in range(48))
-        return sum(diff) / float(len(diff)), \
-            sum(1 for d in diff if d > 48) / float(len(diff)), blk
-
-    for i, n in enumerate(("a.png", "b.png")):
-        gp, cp, nr = shots["gpu"][i], shots["cpu"][i], shots["near"][i]
-        if not (gp and cp and nr):
-            S.check(False, "%s: the three pictures were taken" % n)
-            continue
-        mean_c, far_c, blk_c = stats(gp, cp)
-        mean_n, far_n, blk_n = stats(gp, nr)
-        mean_cn, far_cn, _ = stats(cp, nr)
-        S.check(blk_c <= 24 and blk_n <= 40,
-                "%s: the GPU's picture is the game's, in the same place and "
-                "size (blocks within %d of the CPU's, %d of the sharp one)"
-                % (n, blk_c, blk_n))
-        S.check(mean_c < mean_cn and far_c < 0.02,
-                "%s: closer to the CPU's xBRZ than the sharp picture is "
-                "(mean %.2f vs %.2f; %.2f%% of pixels far off)"
-                % (n, mean_c, mean_cn, 100 * far_c))
-        S.check(mean_n > 0.3,
-                "%s: smoothed, not the sharp picture (mean %.2f from it)"
-                % (n, mean_n))
-        S.summary["gpu_xbrz.%s" % n] = "cpu %.2f/%.3f near %.2f" % (
-            mean_c, far_c, mean_n)
-    if shots["gpu"][0]:
-        S.picture(logs["gpu"], "a.png", "gpu_xbrz_a.png")
-    t = [e for e in g.evt("gpu_xbrz_time")]
-    S.check(len(t) >= 1 and not g.evt("gpu_xbrz off"),
-            "the guard timed the GPU and left it on (%s)" %
-            [e["_"] for e in t][:2])
-
-    # the guard: a GPU that takes 15 ms a frame gives xBRZ back to the CPU
-    r = S.run("gpux_slow", "100:right:200\n+10:shot=s.png\n+10:quit\n",
-              extra=extra, config=conf, autoboot="gbadhoc-top.gba",
-              args=("--gpu-progs", "--gpu-us", "15000"),
-              vita_ini={"gpu_xbrz": 1})
+    """The GPU xBRZ experiment is gone (2.0: speed and licensing).  An old
+    vita.ini with gpu_xbrz = 1 is ignored: xBRZ is the CPU's, as chosen in
+    the menu, and the log has no gpu_xbrz lines."""
+    conf = {"scale_gba": 1, "filter_gba": 4}
+    r = S.run("gpux_gone", "150:shot=a.png\n+10:quit\n",
+              config=conf, autoboot="gbadhoc-test.gba",
+              vita_ini={"gpu_xbrz": 1, "gpu_xbrz_view": 1, "gpu_probe": 1})
     S.clean(r)
-    off = [e for e in r.evt("gpu_xbrz") if e["_"].startswith("EVT gpu_xbrz off")]
-    S.check(len(off) == 1 and off[0].get("reason") == "slow" and
-            len(r.evt("gpu_xbrz_time")) == 2,
-            "a slow GPU: timed twice, then off (%s)" %
-            [e["_"] for e in r.evt("gpu_xbrz")])
+    S.check(not r.evt("gpu_xbrz") and not r.evt("gpu_probe") and
+            not r.evt("gpu_rt"), "no GPU xBRZ, probe or pass-readback lines")
     S.check(len(r.evt("up_tex")) >= 1,
-            "...and xBRZ is the CPU's from then on (%d up_tex)" %
-            len(r.evt("up_tex")))
-    S.picture(r, "s.png")
-
-    # the wide view: the margins and the middle, smoothed together
-    wide = dict(conf, wide_gba=3)
-    pics = {}
-    for name, args in (("gpu", ("--gpu-progs",)), ("cpu", ())):
-        r = S.run("gpux_wide_" + name, "150:shot=w.png\n+10:quit\n",
-                  extra=extra, config=wide, autoboot="gbadhoc-top.gba",
-                  args=args, vita_ini={"fade_drop": 0, "gpu_xbrz": 1})
-        S.clean(r)
-        pics[name] = S.picture(r, "w.png")
-        w = r.evt("wide")
-        S.check(w and int(w[-1].get("margin", "0")) > 0,
-                "wide %s: the wide view is on" % name)
-    if pics["gpu"] and pics["cpu"]:
-        a = pics["gpu"].convert("RGB")
-        b = pics["cpu"].convert("RGB")
-        ga, gb = a.resize((60, 34), Image.BOX), b.resize((60, 34), Image.BOX)
-        blk = max(max(abs(x - y) for x, y in zip(ga.getpixel((i, j)),
-                                                  gb.getpixel((i, j))))
-                  for j in range(34) for i in range(60))
-        S.check(blk <= 24, "wide: the GPU's picture is the CPU's, edge to "
-                "edge (blocks within %d)" % blk)
+            "xBRZ is the CPU's (%d up_tex)" % len(r.evt("up_tex")))
+    S.picture(r, "a.png")
 
 
 def t_render_thread(S):

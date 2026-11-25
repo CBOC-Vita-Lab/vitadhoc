@@ -34,7 +34,7 @@
  *        [--shot F:file.png]... [--shot-dir DIR] [--wav file.wav]
  *        [--input SCRIPT] [--input-file FILE]
  *        [--refresh-mhz 60000] [--work-us 3000] [--slow F:N:US] [--flip-queue N]
- *        [--gpu-progs] [--gpu-us US]
+ *        [--gpu-us US]
  *        [--suspend F] [--worker]
  *        [--echo] [--heap-free-mb N]
  *
@@ -869,10 +869,7 @@ int plat_init(int argc, char **argv)
       else if (!strcmp(a, "--no-motion"))        opt.no_motion = 1;
       else if (!strcmp(a, "--heap-free-mb") && v) { opt.heap_free_mb = (unsigned)atoi(v); i++; }
       else if (!strcmp(a, "--echo"))             opt.echo = 1;
-      /* vback_soft.c: run the GPU programs (shaders/) as the console
-       * would, per pixel -- slow; off, the twin has none */
-      else if (!strcmp(a, "--gpu-progs"))        setenv("GBADHOC_SOFT_PROGS", "1", 1);
-      /* ...and what a timed present says the GPU took (vb_gpu_stats) */
+      /* what a timed present says the GPU took (vb_gpu_stats) */
       else if (!strcmp(a, "--gpu-us") && v)      { setenv("GBADHOC_SOFT_GPU_US", v, 1); i++; }
       else if (!strcmp(a, "--realtime"))         opt.realtime = 1;
       else if (!strcmp(a, "--suspend") && v)

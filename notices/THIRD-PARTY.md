@@ -166,13 +166,6 @@ clarification and the remaining package review.
   `ADDRESS:VALUE[:COMPARE]` as in Genesis Plus GX, the rest dropped),
   shortens display names and associates records with cartridge checksums.
   This database remains separately licensed; it is not relicensed as GPL.
-- **Experimental GPU xBRZ:** a separate implementation referring to libretro's
-  xbrz-freescale-multipass shaders. Their headers include Hyllian's MIT notice
-  and a Zenju GPL-3.0 notice; these are retained in
-  `licenses/GPU-xBRZ-notices.txt` and `licenses/GPL-3.0.txt`. The original
-  upstream shader revision was not recorded. This is not the same license
-  evidence as the vendored CPU xBRZ copy. Combined-binary licensing remains
-  under review; adding notices or leaving GPU mode off does not settle it.
 - **Mbed TLS 3.6.8 (Online play, 2.0):** the Mbed TLS contributors (Arm Limited and others),
   <https://github.com/Mbed-TLS/mbedtls>, tag `mbedtls-3.6.8`, commit
   `82e69999f91126589a28b70dd75b69fbcabe2711`. Dual-licensed Apache-2.0 OR GPL-2.0-or-later;
@@ -244,8 +237,8 @@ clarification and the remaining package review.
 - **GCC runtime:** GCC 15.2.0, Free Software Foundation and contributors.
   GPL-3.0-or-later with the GCC Runtime Library Exception 3.1 for applicable
   runtime files; `licenses/GPL-3.0.txt` and
-  `licenses/GCC-Runtime-Exception.txt`. This exception is separate from the
-  experimental GPU shader's unresolved combined-work review.
+  `licenses/GCC-Runtime-Exception.txt`. The exception is what lets this
+  runtime sit inside the GPL-2.0 combined program (LICENSING.md).
 
 The linked SDK inputs above are pinned by `notices/VitaSDK-build-lock.json`,
 not inferred from whichever SDK is installed later. See [Building](../docs/BUILDING.md).

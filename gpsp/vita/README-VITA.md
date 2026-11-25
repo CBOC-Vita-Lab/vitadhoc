@@ -143,17 +143,10 @@ that off.
   stepped down to 3x and back up, each time making new textures on the emulator's thread (12
   to 30 ms: the frames the game had to catch up). Now such pictures are smoothed at 2x until
   the screen settles, inside the same 4x textures, and nothing is made anew.
-  **xBRZ on the GPU was tried in build 19 and is off:** the same xBRZ rules as GPU programs
-  (from libretro's "xbrz-freescale", in three passes: the points where four GBA pixels meet,
-  each pixel's corners, then every screen pixel at its final size), compiled by the Vita
-  itself with the shader compiler in `ur0:data/libshacccg.suprx`. The picture is right, but
-  on the console the GPU took 31 ms over each frame with it (2.6 ms with the CPU's xBRZ),
-  half of it for the last pass's 444,000 pixels: it cannot keep 60 frames a second, so xBRZ
-  stays on the CPU's cores. `vita.ini gpu_xbrz = 1` turns it on for experiments (the first
-  time, the compiler takes about 26 s; the programs are then kept in
-  `ux0:data/GBAdhoc/shaders/`); a guard measures the GPU as the game runs and gives xBRZ back
-  to the CPU when a frame's GPU work takes over 10 ms twice in a row
-  (`gpu_xbrz off reason=slow`).
+  **xBRZ on the GPU was tried in build 19 and has been removed:** on the console the GPU took
+  31 ms over each frame with it (2.6 ms with the CPU's xBRZ), so it could not keep 60 frames a
+  second, and its shader code carried a licence that cannot be combined with the rest of the
+  app. xBRZ runs on the CPU's cores.
 - **LCD colours** -- as the game sends them, or as a GBA's (or Game Boy Color's) own screen showed
   them: muted, what the art was drawn for (GBA screen is the default on the GBA). **LCD ghosting** (0..10)
   mixes each frame with the last, which is what games that flicker to fake transparency rely on.
@@ -405,17 +398,7 @@ Send back `ux0:data/GBAdhoc/log/` (the newest file). Useful switches, in
   also `render_us` the other core's time, `copy_us`/`pages` the hand-over, `wait_us` how long
   the frame waited for the picture)
 - `fade_drop = 1` — smooth a fade's pictures at 3x instead of 2x; `0` — at 4x, as before
-- `gpu_xbrz = 1` — draw xBRZ on the GPU (too slow on a Vita, see above; the log's `gpu_xbrz`
-  line says whether the GPU took it and how its programs were made: `compiled`, `cached`, or
-  why not, e.g. `no_compiler` or the compiler's first error; `gpu_xbrz_time` lines are the
-  guard's samples of the GPU's time over a frame; `vita_gpu` counts the pictures)
 - `gpu_time = 1` — time the GPU on every frame (each present waits for it; for measuring)
-- `gpu_xbrz_view = 1` — the screen shows GPU xBRZ's corner flags instead of the picture (red
-  top left, green top right, blue the bottom two: coloured specks along every edge mean the
-  GPU is working the passes out); `2` the first pass's. `gpu_probe = 1` compiles test
-  programs at start and logs what the compiler said (`gpu_probe` lines); `gpu_probe = N` (2
-  or more) reads the first two passes' targets back at the Nth GPU picture (`gpu_rt` lines;
-  Vita3K never writes them back, so there it always reads zeros)
 - `core_phase = 2` — the core's split of each frame in the log (`core_phase` lines: `cpu` the
   game's code, `vid` the picture, `blt` handing it over, ...); `3` also the wide view's parts
   (`vita_wide_prof`). It costs a little time itself.

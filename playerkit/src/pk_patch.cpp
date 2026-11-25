@@ -1,21 +1,22 @@
 /* See pk_patch.h. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE). */
 #include "pk_patch.h"
+#include "pk_i18n.h"
 #include "pk_util.h"
 #include <string.h>
 
 namespace pk {
 
-std::string PatchResult::text() const
+std::string PatchResult::text(bool en) const
 {
 	switch (status) {
 	case PS_OK:
-		return verified ? "Patch applied (checksums match)" : "Patch applied (this kind of patch cannot check the ROM)";
-	case PS_BAD_FORMAT: return "The patch file is not valid";
-	case PS_TRUNCATED: return "The patch file is cut short";
-	case PS_SOURCE_MISMATCH: return "This patch was made for a different ROM";
-	case PS_TARGET_MISMATCH: return "The patched ROM does not match the patch's checksum";
-	case PS_PATCH_DAMAGED: return "The patch file is damaged";
-	default: return "The patched ROM would be too large";
+		return verified ? trl("patch.patch_applied_checksums_match", en) : trl("patch.patch_applied_this_kind_of_patch", en);
+	case PS_BAD_FORMAT: return trl("patch.the_patch_file_is_not_valid", en);
+	case PS_TRUNCATED: return trl("patch.the_patch_file_is_cut_short", en);
+	case PS_SOURCE_MISMATCH: return trl("patch.this_patch_was_made_for_a", en);
+	case PS_TARGET_MISMATCH: return trl("patch.the_patched_rom_does_not_match", en);
+	case PS_PATCH_DAMAGED: return trl("patch.the_patch_file_is_damaged", en);
+	default: return trl("patch.the_patched_rom_would_be_too", en);
 	}
 }
 

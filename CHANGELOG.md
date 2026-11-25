@@ -347,6 +347,20 @@ and in emulators; none of it has run on a real Vita yet (see
   players' menus, instead of `?`. Names are never cut in the middle of a
   character, and long ones wrap at sensible places.
 
+**Your language in the players**
+
+- The Super NES and Sega players speak the language of the app: English,
+  Spanish, French, German, Italian, Brazilian Portuguese, Japanese and
+  Simplified Chinese. Settings > Interface has a Language row (Automatic
+  follows the Vita's system language; one the players do not have gives
+  English) and the choice is kept in `display.ini` next to the app's. Menus,
+  notices, help lines and error screens change at once, without restarting
+  the game. The texts live in `lang/pk_<code>.txt` (see
+  `lang/TRANSLATING-players.md`); a text a file lacks shows in English, and
+  the log stays English. Long translations wrap or end in an ellipsis rather
+  than shrink; every screen was checked with a test language 35% longer than
+  English. No translation ships yet: the catalogues are for translators.
+
 **Under the hood**
 
 - A TLS client, STUN, hole punching and a relay client of our own, and the

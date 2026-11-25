@@ -77,13 +77,13 @@ enum StateStatus {
 	ST_WRITE,          /* could not write (see write_rc) */
 	ST_BAD_SLOT
 };
-const char *state_status_text(StateStatus s);
+const char *state_status_text(StateStatus s, bool en = false);      /* en: the English text whatever the language (log lines) */
 
 struct SaveReport {
 	StateStatus status;
 	WriteResult write_rc;
 	bool thumb_ok, shot_ok, meta_ok;     /* the companions; a failed one is removed and does not fail the save */
-	std::string text() const;            /* the reason for the player, "" when all is well */
+	std::string text(bool en = false) const;            /* the reason for the player, "" when all is well */
 	SaveReport() : status(ST_OK), write_rc(W_OK), thumb_ok(false), shot_ok(false), meta_ok(false) {}
 };
 

@@ -1,6 +1,7 @@
 /* See pk_link.h. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE). */
 #include "pk_link.h"
 #include "pk_util.h"
+#include "pk_i18n.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -158,27 +159,27 @@ struct HashRec {
 const char *kErrNames[LE_COUNT] = { "ok", "proto", "rom_missing", "rom_bad", "memory", "start", "desync", "peer_lost",
                                     "peer_abort", "commit", "local", "no_peer", "suspend", "state" };
 const char *kErrText[LE_COUNT] = {
-	"The link is fine.",
-	"The other Vita runs a different version of VitAdhoc.",
-	"The other Vita plays a different game.",
-	"The other Vita's game did not match.",
-	"There was not enough memory to start the link.",
-	"The game could not be started together.",
-	"The two games fell out of step. The link ended and nothing was saved.",
-	"Link lost: the other Vita is gone.",
-	"The other Vita ended the link.",
-	"The game could not be saved.",
-	"The link was cancelled.",
-	"Nobody answered.",
-	"This Vita went to sleep, so the link ended.",
-	"The game did not arrive intact. Try again."
+	"link.the_link_is_fine",
+	"link.the_other_vita_runs_a_different",
+	"link.the_other_vita_plays_a_different",
+	"link.the_other_vita_s_game_did",
+	"link.there_was_not_enough_memory_to",
+	"link.the_game_could_not_be_started",
+	"link.the_two_games_fell_out_of",
+	"link.link_lost_the_other_vita_is",
+	"link.the_other_vita_ended_the_link",
+	"link.the_game_could_not_be_saved",
+	"link.the_link_was_cancelled",
+	"link.nobody_answered",
+	"link.this_vita_went_to_sleep_so",
+	"link.the_game_did_not_arrive_intact"
 };
 const char *kPhaseName[] = { "idle", "wait", "state", "start", "run", "ending", "done", "failed" };
 
 }  // namespace
 
 const char *link_error_name(int e) { return e >= 0 && e < LE_COUNT ? kErrNames[e] : "other"; }
-const char *link_error_text(int e) { return e >= 0 && e < LE_COUNT ? kErrText[e] : "The link failed."; }
+const char *link_error_text(int e) { return e >= 0 && e < LE_COUNT ? tr(kErrText[e]) : tr("link.the_link_failed"); }
 
 /* ====================================================================================================================
  * The session

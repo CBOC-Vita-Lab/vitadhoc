@@ -3,6 +3,7 @@
 #include "pk_test.h"
 #include "harness.h"
 #include "pk_menu.h"
+#include "pk_i18n.h"
 #include "pk_gfx_soft.h"
 #include "pk_glyphs.h"
 #include "pk_uilook.h"
@@ -268,7 +269,7 @@ Audit audit(const std::vector<Rec> &g)
 		run[i] = r;
 	}
 	for (size_t i = 0; i < g.size(); i++) {
-		if (g[i].x < -1 || g[i].y < -1 || g[i].x + g[i].w > 961 || g[i].y + g[i].h > 545) a.off_screen++;
+		if (g[i].x < -1 || g[i].y < -1 || g[i].x + g[i].w > 961 || g[i].y + g[i].h > 545) { a.off_screen++; if (getenv("PK_UILOOK_DBG")) fprintf(stderr, "    off-screen glyph at %.0f,%.0f %.0fx%.0f\n", g[i].x, g[i].y, g[i].w, g[i].h); }
 		for (size_t j = i + 1; j < g.size() && j < i + 400; j++) {
 			if (run[j] == run[i]) continue;
 			if (g[i].y > 434 && g[j].y > 434) continue;     /* the help line is drawn as two stacked layers; it is checked for bounds only */
@@ -358,5 +359,86 @@ TEST(menu_every_page_fits_at_large)
 			}
 			m.release_textures();
 		}
+	}
+}
+
+/* ---- the same audit in the pseudo-locale xx-long (about 35% longer, accented; pk_i18n.h) -------------------------------
+ * A language with longer words must not push text over text or off the screen: wrapping or an ellipsis, never a smaller
+ * size. Each page is drawn in English and in xx-long, at Normal and at Large; xx-long may not have more overlaps than
+ * English did and nothing may leave the screen that did not already (a list row clipped at the bottom of its view counts in both, and that page is not judged on it). */
+namespace {
+std::vector<Audit> audit_pages(int lang, int large)
+{
+	std::vector<Audit> out;
+	i18n_use(lang, 1);
+	pkh::TempDir td;
+	pkh::MockHost host;
+	host.cheat_list.resize(3);
+	host.cheat_list[0].name = "Infinite lives"; host.cheat_list[1].name = "Start with 99 coins"; host.cheat_list[2].name = "Walk through walls";
+	RecGfx g;
+	Text t(&g);
+	StateLayout l; l.root = td.path; l.console = "snes"; l.name = "Super Example World (USA)";
+	States states(l);
+	Mapper mapper;
+	Profile prof = profile_defaults(model_snes(), true);
+	mapper.configure(model_snes(), prof, MapperConfig());
+	ProfileStore store(td.path, "snes", "Super Example World (USA)");
+	Menu m;
+	MenuConfig c; c.game_name = "Super Example World (USA)"; c.console_label = "Super Nintendo";
+	c.caps = CAP_ALL_BASIC | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_CHEATS | CAP_REWIND | CAP_WIDE | CAP_CHEAT_EDIT | CAP_CHEAT_SEARCH | CAP_PLAY_TOGETHER;
+	m.configure(c, &host, &states);
+	m.attach_input(&mapper, &store, &model_snes(), &prof);
+	m.set_value(ROW_UI_TEXT, large);
+	m.set_value(ROW_PIC_SCREEN, PK_SCREEN_OLED);
+	m.open(0);
+	m.update(pkh::idle());
+	auto shot = [&]() {
+		g.glyphs.clear();
+		g.clear(0x101010);
+		for (int i = 0; i < 300; i++) m.update(pkh::idle());
+		m.draw(&g, &t);
+		out.push_back(audit(g.glyphs));
+	};
+	for (int card = 0; card < 8; card++) { shot(); pkh::press(m, PH_RIGHT); }      /* the control centre, card by card */
+	CHECK(goto_settings(m));
+	for (int sub = 0; sub < 4; sub++) {
+		pkh::press(m, PH_CROSS);                                   /* Picture, Controls, Speed, Interface */
+		for (int row = 0; row < 14; row++) { shot(); pkh::press(m, PH_DOWN); }
+		pkh::press(m, PH_CIRCLE);
+		pkh::press(m, PH_DOWN);
+	}
+	/* the save-state page, the cheats page, the search page, a question box and a toast */
+	m.goto_page(Menu::PAGE_STATES); shot();
+	m.goto_page(Menu::PAGE_CHEATS); shot();
+	pkh::press(m, PH_DOWN); shot();
+	m.goto_page(Menu::PAGE_CHEAT_SEARCH);
+	for (int row = 0; row < 6; row++) { shot(); pkh::press(m, PH_DOWN); }
+	m.goto_page(Menu::PAGE_STATES);
+	pkh::press(m, PH_SQUARE); shot();                                // Overwrite Slot 1?
+	pkh::press(m, PH_CIRCLE);
+	m.goto_page(Menu::PAGE_TOP);
+	m.notices().push(tr("states.the_state_file_is_too_large"), NOTICE_ERROR); shot();
+	m.release_textures();
+	i18n_use(LANG_EN, 1);
+	return out;
+}
+}  // namespace
+
+TEST(menu_every_page_fits_in_xx_long)
+{
+	pk_glyphs_set_dir("../gpsp/vita/assets");
+	for (int large = 0; large < 2; large++) {
+		const std::vector<Audit> en = audit_pages(LANG_EN, large);
+		const std::vector<Audit> xx = audit_pages(LANG_PSEUDO, large);
+		CHECK_EQ((int) en.size(), (int) xx.size());
+		CHECK(en.size() > 40);
+		int worse = 0, off = 0;
+		for (size_t i = 0; i < en.size() && i < xx.size(); i++) {
+			if (en[i].off_screen == 0 && xx[i].off_screen > 0) { off++; fprintf(stderr, "    xx-long large=%d shot %d: %d glyphs off screen (English %d)\n", large, (int) i, xx[i].off_screen, en[i].off_screen); }
+			if (xx[i].overlaps > en[i].overlaps) { worse++; fprintf(stderr, "    xx-long large=%d shot %d: %d overlaps (English %d)\n", large, (int) i, xx[i].overlaps, en[i].overlaps); }
+			CHECK(xx[i].glyphs > 0);
+		}
+		CHECK_EQ(off, 0);
+		CHECK_EQ(worse, 0);
 	}
 }

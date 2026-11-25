@@ -61,7 +61,7 @@ $(B)/ra/pk_ra_plat_posix.o: $(PK)/ra/pk_ra_plat_posix.c $(PK)/src/pk_ra_plat.h
 	@mkdir -p $(B)/ra
 	$(RA_CC) $(RA_CFLAGS) -I$(PK)/src -c -o $@ $<
 $(B)/pk/pk_ra.o: PK_EXTRA_INC := $(RA_INC)
-PK_SRC   := pk_util pk_text pk_glyphs pk_font_data pk_icons pk_gfx_soft pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_look pk_cores pk_scale pk_rewind pk_ff pk_speed pk_ra
+PK_SRC   := pk_util pk_i18n pk_text pk_glyphs pk_font_data pk_icons pk_gfx_soft pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_look pk_cores pk_scale pk_rewind pk_ff pk_speed pk_ra
 PK_OBJS  := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC))) $(B)/ra/pk_ra_plat_posix.o $(RA_OBJS)
 PL_FE    := picture cheats savefile audio_pace
 PL_OBJS  := $(addprefix $(B)/pl/,$(addsuffix .o,$(PL_FE))) $(B)/pl/player.o $(B)/pl/pipe.o $(B)/pl/handoff_proof.o $(B)/pl/player_twin.o

@@ -1,0 +1,1090 @@
+# Players' interface texts (playerkit, snes.bin, md.bin). English source and fallback.
+# key<TAB>text ; \n = new line ; keep every % conversion (same type and order) ; sorted by key.
+# context: on-screen text
+input.a_game_button_takes_one_button	A game button takes one button
+# context: on-screen text
+input.a_shortcut_takes_at_most_four	A shortcut takes at most four buttons
+# context: on-screen text
+input.button_1	Button 1
+# context: on-screen text
+input.button_2	Button 2
+# context: on-screen text
+input.circle	Circle
+# context: on-screen text
+input.cross	Cross
+# context: on-screen text
+input.d_pad_down	D-pad down
+# context: on-screen text
+input.d_pad_left	D-pad left
+# context: on-screen text
+input.d_pad_right	D-pad right
+# context: on-screen text
+input.d_pad_up	D-pad up
+# context: on-screen text
+input.down	Down
+# context: on-screen text
+input.fast_forward	Fast-forward
+# context: on-screen text
+input.left	Left
+# context: on-screen text
+input.left_stick_down	Left stick down
+# context: on-screen text
+input.left_stick_left	Left stick left
+# context: on-screen text
+input.left_stick_right	Left stick right
+# context: on-screen text
+input.left_stick_up	Left stick up
+# context: on-screen text
+input.mode	Mode
+# context: on-screen text
+input.no_such_button	No such button
+# context: on-screen text
+input.not_set	Not set
+# context: on-screen text
+input.only_player_1_has_shortcuts	Only player 1 has shortcuts
+# context: on-screen text
+input.pause	Pause
+# context: on-screen text
+input.quick_load	Quick load
+# context: on-screen text
+input.quick_save	Quick save
+# context: on-screen text
+input.rear_touch_bottom_left	Rear touch: bottom left
+# context: on-screen text
+input.rear_touch_bottom_right	Rear touch: bottom right
+# context: on-screen text
+input.rear_touch_top_left	Rear touch: top left
+# context: on-screen text
+input.rear_touch_top_right	Rear touch: top right
+# context: on-screen text
+input.rewind	Rewind
+# context: on-screen text
+input.right	Right
+# context: on-screen text
+input.right_stick_down	Right stick down
+# context: on-screen text
+input.right_stick_left	Right stick left
+# context: on-screen text
+input.right_stick_right	Right stick right
+# context: on-screen text
+input.right_stick_up	Right stick up
+# context: on-screen text
+input.screenshot	Screenshot
+# context: on-screen text
+input.select	Select
+# context: on-screen text
+input.square	Square
+# context: on-screen text
+input.start	Start
+# context: on-screen text
+input.start_select_opens_the_menu_pick	Start + Select opens the menu; pick other buttons
+# context: on-screen text
+input.triangle	Triangle
+# context: on-screen text
+input.turbo_a	Turbo A
+# context: on-screen text
+input.turbo_b	Turbo B
+# context: on-screen text
+input.up	Up
+# context: Language row: follows the Vita system language
+lang.auto	Automatic
+# context: on-screen text
+link.connecting_over_the_internet	Connecting over the Internet
+# context: on-screen text
+link.connecting_through_the_relay	Connecting through the relay
+# context: on-screen text
+link.ending_the_link_together	Ending the link together
+# context: on-screen text
+link.link_ended	Link ended
+# context: on-screen text
+link.link_lost_the_other_vita_is	Link lost: the other Vita is gone.
+# context: on-screen text
+link.nobody_answered	Nobody answered.
+# context: on-screen text
+link.opening_a_path_to_the_other	Opening a path to the other console
+# context: on-screen text
+link.playing_together	Playing together
+# context: on-screen text
+link.reaching_player_1	Reaching player 1
+# context: on-screen text
+link.receiving_the_game_from_player_1	Receiving the game from player 1
+# context: on-screen text
+link.sending_the_game_to_player_2	Sending the game to player 2
+# context: on-screen text
+link.starting_the_game_together	Starting the game together
+# context: on-screen text
+link.the_game_could_not_be_saved	The game could not be saved.
+# context: on-screen text
+link.the_game_could_not_be_started	The game could not be started together.
+# context: on-screen text
+link.the_game_did_not_arrive_intact	The game did not arrive intact. Try again.
+# context: row value
+link.the_link_failed	The link failed.
+# context: on-screen text
+link.the_link_failed_2	The link failed
+# context: on-screen text
+link.the_link_is_fine	The link is fine.
+# context: on-screen text
+link.the_link_was_cancelled	The link was cancelled.
+# context: on-screen text
+link.the_other_vita_ended_the_link	The other Vita ended the link.
+# context: on-screen text
+link.the_other_vita_plays_a_different	The other Vita plays a different game.
+# context: on-screen text
+link.the_other_vita_runs_a_different	The other Vita runs a different version of VitAdhoc.
+# context: on-screen text
+link.the_other_vita_s_game_did	The other Vita's game did not match.
+# context: on-screen text
+link.the_two_games_fell_out_of	The two games fell out of step. The link ended and nothing was saved.
+# context: on-screen text
+link.there_was_not_enough_memory_to	There was not enough memory to start the link.
+# context: on-screen text
+link.this_vita_went_to_sleep_so	This Vita went to sleep, so the link ended.
+# context: on-screen text
+link.waiting_for_player_2	Waiting for player 2
+# context: row value of a governed picture row; %s is the current choice (xBRZ 4x, ...)
+look.auto	Auto (%s)
+# context: row value of a governed picture row eased for speed; %s is the current choice
+look.auto_eased	Auto (%s, eased)
+# context: on-screen text
+md.128_kb	128 KB
+# context: on-screen text
+md.16_kb	16 KB
+# context: on-screen text
+md.256_kb	256 KB
+# context: on-screen text
+md.32_kb	32 KB
+# context: on-screen text
+md.3_buttons	3 buttons
+# context: on-screen text
+md.512_kb	512 KB
+# context: on-screen text
+md.64_kb	64 KB
+# context: on-screen text
+md.6_buttons	6 buttons
+# context: on-screen text
+md.a_game_gear_game_has_one	A Game Gear game has one controller.
+# context: on-screen text
+md.a_game_gear_game_has_one_2	A Game Gear game has one controller
+# context: on-screen text
+md.asic	ASIC
+# context: on-screen text
+md.auto_follows_the_game_3_buttons	Auto follows the game: 3 buttons or 6. A few games misread the 6 button pad; choose 3 buttons for them.
+# context: on-screen text
+md.auto_follows_the_game_europe_runs	Auto follows the game. Europe runs a game at its 50 Hz speed, USA and Japan at 60 Hz; some games only work in their own region.
+# context: on-screen text
+md.both_edges	Both edges
+# context: on-screen text
+md.change_disc	Change disc
+# context: on-screen text
+md.cheat_code_game_genie_pro_action	Cheat code (Game Genie, Pro Action Replay or address:value)
+# context: toast; %s is the file
+md.cheat_list_not_saved	Cheat list not saved: %s. The old file was kept.
+# context: on-screen text
+md.console	Console
+# context: on-screen text
+md.disc	Disc %d
+# context: toast notice
+md.disc_could_not_be_read	Disc %d could not be read: %s
+# context: toast notice
+md.disc_inserted	Disc %d inserted
+# context: toast notice
+md.disc_is_in_the_drive_already	Disc %d is in the drive already
+# context: toast notice
+md.disc_is_missing	Disc %d is missing: %s
+# context: toast notice
+md.disc_tray_open	Disc tray open
+# context: on-screen text
+md.discrete	Discrete
+# context: on-screen text
+md.enhanced	Enhanced
+# context: on-screen text
+md.europe_50_hz	Europe (50 Hz)
+# context: on-screen text
+md.extra_save_memory_some_games_can	Extra save memory some games can use besides the console's built in 8 KB. 512 KB is the usual setting; 128 KB is the one Sega sold; Off leaves the slot empty. A save made with another size is kept and comes back when you choose that size again. Takes effect the next time the game starts. Two players always use 512 KB.
+# context: on-screen text
+md.fm_sound	FM sound
+# context: on-screen text
+md.fm_sound_unit	FM sound unit
+# context: on-screen text
+md.for_a_game_on_several_discs	For a game on several discs: opens the disc tray, takes the disc out, puts the one you choose in and closes the tray, as you would by hand. Do it when the game asks for another disc. Saves and saved moments stay with the game.
+# context: on-screen text
+md.games_on_the_master_system_cover	Games on the Master System cover the first 8 columns with a border colour when they scroll. Hides them, so the picture is 248 wide.
+# context: on-screen text
+md.hide_masked_edge	Hide masked edge
+# context: on-screen text
+md.how_far_back_rewind_reaches_short	How far back rewind reaches: Short about 30 seconds, Medium about a minute. A disc game's saved moments are large (about 1 MB each): quiet scenes keep this length, a scene that redraws the whole screen (video) keeps only a few seconds. The memory it may use is fixed.
+# context: on-screen text
+md.japan	Japan
+# context: on-screen text
+md.lcd_colours	LCD colours
+# context: on-screen text
+md.lcd_ghosting	LCD ghosting
+# context: on-screen text
+md.left_edge	Left edge
+# context: toast notice
+md.look_eased_to_keep_full_speed	Look eased to keep full speed
+# context: error screen: keep the file extensions
+md.m3u_empty	The .m3u list has no disc (.cue, .chd or .iso) in it.
+# context: error screen; %s is the list of missing disc files
+md.m3u_none_found	None of the discs in the .m3u list could be found: %s
+# context: error screen: keep the file extension
+md.m3u_unreadable	The .m3u list could not be read.
+# context: on-screen text
+md.no_sprite_flicker	No sprite flicker
+# context: on-screen text
+md.pad_type	Pad type
+# context: on-screen text
+md.ram_cartridge	RAM cartridge
+# context: on-screen text
+md.region	Region
+# context: error screen: keep the file names and the folder as they are
+md.sega_cd_bios_missing	Sega CD game: put your own Sega CD BIOS (for example us_scd1_9210.bin, eu_mcd1_9210.bin or jp_mcd1_9112.bin) in ux0:data/GBAdhoc/bios or next to the game
+# context: notice kept for the app (session report): keep the folder as it is
+md.sega_cd_bios_missing_notice	A Sega CD game needs its BIOS: put it in ux0:data/GBAdhoc/bios
+# context: error screen; the first %s is the core's own message (English), the second the BIOS regions found
+md.sega_cd_load_failed	%s. Sega CD: check the disc image (.cue with its .bin files, .chd or .iso). BIOS found: %s.
+# context: on-screen text
+md.start_sega_games_from_vitadhoc	Start Sega games from VitAdhoc.
+# context: on-screen text
+md.that_code_is_already_in_the	That code is already in the list
+# context: on-screen text
+md.that_code_points_at_an_address	That code points at an address this game does not have
+# context: on-screen text
+md.that_is_not_a_cheat_code	That is not a cheat code. Use XXXX-XXXX (Game Genie) or AAAAAA:VVVV (Pro Action Replay)
+# context: on-screen text
+md.that_is_not_a_cheat_code_2	That is not a cheat code. Use XXX-XXX (Game Genie), 00AA-AAVV (Pro Action Replay) or AAAA:VV
+# context: on-screen text
+md.the_console_drew_only_4_sprites	The console drew only 4 sprites on a line, so games blinked the rest. On draws them all; the game itself runs exactly the same.
+# context: on-screen text
+md.the_console_drew_only_8_sprites	The console drew only 8 sprites on a line, so games blinked the rest. On draws them all; the game itself runs exactly the same.
+# context: toast notice
+md.the_disc_is_being_changed_already	The disc is being changed already
+# context: on-screen text
+md.the_game_gear_s_screen_showed	The Game Gear's screen showed softer colours and never a true black. On draws them that way.
+# context: toast notice
+md.the_list_names_a_disc_that_is_missing	The list names a disc that is missing: %s
+# context: on-screen text
+md.the_master_system_s_fm_add	The Master System's FM add-on, which some games use. Auto turns it on for games that ask for it.
+# context: toast notice
+md.the_ram_cartridge_changes_when_the_game	The RAM cartridge changes when the game starts again
+# context: on-screen text
+md.the_sega_core_could_not_start	The Sega core could not start.
+# context: on-screen text
+md.the_slow_game_gear_screen_left	The slow Game Gear screen left a trail behind moving things. 0 is off, 10 is strong.
+# context: on-screen text
+md.the_sound_chip_discrete_is_the	The sound chip: Discrete is the original YM2612, ASIC the later YM3438, Enhanced adds the missing high notes.
+# context: on-screen text
+md.usa	USA
+# context: row value
+menu.10_a_second	10 a second
+# context: row value
+menu.15_a_second	15 a second
+# context: row value
+menu.30_a_second	30 a second
+# context: on-screen text
+menu.a_faint_pixel_grid_like_a	A faint pixel grid, like a handheld's screen. 1 is faint, 10 is strong.
+# context: row value
+menu.a_number_you_type	A number you type
+# context: help line under a row
+menu.a_shortcut_can_be_one_button	A shortcut can be one button or a chord: press them together.
+# context: on-screen text
+menu.a_soft_glow_beside_the_picture	A soft glow beside the picture in place of black bars.
+# context: row label
+menu.add_a_cheat	Add a cheat
+# context: row value
+menu.all_games	All games
+# context: row label
+menu.ambient_glow	Ambient glow
+# context: question box
+menu.anything_the_game_has_not_saved	Anything the game has not saved is lost.
+# context: row label
+menu.apply_to	Apply to
+# context: row value
+menu.auto	Auto
+# context: on-screen text
+menu.auto_adapts_to_keep_60_fps	Auto adapts to keep 60 fps; smoothing when it can.
+# context: button hint at the bottom
+menu.back	Back
+# context: on-screen text
+menu.back_to_the_game	Back to the game
+# context: question box
+menu.back_to_the_game_list	Back to the game list?
+# context: on-screen text
+menu.bigger_text_in_the_menus_of	Bigger text in the menus of the app and the players.
+# context: row value
+menu.bilinear	Bilinear
+# context: on-screen text
+menu.brighter_text_and_clearer_edges_in	Brighter text and clearer edges in the menus of the app and the players.
+# context: Button test: a shortcut made of several buttons; %s is the action
+menu.btntest.chord	%s (chord)
+# context: help line under a row
+menu.button_mapping	Button mapping
+# context: help line under a row
+menu.button_mapping_for_every_player_the	Button mapping for every player, the sticks and turbo buttons.
+# context: help line under a row
+menu.button_test	Button test
+# context: row value
+menu.buttons	Buttons
+# context: button hint at the bottom
+menu.cancel	Cancel
+# context: button hint at the bottom
+menu.change	Change
+# context: toast
+menu.cheat_deleted	Cheat deleted
+# context: toast; %s is the cheat name
+menu.cheat_deleted_name	Deleted: %s
+# context: row label
+menu.cheats	Cheats
+# context: help line under a row
+menu.cheats_you_add_or_turn_on	Cheats you add or turn on appear here.
+# context: on-screen text
+menu.choose_which_vita_button_does_what	Choose which Vita button does what, for each player.
+# context: question box
+menu.clear	Clear
+# context: toast notice
+menu.cleared	%s cleared
+# context: on-screen text
+menu.coloured_stripes_like_a_crt_tube	Coloured stripes like a CRT tube. Darkens the picture a little. 1 is faint, 10 is strong.
+# context: row label
+menu.coming	Coming
+# context: button hint at the bottom
+menu.confirm	Confirm
+# context: row label
+menu.controls	Controls
+# context: toast notice
+menu.controls_reset_to_the_defaults	Controls reset to the defaults
+# context: toast; %s is the reason (util.write_*)
+menu.controls_save_failed	Could not save the controls: %s
+# context: toast notice
+menu.could_not_save_the_state_the	Could not save the state: the game could not be captured
+# context: row label
+menu.crt_mask	CRT mask
+# context: row value
+menu.customised	Customised
+# context: row value
+menu.d_pad	D-pad
+# context: on-screen text
+menu.dark_lines_between_the_rows_like	Dark lines between the rows, like a TV. 1 is faint, 10 is strong.
+# context: row value
+menu.default	Default
+# context: button hint at the bottom
+menu.delete	Delete
+# context: question box
+menu.delete_slot	Delete Slot %d?
+# context: question box
+menu.delete_this_cheat	Delete this cheat?
+# context: on-screen text
+menu.empty_slot	Empty slot
+# context: row value
+menu.enhanced_2x	Enhanced 2x
+# context: row value
+menu.enhanced_3x	Enhanced 3x
+# context: row value
+menu.enhanced_4x	Enhanced 4x
+# context: question box
+menu.every_button_stick_and_turbo_setting	Every button, stick and turbo setting goes back to the defaults.
+# context: card label on the control centre and button of the exit question
+menu.exit	Exit
+# context: help line of the Exit card on the control centre
+menu.exit_help	Close VitAdhoc
+# context: row label
+menu.fast_forward	Fast-forward
+# context: help line under a row
+menu.fast_forward_and_sound_while_it	Fast-forward and sound while it runs.
+# context: on-screen text
+menu.ff_button	FF button
+# context: row value
+menu.find_a_value_s_address	Find a value's address
+# context: help line under a row
+menu.find_where_the_game_keeps_lives	Find where the game keeps lives, money or health: note the number, then narrow it down as it changes. Make a result a cheat.
+# context: row label
+menu.game_list	Game list
+# context: on-screen text
+menu.h_m_played	%lldh %02lldm played
+# context: row label
+menu.high_contrast	High contrast
+# context: row value
+menu.hold	Hold
+# context: on-screen text
+menu.hold_the_fast_forward_button_or	Hold the fast-forward button, or press it once to switch fast-forward on and off.
+# context: on-screen text
+menu.hold_the_rewind_button_to_run	Hold the rewind button to run the game backwards.
+# context: on-screen text
+menu.hold_turbo_runs_while_the_button	Hold: turbo runs while the button is held. Toggle: press once to start, again to stop.
+# context: on-screen text
+menu.how_fast_it_runs_2x_and	How fast it runs. 2x and 3x can play the sound sped up, or at normal pitch. Unlimited and Unlimited Smooth are silent: as many frames as fit, one picture every second refresh (Unlimited) or every refresh (Unlimited Smooth).
+# context: on-screen text
+menu.how_fast_turbo_a_presses_10	How fast Turbo A presses: 10, 15 or 30 times a second.
+# context: on-screen text
+menu.how_fast_turbo_b_presses_10	How fast Turbo B presses: 10, 15 or 30 times a second.
+# context: on-screen text
+menu.how_large_the_game_is_drawn	How large the game is drawn. Original keeps the console's shape; Pixel perfect uses whole-number steps.
+# context: help line under a row
+menu.how_the_game_is_run_and	How the game is run and shown.
+# context: row label
+menu.image_quality	Image quality
+# context: row value
+menu.in_the_list	%d in the list
+# context: row label
+menu.interface	Interface
+# context: toast notice
+menu.is_now	%s is now %s
+# context: question box
+menu.keep	Keep
+# context: row label
+menu.keep_sound	Keep sound
+# context: on-screen text
+menu.keep_the_places_that_are_just	Keep the places that are just what they were at the last step.
+# context: on-screen text
+menu.keep_the_places_that_are_not	Keep the places that are not what they were at the last step.
+# context: on-screen text
+menu.keep_the_places_that_do_not	Keep the places that do not hold the number you type.
+# context: on-screen text
+menu.keep_the_places_that_hold_less	Keep the places that hold less than the number you type.
+# context: on-screen text
+menu.keep_the_places_that_hold_more	Keep the places that hold more than the number you type.
+# context: help line under a row
+menu.keep_the_places_that_hold_the	Keep the places that hold the number you type. Look at the game for it.
+# context: on-screen text
+menu.keep_the_places_that_went_down	Keep the places that went down since the last step.
+# context: on-screen text
+menu.keep_the_places_that_went_up	Keep the places that went up since the last step.
+# context: on-screen text
+menu.keep_these_controls_for_every_game	Keep these controls for every game, or only for this one.
+# context: on-screen text
+menu.keep_these_picture_settings_for_every	Keep these picture settings for every game, or only for this one.
+# context: row label (Settings > Interface)
+menu.language	Language
+# context: row value
+menu.large	Large
+# context: row label
+menu.lcd_grid	LCD grid
+# context: row value
+menu.lcd_pch_2000	LCD (PCH-2000)
+# context: on-screen text
+menu.leave_this_game_for_the_game	Leave this game for the game list
+# context: row label
+menu.left_stick	Left stick
+# context: on-screen text
+menu.left_stick_2	Left stick  %d, %d
+# context: on-screen text
+menu.lets_the_rear_touch_panel_s	Lets the rear touch panel's four corners act as buttons you can map.
+# context: button hint at the bottom
+menu.load	Load
+# context: toast notice
+menu.load_undone	Load undone
+# context: toast notice
+menu.loading_states_is_not_available	Loading states is not available
+# context: row value
+menu.look_at_the_game_s_memory	Look at the game's memory now
+# context: help line under a row
+menu.make_this_a_cheat_that_keeps	Make this a cheat that keeps the value it has now.
+# context: help line of a button mapping row; %s is the game button
+menu.map.press_ok_for	Press OK, then the Vita button that should be %s.
+# context: row value
+menu.medium	Medium
+# context: on-screen text
+menu.min_played	%lld min played
+# context: row value
+menu.mmpx_2x	MMPX 2x
+# context: on-screen text
+menu.mmpx_at_twice_its_size_crisp	MMPX at twice its size: crisp pixel art, light on the Vita.
+# context: question box body
+menu.modal.cheat_delete_body	The cheat is removed from the list. This cannot be undone.
+# context: question box body; %s is the cheat name
+menu.modal.cheat_delete_body_named	"%s" is removed from the list. This cannot be undone.
+# context: question box title
+menu.modal.exit_title	Close VitAdhoc?
+# context: question box title built from a host text
+menu.modal.exit_title_named	%s?
+# context: help line under a row
+menu.most_counters_are_1_byte_try	Most counters are 1 byte. Try 2 bytes for money and scores. Any address also looks at odd places. Used by the next New search.
+# context: on-screen text
+menu.most_counters_are_1_byte_try_2	Most counters are 1 byte. Try 2 bytes for money and scores, 4 bytes for big numbers. Used by the next New search.
+# context: toast notice
+menu.moved_here_from	%s moved here from %s
+# context: on-screen text
+menu.moves_like_the_d_pad	Moves like the D-pad
+# context: on-screen text
+menu.narrow_it_down_to_or_fewer	Narrow it down to %d or fewer to see them.
+# context: row label
+menu.new_search	New search
+# context: row label
+menu.no_cheats_for_this_game	No cheats for this game
+# context: row value
+menu.no_cheats_yet	No cheats yet
+# context: on-screen text
+menu.no_picture	No picture
+# context: toast notice
+menu.no_results_start_a_new_search	No results. Start a new search
+# context: toast notice
+menu.no_saved_state_in_this_slot	No saved state in this slot
+# context: row value
+menu.normal	Normal
+# context: row value
+menu.normal_pitch	Normal pitch
+# context: on-screen text
+menu.not_set	Not set
+# context: on-screen text
+menu.not_usable_here	Not usable here
+# context: on-screen text
+menu.not_used	Not used
+# context: help line under a row
+menu.nothing_matched_start_a_new_search	Nothing matched. Start a new search.
+# context: toast notice
+menu.nothing_pressed_the_button_was_not	Nothing pressed: the button was not changed
+# context: toast notice
+menu.nothing_to_undo	Nothing to undo
+# context: row value
+menu.off	Off
+# context: row value
+menu.oled_pch_1000	OLED (PCH-1000)
+# context: row value
+menu.on	On
+# context: row value
+menu.original	Original
+# context: question box
+menu.overwrite	Overwrite
+# context: question box
+menu.overwrite_slot	Overwrite Slot %d?
+# context: on-screen text
+menu.pick_a_result_to_make_it	Pick a result to make it a cheat that keeps its value.
+# context: help line under a row
+menu.pick_the_player_whose_buttons_you	Pick the player whose buttons you are changing.
+# context: row label
+menu.picture	Picture
+# context: on-screen text
+menu.picture_controls_speed_and_text	Picture, controls, speed and text
+# context: row label
+menu.play_together	Play together
+# context: on-screen text
+menu.play_with_a_friend	Play with a friend
+# context: row label
+menu.player	Player
+# context: on-screen text
+menu.player_2	Player %d
+# context: toast notice
+menu.player_buttons_reset	Player %d buttons reset
+# context: question box
+menu.press_a_button_for	Press a button for %s
+# context: help line under a row
+menu.press_ok_then_the_vita_button	Press OK, then the Vita button for it.
+# context: question box
+menu.press_one_button_or_hold_several	Press one button, or hold several together for a chord.
+# context: question box
+menu.press_the_vita_button_stick_direction	Press the Vita button, stick direction or rear corner to use.
+# context: row value
+menu.ps_tv	PS TV
+# context: on-screen text
+menu.put_every_button_stick_and_turbo	Put every button, stick and turbo setting back to the defaults.
+# context: help line under a row
+menu.put_this_player_s_buttons_back	Put this player's buttons back to the defaults.
+# context: question box
+menu.quit	Quit
+# context: row label
+menu.rear_touch_panel	Rear touch panel
+# context: why Play together is greyed
+menu.reason.no_link	Not available for this console: the player has no link
+# context: why a row is greyed
+menu.reason.unsupported	Not available in this player
+# context: help line under a row
+menu.remember_the_game_s_memory_as	Remember the game's memory as it is now. Play on, then narrow the list down with the steps below.
+# context: question box
+menu.reset	Reset
+# context: row label
+menu.reset_game	Reset game
+# context: question box
+menu.reset_the_controls	Reset the controls?
+# context: question box
+menu.reset_the_game	Reset the game?
+# context: row label
+menu.reset_this_player_s_buttons	Reset this player's buttons
+# context: help line under a row
+menu.reset_to_defaults	Reset to defaults
+# context: row label
+menu.results	Results
+# context: button hint at the bottom
+menu.resume	Resume
+# context: row label
+menu.rewind	Rewind
+# context: help line under a row
+menu.rewind_length_help	How far back rewind reaches: Short about 30 seconds, Medium about a minute. A busy game keeps a little less: the memory it may use is fixed.
+# context: row label
+menu.right_stick	Right stick
+# context: on-screen text
+menu.right_stick_2	Right stick  %d, %d
+# context: button hint at the bottom
+menu.save	Save
+# context: button hint at the bottom
+menu.save_here	Save here
+# context: on-screen text
+menu.save_or_load_the_game_of	Save or load the game: %d of %d slots used
+# context: row label
+menu.save_states	Save states
+# context: on-screen text
+menu.saved	Saved
+# context: toast notice
+menu.saving_states_is_not_available	Saving states is not available
+# context: toast notice
+menu.saving_to_slot	Saving to slot %d...
+# context: row label
+menu.scanlines	Scanlines
+# context: row label
+menu.screen	Screen
+# context: row label
+menu.screen_size	Screen size
+# context: help line under a row
+menu.screen_size_image_quality_scanlines_lcd	Screen size, image quality, scanlines, LCD grid and ambient glow.
+# context: title of the keyboard that asks for a number; %s is the step (Equal to, ...)
+menu.search.ask_number	%s (a number)
+# context: name given to a cheat made from a search result; %s is the address
+menu.search.found_at	Found at %s
+# context: one result found
+menu.search.n_result	%d result
+# context: number of results found (not one)
+menu.search.n_results	%d results
+# context: row label
+menu.search_memory	Search memory
+# context: toast notice
+menu.search_started_places_play_on_then	Search started: %d places. Play on, then narrow it down
+# context: button hint at the bottom
+menu.select	Select
+# context: row label
+menu.settings	Settings
+# context: row value: how large the picture is drawn
+menu.shape.fit	Fit
+# context: row value: whole-number picture sizes
+menu.shape.pixel_perfect	Pixel perfect
+# context: row value: how large the picture is drawn
+menu.shape.stretch	Stretch
+# context: row value: how large the picture is drawn
+menu.shape.zoom	Zoom
+# context: row value
+menu.sharp_bilinear	Sharp bilinear
+# context: row value
+menu.short	Short
+# context: on-screen text
+menu.shows_each_button_stick_and_touch	Shows each button, stick and touch panel as it is pressed, and what it does.
+# context: on-screen text
+menu.shows_more_of_the_world_than	Shows more of the world than the console did, for games with a wide view profile.
+# context: row value
+menu.since_the_last_step	Since the last step
+# context: row label
+menu.size_of_the_number	Size of the number
+# context: on-screen text
+menu.slot	Slot %d
+# context: toast notice
+menu.slot_deleted	Slot %d deleted
+# context: on-screen text
+menu.slot_of	Slot %d of %d
+# context: on-screen text
+menu.smoothed_at_four_times_its_size	Smoothed at four times its size. The most detail and work.
+# context: on-screen text
+menu.smoothed_at_three_times_its_size	Smoothed at three times its size. More detail, more work.
+# context: on-screen text
+menu.smoothed_at_twice_the_game_s	Smoothed at twice the game's size, then sized to fit.
+# context: row value
+menu.sped_up	Sped up
+# context: row label
+menu.speed	Speed
+# context: value of the Speed link; %s is the mode (2x, Unlimited, ...)
+menu.speed.value_ff	Fast-forward %s
+# context: row value
+menu.start_again	Start again
+# context: on-screen text
+menu.start_the_game_again_from_the	Start the game again from the beginning
+# context: toast notice
+menu.state_loaded_from_slot	State loaded from slot %d
+# context: toast notice
+menu.state_saved_to_slot	State saved to slot %d
+# context: save slot with no state; also after the dash in the caption
+menu.states.empty	Empty
+# context: question box
+menu.stay	Stay
+# context: row label
+menu.text_size	Text size
+# context: help line under a row
+menu.text_size_and_high_contrast_for	Text size and high contrast for the menus of the app and the players.
+# context: toast notice
+menu.the_cheat_could_not_be_deleted	The cheat could not be deleted
+# context: on-screen text
+menu.the_game_s_own_pixels_evenly	The game's own pixels, evenly sized at any screen size.
+# context: question box
+menu.the_game_starts_again_from_the	The game starts again from the beginning. Anything it has not saved is lost.
+# context: question box
+menu.the_saved_state_and_its_picture	The saved state and its picture are removed. This cannot be undone.
+# context: toast notice
+menu.the_search_could_not_start_not	The search could not start: not enough memory
+# context: on-screen text
+menu.the_sound_while_fast_forwarding_off	The sound while fast-forwarding: off, sped up with the game, or at its normal pitch.
+# context: toast notice
+menu.the_state_could_not_be_deleted	The state could not be deleted
+# context: toast notice
+menu.the_state_could_not_be_loaded	The state could not be loaded: this game or version cannot read it
+# context: question box
+menu.the_state_saved_there_will_be	The state saved there will be replaced by the game as it is now.
+# context: toast notice
+menu.the_undo_could_not_be_applied	The undo could not be applied
+# context: toast notice
+menu.there_is_no_memory_to_search	There is no memory to search in this game
+# context: toast notice
+menu.there_is_no_search_to_narrow	There is no search to narrow down
+# context: row value
+menu.this_game	This game
+# context: toast notice
+menu.this_place_cannot_be_made_into	This place cannot be made into a cheat here
+# context: on-screen text
+menu.to_leave_hold_start_select_or	To leave: hold Start + Select, or a finger on this line
+# context: row value
+menu.toggle	Toggle
+# context: on-screen text
+menu.touch_screen	Touch screen
+# context: on-screen text
+menu.touch_screen_2	Touch screen  %d, %d
+# context: on-screen text
+menu.touching	Touching
+# context: row label
+menu.turbo_a_speed	Turbo A speed
+# context: row label
+menu.turbo_b_speed	Turbo B speed
+# context: row label
+menu.turbo_mode	Turbo mode
+# context: on-screen text
+menu.turn_cheats_on_and_off	Turn cheats on and off
+# context: help line under a row
+menu.turn_this_cheat_on_or_off	Turn this cheat on or off.
+# context: help line under a row
+menu.turn_this_cheat_on_or_off_2	Turn this cheat on or off. Triangle or Delete removes it.
+# context: help line under a row
+menu.type_a_game_genie_pro_action	Type a Game Genie, Pro Action Replay or address=value code with the keyboard.
+# context: toast notice
+menu.type_a_whole_number_from_0	Type a whole number from 0 to %u (or 0x and hex)
+# context: help line under the Language row
+menu.ui.language_help	Language of the menus of the app and the players. Automatic follows the Vita's own language; a language without a translation shows English.
+# context: value of the Interface link
+menu.ui.large_text	Large text
+# context: value of the Interface link
+menu.ui.normal_text	Normal text
+# context: value of the Interface link; %s is Normal text or Large text
+menu.ui.value_contrast	%s, high contrast
+# context: on-screen text
+menu.undo_last_load	Undo last load
+# context: row value
+menu.unlimited	Unlimited
+# context: row value
+menu.unlimited_smooth	Unlimited Smooth
+# context: help line under a row
+menu.video_filter_help	How the picture is fitted to the screen. Sharp bilinear: exact pixels with softened edges, at any size. Bilinear: soft, every pixel blends into the next.
+# context: row label
+menu.waiting	Waiting...  %d
+# context: on-screen text
+menu.what_the_left_stick_does_nothing	What the left stick does: nothing, the D-pad, or its own buttons you can map.
+# context: on-screen text
+menu.what_the_right_stick_does_nothing	What the right stick does: nothing, the D-pad, or its own buttons you can map.
+# context: on-screen text
+menu.which_vita_screen_this_is_oled	Which Vita screen this is. OLED softens the colours a little. Every console.
+# context: row label
+menu.wide_view	Wide view
+# context: on-screen text
+patch.patch_applied_checksums_match	Patch applied (checksums match)
+# context: on-screen text
+patch.patch_applied_this_kind_of_patch	Patch applied (this kind of patch cannot check the ROM)
+# context: on-screen text
+patch.the_patch_file_is_cut_short	The patch file is cut short
+# context: on-screen text
+patch.the_patch_file_is_damaged	The patch file is damaged
+# context: on-screen text
+patch.the_patch_file_is_not_valid	The patch file is not valid
+# context: on-screen text
+patch.the_patched_rom_does_not_match	The patched ROM does not match the patch's checksum
+# context: on-screen text
+patch.the_patched_rom_would_be_too	The patched ROM would be too large
+# context: on-screen text
+patch.this_patch_was_made_for_a	This patch was made for a different ROM
+# context: on-screen text
+player.a_name_for_it_you_can	A name for it (you can leave it empty)
+# context: toast notice
+player.brought_in_the_newer_retroarch_save	Brought in the newer RetroArch save
+# context: hint at the bottom of the two-player connection screen; %s is the button (Circle or Cross)
+player.cancel_hint	%s: cancel
+# context: toast; %s is the cheat name
+player.cheat_added	Cheat added and on: %s
+# context: toast; %s is the reason
+player.cheat_added_not_saved	Cheat added and on, but the list could not be saved: %s
+# context: toast; %s is the reason
+player.cheat_deleted_not_saved	Cheat deleted, but the list could not be saved: %s
+# context: toast; %s is the cheat name
+player.cheat_off	Cheat off: %s
+# context: toast; %s is the reason
+player.cheat_off_not_saved	Cheat off, but the list could not be saved: %s
+# context: toast; %s is the cheat name
+player.cheat_on	Cheat on: %s
+# context: toast; %s is the reason
+player.cheat_on_not_saved	Cheat on, but the list could not be saved: %s
+# context: on-screen text
+player.cheats_are_off_while_linked_to	Cheats are off while linked to another console.
+# context: toast notice
+player.could_not_bring_in_the_retroarch	Could not bring in the RetroArch save: the old save was kept
+# context: toast after Continue; %s is the reason
+player.could_not_continue	Could not continue: %s
+# context: toast notice
+player.could_not_continue_the_resume_point	Could not continue: the resume point does not fit this game
+# context: toast notice
+player.could_not_save_the_screen_settings	Could not save the screen settings
+# context: on-screen text
+player.draws_each_picture_on_its_own	Draws each picture on its own thread, so heavy picture options do not slow the game down. Turn it off if the picture ever misbehaves.
+# context: on-screen text
+player.european_games_run_at_50_hz	European games run at 50 Hz. Smooth 50 Hz plays them at their real speed and evens out the picture: one refresh in six shows a mix of two frames. True 50 Hz shows one frame in six again; Fast 60 Hz runs them 20 % fast, as on a 60 Hz screen.
+# context: on-screen text
+player.fast_60_hz	Fast 60 Hz
+# context: notice kept for the app; %s is the core's own message (English)
+player.game_not_started_err	This game could not be started: %s
+# context: toast notice
+player.hardcore_mode_the_game_starts_from	Hardcore mode: the game starts from the beginning
+# context: toast
+player.moved_old_states	Moved %d old save states to the new slots
+# context: toast (one state)
+player.moved_one_old_state	Moved %d old save state to the new slots
+# context: on-screen text
+player.no_game_was_given	No game was given.
+# context: toast notice
+player.no_point_to_continue_from_the	No point to continue from: the game starts from the beginning
+# context: on-screen text
+player.not_enough_memory	Not enough memory.
+# context: on-screen text
+player.pal_games_speed	PAL games speed
+# context: notice kept for the app; %s is the reason
+player.patch_failed_notice	The patch could not be applied: %s
+# context: on-screen text
+player.quick_response	Quick response
+# context: on-screen text
+player.returning_to_vitadhoc	Returning to VitAdhoc...
+# context: help line under a row
+player.rewind_length	Rewind length
+# context: toast; %s is the reason
+player.save_failed_retry	Could not save the game: %s. The old save was kept; trying again.
+# context: on-screen text
+player.shows_what_you_press_one_frame	Shows what you press one frame sooner: the next frame is worked out ahead and shown. The game itself runs the same. Auto uses it while the game leaves time for it.
+# context: toast notice
+player.slot	Slot %d: %s
+# context: toast notice
+player.slot_1_is_empty	Slot 1 is empty
+# context: toast notice
+player.slot_could_not_be_loaded_this	Slot %d could not be loaded: this game cannot read it
+# context: on-screen text
+player.smooth_50_hz	Smooth 50 Hz
+# context: on-screen text
+player.smooth_hand_over	Smooth hand-over
+# context: on-screen text
+player.start_it_from_the_game_list	Start it from the game list: Settings > Two players
+# context: toast notice
+player.state_loaded_from_slot_1	State loaded from slot 1
+# context: on-screen text
+player.steady_pacing	Steady pacing
+# context: on-screen text
+player.that_code_is_too_long_16	That code is too long (16 parts at most)
+# context: on-screen text
+player.the_cheat_could_not_be_added	The cheat could not be added
+# context: on-screen text
+player.the_cheat_list_is_full	The cheat list is full
+# context: on-screen text
+player.the_connection_could_not_be_opened	The connection could not be opened.
+# context: on-screen text
+player.the_game_file_could_not_be	The game file could not be read.
+# context: on-screen text
+player.the_game_file_could_not_be_2	The game file could not be read again.
+# context: toast notice
+player.the_game_is_saved_again	The game is saved again
+# context: toast notice
+player.the_game_was_reset	The game was reset
+# context: on-screen text
+player.the_patch_could_not_be_applied	The patch could not be applied, so the game was not started.
+# context: toast notice
+player.the_resume_point_was_made_with	The resume point was made with another patch: the game starts from the beginning
+# context: on-screen text
+player.the_two_player_game_could_not	The two-player game could not start.
+# context: on-screen text
+player.the_two_player_link_could_not	The two-player link could not start.
+# context: toast notice
+player.this_cheat_cannot_be_switched_on	This cheat cannot be switched on here
+# context: on-screen text
+player.this_game_could_not_be_started	This game could not be started.
+# context: on-screen text
+player.true_50_hz	True 50 Hz
+# context: on-screen text
+player.two_player_game	Two-player game
+# context: reason in the sentence above
+player.unknown_error	unknown error
+# context: help line under a row
+player.video_filter	Video filter
+# context: on-screen text
+player.when_a_scene_is_too_heavy	When a scene is too heavy for every frame, every second frame is shown, evenly. The game itself keeps full speed.
+# context: toast on an unlock: title and points
+ra.achievement	Achievement: %s (%u)
+# context: on-screen text
+ra.achievements_sent	Achievements sent
+# context: on-screen text
+ra.achievements_will_be_sent_when_back	Achievements will be sent when back online
+# context: indicator on screen while a challenge is active; %s is its title
+ra.challenge	Challenge: %s
+# context: indicator on screen
+ra.challenges_active	%u challenges active
+# context: toast: every achievement of the game; %s is the game
+ra.completed	Completed: %s
+# context: toast; %s is the server's message
+ra.error	RetroAchievements: %s
+# context: notice
+ra.hardcore_no_cheats	Hardcore mode: cheats are off
+# context: notice
+ra.hardcore_no_rewind	Hardcore mode: rewind is off
+# context: notice (RetroAchievements Hardcore)
+ra.hardcore_no_states	Hardcore mode: states cannot be loaded
+# context: toast; %s is the leaderboard
+ra.leaderboard_attempt	Leaderboard attempt: %s
+# context: toast; %s is the leaderboard
+ra.leaderboard_failed	Leaderboard attempt failed: %s
+# context: toast: leaderboard title and the score
+ra.leaderboard_submitted	Submitted: %s %s
+# context: toast: every achievement of the game in Hardcore; %s is the game
+ra.mastered	Mastered: %s
+# context: on-screen text
+ra.no_achievements_for_this_game_yet	No achievements for this game yet
+# context: toast when a game starts: unlocked of all
+ra.progress	%u of %u achievements
+# context: toast when a game starts in Hardcore mode
+ra.progress_hardcore	%u of %u achievements - Hardcore
+# context: toast after a leaderboard: rank of entries
+ra.rank	Rank %u of %u
+# context: on-screen text
+ra.retroachievements_does_not_know_this_version	RetroAchievements does not know this version
+# context: toast
+ra.server_error	RetroAchievements: server error
+# context: toast; %s is the set title
+ra.set_completed	Set completed: %s
+# context: toast
+ra.sign_in_retry	RetroAchievements: could not sign in, will try again
+# context: toast; %s is the server's message
+ra.unavailable_error	Achievements unavailable: %s
+# context: toast
+ra.unavailable_no_answer	Achievements unavailable: no answer
+# context: chip on screen while rewinding
+rewind.chip	<< REWIND %u s
+# context: chip on screen while rewinding at the oldest point
+rewind.chip_oldest	<< REWIND %u s (oldest)
+# context: on-screen text
+rewind.rewind_failed	Rewind failed
+# context: on-screen text
+rewind.rewind_is_off_while_games_are	Rewind is off while games are linked
+# context: on-screen text
+rewind.rewind_is_switched_off_settings	Rewind is switched off (Settings)
+# context: on-screen text
+rewind.rewind_not_enough_memory_for_it	Rewind: not enough memory for it
+# context: on-screen text
+rewind.this_is_as_far_back_as	This is as far back as rewind goes
+# context: on-screen text
+search.1_byte	1 byte
+# context: on-screen text
+search.2_bytes	2 bytes
+# context: on-screen text
+search.2_bytes_any_address	2 bytes, any address
+# context: on-screen text
+search.4_bytes	4 bytes
+# context: on-screen text
+search.4_bytes_any_address	4 bytes, any address
+# context: on-screen text
+search.changed	Changed
+# context: on-screen text
+search.decreased	Decreased
+# context: on-screen text
+search.equal_to	Equal to
+# context: on-screen text
+search.greater_than	Greater than
+# context: on-screen text
+search.increased	Increased
+# context: on-screen text
+search.less_than	Less than
+# context: on-screen text
+search.not_equal_to	Not equal to
+# context: on-screen text
+search.unchanged	Unchanged
+# context: on-screen text
+snes.8_7_console	8:7 (console)
+# context: on-screen text
+snes.averages_pairs_of_columns_in_512	Averages pairs of columns in 512-wide pictures, smoothing their dithered see-through effects. Softens text.
+# context: on-screen text
+snes.averages_pairs_of_lines_in_interlaced	Averages pairs of lines in interlaced pictures, which removes their flicker.
+# context: on-screen text
+snes.blend_hi_res_columns	Blend hi-res columns
+# context: on-screen text
+snes.blend_interlace_lines	Blend interlace lines
+# context: on-screen text
+snes.cheat_code_game_genie_pro_action	Cheat code (Game Genie, Pro Action Replay or address=value)
+# context: toast notice
+snes.look_eased_to_keep_full_speed	Look eased to keep full speed
+# context: on-screen text
+snes.multitap	Multitap
+# context: on-screen text
+snes.pixel_perfect_only_the_console_s	Pixel perfect only: the console's slightly wide pixels (8:7), or square ones.
+# context: on-screen text
+snes.pixel_shape	Pixel shape
+# context: on-screen text
+snes.start_snes_games_from_vitadhoc	Start SNES games from VitAdhoc.
+# context: on-screen text
+snes.that_code_points_at_address_0	That code points at address 0, which cannot be changed
+# context: on-screen text
+snes.that_is_not_a_cheat_code	That is not a cheat code. Use XXXX-XXXX (Game Genie), AAAAAAVV (Pro Action Replay) or AAAAAA=VV
+# context: on-screen text
+snes.the_snes_core_could_not_start	The SNES core could not start.
+# context: on-screen text
+snes.the_super_multitap_for_players_3	The Super Multitap for players 3 and 4. Auto turns it on for games known to use it.
+# context: on-screen text
+speed.unlimited	>> Unlimited
+# context: on-screen text
+speed.unlimited_smooth	>> Unlimited Smooth
+# context: on-screen text
+states.apr	Apr
+# context: on-screen text
+states.aug	Aug
+# context: on-screen text
+states.could_not_save_the_state	Could not save the state: %s
+# context: on-screen text
+states.dec	Dec
+# context: on-screen text
+states.feb	Feb
+# context: on-screen text
+states.jan	Jan
+# context: on-screen text
+states.jul	Jul
+# context: on-screen text
+states.jun	Jun
+# context: on-screen text
+states.mar	Mar
+# context: on-screen text
+states.may	May
+# context: on-screen text
+states.no_saved_state_in_this_slot	No saved state in this slot
+# context: on-screen text
+states.no_such_slot	No such slot
+# context: on-screen text
+states.nov	Nov
+# context: on-screen text
+states.oct	Oct
+# context: on-screen text
+states.sep	Sep
+# context: on-screen text
+states.the_state_could_not_be_read	The state could not be read from the memory card
+# context: on-screen text
+states.the_state_could_not_be_written	The state could not be written
+# context: on-screen text
+states.the_state_file_is_damaged	The state file is damaged
+# context: on-screen text
+states.the_state_file_is_too_large	The state file is too large
+# context: on-screen text
+util.bad_request	bad request
+# context: on-screen text
+util.could_not_replace_the_old_file	could not replace the old file (it was kept)
+# context: on-screen text
+util.could_not_write_to_the_memory	could not write to the memory card (full or write-protected)
+# context: on-screen text
+util.the_card_did_not_keep_what	the card did not keep what was written

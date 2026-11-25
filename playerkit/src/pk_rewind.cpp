@@ -1,5 +1,6 @@
 /* Rewind: see pk_rewind.h. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE). */
 #include "pk_rewind.h"
+#include "pk_i18n.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -367,15 +368,15 @@ RewindAct Rewind::refresh(bool want, bool locked, const char *lock_notice)
 	prev_want_ = want;
 	locked_ = locked;
 	if (!open_) {
-		if (pressed) notice_ = nomem_ ? "Rewind: not enough memory for it" : "Rewind is switched off (Settings)";
+		if (pressed) notice_ = nomem_ ? tr("rewind.rewind_not_enough_memory_for_it") : tr("rewind.rewind_is_switched_off_settings");
 		return RW_PLAY;
 	}
 	if (locked && active_) end_session("locked");
 	if (!active_) {
 		if (!pressed) return RW_PLAY;
-		if (locked) { notice_ = lock_notice ? lock_notice : "Rewind is off while games are linked"; return RW_PLAY; }
+		if (locked) { notice_ = lock_notice ? tr(lock_notice) : tr("rewind.rewind_is_off_while_games_are"); return RW_PLAY; }
 		wait_idle();
-		if (!have_cur_) { notice_ = "This is as far back as rewind goes"; return RW_PLAY; }
+		if (!have_cur_) { notice_ = tr("rewind.this_is_as_far_back_as"); return RW_PLAY; }
 		active_ = first_land_ = true;
 		at_oldest_ = told_oldest_ = false;
 		held_ = credit_ = 0;
@@ -399,7 +400,7 @@ RewindAct Rewind::refresh(bool want, bool locked, const char *lock_notice)
 	}
 	held_++;
 	if (!count_) { credit_ = 0; at_oldest_ = true; }
-	if (at_oldest_ && !told_oldest_) { told_oldest_ = true; notice_ = "This is as far back as rewind goes"; }
+	if (at_oldest_ && !told_oldest_) { told_oldest_ = true; notice_ = tr("rewind.this_is_as_far_back_as"); }
 	if (landed) st_.landings++;
 	return landed ? RW_LAND : RW_STAND;
 }
@@ -425,7 +426,7 @@ std::string Rewind::chip() const
 {
 	if (!active_) return std::string();
 	char b[48];
-	snprintf(b, sizeof b, at_oldest_ ? "<< REWIND %u s (oldest)" : "<< REWIND %u s", back_seconds());
+	snprintf(b, sizeof b, tr(at_oldest_ ? "rewind.chip_oldest" : "rewind.chip"), back_seconds());
 	return b;
 }
 

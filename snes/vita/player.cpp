@@ -4,6 +4,7 @@
 #include "pk_patch.h"
 #include "pk_ra_plat.h"
 #include "pk_util.h"
+#include "pk_i18n.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -291,17 +292,17 @@ void SnesPlayer::poll_writer()
 		case WriterJob::STATE:
 			if (j->quick) {
 				if (j->rep.status != ST_OK) notice(j->rep.text(), NOTICE_ERROR, true);
-				else { session_.note_state_touched(j->state.slot); notice(strf("State saved to slot %d", j->state.slot), NOTICE_OK); }
+				else { session_.note_state_touched(j->state.slot); notice(strf(tr("menu.state_saved_to_slot"), j->state.slot), NOTICE_OK); }
 				if (menu_.is_open()) menu_.refresh();
 			} else {
 				menu_.state_write_done(j->state.slot, j->rep);
 				if (j->rep.status != ST_OK) session_.note_notice(j->rep.text());
 			}
-			logf("state slot %d written: %s\n", j->state.slot, j->rep.status == ST_OK ? "ok" : j->rep.text().c_str());
+			logf("state slot %d written: %s\n", j->state.slot, j->rep.status == ST_OK ? "ok" : j->rep.text(true).c_str());
 			break;
 		case WriterJob::RESUME:
 			resume_busy_ = false;
-			if (j->rep.status != ST_OK) logf("resume point NOT written: %s\n", j->rep.text().c_str());
+			if (j->rep.status != ST_OK) logf("resume point NOT written: %s\n", j->rep.text(true).c_str());
 			session_.set_resume_present(states_->resume_present());
 			break;
 		case WriterJob::SETTINGS:
@@ -462,6 +463,7 @@ void SnesPlayer::apply_overrides()
 	/* the settings every console shares (for the tests and the session runner: display.ini is the real source) */
 	if (req_.overrides.count("screen")) { const std::string w = lower(req_.overrides.find("screen")->second); for (int i = 0; i < PK_SCREEN_CHOICES; i++) if (w == pk_screen_tag(i)) ui_.screen = i; }
 	if (req_.overrides.count("text_size")) ui_.text_large = lower(req_.overrides.find("text_size")->second) == "large" ? 1 : 0;
+	if (req_.overrides.count("language")) { const int l = pk::lang_index(req_.overrides.find("language")->second.c_str()); ui_.language = l >= pk::LANG_CHOICES ? pk::LANG_AUTO : l; pk::i18n_use(l, system_lang_); }
 	if (req_.overrides.count("contrast")) { const std::string w = lower(req_.overrides.find("contrast")->second); ui_.contrast = w == "on" || w == "1" ? 1 : 0; }
 	if ((v = req_.override_int("pixel_square", -1)) >= 0) ps_.pixel_sq = v ? 1 : 0;
 	if ((v = req_.override_int("hires_blend", -1)) >= 0) ps_.hires_blend = v ? 1 : 0;
@@ -496,6 +498,7 @@ void SnesPlayer::sync_menu_values()
 	menu_.set_value(ROW_PIC_SCREEN, ui_.screen);
 	menu_.set_value(ROW_UI_TEXT, ui_.text_large);
 	menu_.set_value(ROW_UI_CONTRAST, ui_.contrast);
+	menu_.set_value(ROW_UI_LANGUAGE, ui_.language);
 	menu_.set_value(ROW_PIC_APPLY, ps_.use_game ? 1 : 0);
 	menu_.set_value(ROW_PIXELS, ps_.pixel_sq ? 1 : 0);
 	menu_.set_value(ROW_HIRES, ps_.hires_blend ? 1 : 0);
@@ -529,7 +532,8 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	StartResult res;
 	init_shared();
 	root_ = root;
-	ui_ = pk::uiprefs_load(root_);          /* Screen, Text size, High contrast: the same file as the app's Settings */
+	ui_ = pk::uiprefs_load(root_);          /* Screen, Text size, High contrast, Language: the same file as the app's Settings */
+	pk::i18n_use(ui_.language, system_lang_);      /* the texts of everything below (fatal screens too) */
 	snes_dir_ = path_join(root, "snes");
 	make_dirs(path_join(snes_dir_, "games"));
 	make_dirs(path_join(path_join(root, "backups"), "snes"));
@@ -563,8 +567,8 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	res.cpu_mhz = req_.cpu_mhz;
 	res.enter_is_cross = req_.enter_is_cross;
 	if (req_.game_path.empty()) {
-		res.fatal1 = "No game was given.";
-		res.fatal2 = "Start SNES games from VitAdhoc.";
+		res.fatal1 = tr("player.no_game_was_given");
+		res.fatal2 = tr("snes.start_snes_games_from_vitadhoc");
 		return res;
 	}
 	rom_ = req_.game_path;
@@ -577,7 +581,7 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 		std::string mlog;
 		int n = migrate_old_states(root, game_, &mlog);
 		if (!mlog.empty()) logf("%s", mlog.c_str());
-		if (n) notice(strf("Moved %d old save state%s to the new slots", n, n == 1 ? "" : "s"), NOTICE_INFO, true);
+		if (n) notice(strf(tr(n == 1 ? "player.moved_one_old_state" : "player.moved_old_states"), n), NOTICE_INFO, true);
 	}
 
 	/* 3. the battery save: a cut write is put back, then a newer RetroArch save is brought in */
@@ -596,8 +600,8 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 					ok = atomic_write(bak, old.data(), old.size()) == W_OK;
 				}
 				if (ok) ok = atomic_write(srm_, b.data(), b.size(), have ? EXISTS_YES : EXISTS_NO) == W_OK;
-				if (ok) notice("Brought in the newer RetroArch save", NOTICE_OK, true);
-				else notice("Could not bring in the RetroArch save: the old save was kept", NOTICE_ERROR, true);
+				if (ok) notice(tr("player.brought_in_the_newer_retroarch_save"), NOTICE_OK, true);
+				else notice(tr("player.could_not_bring_in_the_retroarch"), NOTICE_ERROR, true);
 				logf("retroarch save %s -> %s: %s\n", req_.retroarch_save.c_str(), srm_.c_str(), ok ? "imported" : "FAILED");
 			}
 		}
@@ -606,19 +610,19 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	/* 4. the game, patched in memory when the app asked for it (never half-patched) */
 	char err[200] = "";
 	snes_host_set_backup_dir(path_join(path_join(root, "backups"), "snes").c_str());
-	if (snes_host_init()) { res.fatal1 = "The SNES core could not start."; res.fatal2 = "Not enough memory."; return res; }
+	if (snes_host_init()) { res.fatal1 = tr("snes.the_snes_core_could_not_start"); res.fatal2 = tr("player.not_enough_memory"); return res; }
 	int lr;
 	std::vector<uint8_t> ra_img;       /* the patched file, kept for RetroAchievements' hash (the site knows a patched game by its own) */
 	if (!req_.patch_path.empty()) {
 		std::vector<uint8_t> romb, out;
-		if (!file_read(rom_, romb, 12u << 20)) { res.fatal1 = "This game could not be started."; res.fatal2 = "The game file could not be read."; return res; }
+		if (!file_read(rom_, romb, 12u << 20)) { res.fatal1 = tr("player.this_game_could_not_be_started"); res.fatal2 = tr("player.the_game_file_could_not_be"); return res; }
 		PatchResult pr = patch_apply_files(req_.patch_path, romb, out);
-		logf("patch %s (%s): %s\n", req_.patch_path.c_str(), patch_kind_name(pr.kind), pr.status == PS_OK ? "applied" : pr.text().c_str());
+		logf("patch %s (%s): %s\n", req_.patch_path.c_str(), patch_kind_name(pr.kind), pr.status == PS_OK ? "applied" : pr.text(true).c_str());
 		if (pr.status != PS_OK) {
-			res.fatal1 = "The patch could not be applied, so the game was not started.";
+			res.fatal1 = tr("player.the_patch_could_not_be_applied");
 			res.fatal2 = pr.text();
 			SessionReport r = session_.finish(EXIT_ERROR);
-			r.notice = "The patch could not be applied: " + pr.text();
+			r.notice = trf("player.patch_failed_notice", pr.text().c_str());
 			session_write(root_, r);
 			return res;
 		}
@@ -629,10 +633,10 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	}
 	if (lr) {
 		logf("load failed: %s\n", err);
-		res.fatal1 = "This game could not be started.";
+		res.fatal1 = tr("player.this_game_could_not_be_started");
 		res.fatal2 = err;
 		SessionReport r = session_.finish(EXIT_ERROR);
-		r.notice = std::string("This game could not be started: ") + err;
+		r.notice = trf("player.game_not_started_err", err);
 		session_write(root_, r);
 		return res;
 	}
@@ -666,8 +670,8 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 		logf("link: role=%s mode=%s identity file %s (%s)\n", req_.link.role.c_str(), req_.link.mode.c_str(), link_rom_.c_str(),
 		     link_rom_ == rom_ ? "the game file" : "a copy of the image the core runs");
 		if (link_rom_.empty()) {
-			res.fatal1 = "The two-player link could not start.";
-			res.fatal2 = "The game file could not be read again.";
+			res.fatal1 = tr("player.the_two_player_link_could_not");
+			res.fatal2 = tr("player.the_game_file_could_not_be_2");
 			return res;
 		}
 	}
@@ -695,13 +699,12 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	MenuConfig cfg;
 	cfg.game_name = req_.game_name.empty() ? game_ : req_.game_name;
 	cfg.console_label = "Super Nintendo";
-	cfg.exit_label = "Exit";
-	cfg.exit_help = "Close VitAdhoc";
 	cfg.caps = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_CRT | CAP_GLOW |
 	           CAP_WIDE | CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT | CAP_CHEAT_SEARCH | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_REWIND;
 	cfg.enter_is_cross = req_.enter_is_cross;
 	cfg.players = 4;
-	cfg.play_together_reason = "Start it from the game list: Settings > Two players";
+	cfg.system_lang = system_lang_;
+	cfg.play_together_reason = "player.start_it_from_the_game_list";
 	cfg.accent = 0x7B6CFF;
 	menu_.configure(cfg, this, states_);
 	menu_.attach_input(&mapper_, store_, &model_snes(), &profile_);
@@ -709,41 +712,41 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	menu_.set_choices_allowed(ROW_PIC_QUALITY, ((1u << IMGQ_COUNT) - 1) & ~(1u << IMGQ_ENHANCED_4X));   /* no 4x scaler in a player */
 	{
 		std::vector<std::string> px, onoff, mt, st, filt;
-		px.push_back("8:7 (console)"); px.push_back("Square");
+		px.push_back("snes.8_7_console"); px.push_back("input.square");
 		filt.push_back(kVideoFilterNames[0]); filt.push_back(kVideoFilterNames[1]);
-		onoff.push_back("Off"); onoff.push_back("On");
-		mt.push_back("Auto"); mt.push_back("On"); mt.push_back("Off");
-		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_PIXELS, "Pixel shape",
-		                   "Pixel perfect only: the console's slightly wide pixels (8:7), or square ones.", px, 0, ROW_PIC_QUALITY);
-		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_FILTER, "Video filter", PK_VIDEO_FILTER_HELP, filt, ps_.quality == PIC_SMOOTH ? 1 : 0, ROW_PIC_SCANLINES);
-		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_HIRES, "Blend hi-res columns",
-		                   "Averages pairs of columns in 512-wide pictures, smoothing their dithered see-through effects. Softens text.", onoff, 0, ROW_PIC_APPLY);
-		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_INTERLACE, "Blend interlace lines",
-		                   "Averages pairs of lines in interlaced pictures, which removes their flicker.", onoff, 0, ROW_PIC_APPLY);
-		menu_.add_host_row(Menu::PAGE_CONTROLS, ROW_MULTITAP, "Multitap",
-		                   "The Super Multitap for players 3 and 4. Auto turns it on for games known to use it.", mt, 0, ROW_CTL_MAPPING);
-		menu_.add_host_row(Menu::PAGE_SPEED, ROW_STEADY, "Steady pacing",
-		                   "When a scene is too heavy for every frame, every second frame is shown, evenly. The game itself keeps full speed.",
+		onoff.push_back("menu.off"); onoff.push_back("menu.on");
+		mt.push_back("menu.auto"); mt.push_back("menu.on"); mt.push_back("menu.off");
+		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_PIXELS, "snes.pixel_shape",
+		                   "snes.pixel_perfect_only_the_console_s", px, 0, ROW_PIC_QUALITY);
+		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_FILTER, "player.video_filter", PK_VIDEO_FILTER_HELP, filt, ps_.quality == PIC_SMOOTH ? 1 : 0, ROW_PIC_SCANLINES);
+		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_HIRES, "snes.blend_hi_res_columns",
+		                   "snes.averages_pairs_of_columns_in_512", onoff, 0, ROW_PIC_APPLY);
+		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_INTERLACE, "snes.blend_interlace_lines",
+		                   "snes.averages_pairs_of_lines_in_interlaced", onoff, 0, ROW_PIC_APPLY);
+		menu_.add_host_row(Menu::PAGE_CONTROLS, ROW_MULTITAP, "snes.multitap",
+		                   "snes.the_super_multitap_for_players_3", mt, 0, ROW_CTL_MAPPING);
+		menu_.add_host_row(Menu::PAGE_SPEED, ROW_STEADY, "player.steady_pacing",
+		                   "player.when_a_scene_is_too_heavy",
 		                   onoff, 1);
 		std::vector<std::string> palv;
-		palv.push_back("Smooth 50 Hz"); palv.push_back("True 50 Hz"); palv.push_back("Fast 60 Hz");
+		palv.push_back("player.smooth_50_hz"); palv.push_back("player.true_50_hz"); palv.push_back("player.fast_60_hz");
 		{
 			std::vector<std::string> rl;
 			rl.push_back(kRewindLengthNames[0]); rl.push_back(kRewindLengthNames[1]);
-			menu_.add_host_row(Menu::PAGE_SPEED, ROW_REWIND_LEN, "Rewind length", PK_REWIND_LENGTH_HELP, rl, rewind_len_, ROW_SPD_REWIND);
+			menu_.add_host_row(Menu::PAGE_SPEED, ROW_REWIND_LEN, "player.rewind_length", PK_REWIND_LENGTH_HELP, rl, rewind_len_, ROW_SPD_REWIND);
 		}
-		menu_.add_host_row(Menu::PAGE_SPEED, ROW_PALSPEED, "PAL games speed",
-		                   "European games run at 50 Hz. Smooth 50 Hz plays them at their real speed and evens out the picture: one refresh in six shows a mix of two frames. True 50 Hz shows one frame in six again; Fast 60 Hz runs them 20 % fast, as on a 60 Hz screen.",
+		menu_.add_host_row(Menu::PAGE_SPEED, ROW_PALSPEED, "player.pal_games_speed",
+		                   "player.european_games_run_at_50_hz",
 		                   palv, pk::pal_row_of(pk::PAL_SMOOTH));
 		{
 			std::vector<std::string> qv;
-			qv.push_back("Off"); qv.push_back("Auto"); qv.push_back("On");
-			menu_.add_host_row(Menu::PAGE_SPEED, ROW_QUICK, "Quick response",
-			                   "Shows what you press one frame sooner: the next frame is worked out ahead and shown. The game itself runs the same. Auto uses it while the game leaves time for it.",
+			qv.push_back("menu.off"); qv.push_back("menu.auto"); qv.push_back("menu.on");
+			menu_.add_host_row(Menu::PAGE_SPEED, ROW_QUICK, "player.quick_response",
+			                   "player.shows_what_you_press_one_frame",
 			                   qv, quick_);
 		}
-		menu_.add_host_row(Menu::PAGE_SPEED, ROW_HANDOFF, "Smooth hand-over",
-		                   "Draws each picture on its own thread, so heavy picture options do not slow the game down. Turn it off if the picture ever misbehaves.",
+		menu_.add_host_row(Menu::PAGE_SPEED, ROW_HANDOFF, "player.smooth_hand_over",
+		                   "player.draws_each_picture_on_its_own",
 		                   onoff, 1);
 	}
 	sync_menu_values();
@@ -765,28 +768,28 @@ void SnesPlayer::apply_start_mode()
 {
 	if (linked()) return;      /* a linked game starts from power-on and from the host's save, never from a resume point or slot */
 	if ((req_.start == START_CONTINUE || req_.start == START_SLOT) && ra_.hardcore_blocks()) {
-		notice("Hardcore mode: the game starts from the beginning", NOTICE_INFO);
+		notice(tr("player.hardcore_mode_the_game_starts_from"), NOTICE_INFO);
 		logf("hardcore: the start from a saved state is refused\n");
 		return;
 	}
 	std::vector<uint8_t> d;
 	if (req_.start == START_CONTINUE) {
-		if (!states_->resume_present()) { notice("No point to continue from: the game starts from the beginning", NOTICE_INFO); return; }
+		if (!states_->resume_present()) { notice(tr("player.no_point_to_continue_from_the"), NOTICE_INFO); return; }
 		States::PatchMatch pm = states_->resume_patch(req_.patch_key);
 		if (pm == States::PATCH_DIFFERENT || (pm == States::PATCH_UNKNOWN && !req_.patch_key.empty())) {
-			notice("The resume point was made with another patch: the game starts from the beginning", NOTICE_INFO);
+			notice(tr("player.the_resume_point_was_made_with"), NOTICE_INFO);
 			return;
 		}
 		StateStatus st = states_->load_resume(d);
-		if (st != ST_OK) { notice(std::string("Could not continue: ") + state_status_text(st), NOTICE_ERROR); return; }
-		if (!restore_state(d.data(), d.size())) { notice("Could not continue: the resume point does not fit this game", NOTICE_ERROR); return; }
+		if (st != ST_OK) { notice(trf("player.could_not_continue", state_status_text(st)), NOTICE_ERROR); return; }
+		if (!restore_state(d.data(), d.size())) { notice(tr("player.could_not_continue_the_resume_point"), NOTICE_ERROR); return; }
 		logf("continued from the resume point\n");
 	} else if (req_.start == START_SLOT) {
 		StateStatus st = states_->load(req_.slot, d);
-		if (st != ST_OK) { notice(strf("Slot %d: %s", req_.slot, state_status_text(st)), st == ST_EMPTY ? NOTICE_INFO : NOTICE_ERROR); return; }
-		if (!restore_state(d.data(), d.size())) { notice(strf("Slot %d could not be loaded: this game cannot read it", req_.slot), NOTICE_ERROR); return; }
+		if (st != ST_OK) { notice(strf(tr("player.slot"), req_.slot, state_status_text(st)), st == ST_EMPTY ? NOTICE_INFO : NOTICE_ERROR); return; }
+		if (!restore_state(d.data(), d.size())) { notice(strf(tr("player.slot_could_not_be_loaded_this"), req_.slot), NOTICE_ERROR); return; }
 		session_.note_state_touched(req_.slot);
-		notice(strf("State loaded from slot %d", req_.slot), NOTICE_OK);
+		notice(strf(tr("menu.state_loaded_from_slot"), req_.slot), NOTICE_OK);
 	}
 }
 
@@ -845,7 +848,7 @@ SpeedSettings SnesPlayer::speed_settings() const
 void SnesPlayer::speed_start()
 {
 	/* a linked game steps both machines in lockstep: neither rewind nor fast forward */
-	if (linked()) speed_.set_locked(true, "Rewind is off while games are linked");
+	if (linked()) speed_.set_locked(true, "rewind.rewind_is_off_while_games_are");
 	speed_.start(snes_host_is_pal() ? 50.0 : 60.0988, 4, speed_settings());
 	speed_.rewind().set_async(pf_->wake_writer(), &SpeedGlue::wake, &glue_);
 	logf("%s (state %u bytes, %d s, %d MB)\n", speed_.stats_line().c_str(), (unsigned) snes_host_state_size(), rewind_len_ ? 60 : 30, rewind_mb_);
@@ -995,7 +998,7 @@ std::string SnesPlayer::pace_line()
 void SnesPlayer::quick_save()
 {
 	std::vector<uint8_t> d;
-	if (!capture_state(d)) { notice("Could not save the state: the game could not be captured", NOTICE_ERROR); return; }
+	if (!capture_state(d)) { notice(tr("menu.could_not_save_the_state_the"), NOTICE_ERROR); return; }
 	Frame f;
 	current_frame(&f);
 	WriterJob *j = new WriterJob;
@@ -1011,11 +1014,11 @@ void SnesPlayer::quick_load()
 	wait_writer();
 	std::vector<uint8_t> d, now;
 	StateStatus st = states_->load(1, d);
-	if (st != ST_OK) { notice(st == ST_EMPTY ? std::string("Slot 1 is empty") : state_status_text(st), st == ST_EMPTY ? NOTICE_INFO : NOTICE_ERROR); return; }
+	if (st != ST_OK) { notice(st == ST_EMPTY ? std::string(tr("player.slot_1_is_empty")) : state_status_text(st), st == ST_EMPTY ? NOTICE_INFO : NOTICE_ERROR); return; }
 	if (capture_state(now)) states_->undo_store(now.data(), now.size());
-	if (!restore_state(d.data(), d.size())) { notice("The state could not be loaded: this game or version cannot read it", NOTICE_ERROR); return; }
+	if (!restore_state(d.data(), d.size())) { notice(tr("menu.the_state_could_not_be_loaded"), NOTICE_ERROR); return; }
 	session_.note_state_touched(1);
-	notice("State loaded from slot 1", NOTICE_OK);
+	notice(tr("player.state_loaded_from_slot_1"), NOTICE_OK);
 }
 
 void SnesPlayer::resume_post(bool sync)
@@ -1092,7 +1095,7 @@ bool SnesPlayer::srm_post()
 void SnesPlayer::srm_result(int r, const char *how, uint64_t now)
 {
 	if (!r) {
-		if (save_failing_) { logf("sram save recovered (%s)\n", how); notice("The game is saved again", NOTICE_OK); }
+		if (save_failing_) { logf("sram save recovered (%s)\n", how); notice(tr("player.the_game_is_saved_again"), NOTICE_OK); }
 		else if (srm_writes_ <= 3 || srm_writes_ % 50 == 0) logf("sram save rc=0 (%s, write %d)\n", how, srm_writes_);
 		save_failing_ = false;
 		save_msg_.clear();
@@ -1104,7 +1107,7 @@ void SnesPlayer::srm_result(int r, const char *how, uint64_t now)
 	}
 	char why[200] = "";
 	snes_host_save_error(why, sizeof why);
-	save_msg_ = strf("Could not save the game: %s. The old save was kept; trying again.", why[0] ? why : "unknown error");
+	save_msg_ = strf(tr("player.save_failed_retry"), why[0] ? why : tr("player.unknown_error"));
 	logf("sram save FAILED rc=%d (%s): %s - the file on the card was not touched; retry in %u s\n", r, how, why, srm_backoff_s_);
 	if (!save_failing_) notice(save_msg_, NOTICE_ERROR);
 	session_.note_save_error(save_msg_);
@@ -1185,7 +1188,7 @@ MenuEvent SnesPlayer::menu_update(const MenuInput &in)
 		pacer_.reset(PACE_FULL);
 		look_.reset_window();
 		look_safe_point(LOOK_SAFE_MENU);
-		if (ev == MENU_RESET_DONE) notice("The game was reset", NOTICE_INFO);
+		if (ev == MENU_RESET_DONE) notice(tr("player.the_game_was_reset"), NOTICE_INFO);
 	}
 	return ev;
 }
@@ -1238,13 +1241,14 @@ void SnesPlayer::on_change(int row, int v)
 	case ROW_PIC_GRID: ps_.grid = clampi(v, 0, 10); g_changed |= CH_GRID; break;
 	case ROW_PIC_GLOW: ps_.glow = clampi(v, 0, 10); g_changed |= CH_GLOW; break;
 	case ROW_PIC_CRT: ps_.crt = clampi(v, 0, 10); g_changed |= CH_CRT; break;
-	case ROW_PIC_SCREEN: case ROW_UI_TEXT: case ROW_UI_CONTRAST:
+	case ROW_PIC_SCREEN: case ROW_UI_TEXT: case ROW_UI_CONTRAST: case ROW_UI_LANGUAGE:
 		/* shared by every console and the app: display.ini, written at once (a few bytes) */
 		if (row == ROW_PIC_SCREEN) ui_.screen = pk_screen_clamp(v);
+		else if (row == ROW_UI_LANGUAGE) ui_.language = clampi(v, 0, pk::LANG_CHOICES - 1);      /* the menu switched the texts already */
 		else if (row == ROW_UI_TEXT) ui_.text_large = v ? 1 : 0;
 		else ui_.contrast = v ? 1 : 0;
 		ui_serial_++;
-		if (!pk::uiprefs_save(root_, ui_)) notice("Could not save the screen settings", NOTICE_ERROR, false);
+		if (!pk::uiprefs_save(root_, ui_)) notice(tr("player.could_not_save_the_screen_settings"), NOTICE_ERROR, false);
 		return;
 	case ROW_PIC_APPLY:
 		ps_.use_game = v ? 1 : 0;
@@ -1334,9 +1338,9 @@ void SnesPlayer::set_cheat(int index, bool on)
 {
 	int r = snes_host_cheat_enable(index, on ? 1 : 0);
 	char why[200];
-	if (r < 0) { notice("This cheat cannot be switched on here", NOTICE_ERROR); return; }
-	if (snes_host_cheat_error(why, sizeof why)) notice(std::string("Cheat ") + (on ? "on" : "off") + ", but the list could not be saved: " + why, NOTICE_ERROR);
-	else notice(std::string(on ? "Cheat on: " : "Cheat off: ") + cheat_name(index), on ? NOTICE_OK : NOTICE_INFO);
+	if (r < 0) { notice(tr("player.this_cheat_cannot_be_switched_on"), NOTICE_ERROR); return; }
+	if (snes_host_cheat_error(why, sizeof why)) notice(trf(on ? "player.cheat_on_not_saved" : "player.cheat_off_not_saved", why), NOTICE_ERROR);
+	else notice(trf(on ? "player.cheat_on" : "player.cheat_off", cheat_name(index).c_str()), on ? NOTICE_OK : NOTICE_INFO);
 }
 
 void SnesPlayer::add_cheat() { pf_->ask_cheat_text(); }
@@ -1351,7 +1355,7 @@ bool SnesPlayer::search_setup(pk_cs *cs)
 
 const char *SnesPlayer::search_refused()
 {
-	return linked() ? "Cheats are off while linked to another console." : cheats_refused();
+	return linked() ? tr("player.cheats_are_off_while_linked_to") : cheats_refused();
 }
 
 void SnesPlayer::add_cheat_code(const std::string &code, const std::string &name) { cheat_entered(true, code, name); }
@@ -1371,16 +1375,16 @@ void SnesPlayer::cheat_entered(bool ok, const std::string &code_in, const std::s
 	int r = snes_host_cheat_add(code.c_str(), trim(name).c_str());
 	char why[200];
 	if (r < 0) {
-		const char *t = r == SNES_CHEAT_E_FORMAT ? "That is not a cheat code. Use XXXX-XXXX (Game Genie), AAAAAAVV (Pro Action Replay) or AAAAAA=VV"
-		              : r == SNES_CHEAT_E_FULL ? "The cheat list is full"
-		              : r == SNES_CHEAT_E_TOO_LONG ? "That code is too long (16 parts at most)"
-		              : r == SNES_CHEAT_E_RANGE ? "That code points at address 0, which cannot be changed"
-		              : "The cheat could not be added";
+		const char *t = r == SNES_CHEAT_E_FORMAT ? tr("snes.that_is_not_a_cheat_code")
+		              : r == SNES_CHEAT_E_FULL ? tr("player.the_cheat_list_is_full")
+		              : r == SNES_CHEAT_E_TOO_LONG ? tr("player.that_code_is_too_long_16")
+		              : r == SNES_CHEAT_E_RANGE ? tr("snes.that_code_points_at_address_0")
+		              : tr("player.the_cheat_could_not_be_added");
 		notice(t, NOTICE_ERROR);
 	} else if (snes_host_cheat_error(why, sizeof why)) {
-		notice(std::string("Cheat added and on, but the list could not be saved: ") + why, NOTICE_ERROR);
+		notice(trf("player.cheat_added_not_saved", why), NOTICE_ERROR);
 	} else {
-		notice("Cheat added and on: " + cheat_name(r), NOTICE_OK);
+		notice(trf("player.cheat_added", cheat_name(r).c_str()), NOTICE_OK);
 	}
 	logf("cheat add '%s' -> %d\n", code.c_str(), r);
 	menu_.refresh();
@@ -1390,7 +1394,7 @@ bool SnesPlayer::delete_cheat(int index)
 {
 	int r = snes_host_cheat_remove(index);
 	char why[200];
-	if (r == 0 && snes_host_cheat_error(why, sizeof why)) notice(std::string("Cheat deleted, but the list could not be saved: ") + why, NOTICE_ERROR);
+	if (r == 0 && snes_host_cheat_error(why, sizeof why)) notice(trf("player.cheat_deleted_not_saved", why), NOTICE_ERROR);
 	return r == 0;
 }
 
@@ -1398,7 +1402,7 @@ void SnesPlayer::on_state_touched(int slot) { session_.note_state_touched(slot);
 
 void SnesPlayer::on_controls_changed(WriteResult rc)
 {
-	if (rc != W_OK) { logf("controls NOT saved: %s\n", write_result_text(rc)); session_.note_notice(std::string("Could not save the controls: ") + write_result_text(rc)); }
+	if (rc != W_OK) { logf("controls NOT saved: %s\n", write_result_text(rc, true)); session_.note_notice(trf("menu.controls_save_failed", write_result_text(rc))); }
 }
 
 bool SnesPlayer::queue_state_write(StateJob &job)
@@ -1545,7 +1549,7 @@ void SnesPlayer::look_apply(const char *why)
 	if (why) {
 		logf("look: %s -> mask=%u (scaler steps %d, row %d, interlace blend %d, hi-res blend %d)\n", why, look_.mask(), eff_.tier_steps, eff_.scaler, eff_.interlace_blend, eff_.hires_blend);
 		/* no toast at launch, where only a remembered look is applied */
-		if (strcmp(why, "start") != 0 && look_.level() > 0) notice("Look eased to keep full speed", NOTICE_INFO);
+		if (strcmp(why, "start") != 0 && look_.level() > 0) notice(tr("snes.look_eased_to_keep_full_speed"), NOTICE_INFO);
 	}
 }
 
@@ -1646,7 +1650,7 @@ void SnesPlayer::finish(ExitReason why)
 	WriteResult w = session_write(root_, rep);
 	logf("session: %lld s played, save_changed=%d save_error=%d states=%d resume=%d exit=%d -> launch/session.txt %s\n",
 	     (long long) rep.seconds_played, rep.save_changed ? 1 : 0, rep.save_error ? 1 : 0, (int) rep.states_touched.size(),
-	     rep.resume_present ? 1 : 0, (int) why, w == W_OK ? "written" : write_result_text(w));
+	     rep.resume_present ? 1 : 0, (int) why, w == W_OK ? "written" : write_result_text(w, true));
 	ra_.shutdown();                  /* an unlock earned a moment ago gets up to three seconds to reach the server */
 	log_flush(true);
 }

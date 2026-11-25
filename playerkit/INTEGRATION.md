@@ -251,6 +251,23 @@ must do:
 - Words: "starred", "game file", never "ROM" or "favourites"; hosts should pass their own game name without the region tag if they want it stripped.
 - Battery RAM: do not write the save before opening the menu. Open the menu, draw it, then call `srm_write_sync()`; the menu never waits for it.
 
+## 5c. Languages (`pk_i18n`)
+
+- Every user-visible text is a key in `lang/pk_en.txt` (sorted, `# context:` above each); `tools/gen_strings.py`
+  turns it into `src/pk_strings_en.inc`, the English table compiled in. `make -C playerkit i18n-check` (part of
+  `test`) fails when the two differ. Link `src/pk_i18n.cpp` with `pk_util.cpp` (the Makefiles of both players do).
+- At start, after `uiprefs_load`: `pk::i18n_dir("app0:")` once, then `pk::i18n_use(ui.language, system_lang)`;
+  `system_lang` is `SCE_SYSTEM_PARAM_ID_LANG` (`MenuConfig::system_lang`). The Language row of Settings > Interface
+  calls `i18n_use` itself, then `MenuHost::on_change(ROW_UI_LANGUAGE, v)` (store `ui.language` with `uiprefs_save`)
+  and `MenuHost::on_language_changed()` (rebuild host rows that hold formatted text, e.g. "Disc 2").
+- `pk::tr(key)` returns the catalogue text, else English, else the key itself; never keep the pointer past the next
+  language change (copy it). `pk::trf(key, ...)` formats a printf-style text. Host rows (`add_host_row`) and
+  `MenuConfig` texts take keys and the menu resolves them each time it builds its rows.
+- Logs stay English: pass `true` to the `bool en` parameter of `state_status_text`, `write_result_text`,
+  `SaveReport::text` and `PatchResult::text` at log sites.
+- `language=xx-long` in `display.ini` selects a pseudo-language (+35%, accented) built from the English table;
+  `make -C playerkit test` runs the menu walk and the text-fit audit in it.
+
 ## 6. Testing the adoption
 
 - `make -C playerkit test` (unit tests with ASan and UBSan, plus the scripted

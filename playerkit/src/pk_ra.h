@@ -28,6 +28,7 @@
 #ifndef PK_RA_H
 #define PK_RA_H
 
+#include "pk_i18n.h"
 #include "pk_notice.h"
 
 #include <stddef.h>
@@ -40,9 +41,9 @@ struct rc_client_t;
 namespace pk {
 
 /* what a refused action says (the same words on every console) */
-#define PK_RA_NO_STATE   "Hardcore mode: states cannot be loaded"
-#define PK_RA_NO_CHEATS  "Hardcore mode: cheats are off"
-#define PK_RA_NO_REWIND  "Hardcore mode: rewind is off"
+#define PK_RA_NO_STATE   (::pk::tr("ra.hardcore_no_states"))
+#define PK_RA_NO_CHEATS  (::pk::tr("ra.hardcore_no_cheats"))
+#define PK_RA_NO_REWIND  "ra.hardcore_no_rewind"      /* a catalogue key: Speed::set_rewind_locked() keeps it and the notice says tr() of it */
 
 /* rc_consoles.h ids */
 enum { RA_MEGA_DRIVE = 1, RA_SNES = 3, RA_MASTER_SYSTEM = 11, RA_GAME_GEAR = 15, RA_SG1000 = 33 };

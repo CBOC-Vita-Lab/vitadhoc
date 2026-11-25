@@ -227,6 +227,8 @@ public:
 	const pic_settings &picture() const { return eff_; }   /* ps_ with the look governor applied */
 	/* Screen, Text size, High contrast: the settings every console shares (display.ini, pk_uiprefs.h); ui_serial() counts changes */
 	const pk::UiPrefs &ui() const { return ui_; }
+	/* the Vita's system language (SCE_SYSTEM_PARAM_ID_LANG) for Language: Automatic; set before start() */
+	void set_system_lang(int v) { system_lang_ = v; }
 	unsigned ui_serial() const { return ui_serial_; }
 
 	/* ---- wide view (the Wide view row: Auto, On, Off; md/frontend/wide.h does the work) ----
@@ -296,6 +298,8 @@ public:
 	const char *state_load_refused();
 	const char *cheats_refused();
 	void on_change(int row_id, int value);
+	void on_language_changed() override;
+	void add_disc_row();
 	void on_reset();
 	bool capture_state(std::vector<uint8_t> &out);
 	bool restore_state(const uint8_t *data, size_t n);
@@ -345,6 +349,7 @@ private:
 	bool have_launch_ = false;
 	std::string root_, console_ = "md", game_, rom_, srm_;
 	int system_ = MD_SYS_MD;
+	int system_lang_ = 1;
 	pk::UiPrefs ui_;               /* display.ini: Screen, Text size, High contrast */
 	unsigned ui_serial_ = 0;
 	pic_settings ps_;              /* what the player chose (and what the files hold) */

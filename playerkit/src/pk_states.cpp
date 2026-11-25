@@ -1,5 +1,6 @@
 /* See pk_states.h. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE). */
 #include "pk_states.h"
+#include "pk_i18n.h"
 #include <string.h>
 #include <time.h>
 #include <algorithm>
@@ -96,29 +97,29 @@ std::string StateLayout::resume_path() const { return path_join(states_dir(), na
 std::string StateLayout::undo_path() const { return path_join(states_dir(), name + ext_tag + ".undo"); }
 std::string StateLayout::scene_path() const { return path_join(path_join(root, "scenes"), name + ".shot"); }
 
-const char *state_status_text(StateStatus s)
+const char *state_status_text(StateStatus s, bool en)
 {
 	switch (s) {
 	case ST_OK: return "";
-	case ST_EMPTY: return "No saved state in this slot";
-	case ST_READ: return "The state could not be read from the memory card";
-	case ST_DAMAGED: return "The state file is damaged";
-	case ST_TOO_BIG: return "The state file is too large";
-	case ST_WRITE: return "The state could not be written";
-	default: return "No such slot";
+	case ST_EMPTY: return trl("states.no_saved_state_in_this_slot", en);
+	case ST_READ: return trl("states.the_state_could_not_be_read", en);
+	case ST_DAMAGED: return trl("states.the_state_file_is_damaged", en);
+	case ST_TOO_BIG: return trl("states.the_state_file_is_too_large", en);
+	case ST_WRITE: return trl("states.the_state_could_not_be_written", en);
+	default: return trl("states.no_such_slot", en);
 	}
 }
 
-std::string SaveReport::text() const
+std::string SaveReport::text(bool en) const
 {
 	if (status == ST_OK) return std::string();
-	if (status == ST_WRITE) return strf("Could not save the state: %s", write_result_text(write_rc));
-	return state_status_text(status);
+	if (status == ST_WRITE) return strf(trl("states.could_not_save_the_state", en), write_result_text(write_rc, en));
+	return state_status_text(status, en);
 }
 
 std::string stamp_text(int64_t t)
 {
-	static const char *mon[12] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+	static const char *const mon[12] = { "states.jan", "states.feb", "states.mar", "states.apr", "states.may", "states.jun", "states.jul", "states.aug", "states.sep", "states.oct", "states.nov", "states.dec" };
 	if (t <= 0) return std::string();
 	time_t tt = (time_t) t;
 	struct tm tmv;
@@ -132,7 +133,7 @@ std::string stamp_text(int64_t t)
 		int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
 		int64_t d = doy - (153 * mp + 2) / 5 + 1, m = mp < 10 ? mp + 3 : mp - 9;
 		if (m <= 2) y++;
-		return strf("%d %s %d, %02d:%02d", (int) d, mon[m - 1], (int) y, (int) (rem / 3600), (int) (rem % 3600 / 60));
+		return strf("%d %s %d, %02d:%02d", (int) d, tr(mon[m - 1]), (int) y, (int) (rem / 3600), (int) (rem % 3600 / 60));
 	}
 #endif
 #ifdef _WIN32
@@ -141,7 +142,7 @@ std::string stamp_text(int64_t t)
 	if (!localtime_r(&tt, &tmv)) return std::string();
 #endif
 	if (tmv.tm_mon < 0 || tmv.tm_mon > 11) return std::string();
-	return strf("%d %s %d, %02d:%02d", tmv.tm_mday, mon[tmv.tm_mon], tmv.tm_year + 1900, tmv.tm_hour, tmv.tm_min);
+	return strf("%d %s %d, %02d:%02d", tmv.tm_mday, tr(mon[tmv.tm_mon]), tmv.tm_year + 1900, tmv.tm_hour, tmv.tm_min);
 }
 
 /* ---- pictures ----------------------------------------------------------- */

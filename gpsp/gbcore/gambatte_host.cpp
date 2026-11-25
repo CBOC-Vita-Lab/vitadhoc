@@ -14,6 +14,12 @@
 /* the cartridge's rumble motor: no motor on this build */
 void cartridge_set_rumble(unsigned) {}
 
+/* at file scope: inside the anonymous namespace these would get internal names */
+extern "C" {
+extern const unsigned char tgbshared_cgb_lcd_curve[32];
+extern const unsigned char tgbshared_cgb_lcd_green[32 * 32];
+}
+
 namespace {
 
 enum {
@@ -79,10 +85,10 @@ struct Machine {
   uint64_t frames;
   int skip, quiet;
   size_t rom_bytes;
-  /* the triangle filter */
-  int16_t hist[2 * 2 * MAX_DECIM];            /* two copies of the last 2*decim-1 stereo samples (so a read is flat) */
-  unsigned hist_len, hist_pos, since;
-  int32_t tri[2 * MAX_DECIM];
+  /* the triangle filter (two box filters in a row, so two running sums per channel instead of 2*decim-1 taps):
+   * over a block of decim samples x_j, U = sum j*x_j and V = sum x_j; an output is U(previous block) + decim*V - U */
+  int32_t u[2], v[2], pu[2];                  /* this block's sums, the last block's U (L, R) */
+  unsigned since;                             /* samples into this block */
   int16_t out[2 * (SOUND_FRAME / 16 + 8)];
   size_t out_n;
   /* cheats */
@@ -93,12 +99,11 @@ struct Machine {
   uint16_t video[VPITCH * VH];
   uint32_t sound[SOUND_BUF];
   Machine() : cgb_console(0), cgb(0), decim(64), rate(32768), cart_id(0), frames(0), skip(0), quiet(0), rom_bytes(0),
-              hist_len(0), hist_pos(0), since(0), out_n(0), ram_cheat_n(0), undo_n(0)
+              since(0), out_n(0), ram_cheat_n(0), undo_n(0)
   {
     memset(&cb, 0, sizeof cb);
     memset(header, 0, sizeof header);
-    memset(hist, 0, sizeof hist);
-    memset(tri, 0, sizeof tri);
+    memset(u, 0, sizeof u); memset(v, 0, sizeof v); memset(pu, 0, sizeof pu);
     memset(out, 0, sizeof out);
     memset(video, 0xFF, sizeof video);
     memset(sound, 0, sizeof sound);
@@ -115,10 +120,6 @@ int g_wall_shift;                            /* the clock was started before the
 #define RGB565(r, g, b) ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
 
 /* ---- the Game Boy Color LCD model: the same tables the other core draws with (tgbdual/_cgb_lcd_table.h) ---- */
-extern "C" {
-extern const unsigned char tgbshared_cgb_lcd_curve[32];
-extern const unsigned char tgbshared_cgb_lcd_green[32 * 32];
-}
 
 }  // namespace
 
@@ -220,36 +221,34 @@ void wall_poll(Machine *m)
 /* ---- the sound: 2 MiHz stereo down to the asked rate by a triangle filter of two output periods ---- */
 void audio_reset(Machine *m)
 {
-  memset(m->hist, 0, sizeof m->hist);
-  m->hist_pos = 0;
+  memset(m->u, 0, sizeof m->u); memset(m->v, 0, sizeof m->v); memset(m->pu, 0, sizeof m->pu);
   m->since = 0;
 }
 
+enum { GAIN_NUM = 1111 };
+
 void audio_feed(Machine *m, const int16_t *in, unsigned n)
 {
-  const unsigned d = m->decim, len = 2 * d - 1;
+  const unsigned d = m->decim;
   while (n--) {
-    int16_t *w = m->hist + 2 * m->hist_pos;
-    w[0] = in[0]; w[1] = in[1];
-    w += 2 * len;                              /* the second copy */
-    w[0] = in[0]; w[1] = in[1];
+    const int32_t l = in[0], r = in[1], j = (int32_t)m->since;
     in += 2;
-    if (++m->hist_pos == len)
-      m->hist_pos = 0;
+    m->u[0] += j * l; m->u[1] += j * r;
+    m->v[0] += l;     m->v[1] += r;
     if (++m->since == d) {
-      const int16_t *h = m->hist + 2 * m->hist_pos;  /* oldest first */
-      int32_t l = 0, r = 0;
-      m->since = 0;
-      for (unsigned j = 0; j < len; ++j) {
-        const int32_t t = m->tri[j];
-        l += t * h[2 * j];
-        r += t * h[2 * j + 1];
+      /* GAIN_NUM/1024: the level TGB Dual's mixer gives the same channels (a full-volume square wave: rms 8203
+       * there, 7562 here before the gain; tests/suites.c AUDIO line), so the two cores sound as loud as each other */
+      int32_t o[2];
+      for (int c = 0; c < 2; ++c) {
+        const int32_t t = m->pu[c] + (int32_t)d * m->v[c] - m->u[c];
+        o[c] = (int32_t)((int64_t)t * GAIN_NUM / (int64_t)(1024 * d * d));
+        o[c] = o[c] > 32767 ? 32767 : o[c] < -32768 ? -32768 : o[c];
+        m->pu[c] = m->u[c]; m->u[c] = 0; m->v[c] = 0;
       }
-      l /= (int32_t)(d * d);
-      r /= (int32_t)(d * d);
+      m->since = 0;
       if (m->out_n < sizeof m->out / sizeof m->out[0] / 2) {
-        m->out[2 * m->out_n] = (int16_t)(l > 32767 ? 32767 : l < -32768 ? -32768 : l);
-        m->out[2 * m->out_n + 1] = (int16_t)(r > 32767 ? 32767 : r < -32768 ? -32768 : r);
+        m->out[2 * m->out_n] = (int16_t)o[0];
+        m->out[2 * m->out_n + 1] = (int16_t)o[1];
         m->out_n++;
       }
     }
@@ -425,9 +424,6 @@ int gambatte_host_create(const uint8_t *rom, size_t size, int cgb_console, unsig
   if (d > MAX_DECIM) d = MAX_DECIM;
   m->decim = d;
   m->rate = kNative / d;
-  for (unsigned j = 0; j < 2 * d - 1; ++j)
-    m->tri[j] = (int32_t)(j < d ? j + 1 : 2 * d - 1 - j);
-  m->hist_len = 2 * d - 1;
   g_m = m;
   /* palettes of a Game Boy running as a Game Boy (the DMG-hardware path only) */
   if (!m->cgb) {

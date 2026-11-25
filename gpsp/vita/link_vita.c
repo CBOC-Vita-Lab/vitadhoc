@@ -1795,6 +1795,8 @@ static int session_begin(void)
    fe_evt("fast_link_setting own=%d role=%s", g_pcfg.fast_link,
           L.is_host ? "host" : "guest");
    rc = fe_host_gblink_start(L.is_host, L.delay, 0);
+   if (fe_host_gb_core_notice_take() == 2)
+      osd_toast("Link play uses the Standard Game Boy core");
    app_frame_forget();               /* the single machine's frame is gone */
    app_audio_flush();
    app_pace_reset();

@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "../frontend-common/fe_evt.h"
 
 /* The two-player link's calls (gbmux_pad_*) are the only ones that reach the

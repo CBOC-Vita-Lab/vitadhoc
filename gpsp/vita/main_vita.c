@@ -6465,6 +6465,8 @@ static int game_boot(const char *rom_path, fe_console_t console)
    }
    ui_loading_finish(1);
    g_game_loaded = 1;
+   if (fe_host_gb_core_notice_take() == 1)
+      osd_toast("Accurate core can't run this cartridge: using Standard");
    g_faults_seen = fe_host_guest_faults();   /* the count is the process's */
    fe_evt("gba_cable_ready=%d", fe_host_gba_cable_ready());
    plat_memory_report();        /* now the core has taken its memory */
@@ -6631,7 +6633,9 @@ static void menu_action(ui_action act)
       if (!ui_state_load_done(rc))
          osd_toast(rc == 0 ? "State loaded"
                    : rc == -2 ? "Hardcore mode: states cannot be loaded"
-                              : "No state to load");
+                   : fe_host_state_other_core_take()
+                       ? "This state is from the other Game Boy core"
+                       : "No state to load");
       break;
    }
 

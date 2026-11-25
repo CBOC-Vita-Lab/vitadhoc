@@ -65,8 +65,8 @@ What the tests cover (host x86 and qemu armhf, synthetic discs and a test-only s
   once a second in the player log.
 - FM worker (`core/fm_thread.c`, `threads.ini` `fm_thread=0|1`: off, on (default)): the YM2612's FM synthesis runs on its own core behind a write
   log (the chip's register writes, resets and sample runs, in order); the emulating thread keeps the status register's timer flags (a copy of
-  the chip's timers), the BUSY flag and the FM clock. The mixer joins at the end of every frame with a bounded wait (5 ms), after which the
-  emulating thread finishes the queue itself, so the sound never drops. Output is bit-identical with it on and off (`md/twin/fm_check.sh`, gate
+  the chip's timers), the BUSY flag and the FM clock. The mixer joins at the end of every frame and waits up to 5 ms for the worker, after which the
+  emulating thread finishes the queue itself (after the worker's current batch: the worker holds the lock per batch), so the sound never drops. Output is bit-identical with it on and off (`md/twin/fm_check.sh`, gate
   step `md-fm`). Not used with the Nuked YM2612 / YM3438 chip options and not for the YM2413 of the 8 bit systems. Census: `core_split fm_us=
   join_wait_us= runs= writes= takeovers= full_waits=` once a second in the player log.
 - Games that read the VDP status register on every line make the emulating thread wait for the worker on every line (a Mega Drive

@@ -297,6 +297,8 @@ static unsigned g_worker_mask;
 
 int md_host_set_threads(const md_thread_ops *ops, unsigned mask)
 {
+	/* a running FM worker uses g_ops: stop it (the queue is drained first) before the functions go away or change */
+	if (fmw_on && (!ops || !(mask & MD_THREAD_FM))) fmw_stop();
 	if (ops) g_ops = *ops; else memset(&g_ops, 0, sizeof g_ops);
 	g_worker_mask = ops ? (mask & (MD_THREAD_VDP | MD_THREAD_VDP_SMS)) : 0;
 	fmw_set_ops(ops ? &g_ops : NULL, ops && (mask & MD_THREAD_FM));      /* started by sound_init for the Mega Drive's YM2612 */

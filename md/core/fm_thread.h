@@ -12,8 +12,10 @@
  * writes and sample counts; with the check on the twin compares it with the real chip at every join.
  *
  * Joins: the mixer joins at the end of every frame (sound_update, before it reads the samples), and state save / load, chip options and a reset
- * of the sound run between frames with the worker idle. The wait is bounded: when the worker has not caught up after FMW_BOUND_US (or the queue is
+ * of the sound run between frames with the worker idle. The join waits up to FMW_BOUND_US for the worker to catch up; after that (or when the queue is
  * full) the emulating thread takes the rest of the queue over itself, with the same code on the same chip, so the sound never drops and never differs.
+ * The worker holds the queue's lock for one batch (everything queued when it looked); a take-over has to wait for that batch to end, so the 5 ms is
+ * the time the emulating thread waits for the worker to become idle, not a hard limit on the whole join.
  *
  * Not for the Nuked YM2612 / YM3438 option (its status needs the chip clock by clock) and not for the YM2413 of the 8 bit systems: those run inline.
  */
@@ -26,13 +28,13 @@ extern int fmw_on;                                   /* 1 while the worker runs 
 void fmw_set_ops(const md_thread_ops *ops, int want);   /* the platform's thread functions and whether the worker is wanted (kept across loads) */
 int fmw_start(int *buffer);                          /* buffer: the FM sample buffer of sound.c; 0 on success */
 void fmw_stop(void);                                 /* joins, ends the thread */
-void fmw_join(void);                                 /* every queued call is done (bounded wait, then the emulating thread finishes the queue) */
+void fmw_join(void);                                 /* every queued call is done (waits FMW_BOUND_US, then the emulating thread finishes the queue after the worker's current batch) */
 void fmw_q_write(unsigned a, unsigned v);            /* YM2612Write(a, v) */
 void fmw_q_run(int samples, int offset);             /* YM2612Update(buffer + offset, samples) */
 void fmw_q_reset(void);                              /* YM2612ResetChip() */
 int fmw_wanted(void);
 
-#define FMW_BOUND_US 5000                            /* the longest the emulating thread waits at a join before it takes the queue over */
+#define FMW_BOUND_US 5000                            /* how long the emulating thread waits at a join for the worker to catch up before it takes the queue over */
 
 /* debug (the twin's --fm-check / --fm-stress / --fm-inline / --fm-tiny): bit 0 compare the timer shadow with the chip at every join, bit 1 a join
  * after every run, bit 2 always take the queue over at a join (the fallback path), bit 3 a tiny queue (the queue-full path) */

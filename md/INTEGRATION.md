@@ -106,8 +106,8 @@ after every line (twin only). `md/vita/main.cpp` shows the sceKernel version, `m
 `MD_THREAD_FM` (worker id `MD_WORKER_FM`) puts the YM2612's FM synthesis on its own thread (`core/fm_thread.h`): the 68000 and the Z80 side
 records the chip's register writes, resets and "run n samples" calls in a log and the worker feeds them to the unchanged chip; the status register's
 timer flags, the BUSY flag and the FM clock stay on the emulating thread, which keeps a small copy of the chip's timers (`YM2612Shadow*`). The mixer
-joins at the end of every frame; the wait is bounded (`FMW_BOUND_US`), after which the emulating thread finishes the queue itself with the same code,
-so the sound never drops and never differs. Sound, state and picture are bit-identical with it on and off. It does not start for the Nuked
+joins at the end of every frame and waits up to `FMW_BOUND_US` (5 ms) for the worker, after which the emulating thread finishes the queue itself with the same code (it first waits for the worker's current batch to end: the worker holds the queue's lock per batch),
+so the sound never drops and never differs. `md_host_set_threads(NULL, 0)` (or a mask without `MD_THREAD_FM`) while the worker runs stops it first. Sound, state and picture are bit-identical with it on and off. It does not start for the Nuked
 YM2612 / YM3438 options or for the YM2413 of the 8 bit systems (they run inline). `md_host_fm_census()` returns its counters, `md_host_fm_debug()`
 turns on the timer check and the fallback / queue-full paths (twin only; `md_twin --fm-thread | --fm-check | --fm-stress | --fm-inline | --fm-tiny`,
 and `MD_TWIN_FM=1|check|stress|inline|tiny` for player_twin and link_twin).

@@ -154,7 +154,7 @@ Edits to upstream files:
 ### FM worker thread (performance edit, on by default in md.bin, off in the core)
 
 The YM2612 (MAME core) can make its samples on its own thread. Files added: `fm_thread.h/.c` (a single producer, single consumer ring of 32 bit
-words holding `YM2612Write`, `YM2612Update` and `YM2612ResetChip` calls in the order the emulating thread made them; the worker; the bounded join
+words holding `YM2612Write`, `YM2612Update` and `YM2612ResetChip` calls in the order the emulating thread made them; the worker; the join with its 5 ms wait
 and the take-over of the queue by the emulating thread). Edits to upstream files:
 
 - `sound/ym2612.c/.h`: `YM2612Shadow*`, a copy of the timer part of the chip (address latch, registers 0x24-0x27, the two counters, the status flags)

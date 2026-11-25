@@ -169,6 +169,10 @@ int main(int argc, char **argv)
 	if (argc > 4 && !strcmp(argv[1], "bench")) return bench(argc, argv);
 	scale_init();
 	printf("scale_neon_check: neon_built=%d\n", scale_neon_built() ? 1 : 0);
+#if defined(__ARM_NEON) && !defined(PK_SCALE_NO_NEON)
+	/* a NEON build whose start-up self check switched the NEON loops off would compare the C loops with themselves and pass */
+	if (!scale_neon_built()) { printf("scale_neon_check FAILED: the start-up self check switched the NEON loops off\n"); return 1; }
+#endif
 	const ScalerKind kinds[3] = { SC_MMPX2, SC_XBR2, SC_XBR3 };
 	const int quick = argc > 1 && !strcmp(argv[1], "quick");
 	for (size_t si = 0; si < sizeof kSizes / sizeof kSizes[0]; si++) {

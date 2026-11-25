@@ -56,8 +56,8 @@ two fixed ones (and small timing differences in a game's random choices).
 - **GBA** games that rewrite their own code (a self-modifying game) flush only
   the part that changed in 1.4. Software-3D games (bitmap modes) start on
   sharp bilinear so they are not asked to redraw a whole smoothed picture each
-  frame. Sprite priority is exact in 1.4; the OAM-order note below was
-  written for 1.3 and has not been rechecked.
+  frame. Sprite priority is exact in 1.4; the OAM-order check is in "Sprite
+  order" below.
 
 ## Game Boy test suites
 
@@ -94,12 +94,35 @@ emulated; its timing tests also depend on cycle-exact reads), and the sound
 tests for sweep details and for wave RAM read, trigger and write while the
 channel plays. Games that depend on those are rare.
 
+## Sprite order (OAM order)
+
+Golden Sun 1 and 2, Mario Golf and The Minish Cap were reported with sprites
+that peek through a menu or overlap in the wrong order. The cause is a rule of
+the real console: among sprites, a later sprite takes a pixel over only with a
+strictly better priority, and a transparent pixel of such a sprite still hands
+its priority to the sprite already there. gpSP drew by priority only. 1.4 has
+the rule (docs/TECHNICAL.md, OBJ_EXACT); 2.0 rechecked it on the PC build:
+
+- Golden Sun 1 (opening, dialogue boxes over the party) and Mario Golf (title,
+  menus, the first walk) were played by script and one frame in three was
+  compared, line by line, with the sprite and background renderer of mGBA
+  (reference only, run on the same video memory and registers). Golden Sun:
+  1198 frames, 5 differed with the old drawing (1 to 27 pixels each, around
+  a Psynergy ring) and none with the exact one; Mario Golf: 998 frames, none
+  differed either way. Frames where the game changes video memory in the
+  middle of the picture (about 6 percent) cannot be replayed that way and were
+  left out; the colour blend rounds one step differently from mGBA and was
+  allowed one step.
+- A test cartridge of our own with 64 random sprites (every priority, holes,
+  affine) over three backgrounds is checked pixel by pixel against the rules
+  (`app_tests.py --only objrand`): 16 pixels are wrong with the old drawing,
+  none with the exact one.
+- Not covered: sprites of the "object window" mode (they do not take part in
+  the rule), the menus of The Minish Cap and the Golden Sun battle screens
+  (not reached), and Golden Sun 2 (not available). Not a Vita test.
+
 ## Not fixed, and not checked
 
-- **OAM order** (Golden Sun 1 and 2, Mario Golf, The Minish Cap): sprites
-  that peek through a menu or are in the wrong order. This is a rendering
-  detail of the real console that gpSP does not copy. Not fixed in 1.3; a
-  script cannot judge it.
 - **Flicker** (Need for Speed games, SSX Tricky): no picture that alternates
   every frame was found in the races we reached. Flicker that is part of how
   the game draws would not show up this way.

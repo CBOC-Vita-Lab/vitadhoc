@@ -302,6 +302,14 @@ and in emulators; none of it has run on a real Vita yet (see
   player, or read from a file, before using it.
 - Both Vitas need VitAdhoc 2.0.
 
+**GBA sprite order**
+
+- **Sprites that overlap are drawn in the real console's order**, so a sprite
+  no longer peeks through a menu in Golden Sun and Mario Golf. The rule was
+  already in 1.4; 2.0 checked it line by line against a reference renderer on
+  both games and added a pixel-by-pixel test cartridge. Host results; see
+  docs/COMPATIBILITY.md.
+
 **Game Boy accuracy**
 
 - **Game Boy and Game Boy Color games follow the real console more closely.**

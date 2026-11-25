@@ -152,6 +152,14 @@ gbadhoc-objprio.gba: crt0.S objprio.c gba.ld
 	$(CROSS)gcc $(CFLAGS) -nostdlib -nostartfiles -T gba.ld -o gbadhoc-objprio.elf \
 	  crt0.S objprio.c -lgcc
 	$(CROSS)objcopy -O binary gbadhoc-objprio.elf $@
+
+# The sprite rules checked pixel by pixel (app_tests.py, objrand): objrand.c.
+.PHONY: objrand
+objrand: gbadhoc-objrand.gba
+gbadhoc-objrand.gba: crt0.S objrand.c gba.ld
+	$(CROSS)gcc $(CFLAGS) -nostdlib -nostartfiles -T gba.ld -o gbadhoc-objrand.elf \
+	  crt0.S objrand.c -lgcc
+	$(CROSS)objcopy -O binary gbadhoc-objrand.elf $@
 	@ls -l $@
 
 # Self-modifying RAM code (app_tests.py, smc; SMC_RANGE): see smc.c.

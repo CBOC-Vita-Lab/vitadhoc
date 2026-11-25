@@ -1837,6 +1837,106 @@ def t_objprio(S):
             "(%d checked, %d differed)" % (checked, bad))
 
 
+def t_objrand(S):
+    """The sprite rules, pixel by pixel (testrom/objrand.c): 64 random sprites
+    (8x8 and 16x16, a third of them affine, four patterns with holes, every
+    priority) over three backgrounds with holes.  The expected picture is
+    worked out here from the hardware's rules: among sprites a later one takes
+    a pixel only with a strictly better priority, a transparent pixel of such
+    a sprite hands its priority to the sprite already there, and a sprite
+    beats a background of the same priority.  Drawn by the core and by the
+    render thread; every pixel must match."""
+    subprocess.run(["make", "-C", os.path.join(HERE, "testrom"), "objrand"],
+                   capture_output=True)
+    rom = os.path.join(HERE, "testrom", "gbadhoc-objrand.gba")
+    if not os.path.exists(rom):
+        S.note("no testrom/gbadhoc-objrand.gba (make -C testrom objrand): skipped")
+        return
+    extra = {"roms/gbadhoc-objrand.gba": open(rom, "rb").read()}
+
+    seed = [12345]
+
+    def rnd():
+        seed[0] = (seed[0] * 1103515245 + 12345) & 0xFFFFFFFF
+        return (seed[0] >> 16) & 0x7FFF
+
+    def sprite_px(pat, n, x, y):
+        return ((x + 2 * y + n + pat) % 3) != 0
+
+    def bg_px(k, x, y):
+        return ((x * (k + 2) + y * 3 + k) % 4) != 0
+
+    def e8(v):
+        return v * 255 // 31
+
+    bgcol = [(0, 0, 31), (0, 31, 0), (31, 0, 0)]
+    bgpri = [2, 1, 0]
+    # the sprites, as the cartridge makes them
+    sprites = []
+    for q in range(4):
+        for i in range(16):
+            big = rnd() & 1
+            x = (q & 1) * 120 + rnd() % 96
+            y = (q >> 1) * 80 + rnd() % 56
+            prio = rnd() & 3
+            pat = rnd() & 3
+            rnd()                                       # affine or not
+            sprites.append((big, x, y, prio, pat, i))
+    cov = {"rows": 0}
+    want = {}
+    for y in range(160):
+        for x in range(240):
+            col, pri = None, 4
+            for big, sx, sy, prio, pat, bank in sprites:     # OAM order
+                w = 16 if big else 8
+                if not (sx <= x < sx + w and sy <= y < sy + w):
+                    continue
+                lx, ly = x - sx, y - sy
+                n = (ly // 8) * 2 + (lx // 8) if big else 0
+                if prio < pri:
+                    if sprite_px(pat, n, lx % 8, ly % 8):
+                        col = ((bank & 3) * 8 + 4, ((bank >> 2) & 3) * 8 + 4, 16)
+                    pri = prio
+                    # (a transparent pixel over nothing leaves no colour)
+                    if col is None:
+                        pri = 4
+            out = (0, 0, 0)
+            for pr in range(4):
+                if col is not None and pri == pr:
+                    out = col
+                    break
+                hit = None
+                for k in range(3):
+                    if bgpri[k] == pr and bg_px(k, x % 8, y % 8):
+                        hit = bgcol[k]
+                        break
+                if hit:
+                    out = hit
+                    break
+            want[(x, y)] = out
+    shots = {}
+    for mode in (0, 1):
+        r = S.run("objrand_rt%d" % mode, "120:shot=objrand.png\n130:quit\n",
+                  config={"scale_gba": 4, "filter_gba": 0},
+                  vita_ini={"render_thread": mode},
+                  autoboot="gbadhoc-objrand.gba", extra=extra)
+        S.clean(r)
+        im = S.picture(r, "objrand.png")
+        if not im:
+            continue
+        g = game_pixels(im)
+        shots[mode] = g.tobytes()
+        bad = []
+        for (x, y), c in want.items():
+            p = g.getpixel((x, y))
+            if max(abs(p[i] - e8(c[i])) for i in range(3)) > 12:
+                bad.append((x, y, p, c))
+        S.check(not bad, "render_thread %d: every one of 38400 pixels is what "
+                "the rules give (%d differ, first %s)" % (mode, len(bad), bad[:2]))
+    if len(shots) == 2:
+        S.check(shots[0] == shots[1], "the render thread's picture is the core's")
+
+
 def t_realtime(S):
     """--realtime: the wall clock, a real audio thread, a real worker."""
     r = S.run("realtime", "60:a:10\n", autoboot="gbadhoc-test.gba",
@@ -10209,7 +10309,7 @@ TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicato
          ("cheats", t_cheats), ("play", t_play), ("touch", t_touch), ("touch_feedback", t_touch_feedback),
          ("typing", t_typing), ("cheat_search", t_cheat_search), ("look", t_look), ("wide", t_wide),
          ("wide_auto", t_wide_auto), ("wide_top", t_wide_top),
-         ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("biossound", t_biossound), ("chain", t_chain), ("objprio", t_objprio), ("smc", t_smc),
+         ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("biossound", t_biossound), ("chain", t_chain), ("objprio", t_objprio), ("objrand", t_objrand), ("smc", t_smc),
          ("realtime", t_realtime),
          ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_heal", t_save_heal), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("gb_type", t_gb_type), ("launch_param", t_launch_param),
          ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("archives", t_archives), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("screen_crt_text", t_screen_crt_text), ("text_large", t_text_large), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("hand_set_rows", t_hand_set_rows), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),

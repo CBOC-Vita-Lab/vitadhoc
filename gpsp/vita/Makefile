@@ -216,6 +216,9 @@ VPK_EXTRA += $(MD_BIN)=md.bin \
 $(MD_BIN): FORCE
 	+$(MAKE) -C ../../md/vita
 FORCE:
+# The players' language catalogues (playerkit loads app0:lang/pk_<code>.txt; English is compiled in, so a missing one only means English).
+PK_LANG_FILES := $(wildcard ../../lang/pk_*.txt)
+VPK_EXTRA += $(foreach f,$(PK_LANG_FILES),$(f)=lang/$(notdir $(f)))
 VPK_FILES := -a sce_sys/icon0.png=sce_sys/icon0.png \
              -a sce_sys/livearea/contents/bg.png=sce_sys/livearea/contents/bg.png \
              -a sce_sys/livearea/contents/startup.png=sce_sys/livearea/contents/startup.png \

@@ -489,7 +489,9 @@ trigger for as long as it is down; a finger beside the picture, or on the wide
 view's extra columns, aims off the screen. The aim stays for 20 frames after
 the finger lifts, because a game looks for the light some frames after the
 trigger and a tap is shorter than that. It works with the menus' touch
-switched off (`touch = 0`) too. The game reads the picture the core drew, so no cross hair is
+switched off (`touch = 0`) too. Quick response does not run ahead in a Zapper
+game (the gun's light is timed against the frame being drawn and is not in a
+state). The game reads the picture the core drew, so no cross hair is
 drawn. A tap does not open the menu in those games.
 
 **Button test** (2.0, Settings > Controls > Button test; in the Super NES and Sega

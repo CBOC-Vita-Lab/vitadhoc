@@ -1308,10 +1308,13 @@ void app_quick_options(void)
           app_quick_supported(console));
 }
 
-/* No pass of play may run ahead when ... (fe_host.c also refuses a machine that cannot) */
+/* No pass of play may run ahead when ... (fe_host.c also refuses a machine that cannot).  Nor with the Zapper: the gun's
+ * light is timed against the frame the core is drawing and is not part of a state, so a frame run ahead and taken back
+ * would leave the game a light from a frame that never was. */
+static int zapper_active(void);
 static int app_ahead_blocked(int session, int local, int steady_on, int rewinding)
 {
-   return g_ff.on || session || local || g_sw.link_bench || link_owns_picture() || rewinding || steady_on ||
+   return g_ff.on || session || local || g_sw.link_bench || link_owns_picture() || rewinding || steady_on || zapper_active() ||
           ui_active() || !fe_host_ahead_possible() || (ahead_mode() == AHEAD_MODE_AUTO && !ho_active());
 }
 

@@ -61,6 +61,26 @@ and in emulators; none of it has run on a real Vita yet (see
   is open, and is off while linked and in Hardcore like the other cheats.
   Tested on the PC only.
 
+**A library you can organise**
+
+- **Collections.** Make lists of your own (Road trip, Two at once, Backlog):
+  press Select + Square on a game (the Home screen also has a Lists button) to
+  add it to a collection, take it out, make a new one with the on-screen
+  keyboard, rename one or delete one. A collection holds games of every console;
+  each console's list shows the ones it has. Select steps through them after
+  Games, Starred and Recent. They are kept in `collections.txt` beside
+  `config.ini`, written whole at every change: a write that fails leaves the
+  old file as it was and says so.
+- **Most played** (the longest first) and **Not played yet** appear once
+  something has been played, from the play time VitAdhoc already keeps. There
+  is no "Two players" view: none of the bundled data says how many players a
+  game has, and a guess would be wrong.
+- **RetroArch and Emu4Vita++ playlists** (`.lpl` files in
+  `ux0:data/retroarch/playlists` and `ux0:data/EMU4VITAPLUS/playlists`, and on
+  `uma0:`) show as read-only collections. Their games are matched to yours by
+  path, then file name, then checksum (the bundled No-Intro table names the
+  checksum; no game file is read). VitAdhoc never writes to them.
+
 **Smoother play**
 
 - **Faster Super NES Mode 7 and wide view.** Games with a rotating or

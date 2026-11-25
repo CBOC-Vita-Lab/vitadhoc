@@ -323,6 +323,13 @@ flicker or missing instruments, which we could not judge without a Vita.
   with two 16 MB games at once. A full trade between versions has not been
   played through.
 - **Mystery Gift** from a phone, all the way into the game's save.
+- **Collections and playlists:** matching a RetroArch playlist item by
+  checksum uses the bundled No-Intro names, so a hack or a game the database
+  does not know is matched by path or file name only; compressed (rzip)
+  playlists are skipped, and there is no "Two players" view because no bundled
+  data has a player count. Limits: 24 collections, 4,096 games in them, 16
+  playlists. Tested on the PC build; the Vita's folders (`uma0:` included) and
+  the on-screen keyboard have not been used on a console.
 
 ## Performance
 

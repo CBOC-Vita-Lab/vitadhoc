@@ -60,6 +60,7 @@ UI_WEAK int         ui_host_extra_roots(void)   { return 0; }
 UI_WEAK int         ui_host_extra_root_toggle(const char *f) { (void)f; return -3; }
 UI_WEAK int         ui_host_zip_console(const char *p, unsigned n) { (void)p; (void)n; return -1; }
 UI_WEAK int         ui_host_md_bin_ok(const char *p) { (void)p; return 1; }
+UI_WEAK int         ui_host_name_by_crc(unsigned c, char *o, size_t n) { (void)c; (void)o; (void)n; return 0; }
 UI_WEAK int         ui_host_sync_ra_on(void) { return 0; }
 UI_WEAK void        ui_host_sync_ra_set(int on) { (void)on; }
 UI_WEAK int         ui_host_cpu_fast(void) { return 1; }

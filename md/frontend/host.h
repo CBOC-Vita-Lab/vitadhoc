@@ -107,6 +107,27 @@ int md_host_cd_disc_region(void);
 const char *md_host_cd_notice(void);
 size_t md_host_cd_bios_regions(char *out, size_t n);
 
+/* ---- a game on several discs (an .m3u list, 2.0) -------------------------------------------------------------------------------
+ * The player tells the host the discs of the game once, after md_host_load_disc loaded disc `cur` of them (paths of .cue / .chd / .iso files,
+ * copied, at most MD_HOST_DISC_MAX of MD_HOST_DISC_PATH bytes). The machine, the save and the disc's identity stay those of the game: only
+ * the disc in the drive changes, with the drive's own tray handling the core already has (the tray status the BIOS reads, then a table of
+ * contents again when it closes), the way a player changes discs by hand:
+ *   md_host_cd_eject      the tray opens (the status the game's disc check sees). 0 = done, non-zero = no disc game or already open.
+ *   md_host_cd_swap(i)    with the tray open: disc i replaces the one in the drive (the read-ahead thread is stopped and restarted around it).
+ *                         0 = done; else a short reason in err, and the disc that was in the drive is put back.
+ *   md_host_cd_close      the tray closes: the game's drive sees a disc and reads its table of contents.
+ * A state records which disc was in the drive: loading it puts that disc in (a state of disc 2 loaded while disc 1 is in swaps them, no tray
+ * involved: the state is the whole machine). States written before this had no disc number and mean disc 1. */
+#define MD_HOST_DISC_MAX 8
+#define MD_HOST_DISC_PATH 512
+void md_host_cd_set_discs(const char (*paths)[MD_HOST_DISC_PATH], int n, int cur);
+int md_host_cd_disc_count(void);           /* discs the game has (1 for a single disc, 0 without a disc game) */
+int md_host_cd_disc_index(void);           /* the disc in the drive, 0 based */
+int md_host_cd_tray_open(void);
+int md_host_cd_eject(void);
+int md_host_cd_swap(int index, char *err, size_t errlen);
+int md_host_cd_close(void);
+
 /* ---- worker threads ---------------------------------------------------------------------------------------- */
 
 /* Optional. The VDP line renderer can run on its own thread (md/core/vdp_thread.h: a write log, bit identical pictures, sound and state).

@@ -1016,11 +1016,13 @@ static const char *pick_target(const char *save_path, const char *rom_dir,
        * that name.  SNES, NES and WonderSwan saves already are Game.srm. */
       if (kind == 1 || kind == 2)
       {
-         char a[SS_PATH * 2], z[SS_PATH * 2];
+         char a[SS_PATH * 2], z[SS_PATH * 2], z7[SS_PATH * 2];
          if (snprintf(a, sizeof(a), "%s%s.gba", rom_dir, stem) < (int)sizeof(a) &&
              !exists(a) &&
              snprintf(z, sizeof(z), "%s%s.zip", rom_dir, stem) < (int)sizeof(z) &&
-             !exists(z))
+             !exists(z) &&
+             snprintf(z7, sizeof(z7), "%s%s.7z", rom_dir, stem) < (int)sizeof(z7) &&
+             !exists(z7))
          {
             snprintf(out, cap, "%s%s.sav", rom_dir, stem);
             rule = "no-retroarch:beside-game-sav";

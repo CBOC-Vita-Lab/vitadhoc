@@ -7,6 +7,9 @@
  * through stb_image's inflater, psp/stb_impl.c).  No ZIP64, no encryption,
  * no multi-disk archives: those are refused, never guessed at.  The result
  * is checked against the entry's CRC-32 before it is used.
+ *
+ * A file that begins with the 7z signature goes to sz_rom.c instead (the same
+ * entry record, method 7).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +17,7 @@
 
 #include "zip_rom.h"
 #include "fe_util.h"
+#include "sz_rom.h"
 
 /* psp/stb_impl.c builds stb_image with its zlib decoder (PNG needs it). */
 int stbi_zlib_decode_noheader_buffer(char *obuffer, int olen,
@@ -79,6 +83,16 @@ int zip_rom_peek(const char *path, zip_rom_entry *out)
    f = fopen(path, "rb");
    if (!f)
       return -1;
+   {
+      /* the 7z signature: the first six bytes (the file is opened once for a zip) */
+      static const unsigned char sig7z[6] = { '7', 'z', 0xBC, 0xAF, 0x27, 0x1C };
+      unsigned char sig[6];
+      if (fread(sig, 1, 6, f) == 6 && !memcmp(sig, sig7z, 6))
+      {
+         fclose(f);
+         return sz_rom_peek(path, out, name_console);
+      }
+   }
    if (fseek(f, 0, SEEK_END) != 0 || (fsize = ftell(f)) < 22)
       goto done;
    tail_len = fsize < ZIP_TAIL_MAX ? fsize : ZIP_TAIL_MAX;
@@ -227,6 +241,8 @@ int zip_rom_head(const char *path, const zip_rom_entry *e, unsigned char *buf, u
 {
    unsigned char *d = NULL;
    unsigned got;
+   if (e && e->method == 7)
+      return sz_rom_head(path, e, buf, n);
    if (!buf || zip_rom_load(path, e, &d) != 0)
       return -1;
    got = e->usize < n ? (unsigned)e->usize : n;
@@ -243,6 +259,8 @@ int zip_rom_extract(const char *path, const zip_rom_entry *e,
    int rc, n;
    FILE *o;
 
+   if (e && e->method == 7)
+      return sz_rom_extract(path, e, out_path);
    if (!out_path || snprintf(tmp, sizeof(tmp), "%s.part", out_path) >= (int)sizeof(tmp))
       return -1;
    rc = zip_rom_load(path, e, &out);

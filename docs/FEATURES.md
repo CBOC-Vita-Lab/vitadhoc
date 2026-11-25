@@ -18,8 +18,8 @@ start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 | Sega Genesis / Mega Drive, Master System, Game Gear, SG-1000 | Genesis Plus GX in its own program (`md.bin`, non-commercial licence), one player for the four consoles; the app's library, Starred, Recent, play time, Continue, ten state slots, cheats from the bundled database, RetroArch save import and crash protection work as for the Super NES; saves are `Game.srm` beside the game |
 | Rendering | GXM/libvita2d; GBA render worker and CPU upscaling workers |
 | Input | Buttons, sticks, front touch, motion sensors; mappings and turbo settings |
-| Sega CD / Mega CD | The same Sega player (`md.bin`) with Genesis Plus GX's disc code, libchdr and tremor; your own Sega CD BIOS is needed (not included); `.cue`+`.bin`, `.iso`, `.chd`; all Genesis features, two players, RetroAchievements; saves are `Game.srm` (backup RAM + RAM cartridge, 512 KB by default, or none with Off; the cartridges of the other sizes you tried are kept in the same file); disc reading and CHD decoding (LZMA, zlib, zstd, FLAC) run on a read-ahead thread; a disc whose region has no BIOS shows a notice, not a silent fallback |
-| Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.nes`, `.fds`, `.unf`, `.unif`, `.ws`, `.wsc`, `.pc2`, `.md`, `.gen`, `.smd`, `.sms`, `.gg`, `.sg`, `.cue`, `.chd`, `.iso` (and `.bin` when it is a Genesis image); supported stored/deflated `.zip` entries up to 32 MiB |
+| Sega CD / Mega CD | The same Sega player (`md.bin`) with Genesis Plus GX's disc code, libchdr and tremor; your own Sega CD BIOS is needed (not included); `.cue`+`.bin`, `.iso`, `.chd`, and `.m3u` lists for games on several discs (the list is the game in the library, its discs are hidden, and the in-game menu's Change disc opens the tray, swaps the disc and closes it; saves and saved moments belong to the list's name); all Genesis features, two players, RetroAchievements; saves are `Game.srm` (backup RAM + RAM cartridge, 512 KB by default, or none with Off; the cartridges of the other sizes you tried are kept in the same file); disc reading and CHD decoding (LZMA, zlib, zstd, FLAC) run on a read-ahead thread; a disc whose region has no BIOS shows a notice, not a silent fallback |
+| Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.nes`, `.fds`, `.unf`, `.unif`, `.ws`, `.wsc`, `.pc2`, `.md`, `.gen`, `.smd`, `.sms`, `.gg`, `.sg`, `.cue`, `.chd`, `.iso`, `.m3u` (and `.bin` when it is a Genesis image); supported stored/deflated `.zip` entries and `.7z` archives (LZMA, LZMA2, BCJ, Delta) with a game up to 32 MiB |
 | Library | Up to 2,048 games per console; folders scanned two levels deep |
 | Extra folders | Up to 24; Settings writes a list capped at 480 characters |
 | State slots | Ten per game (`.st0` to `.st9`); sharing protocol exposes the first five |
@@ -109,6 +109,23 @@ and caches the unpacked game in `unzipped/`. Saves, states and settings keep
 the archive's name. No encrypted, ZIP64 or multi-disk archives; use one game
 per zip. Patches and local play with a different second cartridge require
 unzipped games.
+
+A `.7z` is read the same way (Igor Pavlov's LZMA SDK decoder, public domain, in
+`gpsp/vita/third_party/lzma/`): the first file with a supported extension is
+the game, its CRC-32 is checked, it is unpacked once into `unzipped/`, and
+saves and states keep the archive's name. LZMA, LZMA2, BCJ and Delta are
+read; encrypted archives, PPMd and BCJ2 are not. A solid archive is unpacked a
+block at a time, so an archive whose block holding the game is over 64 MiB, or
+whose game is over 32 MiB, is refused with a notice that says so. `.7z`
+works for every console that takes a `.zip` (not for Sega CD discs).
+
+A Sega CD game on several discs is an `.m3u` list (one `.cue`, `.chd` or `.iso`
+per line, `#` comments, relative paths from the list's folder, up to 8 discs).
+The list is the game: the library shows it once and hides the discs it names,
+saves and saved moments are named after it, and a saved moment remembers which
+disc was in the drive. In the game, Settings > Speed > Change disc runs the
+drive's own tray handling (open, swap, close, about a second each) so the
+game's "insert disc 2" check sees what it would on a console.
 
 Launchers can pass a raw cartridge path through
 `psgm:play?titleid=GBAD00001&param=...`. The path is not URL-decoded. It is read

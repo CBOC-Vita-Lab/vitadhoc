@@ -10,7 +10,7 @@ explains display, achievements, patches and link play in more detail.
 - A PS Vita with HENkaku or Ensō, and VitaShell. The app's ID is `GBAD00001`.
 - Your own `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc` and `.nes` games (also `.fds`, `.unf`,
   `.unif`, `.ws`, `.wsc`, and Sega `.md`, `.gen`, `.smd`, `.sms`, `.gg`, `.sg`),
-  or supported `.zip` archives.
+  or supported `.zip` or `.7z` archives.
   Subfolders are fine, two levels deep.
 - Wi-Fi only for box art, RetroAchievements and playing online.
 - No separate BIOS is required: an open replacement is built in. An optional
@@ -94,7 +94,7 @@ ux0:data/RetroFlow/ROMS/Sega - SG-1000
 Every other folder directly inside `ux0:ROMS/` or `ux0:roms/` is read too
 (a `SNES ROM Collection` or `NES Games` folder, for example). The file ending
 decides the console, not the folder's name: `.gba`, `.gb`, `.gbc`, `.sfc` or
-`.smc`, `.nes`, `.fds`, `.unf` or `.unif`, `.ws`, `.wsc` or `.pc2`, `.md`, `.gen` or `.smd`, `.sms`, `.gg`, `.sg`, and for Sega CD `.cue`, `.chd` or `.iso`. A `.bin` is a Genesis game only if its header says SEGA; any other `.bin` is left unlisted. NES and
+`.smc`, `.nes`, `.fds`, `.unf` or `.unif`, `.ws`, `.wsc` or `.pc2`, `.md`, `.gen` or `.smd`, `.sms`, `.gg`, `.sg`, and for Sega CD `.cue`, `.chd`, `.iso` or `.m3u` (a list of the discs of one game). A `.bin` is a Genesis game only if its header says SEGA; any other `.bin` is left unlisted. NES and
 Famicom games go in `ux0:ROMS/NES/`, WonderSwan games in `ux0:ROMS/WS/`, or
 in any of these folders.
 
@@ -189,6 +189,24 @@ the `.cue`. A `.chd` unpacks while the game runs and costs more CPU than a
 `.cue` with raw tracks. Games that use backup RAM get a 512 KB RAM cartridge
 by default (Settings can set another size or none).
 
+**Sega CD games on several discs:** make a text file named after the game with
+the extension `.m3u`, in the folder of the discs, with one disc per line in
+order (the files may be `.cue`, `.chd` or `.iso`; a line that starts with `#` is
+a comment; a name is read from the `.m3u`'s own folder, and `sub/Disc 2.cue`
+works):
+
+```text
+Game Name (Disc 1).cue
+Game Name (Disc 2).cue
+```
+
+The library then shows `Game Name` once (the `.m3u`) and hides the two discs.
+The first disc that is there starts; its saves and saved moments are named
+`Game Name`, whichever disc is in. When the game asks for another disc, open
+the in-game menu, Settings > Speed > Change disc, and pick the disc: the tray
+opens, the disc is swapped and the tray closes, about three seconds in all.
+Up to 8 discs. A single-disc game needs no `.m3u`.
+
 **Famicom Disk System games** (`.fds`) need the disk system's BIOS, which VitAdhoc
 cannot include: put your own `disksys.rom` next to the game or in
 `ux0:data/GBAdhoc/nes/` (create the folder).
@@ -198,7 +216,7 @@ named after the game wherever it is kept, as in RetroArch, so moving a game to
 another folder keeps its states. Games from older versions are moved
 over by themselves the first time you open or view them.
 
-A game kept in a `.zip` uses the archive's stem and the console's suffix:
+A game kept in a `.zip` or `.7z` uses the archive's stem and the console's suffix:
 `Game.zip` becomes `Game.sav` for GBA, `Game.gb.sav` for GB, or
 `Game.gbc.sav` for GBC.
 
@@ -225,6 +243,12 @@ named after it. The first game entry (`.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.n
 `.unf` or `.unif`) is used; keep one
 game per zip to avoid surprises. Stored and deflated entries up to 32 MiB
 are supported; encrypted, multi-disk and ZIP64 archives are not.
+
+`.7z` archives work the same way (LZMA and LZMA2, with the usual filters; no
+password-protected archives). Unpacking a big `.7z` takes a moment: the loading
+screen says "Unpacking game". A game over 32 MiB, or a solid archive whose block
+is over 64 MiB, is refused with a notice; pack such a game on its own, or use
+the unpacked file.
 
 Patches and two-player play using a different cartridge for each player need
 the games unzipped. If you unpack or rename a game later, back up its saves
@@ -365,6 +389,6 @@ off in Settings > Interface > Game previews.
 | A save seems missing | Look next to the game's file, in case it was moved or renamed. A Game Boy save is `Game.gb.sav`, a Color one `Game.gbc.sav`. To bring one from another emulator, see above. |
 | A game fails with the built-in BIOS | Put your own BIOS dump at `ux0:data/GBAdhoc/gba_bios.bin`. |
 | The picture is slow or odd | Settings > Display: Image quality Original, and leave GPU xBRZ off. See the [performance report](docs/PERFORMANCE.md) for measured settings, not a universal speed promise. |
-| A zip will not open | Unzip it and try the game directly; check that it has one supported game and is not encrypted or ZIP64. |
+| A zip or 7z will not open | The notice says why. Unpack it and try the game directly; check that it has one supported game and is not encrypted, ZIP64 or a solid `.7z` block over 64 MiB. |
 | No cover for a game | Covers are optional. Check Wi-Fi, or set your own: Cover on the home screen, or a picture in `covers/` ([above](#your-own-cover-pictures)). |
 | RetroAchievements won't sign in | Check Wi-Fi and the Vita's date and time. The log's `ra_http` lines say why. |

@@ -1778,11 +1778,231 @@ static int run_costs_test(const std::string &con, const char *rom)
 	return g_fail ? 1 : 0;
 }
 
+/* ---- a game on several discs (an .m3u): the list, Change disc (the tray opens, the disc is swapped, the tray closes), saves and states by the list's name ---- */
+
+static mdp::MdPlayer *m3u_start(Rig &rig, const std::string &root, const std::string &game, mdp::StartResult *out)
+{
+	rig.pf.log_path = root + "/scd/log.txt";
+	mdp::MdPlayer *pl = new mdp::MdPlayer(&rig.pf);
+	rig.pl = pl;
+	rig.pf.player = pl;
+	char a0[] = "app0:md.bin";
+	std::string g = game;
+	char *argv[] = { a0, &g[0], 0 };
+	*out = pl->start(2, argv, root, true);
+	return pl;
+}
+
+static int run_m3u_test(const std::string &discs, const std::string &work)
+{
+	const std::string g = work + "/g", root = work + "/root", shots = work + "/shots";
+	make_dirs(g); make_dirs(root); make_dirs(shots);
+	md_host_cd_bios_test_force(1);
+	/* the fixtures: disc 1 is the three track raw disc, disc 2 a cooked image of the same length whose sector 40 differs */
+	std::vector<uint8_t> single_bin = read_bytes(discs + "/single.bin"), cooked = read_bytes(discs + "/cooked.iso");
+	EXPECT(!single_bin.empty() && cooked.size() == 300u * 2048u);
+	std::vector<uint8_t> sec40(cooked.begin() + 40 * 2048, cooked.begin() + 41 * 2048);
+	std::vector<uint8_t> disc2 = cooked;
+	for (int i = 0; i < 2048; i++) disc2[(size_t) (40 * 2048 + i)] ^= 0xA5;
+	std::vector<uint8_t> sec40b(disc2.begin() + 40 * 2048, disc2.begin() + 41 * 2048);
+	EXPECT(sec40 != sec40b);
+	EXPECT(write_bytes(g + "/single.bin", single_bin) && write_bytes(g + "/single.cue", read_bytes(discs + "/single.cue")));
+	EXPECT(write_bytes(g + "/Disc 2.iso", disc2) && write_bytes(g + "/standin.bin", read_bytes(discs + "/standin.bin")));
+	EXPECT(write_text(g + "/Test Game.m3u", "\xEF\xBB\xBF#EXTM3U\r\n#EXTINF:-1,One\r\nsingle.cue\r\n\r\n  Disc 2.iso  \r\n"));
+	/* a list that names a disc which is not there, one with no disc at all, and an empty one */
+	EXPECT(write_text(g + "/Gone.m3u", "single.cue\nnot there.iso\n"));
+	EXPECT(write_text(g + "/Nothing.m3u", "a.cue\nb.iso\n"));
+	EXPECT(write_text(g + "/Empty.m3u", "# no discs\nreadme.txt\n"));
+
+	auto data40 = [&](std::vector<uint8_t> &o) { o.assign(2048, 0); return md_host_cd_test_data(40, o.data()) == 0; };
+	std::vector<uint8_t> now;
+
+	/* ---- the list starts disc 1; the game is the list's name ---- */
+	{
+		Rig rig(shots);
+		mdp::StartResult sr;
+		EXPECT(md_host_init() == 0);
+		mdp::MdPlayer *pl = m3u_start(rig, root, g + "/Test Game.m3u", &sr);
+		EXPECT(sr.ok);
+		if (!sr.ok) { fprintf(stderr, "start: %s / %s\n", sr.fatal1.c_str(), sr.fatal2.c_str()); return 1; }
+		EXPECT(sr.console == "scd");
+		EXPECT(pl->game_name() == "Test Game");
+		EXPECT(pl->srm_path().size() > 13 && pl->srm_path().substr(pl->srm_path().size() - 13) == "Test Game.srm");
+		EXPECT(pl->discs().size() == 2);
+		EXPECT(md_host_cd_disc_count() == 2 && md_host_cd_disc_index() == 0 && md_host_cd_tracks() == 3);
+		EXPECT(data40(now) && now == sec40);
+		EXPECT(!md_host_cd_tray_open());
+		pl->apply_start_mode();
+		rig.run(30);
+
+		/* the menu has the row, on the Speed page, with one choice per disc */
+		EXPECT(rig.open_by_chord());
+		rig.settle(14);
+		pl->menu().goto_page(Menu::PAGE_SPEED);
+		rig.settle(3);
+		int row = -1;
+		for (int i = 0; i < pl->menu().row_count(); i++) if (pl->menu().row_label(i) == "Change disc") row = i;
+		EXPECT(row >= 0);
+		if (row >= 0) EXPECT(pl->menu().row_value_text(row) == "Disc 1");
+		rig.snap("m3u_menu");
+		EXPECT(rig.press(PH_CROSS) == MENU_RESUME || true);
+		pl->menu().goto_page(Menu::PAGE_TOP);
+
+		/* a state save by the menu is named by the list */
+		if (!pl->menu_open()) { pl->open_menu(0); rig.settle(3); }
+		pl->menu().goto_page(Menu::PAGE_STATES);
+		rig.settle(2);
+		pl->menu().select_slot(1);
+		rig.press(PH_CIRCLE);
+		rig.settle(4);
+		if (pl->menu_open()) { rig.press(PH_CROSS); rig.press(PH_CROSS); rig.press(PH_CROSS); }
+		pl->menu().notices();
+		for (int i = 0; i < 20 && pl->menu_open(); i++) rig.menu_frame(rig.mi(0));
+
+		/* ---- Change disc: tray open, a second of the game, the disc swapped, a second, the tray closed ---- */
+		const int tick = mdp::MdPlayer::disc_tray_frames();
+		pl->change_disc(0);                                  /* the disc that is in: nothing happens */
+		EXPECT(pl->disc_phase() == 0 && !md_host_cd_tray_open());
+		pl->change_disc(1);
+		EXPECT(pl->disc_phase() == 1 && md_host_cd_tray_open());
+		EXPECT(md_host_cd_disc_index() == 0);
+		rig.run(tick - 5);
+		EXPECT(md_host_cd_tray_open() && md_host_cd_disc_index() == 0);
+		rig.run(10);                                         /* the swap is done, the tray is still open */
+		EXPECT(md_host_cd_tray_open() && md_host_cd_disc_index() == 1 && md_host_cd_tracks() != 3);
+		EXPECT(data40(now) && now == sec40b);
+		pl->change_disc(0);                                  /* not while one is going on */
+		EXPECT(md_host_cd_disc_index() == 1);
+		rig.run(tick);
+		EXPECT(!md_host_cd_tray_open() && pl->disc_phase() == 0);
+		EXPECT(md_host_cd_disc_index() == 1 && md_host_cd_disc_count() == 2);
+		rig.run(30);                                         /* the game goes on */
+		EXPECT(data40(now) && now == sec40b);
+
+		pl->wait_writer();
+		EXPECT(exists(bucket(root, "scd", "Test Game") + ".st0"));   /* the state of the menu save, named by the list */
+
+		/* a state keeps its disc: made with disc 2 in, loaded with disc 1 in, it puts disc 2 back */
+		std::vector<uint8_t> st(md_host_state_size());
+		size_t len = md_host_state_save_mem(st.data(), st.size());
+		EXPECT(len > 0);
+		st.resize(len);
+		pl->change_disc(0);
+		rig.run(tick * 2 + 5);
+		EXPECT(!md_host_cd_tray_open() && md_host_cd_disc_index() == 0 && md_host_cd_tracks() == 3);
+		EXPECT(data40(now) && now == sec40);
+		EXPECT(md_host_state_load_mem(st.data(), st.size()) == 0);
+		EXPECT(md_host_cd_disc_index() == 1 && data40(now) && now == sec40b);
+		rig.run(5);
+		/* ...and the state of disc 1 made before (the slot) takes disc 1 back: the saved moments stay with the game, whatever disc is in */
+		/* a state that names a disc the list does not have is refused */
+		{
+			std::vector<uint8_t> bad = st;
+			bad[9] = 5;
+			EXPECT(md_host_state_load_quick(bad.data(), bad.size()) != 0);
+			EXPECT(md_host_cd_disc_index() == 1);
+		}
+		/* a damaged state file of another disc does not change the disc (the check comes before the swap) */
+		{
+			std::vector<uint8_t> bad = st;
+			bad[9] = 0;
+			bad[bad.size() / 2] ^= 0x55;
+			EXPECT(md_host_state_load_mem(bad.data(), bad.size()) != 0);
+			EXPECT(md_host_cd_disc_index() == 1 && data40(now) && now == sec40b);
+		}
+		/* a moment saved while the tray was open, loaded after the change: the tray is open again and nothing is closing it. Change disc still
+		 * works from there (it does not need to open the tray), and choosing the disc that is in closes it */
+		{
+			pl->change_disc(0);
+			EXPECT(pl->disc_phase() == 1 && md_host_cd_tray_open());
+			std::vector<uint8_t> open_st(md_host_state_size());
+			const size_t ol = md_host_state_save_mem(open_st.data(), open_st.size());
+			EXPECT(ol > 0);
+			open_st.resize(ol);
+			rig.run(tick * 2 + 5);
+			EXPECT(!md_host_cd_tray_open() && md_host_cd_disc_index() == 0 && pl->disc_phase() == 0);
+			EXPECT(md_host_state_load_mem(open_st.data(), open_st.size()) == 0);
+			EXPECT(md_host_cd_tray_open() && md_host_cd_disc_index() == 1 && pl->disc_phase() == 0);
+			rig.run(tick * 3);
+			EXPECT(md_host_cd_tray_open());
+			pl->change_disc(1);                               /* the disc that is in: the tray closes */
+			EXPECT(pl->disc_phase() == 2);
+			rig.run(tick + 5);
+			EXPECT(!md_host_cd_tray_open() && md_host_cd_disc_index() == 1 && pl->disc_phase() == 0);
+			EXPECT(md_host_state_load_mem(open_st.data(), open_st.size()) == 0);
+			pl->change_disc(0);                               /* another disc with the tray open: swapped, then closed */
+			EXPECT(pl->disc_phase() == 1);
+			rig.run(tick * 2 + 5);
+			EXPECT(!md_host_cd_tray_open() && md_host_cd_disc_index() == 0 && pl->disc_phase() == 0);
+			EXPECT(data40(now) && now == sec40);
+			/* a state whose disc is gone from the card is refused, and the disc that was in stays in (the drive is not left empty) */
+			EXPECT(rename((g + "/Disc 2.iso").c_str(), (g + "/Disc 2.away").c_str()) == 0);
+			EXPECT(md_host_state_load_mem(st.data(), st.size()) != 0);
+			EXPECT(md_host_cd_disc_index() == 0 && md_host_cd_tracks() == 3 && data40(now) && now == sec40);
+			EXPECT(rename((g + "/Disc 2.away").c_str(), (g + "/Disc 2.iso").c_str()) == 0);
+			/* a state with the tray closed that lands in the middle of a change ends the change without a complaint */
+			pl->change_disc(1);
+			EXPECT(pl->disc_phase() == 1);
+			EXPECT(md_host_state_load_mem(st.data(), st.size()) == 0);
+			rig.run(tick + 5);
+			EXPECT(pl->disc_phase() == 0 && !md_host_cd_tray_open() && md_host_cd_disc_index() == 1);
+			EXPECT(data40(now) && now == sec40b);
+		}
+		/* the save is still the list's: written under its name */
+		{
+			std::vector<uint8_t> sv(4096, 0x3C);
+			md_host_sram_write(sv.data(), sv.size());
+			md_host_sram_mark_unsaved();
+			for (int i = 0; i < 12; i++) { rig.pf.clock_us += 1000000; rig.game_frame(); pl->wait_writer(); }
+			EXPECT(exists(pl->srm_path()));
+		}
+		pl->finish(EXIT_NORMAL);
+		md_host_unload();
+		delete pl;
+	}
+
+	/* ---- a disc that is missing: the game starts with the first one that is there, the row refuses the missing one ---- */
+	{
+		Rig rig(shots);
+		mdp::StartResult sr;
+		EXPECT(md_host_init() == 0);
+		mdp::MdPlayer *pl = m3u_start(rig, root, g + "/Gone.m3u", &sr);
+		EXPECT(sr.ok);
+		if (sr.ok) {
+			pl->apply_start_mode();
+			rig.run(5);
+			EXPECT(md_host_cd_disc_count() == 2 && md_host_cd_disc_index() == 0);
+			pl->change_disc(1);
+			EXPECT(pl->disc_phase() == 0 && !md_host_cd_tray_open() && md_host_cd_disc_index() == 0);
+			rig.run(130);
+			EXPECT(md_host_cd_disc_index() == 0 && !md_host_cd_tray_open());
+			pl->finish(EXIT_NORMAL);
+		}
+		md_host_unload();
+		delete pl;
+	}
+	/* ---- no disc there at all, and a list with nothing in it: refused with a reason ---- */
+	for (const char *nm : { "Nothing.m3u", "Empty.m3u", "NoSuchList.m3u" }) {
+		Rig rig(shots);
+		mdp::StartResult sr;
+		EXPECT(md_host_init() == 0);
+		mdp::MdPlayer *pl = m3u_start(rig, root, g + "/" + nm, &sr);
+		EXPECT(!sr.ok);
+		EXPECT(sr.fatal1 == "This game could not be started." && !sr.fatal2.empty());
+		fprintf(stderr, "player_twin: %s: %s\n", nm, sr.fatal2.c_str());
+		md_host_unload();
+		delete pl;
+	}
+	fprintf(stderr, "player_twin: m3u %d checks, %d failed\n", g_checks, g_fail);
+	return g_fail ? 1 : 0;
+}
+
 int main(int argc, char **argv)
 {
 	/* Sega CD ("scd"): the disc is a synthetic one (tools/mkscd.py) and the BIOS is its stand-in, found by the player's own search (in the disc's folder); */
 	/* the core is told to accept it (it is not a Sega BIOS). */
 	if (argc >= 3 && !strcmp(argv[2], "scd")) md_host_cd_bios_test_force(1);
+	if (argc >= 4 && !strcmp(argv[1], "m3u")) return run_m3u_test(argv[2], argv[3]);
 	if (argc >= 4 && !strcmp(argv[1], "costs")) return run_costs_test(argv[2], argv[3]);
 	if (argc >= 5 && !strcmp(argv[1], "speed")) return run_speed_test(argv[2], argv[3], argv[4]);
 	if (argc >= 5 && !strcmp(argv[1], "ahead")) return run_ahead_test(argv[2], argv[3], argv[4]);

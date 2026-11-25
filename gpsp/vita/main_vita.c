@@ -111,6 +111,7 @@
 #include "save_sync.h"
 #include "rom_patch.h"
 #include "zip_rom.h"
+#include "sz_rom.h"
 #include "audio_vita.h"
 #include "app_vita.h"
 #include "link_snes.h"
@@ -612,11 +613,23 @@ static int has_ext(const char *name, const char *ext)
    return n > e && strcasecmp(name + n - e, ext) == 0;
 }
 
+/* A game kept in an archive: .zip, or .7z (zip_rom.h, sz_rom.h) */
+static int is_arc(const char *path)
+{
+   return has_ext(path, ".zip") || has_ext(path, ".7z");
+}
+
+/* The extension's length: ".zip" 4, ".7z" 3 */
+static size_t arc_ext_len(const char *path)
+{
+   return has_ext(path, ".7z") ? 3 : 4;
+}
+
 /* A cartridge started without the game list is the console its extension
  * says; one picked in the list is the console the player was browsing. */
 static fe_console_t console_for(const char *path)
 {
-   if (has_ext(path, ".zip"))
+   if (is_arc(path))
    {
       zip_rom_entry e;
       if (zip_rom_peek(path, &e) >= -2 && e.console >= 0)
@@ -643,7 +656,7 @@ static fe_console_t console_for(const char *path)
    if (has_ext(path, ".sms")) return FE_CONSOLE_SMS;
    if (has_ext(path, ".gg"))  return FE_CONSOLE_GG;
    if (has_ext(path, ".sg") || has_ext(path, ".sc")) return FE_CONSOLE_SG;
-   if (has_ext(path, ".cue") || has_ext(path, ".chd") || has_ext(path, ".iso")) return FE_CONSOLE_SCD;   /* a disc: Sega CD */
+   if (has_ext(path, ".cue") || has_ext(path, ".chd") || has_ext(path, ".iso") || has_ext(path, ".m3u")) return FE_CONSOLE_SCD;   /* a disc, or the list of a game's discs: Sega CD */
    return FE_CONSOLE_GBA;
 }
 
@@ -762,8 +775,8 @@ static unsigned char *patch_read(const char *path, long *len, long cap);
  *                         config is not read here), "" = none.  The player
  *                         imports it when it is newer than `save`.
  * All three are "" for any failure: never a half-filled pair. */
-static const char *const k_snes_carts[] = { ".smc", ".sfc", ".swc", ".fig", ".zip" };
-static const char *const k_sega_carts[] = { ".md", ".gen", ".smd", ".bin", ".68k", ".sms", ".gg", ".sg", ".sc", ".zip" };
+static const char *const k_snes_carts[] = { ".smc", ".sfc", ".swc", ".fig", ".zip", ".7z" };
+static const char *const k_sega_carts[] = { ".md", ".gen", ".smd", ".bin", ".68k", ".sms", ".gg", ".sg", ".sc", ".zip", ".7z" };
 static int snes_patch_find(const char *rom_path, char *out, size_t cap,
                            const char *const *carts, size_t ncarts)
 {
@@ -2499,11 +2512,11 @@ static int rom_from_launch(char *out, size_t cap)
        !has_ext(out, ".sfc") && !has_ext(out, ".smc") && !has_ext(out, ".nes") &&
        !has_ext(out, ".fds") && !has_ext(out, ".unf") && !has_ext(out, ".unif") &&
        !has_ext(out, ".ws") && !has_ext(out, ".wsc") && !has_ext(out, ".pc2") &&
-       !has_ext(out, ".zip"))
+       !has_ext(out, ".zip") && !has_ext(out, ".7z"))
    {
       fe_evt("launch_param refused reason=not_a_game path=\"%s\"", out);
       snprintf(g_launch_note, sizeof(g_launch_note),
-               "%.100s is not a .gba, .gb, .gbc, .sfc, .smc, .nes, .fds, .ws, .wsc or .zip file.", base_name(out));
+               "%.100s is not a .gba, .gb, .gbc, .sfc, .smc, .nes, .fds, .ws, .wsc, .zip or .7z file.", base_name(out));
       return 1;
    }
    if (file_size(out, &size) != 0 || size <= 0)
@@ -4993,11 +5006,13 @@ static void save_import(const char *rom_path, const char *save_path,
       {
          /* Game.sav is Game.gba's (or a zipped GBA game's) when that
           * cartridge is beside it */
-         char probe2[APP_PATH_CAP + 8];
+         char probe2[APP_PATH_CAP + 8], probe3[APP_PATH_CAP + 8];
          if ((path_fmt(probe, sizeof(probe), "%s%s.gba", dir, stem) != 0 ||
               file_size(probe, NULL) != 0) &&
              (path_fmt(probe2, sizeof(probe2), "%s%s.zip", dir, stem) != 0 ||
-              file_size(probe2, NULL) != 0))
+              file_size(probe2, NULL) != 0) &&
+             (path_fmt(probe3, sizeof(probe3), "%s%s.7z", dir, stem) != 0 ||
+              file_size(probe3, NULL) != 0))
          {
             TRY("this folder", "%s%s.sav", dir, stem)
          }
@@ -5285,6 +5300,17 @@ int ui_host_zip_console(const char *path, unsigned size)
    return c;
 }
 
+/* Why the last zip_unpack refused (a line for the notice); "" when it did not */
+static char g_arc_note[96];
+
+/* The notice's last line for an archive that did not start */
+static const char *arc_note(const char *path)
+{
+   if (g_arc_note[0])
+      return g_arc_note;
+   return has_ext(path, ".7z") ? "The .7z file could not be opened." : "The zip file could not be opened.";
+}
+
 static int zip_unpack(const char *zip, fe_console_t console, char *out,
                       size_t cap, long *size)
 {
@@ -5301,8 +5327,19 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
       why = rc == -2 ? "zip_unsupported" : "zip_no_game";
    else if (e.console != (int)console)
       why = "zip_other_console";
+   g_arc_note[0] = '\0';
    if (why)
    {
+      if (rc == -2 && e.usize > ZIP_ROM_MAX)
+         snprintf(g_arc_note, sizeof(g_arc_note), "The game in it is over %lu MB: too large to unpack.", ZIP_ROM_MAX >> 20);
+      else if (rc == -2 && e.method == 7 && e.csize > SZ_ROM_BLOCK_MAX)
+         snprintf(g_arc_note, sizeof(g_arc_note), "Its block is over %lu MB: too large to unpack.", SZ_ROM_BLOCK_MAX >> 20);
+      else if (rc == -2)
+         snprintf(g_arc_note, sizeof(g_arc_note), "It is encrypted or packed in a way this app cannot read.");
+      else if (rc != 0)
+         snprintf(g_arc_note, sizeof(g_arc_note), "No game this app can start was found in it.");
+      else
+         snprintf(g_arc_note, sizeof(g_arc_note), "The game in it is for another console.");
       fe_evt("boot_refused reason=%s path=%s", why, zip);
       return -1;
    }
@@ -5334,7 +5371,7 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
             ext = sx[k];
    }
    snprintf(stem, sizeof(stem), "%s", base_name(zip));
-   stem[strlen(stem) - 4] = '\0';                      /* ".zip" */
+   stem[strlen(stem) - arc_ext_len(zip)] = '\0';          /* ".zip" or ".7z" */
    if (path_fmt(dir, sizeof(dir), "%s/unzipped", g_app_root) != 0 ||
        path_fmt(out, cap, "%s/%s%s", dir, stem, ext) != 0 ||
        path_fmt(key, sizeof(key), "%s.key", out) != 0 ||
@@ -5379,11 +5416,13 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
       }
    }
    remove(key);
+   ui_loading_update("Unpacking game", 0, 0);   /* the loading screen, when it is up: a big .7z takes a moment */
    rc = zip_rom_extract(zip, &e, out);
    fe_evt("zip_unpack rc=%d entry=\"%s\" method=%d size=%lu path=%s", rc,
           e.name, e.method, e.usize, out);
    if (rc != 0)
    {
+      snprintf(g_arc_note, sizeof(g_arc_note), rc == -2 ? (e.method == 7 ? "It is damaged or packed in a way this app cannot read." : "The game in it is damaged (checksum).") : "The game in it could not be unpacked.");
       fe_evt("boot_refused reason=%s path=%s",
              rc == -2 ? "zip_crc" : "zip_extract", zip);
       return -1;
@@ -5412,7 +5451,7 @@ int ui_host_snes_game_id(const char *path, char out[9])
    if (!path || !out)
       return 0;
    out[0] = '\0';
-   if (has_ext(path, ".zip"))
+   if (is_arc(path))
    {
       zip_rom_entry e;
       fe_console_t zc = FE_CONSOLE_SNES;
@@ -5442,7 +5481,7 @@ static int game_boot(const char *rom_path, fe_console_t console)
       fe_evt("boot_refused reason=no_rom path=%s", rom_path);
       return -1;
    }
-   if (has_ext(rom_path, ".zip"))
+   if (is_arc(rom_path))
    {
       /* A zipped game: the cartridge is unpacked once into unzipped/ and
        * started from there; its saves and states stay beside the .zip,
@@ -7233,7 +7272,7 @@ int main(int argc, char **argv)
          char snes_arg[APP_PATH_CAP * 2 + 2];
          int src;
          snprintf(snes_arg, sizeof(snes_arg), "%s", rom_path);
-         if (has_ext(rom_path, ".zip"))
+         if (is_arc(rom_path))
          {
             /* a zipped game: the program gets the unpacked file and, after a
              * '|' (never in a file name on the card), where its save lives:
@@ -7244,11 +7283,11 @@ int main(int argc, char **argv)
             if (zip_unpack(rom_path, console, un, sizeof(un), &usz) != 0)
             {
                app_notice("This game could not be started", base_name(rom_path),
-                          "The zip file could not be opened.", 6000);
+                          arc_note(rom_path), 6000);
                continue;
             }
             snprintf(snes_arg, sizeof(snes_arg), "%s|%.*s.srm", un,
-                     (int)(zl - 4), rom_path);
+                     (int)(zl - arc_ext_len(rom_path)), rom_path);
          }
          g_snes_lk = NULL;
          if (two)
@@ -7326,13 +7365,13 @@ int main(int argc, char **argv)
          snprintf(game, sizeof(game), "%s", rom_path);
          snprintf(save, sizeof(save), "%.*s.srm",
                   (int)(dt && (!sl || dt > sl) ? (size_t)(dt - rom_path) : strlen(rom_path)), rom_path);
-         if (has_ext(rom_path, ".zip"))
+         if (is_arc(rom_path))
          {
             long usz = 0;
             if (zip_unpack(rom_path, console, game, sizeof(game), &usz) != 0)
             {
                app_notice("This game could not be started", base_name(rom_path),
-                          "The zip file could not be opened.", 6000);
+                          arc_note(rom_path), 6000);
                continue;
             }
          }
@@ -7375,7 +7414,8 @@ int main(int argc, char **argv)
          artfetch_pause(0);
          app_notice("This game could not be started",
                     base_name(rom_path),
-                    "The file may be damaged or not a game for this console.",
+                    is_arc(rom_path) ? arc_note(rom_path)
+                    : "The file may be damaged or not a game for this console.",
                     6000);
          continue;
       }

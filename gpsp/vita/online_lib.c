@@ -19,8 +19,8 @@
  * game list use.
  * Files it reads: .gba (header at 0xAC), .gb / .gbc (title at 0x134), and a
  * .zip whose first game entry is STORED (not compressed): its header is read
- * where it lies.  A compressed .zip cannot be read without unpacking all of
- * it, which a frame cannot afford, so it is skipped (online_lib_skipped()). */
+ * where it lies.  A compressed .zip, and any .7z, cannot be read without
+ * unpacking all of it, which a frame cannot afford, so it is skipped (online_lib_skipped()). */
 #include <stdint.h>
 #include <dirent.h>
 #include <stdio.h>
@@ -136,7 +136,7 @@ static int read_header(const char *path, uint8_t hdr[16])
    size_t n = G.family == OL_GBA ? 4 : 16;
    long off = G.family == OL_GBA ? 0xAC : 0x134;
 
-   if (ext_is(path, ".zip"))
+   if (ext_is(path, ".zip") || ext_is(path, ".7z"))
    {
       zip_rom_entry e;
       uint8_t lh[30];
@@ -208,10 +208,45 @@ static int pad_ext_ok(const char *path)
    if (G.family == OL_SNES)
       return ext_is(path, ".sfc") || ext_is(path, ".smc");
    if (G.family == OL_SEGA)
-      return !strcmp(G.sega, "scd") ? (ext_is(path, ".cue") || ext_is(path, ".chd") || ext_is(path, ".iso"))
+      return !strcmp(G.sega, "scd") ? (ext_is(path, ".cue") || ext_is(path, ".chd") || ext_is(path, ".iso") || ext_is(path, ".m3u"))
            : !strcmp(G.sega, "sms") ? ext_is(path, ".sms") : !strcmp(G.sega, "sg") ? (ext_is(path, ".sg") || ext_is(path, ".sc"))
            : ext_is(path, ".md") || ext_is(path, ".gen") || ext_is(path, ".smd") || ext_is(path, ".bin") || ext_is(path, ".68k");
    return ext_is(path, ".ws") || ext_is(path, ".wsc");
+}
+
+#include <dirent.h>
+
+/* 1 when an .m3u in the folder of the disc `path` names it: the .m3u is the game, the disc is not offered on its own (as the game list does) */
+static int disc_listed_by_m3u(const char *path)
+{
+   static char list[PK_M3U_MAX_DISCS][PK_M3U_PATH];
+   char dir[PK_M3U_PATH], me[PK_M3U_PATH];
+   const char *sl = strrchr(path, '/');
+   size_t dl = sl ? (size_t)(sl - path) : 0;
+   struct dirent *e;
+   DIR *d;
+   int hit = 0;
+   if (dl == 0 || dl >= sizeof(dir) || strlen(path) >= sizeof(me))
+      return 0;
+   memcpy(dir, path, dl);
+   dir[dl] = '\0';
+   strcpy(me, path);
+   pk_m3u_fold(me);
+   d = opendir(dir);
+   if (!d)
+      return 0;
+   while (!hit && (e = readdir(d)) != NULL)
+   {
+      char full[PK_M3U_PATH];
+      int nd, i;
+      if (e->d_name[0] == '.' || !pk_m3u_is_list(e->d_name) || snprintf(full, sizeof(full), "%s/%s", dir, e->d_name) >= (int)sizeof(full))
+         continue;
+      nd = pk_m3u_load(full, list, PK_M3U_MAX_DISCS, NULL, NULL);
+      for (i = 0; i < nd && !hit; i++)
+         hit = strcasecmp(list[i], me) == 0;
+   }
+   closedir(d);
+   return hit;
 }
 
 /* The id of the file at `path` as 8 upper-case hex digits; 1 = read, 0 = not a game of this family. */
@@ -272,7 +307,7 @@ static int has_patch(const char *path)
    const char *dot = strrchr(path, '.');
    struct stat st;
    size_t stem, i;
-   if (!dot || ext_is(path, ".zip"))
+   if (!dot || ext_is(path, ".zip") || ext_is(path, ".7z"))
       return 0;
    stem = (size_t)(dot - path);
    for (i = 0; i < sizeof(ext) / sizeof(ext[0]); i++)
@@ -398,12 +433,13 @@ int online_lib_step(int files)
          {
             /* the whole file is the identity: a zip cannot be read in a frame, so it is counted and left */
             char id[9];
-            if (ext_is(path, ".zip"))
+            if (ext_is(path, ".zip") || ext_is(path, ".7z"))
             {
                G.skipped++;
                continue;
             }
-            if (!pad_ext_ok(path) || !pad_id_of(path, id) || strcasecmp(id, G.game) != 0)
+            if (!pad_ext_ok(path) || (G.family == OL_SEGA && !strcmp(G.sega, "scd") && !pk_m3u_is_list(path) && disc_listed_by_m3u(path)) ||
+                !pad_id_of(path, id) || strcasecmp(id, G.game) != 0)
                continue;
             add_hit(path);
             break;

@@ -202,6 +202,12 @@ sharing).
     back to the library.
   - A disc with only a data track shows 99 audio tracks (the core's own
     behaviour). A lone `.bin` without `.cue` is not listed; use `.iso`. No zip.
+  - Games on several discs use an `.m3u` list (up to 8 discs). Change disc
+    works through the drive's tray handling like Genesis Plus GX's own disc
+    swap; a game that does not check the tray may not notice the new disc until
+    it reads it. RetroAchievements follows the first disc of the list. Not
+    offered in Two players (both consoles must keep the same disc). Only
+    tested with synthetic discs; no real multi-disc game has run.
   - Saves are not RetroArch `.brm` files; they cannot be exchanged.
   - Cheats change main work RAM only; no ROM patches for discs.
   - In Two players the region and RAM cartridge are fixed (USA/auto, 512 KB) on both sides.
@@ -347,6 +353,15 @@ flicker or missing instruments, which we could not judge without a Vita.
 - **Zipped games:** the first game in the zip with a known extension is the one
   played. Patches, and two-player play with a different game for each player,
   need the game unzipped. Encrypted and ZIP64 archives are not read.
+- **`.7z` games:** read with the LZMA SDK (LZMA, LZMA2, BCJ, Delta; no
+  passwords, PPMd or BCJ2). The archive's block that holds the game is
+  unpacked in memory at once, so a game over 32 MB or a solid block over 64 MB
+  is refused (the notice says which); pack big games without "solid" or on
+  their own. A Genesis `.bin` in a `.7z` is unpacked once to check its header
+  when the library lists it, which can be slow for a big solid archive. The
+  library does not show the room-finder's checksum for a `.7z` (same as a
+  deflated zip). Tested on the PC with archives made by p7zip; the unpacking
+  time on a Vita is not measured.
 - **Starting from a launcher** works when VitAdhoc is closed; close it first.
 - **Sharing states between two Vitas** covers slots 1 to 5.
 - **Chinese-only characters** (simplified or traditional hanzi that Japanese

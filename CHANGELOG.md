@@ -116,6 +116,19 @@ and in emulators; none of it has run on a real Vita yet (see
   fast forward.
 - **RetroAchievements shows more:** a mark when an achievement is one step
   away, a progress count ("3/10") and the live value of a leaderboard run.
+- **`.7z` games everywhere `.zip` works.** Every console lists, unpacks and
+  plays a game kept in a `.7z` (LZMA and LZMA2): the first game file in the
+  archive, checked against its checksum, unpacked once, with saves and states
+  named after the archive. A game over 32 MB, or a solid archive whose block is
+  over 64 MB, is refused with a notice that says so instead of running out of
+  memory. Encrypted archives are not read. Checked on the PC only; how long a
+  big archive takes to unpack on a Vita is not measured.
+- **Sega CD games on several discs.** A `.m3u` list names the discs of one game:
+  the library shows the list once and hides its discs, saves and saved moments
+  are kept under the list's name, and Settings > Speed > Change disc in the
+  game opens the disc tray, swaps the disc and closes it, as a console would.
+  A saved moment remembers which disc was in. Checked on the PC with synthetic
+  discs; no real multi-disc game has run.
 - **Fast forward at normal pitch**, with the sound kept low and smooth.
 - **Tap screen for menu** can be turned off for thumbs that touch the screen;
   Start + Select always opens the menu.

@@ -3,6 +3,7 @@
 #include "pk_patch.h"
 #include "pk_ra_plat.h"
 #include "pk_util.h"
+#include "pk_m3u.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -133,6 +134,12 @@ static void overlay_changed(pic_settings &dst, const pic_settings &src, unsigned
 	if (m & CH_WIDE) dst.wide = src.wide;
 }
 
+static std::string disc_file_name(const std::string &p)
+{
+	const size_t k = p.find_last_of("/:");
+	return k == std::string::npos ? p : p.substr(k + 1);
+}
+
 static const char *kConsoles[5] = { "md", "sms", "gg", "sg", "scd" };
 
 std::string MdPlayer::console_for_extension(const std::string &path)
@@ -140,7 +147,7 @@ std::string MdPlayer::console_for_extension(const std::string &path)
 	if (ends_with_ci(path, ".gg")) return "gg";
 	if (ends_with_ci(path, ".sms") || ends_with_ci(path, ".mark3")) return "sms";
 	if (ends_with_ci(path, ".sg") || ends_with_ci(path, ".sc") || ends_with_ci(path, ".sg1000")) return "sg";
-	if (ends_with_ci(path, ".cue") || ends_with_ci(path, ".chd") || ends_with_ci(path, ".iso")) return "scd";
+	if (ends_with_ci(path, ".cue") || ends_with_ci(path, ".chd") || ends_with_ci(path, ".iso") || ends_with_ci(path, ".m3u")) return "scd";
 	return "md";
 }
 
@@ -627,7 +634,34 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 			return res;
 		}
 		if (!req_.patch_path.empty()) logf("patch ignored: a disc cannot be patched in memory\n");
-		if (md_host_load_disc(rom_.c_str(), err, sizeof err)) {
+		/* a game on several discs: an .m3u names them; the first one that is there goes in, the others wait for "Change disc" */
+		std::string disc_path = rom_;
+		int disc_first = 0;
+		discs_.clear();
+		if (pk_m3u_is_list(rom_.c_str())) {
+			static char dl[PK_M3U_MAX_DISCS][PK_M3U_PATH];
+			int missing = 0, skipped = 0;
+			const int nd = pk_m3u_load(rom_.c_str(), dl, PK_M3U_MAX_DISCS, &missing, &skipped);
+			std::string gone;
+			for (int i = 0; i < nd; i++) {
+				discs_.push_back(dl[i]);
+				if (!file_exists(dl[i], nullptr, nullptr)) gone += (gone.empty() ? "" : ", ") + disc_file_name(dl[i]);
+			}
+			logf("m3u %s: %d disc(s), %d missing, %d line(s) not used\n", rom_.c_str(), nd, missing, skipped);
+			disc_first = -1;
+			for (int i = 0; i < nd && disc_first < 0; i++) if (file_exists(dl[i], nullptr, nullptr)) disc_first = i;
+			if (nd <= 0 || disc_first < 0) {
+				res.fatal1 = "This game could not be started.";
+				res.fatal2 = nd < 0 ? "The .m3u list could not be read." : nd == 0 ? "The .m3u list has no disc (.cue, .chd or .iso) in it." : "None of the discs in the .m3u list could be found: " + gone;
+				SessionReport r = session_.finish(EXIT_ERROR);
+				r.notice = "This game could not be started: " + res.fatal2;
+				session_write(root_, r);
+				return res;
+			}
+			disc_path = discs_[(size_t) disc_first];
+			if (!gone.empty()) notice(strf("The list names a disc that is missing: %s", gone.c_str()), NOTICE_ERROR, true);
+		}
+		if (md_host_load_disc(disc_path.c_str(), err, sizeof err)) {
 			logf("load failed: %s\n", err);
 			res.fatal1 = "This game could not be started.";
 			{ char found[64]; md_host_cd_bios_regions(found, sizeof found);
@@ -636,6 +670,12 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 			r.notice = std::string("This game could not be started: ") + err;
 			session_write(root_, r);
 			return res;
+		}
+		if (discs_.size() > 1) {
+			static char dl2[MD_HOST_DISC_MAX][MD_HOST_DISC_PATH];
+			for (size_t i = 0; i < discs_.size() && i < (size_t) MD_HOST_DISC_MAX; i++) snprintf(dl2[i], sizeof dl2[i], "%s", discs_[i].c_str());
+			md_host_cd_set_discs(dl2, (int) std::min<size_t>(discs_.size(), MD_HOST_DISC_MAX), disc_first);
+			logf("disc %d of %d in the drive: %s\n", disc_first + 1, (int) discs_.size(), disc_path.c_str());
 		}
 		logf("%s\n", md_host_cd_info());
 		if (md_host_cd_notice()[0]) notice(md_host_cd_notice(), NOTICE_ERROR, true);           /* the disc's region has no BIOS of its own here: say what to add */
@@ -801,6 +841,13 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 			menu_.add_host_row(Menu::PAGE_SPEED, ROW_RAMCART, "RAM cartridge",
 			                   "Extra save memory some games can use besides the console's built in 8 KB. 512 KB is the usual setting; 128 KB is the one Sega sold; Off leaves the slot empty. A save made with another size is kept and comes back when you choose that size again. Takes effect the next time the game starts. Two players always use 512 KB.",
 			                   rc, ram_cart_);
+		}
+		if (scd_ && discs_.size() > 1 && !linked()) {
+			std::vector<std::string> dc;
+			for (size_t i = 0; i < discs_.size(); i++) dc.push_back(strf("Disc %d", (int) i + 1));
+			menu_.add_host_row(Menu::PAGE_SPEED, ROW_DISC, "Change disc",
+			                   "For a game on several discs: opens the disc tray, takes the disc out, puts the one you choose in and closes the tray, as you would by hand. Do it when the game asks for another disc. Saves and saved moments stay with the game.",
+			                   dc, md_host_cd_disc_index(), ROW_REGION);
 		}
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_REGION, "Region",
 		                   "Auto follows the game. Europe runs a game at its 50 Hz speed, USA and Japan at 60 Hz; some games only work in their own region.", region, region_);
@@ -1031,8 +1078,62 @@ int MdPlayer::speed_plan(int normal)
 	return n;
 }
 
+/* ---- Change disc: the tray opens, the disc is swapped a moment later, the tray closes a moment after that (the game's own disc check sees all three) ---- */
+
+void MdPlayer::change_disc(int index)
+{
+	if (!scd_ || discs_.size() < 2 || linked()) return;
+	if (disc_phase_) { notice("The disc is being changed already", NOTICE_INFO); sync_disc_row(); return; }
+	if (index < 0 || index >= (int) discs_.size()) { sync_disc_row(); return; }
+	/* the tray may be open already (the game opened it, or a saved moment taken while it was open came back): the change goes on from there, and
+	 * choosing the disc that is in closes it */
+	const bool open = md_host_cd_tray_open() != 0;
+	if (index == md_host_cd_disc_index() && !open) { notice(strf("Disc %d is in the drive already", index + 1), NOTICE_INFO); return; }
+	if (!file_exists(discs_[(size_t) index], nullptr, nullptr)) {
+		notice(strf("Disc %d is missing: %s", index + 1, disc_file_name(discs_[(size_t) index]).c_str()), NOTICE_ERROR, true);
+		sync_disc_row();
+		return;
+	}
+	if (!open && md_host_cd_eject() != 0) { sync_disc_row(); return; }
+	disc_want_ = index;
+	disc_phase_ = index == md_host_cd_disc_index() ? 2 : 1;
+	disc_wait_ = kDiscTrayFrames;
+	logf("change disc: tray open%s, disc %d next\n", open ? " already" : "", index + 1);
+	if (!open) notice("Disc tray open", NOTICE_OK);
+}
+
+void MdPlayer::sync_disc_row() { menu_.set_value(ROW_DISC, md_host_cd_disc_index()); }
+
+void MdPlayer::disc_tick()
+{
+	if (!disc_phase_ || --disc_wait_ > 0) return;
+	if (!md_host_cd_tray_open()) {             /* a saved moment (a state, a rewind) came in with the tray closed: the change is over, its disc is the one in */
+		disc_phase_ = 0;
+		sync_disc_row();
+		return;
+	}
+	if (disc_phase_ == 1) {
+		char err[160];
+		if (md_host_cd_swap(disc_want_, err, sizeof err) == 0) {
+			logf("change disc: disc %d in the drive\n", disc_want_ + 1);
+		} else {
+			logf("change disc: disc %d could not be read: %s\n", disc_want_ + 1, err);
+			notice(strf("Disc %d could not be read: %s", disc_want_ + 1, err), NOTICE_ERROR, true);
+		}
+		disc_phase_ = 2;
+		disc_wait_ = kDiscTrayFrames;
+		return;
+	}
+	md_host_cd_close();
+	disc_phase_ = 0;
+	notice(strf("Disc %d inserted", md_host_cd_disc_index() + 1), NOTICE_OK);
+	sync_disc_row();
+	logf("change disc: tray closed\n");
+}
+
 bool MdPlayer::run_frame(bool render)
 {
+	disc_tick();
 	const bool landing = speed_.rewinding();
 	const bool ran = speed_.run_frame(render);
 	if (ran) {
@@ -1445,6 +1546,7 @@ void MdPlayer::on_change(int row, int v)
 		if (md_host_fps() != before) { timing_changed_ = true; ahead_.set_frame_us((uint32_t) (1e6 / md_host_fps() + 0.5)); logf("region %d: %.4f Hz now\n", region_, md_host_fps()); }
 		break;
 	}
+	case ROW_DISC: change_disc(v); break;
 	case ROW_RAMCART: ram_cart_ = clampi(v, 0, 6); notice("The RAM cartridge changes when the game starts again", NOTICE_OK); break;
 	case ROW_FM: fm_ = clampi(v, 0, 2); md_host_set_option("fm", fm_); break;
 	case ROW_YM2413: ym2413_ = clampi(v, 0, 2); md_host_set_option("ym2413", ym2413_); break;
@@ -1498,6 +1600,7 @@ bool MdPlayer::restore_state(const uint8_t *data, size_t n)
 	jumps_++;
 	pacer_.reset(PACE_FULL);
 	speed_.state_changed();              /* "a moment ago" is another timeline now */
+	if (r == 0 && scd_ && discs_.size() > 1 && !disc_phase_) sync_disc_row();      /* the state's disc is in the drive now */
 	return r == 0;
 }
 

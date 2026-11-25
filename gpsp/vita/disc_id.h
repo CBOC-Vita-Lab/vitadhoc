@@ -10,6 +10,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
+
+#include "../../playerkit/src/pk_m3u.h"
 
 static inline int disc_ext_is(const char *path, const char *ext)
 {
@@ -19,7 +22,7 @@ static inline int disc_ext_is(const char *path, const char *ext)
 
 static inline int disc_is_image(const char *path)
 {
-   return disc_ext_is(path, ".cue") || disc_ext_is(path, ".chd") || disc_ext_is(path, ".iso");
+   return disc_ext_is(path, ".cue") || disc_ext_is(path, ".chd") || disc_ext_is(path, ".iso") || disc_ext_is(path, ".m3u");
 }
 
 /* `crc` is the caller's CRC-32 routine (start 0). 1 = id written, 0 = not a readable disc */
@@ -35,6 +38,20 @@ static inline int disc_game_id(const char *path, char out[9], uint32_t (*crc)(ui
       out[0] = '\0';
    if (!path || !out || !disc_is_image(path))
       return 0;
+   if (disc_ext_is(path, ".m3u"))
+   {
+      /* a game on several discs is its first disc that is there: the same id whichever disc of the list is in the drive, and the same as the
+       * first disc's own .cue gives */
+      static char list[PK_M3U_MAX_DISCS][PK_M3U_PATH];
+      int nd = pk_m3u_load(path, list, PK_M3U_MAX_DISCS, NULL, NULL), i;
+      for (i = 0; i < nd; i++)
+      {
+         struct stat st;
+         if (stat(list[i], &st) == 0 && S_ISREG(st.st_mode))
+            return disc_game_id(list[i], out, crc);
+      }
+      return 0;
+   }
    if (disc_ext_is(path, ".cue"))
    {
       /* the first FILE of the sheet: the data track, beside the sheet. The name may be in quotes or not, may carry a directory (the core takes the

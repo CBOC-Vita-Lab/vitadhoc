@@ -287,6 +287,7 @@ static void ring_push(const int16_t *s, int n)
 }
 
 static void cd_stash_clear(void);
+static int g_disc_n, g_disc_cur;           /* the discs of an .m3u game (md_host_cd_set_discs) */
 
 /* ---- lifetime -------------------------------------------------------------------------------------------- */
 
@@ -341,6 +342,7 @@ void md_host_unload(void)
 	audio_shutdown();
 	if (G.cd) { cdio_end(); cdd_unload(); md_cd_wanted = 0; system_bios &= ~0x10; }      /* the core keeps the boot ROM it loaded: the next disc reads it again (it may be another BIOS) */
 	system_hw = 0;
+	g_disc_n = 0; g_disc_cur = 0;
 	G.cd = 0; G.cd_tracks = 0; G.cd_info[0] = 0; G.cd_bios_used[0] = 0; G.cd_notice[0] = 0; G.cd_disc_region = 0;
 	G.loaded = 0; G.system = 0; G.ncheat = 0; G.rom_src = NULL; G.rom_n = 0; wide_m = 0;
 	cd_stash_clear();
@@ -877,6 +879,72 @@ static uint32_t cd_disc_crc(void)
 static int disc_region(const uint8_t *hdr) { return hdr[0x20b] == 0x64 ? 2 : hdr[0x20b] == 0xa1 ? 3 : 1; }
 int md_host_cd_disc_region(void) { return G.loaded && G.cd ? G.cd_disc_region : 0; }
 const char *md_host_cd_notice(void) { return G.loaded && G.cd ? G.cd_notice : ""; }
+
+/* ---- more than one disc (host.h) ---- */
+static char g_discs[MD_HOST_DISC_MAX][MD_HOST_DISC_PATH];
+
+void md_host_cd_set_discs(const char (*paths)[MD_HOST_DISC_PATH], int n, int cur)
+{
+	int i;
+	g_disc_n = 0; g_disc_cur = 0;
+	if (!paths || n < 1) return;
+	if (n > MD_HOST_DISC_MAX) n = MD_HOST_DISC_MAX;
+	for (i = 0; i < n; i++) { strncpy(g_discs[i], paths[i], MD_HOST_DISC_PATH - 1); g_discs[i][MD_HOST_DISC_PATH - 1] = 0; }
+	g_disc_n = n;
+	g_disc_cur = cur >= 0 && cur < n ? cur : 0;
+}
+int md_host_cd_disc_count(void) { return G.loaded && G.cd ? (g_disc_n > 0 ? g_disc_n : 1) : 0; }
+int md_host_cd_disc_index(void) { return G.loaded && G.cd ? g_disc_cur : 0; }
+int md_host_cd_tray_open(void) { return G.loaded && G.cd && cdd.status == CD_OPEN; }
+
+/* The tray's two status changes below (open: CD_OPEN and the "no audio" flag; close: a table of contents again, or no disc) and the swap by
+ * cdd_load in cd_put_disc are those of Genesis Plus GX's own disc control in its libretro port (libretro/libretro.c disk_set_eject_state and
+ * disk_set_image_index, Copyright Eke-Eke and Daniel De Matteis, under the Genesis Plus GX licence that md/core carries, md/core/LICENSE.txt):
+ * these lines are under that licence, not this file's MIT. */
+int md_host_cd_eject(void)
+{
+	if (!G.loaded || !G.cd || cdd.status == CD_OPEN) return 1;
+	cdd.status = CD_OPEN;
+	scd.regs[0x36 >> 1].byte.h = 0x01;      /* no audio track playing */
+	cdd.index = cdd.lba = 0;                /* the drive's position is reset, as the Open Tray command does */
+	return 0;
+}
+
+int md_host_cd_close(void)
+{
+	if (!G.loaded || !G.cd || cdd.status != CD_OPEN) return 1;
+	cdd.status = cdd.loaded ? CD_TOC : NO_DISC;
+	return 0;
+}
+
+/* disc i into the drive (whatever state the tray is in); 0 = done */
+static int cd_put_disc(int index, char *err, size_t errlen)
+{
+	char hdr[0x210], why[100];
+	if (err && errlen) err[0] = 0;
+	if (index < 0 || index >= g_disc_n) { if (err && errlen) snprintf(err, errlen, "no such disc"); return 1; }
+	cdio_end();
+	cdd_note[0] = 0;
+	cdd_load(g_discs[index], hdr);
+	snprintf(why, sizeof why, "%s", cdd_note[0] ? cdd_note : "the disc could not be read");
+	if (cdd.loaded && cdd.toc.tracks[0].type && !cdd.toc.tracks[0].fd) { cdd_unload(); snprintf(why, sizeof why, "%s", cdd_note[0] ? cdd_note : "the disc's data track file is missing"); }
+	cdio_begin();
+	if (!cdd.loaded) { if (err && errlen) snprintf(err, errlen, "%s", why); return 2; }
+	g_disc_cur = index;
+	G.cd_tracks = cdd.toc.last;
+	return 0;
+}
+
+int md_host_cd_swap(int index, char *err, size_t errlen)
+{
+	int prev = g_disc_cur, rc;
+	if (err && errlen) err[0] = 0;
+	if (!G.loaded || !G.cd) { if (err && errlen) snprintf(err, errlen, "no disc game"); return 1; }
+	if (cdd.status != CD_OPEN) { if (err && errlen) snprintf(err, errlen, "the tray is closed"); return 1; }
+	rc = cd_put_disc(index, err, errlen);
+	if (rc && prev >= 0 && prev < g_disc_n) cd_put_disc(prev, NULL, 0);      /* the drive is not left empty */
+	return rc;
+}
 /* "Europe and Japan": the regions a BIOS was handed over for */
 size_t md_host_cd_bios_regions(char *out, size_t n)
 {
@@ -1386,7 +1454,7 @@ static size_t state_save_to(uint8_t *buf, size_t cap, int with_crc)
 	memset(buf + STATE_HDR + used, 0, G.state_size - STATE_HDR - used);   /* the tail is zero so two states differ only where the machine did */
 	memcpy(buf, "MDST", 4);
 	put32(buf + 4, STATE_VERSION_ID);
-	put32(buf + 8, (uint32_t)G.system + (G.cd ? 16u : 0u));       /* a disc's state is never taken for a cartridge's */
+	put32(buf + 8, (uint32_t)G.system + (G.cd ? 16u : 0u) + (G.cd ? ((uint32_t)g_disc_cur << 8) : 0u));       /* a disc's state is never taken for a cartridge's; its disc number rides above (0 = the first or only disc) */
 	put32(buf + 12, (uint32_t)used);
 	memcpy(buf + STATE_HDR, G.state_scratch, used);
 	carry_write(buf + STATE_HDR + used);                  /* the sprite lists, FIFO flag, PSG deltas, EEPROM position the core's state lacks */
@@ -1409,10 +1477,16 @@ static int state_load_from(const uint8_t *buf, size_t n, int check_crc)
 	if (ver == STATE_VERSION_ID) { if (n != G.state_size) return 3; payload_cap = G.state_payload_cap; }
 	else if (ver == STATE_VERSION_OLD) { if (n != G.state_size_old) return 3; payload_cap = n - STATE_HDR - STATE_TRAILER; }
 	else return 3;
-	if (get32(buf + 8) != (uint32_t)G.system + (G.cd ? 16u : 0u)) return 3;
+	if ((get32(buf + 8) & 0xFFu) != (uint32_t)G.system + (G.cd ? 16u : 0u)) return 3;
 	used = get32(buf + 12);
 	if (used == 0 || used > payload_cap || used > G.state_payload_cap) return 3;
 	if (check_crc && get32(buf + n - STATE_TRAILER) != (uint32_t)crc32(0, buf, (unsigned)(n - STATE_TRAILER))) return 3;
+	if (G.cd && (int)((get32(buf + 8) >> 8) & 0xFFu) != g_disc_cur) {      /* the state was made with another disc in the drive: it goes in first (once the state is known to be whole: a damaged file does not change the disc) */
+		const int d = (int)((get32(buf + 8) >> 8) & 0xFFu);
+		const int prev = g_disc_cur;
+		if (d >= g_disc_n) return 3;
+		if (cd_put_disc(d, NULL, 0)) { cd_put_disc(prev, NULL, 0); return 3; }      /* its disc is gone: the one that was in goes back, the drive is not left empty */
+	}
 	memcpy(G.state_scratch, buf + STATE_HDR, used);      /* the core wants a writable buffer */
 	/* run-ahead's own load keeps the picture just drawn, the pattern cache and the palette tables (the core then marks only the patterns
 	 * whose VRAM differs); every other load starts from cleared buffers as before */

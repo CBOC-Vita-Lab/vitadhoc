@@ -650,9 +650,9 @@ def t_gba_two_games(T):
     """GBA Link Cable between two DIFFERENT games (the trade between
     versions: Ruby with Sapphire): each Vita fetches the other's game over
     the link, keeps it in its cache, runs both machines from their own
-    cartridges and saves.  Small cartridges (identified whole) both ways,
-    then 1 MiB ones (identified by slices) with a second session that finds
-    the games in the cache."""
+    cartridges and saves.  Small cartridges (identified whole) both ways
+    (this part), then 1 MiB ones (gba_two_games_big, a scenario of its own, so each
+    fits a ten-minute run)."""
     if not os.path.exists(LINKTEST_B):
         T.S.note("no tools/linktest/linktest_b.gba (make -C tools/linktest "
                  "VARIANT_B=1): skipped")
@@ -661,6 +661,16 @@ def t_gba_two_games(T):
     two_games_session(T, "small, T hosts", LINKTEST, LINKTEST_B, False)
     T.begin("gba_two_games_ba")
     two_games_session(T, "small, B hosts", LINKTEST_B, LINKTEST, False)
+
+
+def t_gba_two_games_big(T):
+    """GBA Link Cable between two different games, 1 MiB cartridges
+    (identified by slices), with a second session that finds the games in
+    the cache."""
+    if not os.path.exists(LINKTEST_B):
+        T.S.note("no tools/linktest/linktest_b.gba (make -C tools/linktest "
+                 "VARIANT_B=1): skipped")
+        return
     T.begin("gba_two_games_big")
     d = T.dir
     big_a = os.path.join(d, "ruby.gba")
@@ -1150,21 +1160,22 @@ GBLINK_CGB = os.path.join(HERE, "testrom", "gblink-cgb.gbc")
 GBLINK_FAST = os.path.join(HERE, "testrom", "gblink-cgbfast.gbc")
 
 
-def t_gb_mixed(T):
+def t_gb_mixed(T, fast=False):
     """A Game Boy and a Game Boy Color cartridge over the network link (Red
     with Gold, Yellow with Crystal): .gb on one console, .gbc on the other,
-    each machine its own hardware, in both directions, and a Color in
-    double speed against a Game Boy at normal speed."""
+    each machine its own hardware, in both directions (this part), and a
+    Color in double speed against a Game Boy at normal speed (gb_mixed_fast,
+    a scenario of its own, so each fits a ten-minute run)."""
     if not all(os.path.exists(p) for p in (GBLINK, GBLINK_CGB, GBLINK_FAST)):
         T.S.note("no testrom/gblink-cgb*.gbc (make -C testrom gb): skipped")
         return
-    for tag, ra_rom, rb_rom, what in (
-            ("gb_cgb", GBLINK, GBLINK_CGB, "Game Boy hosts, Color joins"),
-            ("cgb_gb", GBLINK_CGB, GBLINK, "Color hosts, Game Boy joins"),
+    for tag, ra_rom, rb_rom, what in ((
             ("gb_fast", GBLINK, GBLINK_FAST,
              "Game Boy with a Color in double speed"),
             ("fast_gb", GBLINK_FAST, GBLINK,
-             "Color in double speed with a Game Boy")):
+             "Color in double speed with a Game Boy")) if fast else (
+            ("gb_cgb", GBLINK, GBLINK_CGB, "Game Boy hosts, Color joins"),
+            ("cgb_gb", GBLINK_CGB, GBLINK, "Color hosts, Game Boy joins"))):
         T.begin("gb_mixed_" + tag)
         a = T.twin("a", T.arch_a, ra_rom, "Alice",
                    host(2, "host.png") + shot(11, "linking.png") +
@@ -1197,6 +1208,12 @@ def t_gb_mixed(T):
         T.same_machines(ra, rb)
         gb_verdict(T, ra, "A", 1, os.path.basename(ra_rom) + ".sav")
         gb_verdict(T, rb, "B", 2, os.path.basename(rb_rom) + ".sav")
+
+
+def t_gb_mixed_fast(T):
+    """A Game Boy against a Game Boy Color in double speed over the network
+    link, in both directions (the rest of gb_mixed)."""
+    t_gb_mixed(T, fast=True)
 
 
 def t_gb_extra_folder(T):
@@ -2044,7 +2061,7 @@ def t_sega_two(T):
                 "%s: both carry the same pad compat word (%s)" % (con, ka.get("link.compat")))
 
 
-TESTS = [("wifi_cable", t_wifi_cable), ("gba_two_games", t_gba_two_games), ("fast_link", t_fast_link), ("share", t_share), ("share_replace", t_share_replace), ("mgift", t_mgift), ("gb_two_carts", t_gb_two_carts), ("gb_mixed", t_gb_mixed), ("gb_extra_folder", t_gb_extra_folder), ("three_sessions", t_three_sessions),
+TESTS = [("wifi_cable", t_wifi_cable), ("gba_two_games", t_gba_two_games), ("gba_two_games_big", t_gba_two_games_big), ("fast_link", t_fast_link), ("share", t_share), ("share_replace", t_share_replace), ("mgift", t_mgift), ("gb_two_carts", t_gb_two_carts), ("gb_mixed", t_gb_mixed), ("gb_mixed_fast", t_gb_mixed_fast), ("gb_extra_folder", t_gb_extra_folder), ("three_sessions", t_three_sessions),
          ("wifi_gb", t_wifi_gb), ("wifi_adapter", t_wifi_adapter),
          ("internet", t_internet), ("adhoc", t_adhoc),
          ("room_full", t_room_full), ("different_build", t_different_build),
@@ -2059,7 +2076,7 @@ TESTS = [("wifi_cable", t_wifi_cable), ("gba_two_games", t_gba_two_games), ("fas
 # refusal, and the two kinds of link that do not need matching backends.
 RUNS = {
     "x86": [n for n, _ in TESTS if n != "mixed_refuse"],
-    "armhf": ["wifi_cable", "gba_two_games", "three_sessions", "wifi_gb", "wifi_adapter",
+    "armhf": ["wifi_cable", "gba_two_games", "gba_two_games_big", "three_sessions", "wifi_gb", "wifi_adapter",
               "internet", "adhoc", "room_full", "host_quits", "link_lost",
               "lossy", "suspend"],
     "mixed": ["mixed_refuse", "wifi_gb", "wifi_adapter"],

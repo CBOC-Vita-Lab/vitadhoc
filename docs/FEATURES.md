@@ -17,7 +17,7 @@ start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 | WonderSwan / Color | Beetle WonderSwan (Mednafen) inside the app (GPL-2.0-or-later); 224 x 144 at 75.47 frames a second, blended into each 59.94 Hz refresh; horizontal and vertical games |
 | Sega Genesis / Mega Drive, Master System, Game Gear, SG-1000 | Genesis Plus GX in its own program (`md.bin`, non-commercial licence), one player for the four consoles; the app's library, Starred, Recent, play time, Continue, ten state slots, cheats from the bundled database, RetroArch save import and crash protection work as for the Super NES; saves are `Game.srm` beside the game |
 | Rendering | GXM/libvita2d; GBA render worker and CPU upscaling workers |
-| Input | Buttons, sticks, front touch, motion sensors; mappings and turbo settings |
+| Input | Buttons, sticks, front touch, rear touch (four corners as mappable inputs), NES Zapper on the touch screen, motion sensors; mappings, turbo settings and a Button test page |
 | Sega CD / Mega CD | The same Sega player (`md.bin`) with Genesis Plus GX's disc code, libchdr and tremor; your own Sega CD BIOS is needed (not included); `.cue`+`.bin`, `.iso`, `.chd`; all Genesis features, two players, RetroAchievements; saves are `Game.srm` (backup RAM + RAM cartridge, 512 KB by default, or none with Off; the cartridges of the other sizes you tried are kept in the same file); disc reading and CHD decoding (LZMA, zlib, zstd, FLAC) run on a read-ahead thread; a disc whose region has no BIOS shows a notice, not a silent fallback |
 | Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.nes`, `.fds`, `.unf`, `.unif`, `.ws`, `.wsc`, `.pc2`, `.md`, `.gen`, `.smd`, `.sms`, `.gg`, `.sg`, `.cue`, `.chd`, `.iso` (and `.bin` when it is a Genesis image); supported stored/deflated `.zip` entries up to 32 MiB |
 | Library | Up to 2,048 games per console; folders scanned two levels deep |
@@ -463,6 +463,37 @@ Controls can be remapped. Turbo A/B variants support hold or toggle and
 10, 15 or 30 presses per second; they rest during link play and reset when a
 menu opens or a state loads. The menu shortcut remains reachable. See
 [Controls](../CONTROLS.md) for the defaults and two-player input switching.
+
+**Rear touch panel** (2.0, Settings > Controls, Off by default; the same row in
+the Super NES and Sega players): the panel is read in two halves both ways, so
+four corners, bits above the sixteen the Vita's buttons and the stick use in
+the control map (`ctl_map.h`, `CTL_REAR_*`; the players' `PH_BACK_*`). A corner is
+bound in Button mapping like any button, so it can be a game button, a shortcut
+(fast forward, rewind, quick save and load, screenshot, pause) or a turbo button;
+Settings > This game > Rear touch panel (Settings, Off, On; `rear_touch` in the
+game's `games/<ROM>.ini`) overrides the global `rear_touch` of `config.ini`.
+While a binding is being captured the panel is read even when it is Off, so a
+corner can be chosen from there. There is no hold time or grip area: the zones
+are the players'. On the WonderSwan, whose buttons are the Vita's own, a corner
+bound to a game button presses the WonderSwan button that button's own key presses.
+
+**NES Zapper** (2.0): FCEUmm's game database (the core's own, the same list the
+libretro core uses) says which games have a Zapper and on which port; for them,
+or for any game with Settings > This game > Port 2 = Zapper (`nes_port2 = 1` in
+the game's ini; 0 Auto, 2 Controller), the front touch screen is the gun. A finger on
+the picture aims at the NES pixel under it (through the screen size, wide view
+and overscan crop: `zapper_map.h`) and pulls the trigger for as long as it is
+down; a finger beside the picture, or on the wide view's extra columns, aims
+off the screen. The game reads the picture the core drew, so no cross hair is
+drawn. A tap does not open the menu in those games.
+
+**Button test** (2.0, Settings > Controls > Button test; in the Super NES and Sega
+players the Controls page of their menu): the twelve buttons, both sticks with
+their numbers, the touch screen with its position and the four rear corners,
+each lit while held, with the actions the current mapping puts on it. It shows
+the input as the hardware reports it, not as the game would see it. Start +
+Select held for half a second leaves; no other button does. The WonderSwan's
+names are for a game held sideways.
 
 ## Link Play And Sharing
 

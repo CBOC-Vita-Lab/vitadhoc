@@ -167,6 +167,24 @@ const char *ui_host_overlay_name(void);
  * the app swaps the pad's Cross and Circle (and the hints' glyphs) to match. */
 int         ui_host_ab_circle(void);
 void        ui_host_buttons_changed(void);
+/* Settings > Controls > Button test: every Vita input as it is now, read
+ * straight from the hardware beside the app's own pad (the page shows what
+ * the player presses, not what the game would see).  buttons are PLAT_BTN_*
+ * (plat.h; the A/B swap applied as the app sees them); the sticks 0..255,
+ * 128 centred; front_n fingers on the front panel (the first at front_x,
+ * front_y, native 960x544); rear_n fingers on the rear panel, rear the
+ * CTL_REAR_* corners they touch.  front_use is what a touch of the screen
+ * does for this game ("Opens the menu", "Aims and fires (Zapper)", "Nothing"). */
+typedef struct ui_btn_state
+{
+   unsigned    buttons;
+   int         lx, ly, rx, ry;
+   int         front_n, front_x, front_y;
+   int         rear_n;
+   unsigned    rear;
+   const char *front_use;
+} ui_btn_state;
+void        ui_host_btn_read(ui_btn_state *s);
 const char *ui_host_shot_dir(void);
 /* Cover picture > Choose a picture: the console's own photos and screenshots
  * ("ux0:picture"; vita.ini pictures = <folder> for another). */

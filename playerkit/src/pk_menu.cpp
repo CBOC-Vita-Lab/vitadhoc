@@ -45,7 +45,7 @@ Menu::Menu()
 	  nav_player_(0), modal_(M_NONE), modal_arg_(0), scroll_(0), scroll_target_(0), age_ms_(0), map_player_(0), prev_buttons_(0),
 	  ignore_mask_(0), first_update_(true), t_down_(false), t_region_(-1), t_x0_(0), t_y0_(0), t_x_(0), t_y_(0), t_scroll0_(0),
 	  t_scrolling_(false), t_slider_(false), flash_ms_(0), have_flash_(false), shot_w_(0), shot_h_(0), shot_slot_(0), undo_avail_(false),
-	  gfx_(0), shot_tex_(0), tex_dirty_(false), cap_action_(-1), cap_ms_(0), cap_window_ms_(0), cap_bits_(0), pending_(MENU_NONE)
+	  gfx_(0), shot_tex_(0), tex_dirty_(false), bt_hold_ms_(0), cap_action_(-1), cap_ms_(0), cap_window_ms_(0), cap_bits_(0), pending_(MENU_NONE)
 {
 	memset(vals_, 0, sizeof vals_);
 	memset(allowed_, 0, sizeof allowed_);
@@ -290,6 +290,7 @@ static const char *help_for(int id)
 	case ROW_CTL_STICK_R: return "What the right stick does: nothing, the D-pad, or its own buttons you can map.";
 	case ROW_CTL_REAR: return "Lets the rear touch panel's four corners act as buttons you can map.";
 	case ROW_CTL_MAPPING: return "Choose which Vita button does what, for each player.";
+	case ROW_CTL_BTNTEST: return "Shows each button, stick and touch panel as it is pressed, and what it does.";
 	case ROW_CTL_TURBO_A: return "How fast Turbo A presses: 10, 15 or 30 times a second.";
 	case ROW_CTL_TURBO_B: return "How fast Turbo B presses: 10, 15 or 30 times a second.";
 	case ROW_CTL_TURBO_MODE: return "Hold: turbo runs while the button is held. Toggle: press once to start, again to stop.";
@@ -413,6 +414,11 @@ void Menu::build_rows()
 			Row r;
 			r.id = ROW_CTL_MAPPING; r.kind = K_LINK; r.label = "Button mapping"; r.tag = PAGE_MAPPING; r.help = help_for(ROW_CTL_MAPPING);
 			r.enabled = input_ok; if (!input_ok) r.reason = unsup;
+			rows_.push_back(r);
+		}
+		{
+			Row r;
+			r.id = ROW_CTL_BTNTEST; r.kind = K_ACTION; r.label = "Button test"; r.help = help_for(ROW_CTL_BTNTEST);
 			rows_.push_back(r);
 		}
 		bool tA = model_ && model_->turbo_a >= 0, tB = model_ && model_->turbo_b >= 0;
@@ -710,6 +716,7 @@ void Menu::activate_row(int i)
 	case K_ACTION:
 		if (r.id == ID_CHEAT_ADD) { if (host_ && host_->cheats_refused()) notify(host_->cheats_refused(), NOTICE_ERROR); else if (host_) host_->add_cheat(); }
 		else if (r.id == ROW_CTL_RESET) open_modal(M_CTL_RESET, 0);
+		else if (r.id == ROW_CTL_BTNTEST) { bt_hold_ms_ = 0; bt_pad_ = PadSample(); bt_touch_ = TouchPoint(); open_modal(M_BTNTEST, 0); }
 		else if (page_ == PAGE_MAPPING && r.tag == TAG_MAP_RESET) {
 			if (profile_ && model_) {
 				Profile d = profile_defaults(*model_, cfg_.enter_is_cross);
@@ -893,6 +900,7 @@ void Menu::modal_answer(bool yes)
 		}
 		break;
 	case M_CAPTURE: break;
+	case M_BTNTEST: break;
 	case M_CHEAT_DELETE:
 		if (yes && host_) {
 			std::string name = arg >= 0 && arg < (int) cheats_.size() ? cheats_[(size_t) arg].name : std::string();
@@ -915,6 +923,42 @@ void Menu::begin_capture(int action)
 	cap_window_ms_ = 0;
 	mapper_->capture_reset();
 	open_modal(M_CAPTURE, action);
+}
+
+/* Settings > Controls > Button test.  Every input is shown as it is read; the page leaves only by Start + Select held for half a
+ * second (every other button is being tested). Nothing is sent to the game and no press reaches the menu. */
+void Menu::bt_update(const MenuInput &in)
+{
+	const PadSample &ps = in.pads[nav_player_];
+	bt_pad_ = ps;
+	bt_touch_ = in.touch;
+	if ((ps.buttons & PH_MENU_CHORD) == PH_MENU_CHORD) bt_hold_ms_ += in.dt_ms; else bt_hold_ms_ = 0;
+	if (bt_hold_ms_ >= 500) {
+		modal_ = M_NONE;
+		bt_hold_ms_ = 0;
+		ignore_mask_ = ps.buttons & PH_BUTTONS;      /* the two buttons that left are not a press on the page behind */
+		prev_buttons_ = 0;
+		first_update_ = false;
+		layout();
+	}
+}
+
+/* The actions player 1's profile puts on the physical input `bit` (a chord's member too, marked). */
+std::string Menu::bt_actions(uint32_t bit) const
+{
+	std::string s;
+	if (!profile_ || !model_) return s;
+	for (int a = 0; a < ACT_COUNT; a++) {
+		if (a >= model_->n && a < ACT_TURBO_A) continue;
+		if (a == ACT_TURBO_A && model_->turbo_a < 0) continue;
+		if (a == ACT_TURBO_B && model_->turbo_b < 0) continue;
+		uint32_t b = profile_->bind[0][a];
+		if (!(b & bit)) continue;
+		if (!s.empty()) s += ", ";
+		s += action_label(*model_, a);
+		if (b != bit) s += " (chord)";
+	}
+	return s;
 }
 
 void Menu::capture_update(const MenuInput &in)
@@ -995,6 +1039,7 @@ void Menu::layout()
 {
 	regions_.clear();
 	if (!open_) return;
+	if (modal_ == M_BTNTEST) return;     /* a finger on the glass is only shown, never a press */
 	if (modal_) {
 		add_region(0, 0, 960, 544, REGION_OUTSIDE, 0, 0, false);
 		float cx = 200, cy = modal_ == M_CAPTURE ? 150 : 170, cw = 560;
@@ -1244,6 +1289,11 @@ MenuEvent Menu::update(const MenuInput &in)
 	notices_.update(in.dt_ms);
 	layout();
 	pending_ = MENU_NONE;
+	if (modal_ == M_BTNTEST) {
+		bt_update(in);
+		layout();
+		return MENU_NONE;
+	}
 	if (modal_ == M_CAPTURE && mapper_) {
 		capture_update(in);
 		/* whatever was pressed to answer must not also act as a menu press afterwards */
@@ -1315,7 +1365,7 @@ void Menu::draw_hints(Gfx *g, Text *t)
 {
 	float xr = 924;
 	int ge = cfg_.enter_is_cross ? GLYPH_CROSS : GLYPH_CIRCLE, gc = cfg_.enter_is_cross ? GLYPH_CIRCLE : GLYPH_CROSS;
-	if (modal_ == M_CAPTURE) return;              /* any button is the answer: no hints */
+	if (modal_ == M_CAPTURE || modal_ == M_BTNTEST) return;   /* any button is the answer / being tested: no hints */
 	if (modal_ != M_NONE) {
 		hint(g, t, &xr, gc, "Cancel", 0);
 		hint(g, t, &xr, ge, "Confirm", 0);
@@ -1561,8 +1611,64 @@ void Menu::draw_states(Gfx *g, Text *t)
 	}
 }
 
+void Menu::draw_btntest(Gfx *g, Text *t)
+{
+	g->fill_rect(0, 0, 960, 544, col(C_BG, 235));
+	t->draw(F_TITLE, 44, 22, "Button test", col(C_TEXT));
+	t->draw(F_CAPTION, 46, 22 + t->line_h(F_TITLE), cfg_.game_name.empty() ? cfg_.console_label.c_str() : cfg_.game_name.c_str(), col(C_TEXT2));
+	const float RH2 = 30, PITCH2 = 34, W = 424, Y0 = 108;
+	struct Line { std::string name, text; bool lit; };
+	std::vector<Line> left, right;
+	const bool ec = cfg_.enter_is_cross;
+	for (int i = 0; i < 12; i++) left.push_back({ phys_label(1u << i, ec), bt_actions(1u << i), (bt_pad_.buttons & (1u << i)) != 0 });
+	{
+		int sl = profile_ ? profile_->stick_left : STICK_MOVE, sr = profile_ ? profile_->stick_right : STICK_OFF;
+		int on = profile_ ? profile_->stick_on : 72;
+		auto words = [&](int mode, uint32_t dirs) -> std::string {
+			if (mode == STICK_OFF) return "Not used";
+			if (mode == STICK_MOVE) return "Moves like the D-pad";
+			std::string s;
+			for (int k = 0; k < 4; k++) { std::string a = bt_actions(dirs << k); if (!a.empty()) s += (s.empty() ? "" : ", ") + a; }
+			return s.empty() ? "Not set" : s;
+		};
+		bool ll = abs(bt_pad_.lx - 128) >= on || abs(bt_pad_.ly - 128) >= on, rr = abs(bt_pad_.rx - 128) >= on || abs(bt_pad_.ry - 128) >= on;
+		right.push_back({ strf("Left stick  %d, %d", bt_pad_.lx, bt_pad_.ly), words(sl, PH_LS_UP), ll });
+		right.push_back({ strf("Right stick  %d, %d", bt_pad_.rx, bt_pad_.ry), words(sr, PH_RS_UP), rr });
+		right.push_back({ bt_touch_.down ? strf("Touch screen  %d, %d", (int) bt_touch_.x, (int) bt_touch_.y) : std::string("Touch screen"), bt_touch_.down ? "Touching" : "", bt_touch_.down });
+		bool rear = profile_ && profile_->back_touch;
+		for (int k = 0; k < 4; k++) {
+			uint32_t bit = PH_BACK_TL << k;
+			std::string a = rear ? bt_actions(bit) : std::string("Rear touch panel is Off");
+			if (rear && a.empty()) a = "Not set";
+			right.push_back({ phys_label(bit, ec), a, (bt_pad_.back & (1u << k)) != 0 });
+		}
+	}
+	for (int col_i = 0; col_i < 2; col_i++) {
+		const std::vector<Line> &v = col_i ? right : left;
+		float x = col_i ? 492 : 44;
+		for (size_t i = 0; i < v.size(); i++) {
+			float y = Y0 + (float) i * PITCH2;
+			g->fill_rrect(x, y, W, RH2, 15, v[i].lit ? accent(255) : col(0xFFFFFF, 26));
+			uint32_t ink = v[i].lit ? col(C_INK) : col(C_TEXT);
+			float ty = y + (RH2 - t->line_h(F_BODY)) * 0.5f;
+			std::string nm = t->fit(F_BODY, v[i].name, 200);
+			t->draw(F_BODY, x + 14, ty, nm.c_str(), ink);
+			std::string tx = t->fit(F_BODY, v[i].text, W - 14 - 14 - t->width(F_BODY, nm.c_str()) - 12);
+			t->draw_right(F_BODY, x + W - 14, ty, tx.c_str(), v[i].lit ? col(C_INK, 200) : col(C_TEXT2));
+		}
+	}
+	/* the leaving bar and the one line that says how to leave */
+	if (bt_hold_ms_ > 0) {
+		float w = 300.0f * (float) std::min(bt_hold_ms_, 500) / 500.0f;
+		g->fill_rrect(330, 500, 300, 6, 3, col(0xFFFFFF, 40));
+		g->fill_rrect(330, 500, w, 6, 3, accent(255));
+	}
+	t->draw_center(F_BODY, 480, 512, "Hold Start + Select to leave", col(C_TEXT2));
+}
+
 void Menu::draw_modal(Gfx *g, Text *t)
 {
+	if (modal_ == M_BTNTEST) { draw_btntest(g, t); return; }
 	g->fill_rect(0, 0, 960, 544, col(C_BG, 150));
 	float cx = 200, cy = modal_ == M_CAPTURE ? 150 : 170, cw = 560, ch = modal_ == M_CAPTURE ? 336 : 254;
 	g->fill_rrect(cx - 6, cy + 6, cw + 12, ch + 12, 34, col(0x000000, 90));

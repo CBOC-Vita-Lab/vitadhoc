@@ -115,6 +115,7 @@
 #include "app_vita.h"
 #include "link_snes.h"
 #include "ui_vita_md.h"       /* the four Sega consoles (md.bin) */
+#include "zapper_map.h"       /* the NES Zapper on the touch screen */
 #include "mgift_vita.h"
 #include "mgift_net.h"       /* MGNET_LISTEN_PORT */
 #include "cheats_vita.h"
@@ -1196,6 +1197,8 @@ void app_ws_options(void)
  * at the game's start and when the row changes. */
 void app_nes_options(void)
 {
+   /* Port 2 (this game's own choice; read at the load): Auto / Zapper / Controller */
+   nescore_set_port2(g_pgame.on ? g_pgame.nes_port2 : NESCORE_PORT2_AUTO);
    /* (Auto gives way to the look governor's last rung: look_glue.h) */
    nescore_set_wide(boot_guard_safe() ? NESCORE_WIDE_OFF
                     : g_pcfg.nes_wide == 1 ? NESCORE_WIDE_ON
@@ -1395,12 +1398,100 @@ static const char *base_name(const char *path)
  * what pspcompat_pad() makes of the first pad, for a second one. */
 static unsigned pad_psp_bits(const plat_pad *p)
 {
-   unsigned b = p->buttons & CTL_ALL;
+   unsigned b = p->buttons & 0xFFFFu;
    int dx = (int)p->lx - 128, dy = (int)p->ly - 128;
    if (dx < -PSPCOMPAT_STICK_DEADZONE) b |= PSP_CTRL_LEFT;
    if (dx >  PSPCOMPAT_STICK_DEADZONE) b |= PSP_CTRL_RIGHT;
    if (dy < -PSPCOMPAT_STICK_DEADZONE) b |= PSP_CTRL_UP;
    if (dy >  PSPCOMPAT_STICK_DEADZONE) b |= PSP_CTRL_DOWN;
+   return b;
+}
+
+/* ---- THE NES ZAPPER on the front touch screen (zapper_map.h) -------------------
+ *
+ * A NES game that uses the Zapper (the core's game database lists them: Duck
+ * Hunt, Hogan's Alley, Wild Gunman, Gumshoe and the rest; Settings > THIS GAME >
+ * Port 2 can force it or switch it off) takes the front touch screen as its
+ * gun: a finger on the picture aims, and for as long as it is down the
+ * trigger is pulled.  The screen is then the gun's alone -- a tap does not
+ * open the menu (Start + Select does) -- and nothing is drawn for it. */
+static int zapper_active(void)
+{
+   return g_game_console == FE_CONSOLE_NES && nescore_zapper_active();
+}
+
+static int g_zap_told = -1, g_zap_trig;     /* what the log has been told (harness) */
+
+static void zapper_frame(void)
+{
+   pc_touch t;
+   int nx = -1, ny = -1, trig = 0;
+   pspcompat_touch(&t);
+   if (t.down && !g_tap.wait)          /* (not the finger that closed the menu) */
+   {
+      vid_rect_t r;
+      vid_picture_rect(g_show.w, g_show.h, &r);
+      trig = 1;
+      (void)zapper_map(t.nx, t.ny, r.x, r.y, r.w, r.h, (int)g_show.w,
+                       (int)g_show.h, (int)nescore_top(), &nx, &ny);
+   }
+   nescore_set_zapper(nx, ny, trig);
+   if (trig != g_zap_trig)
+   {
+      g_zap_trig = trig;
+      fe_evt("zapper trigger=%d x=%d y=%d", trig, nx, ny);
+   }
+}
+
+/* ---- THE REAR TOUCH PANEL (ctl_map.h CTL_REAR_*) --------------------------
+ *
+ * Settings > Controls > Rear touch panel (this game's own choice first): the
+ * panel's four corners are inputs that Button mapping gives to any action.
+ * They are read here, beside the pad, and only join it as CTL_REAR_* bits
+ * while the setting is on -- or while a binding is being captured, so a
+ * corner can be chosen even from Off.  Nothing is bound to them by default. */
+static int rear_wanted(void)
+{
+   if (g_pgame.on && g_pgame.rear >= 0)
+      return g_pgame.rear;
+   return g_pcfg.rear_touch;
+}
+
+static unsigned rear_pad(void)
+{
+   plat_touch_pt pt[4];
+   int x[4], y[4], i, n;
+   if (!rear_wanted() && !ui_capturing())
+      return 0;
+   n = plat_rear_points(pt, 4);
+   for (i = 0; i < n; i++)
+   {
+      x[i] = pt[i].x;
+      y[i] = pt[i].y;
+   }
+   return ctl_rear_zones(x, y, n);
+}
+
+/* The pad as the app reads it: the buttons, and the rear corners. */
+static unsigned pad_now(void)
+{
+   return pspcompat_pad() | rear_pad();
+}
+
+/* The WonderSwan takes the Vita's own buttons, not the control map: a corner
+ * bound to a game button presses what that button's own key presses there. */
+static unsigned ws_rear_keys(unsigned pad)
+{
+   unsigned b = 0;
+   int a;
+   if (!(pad & CTL_REAR_ALL))
+      return 0;
+   for (a = CTL_GAME_A; a < CTL_GAME_COUNT; a++)
+   {
+      unsigned bind = g_pcfg.controls.bind[a];
+      if ((bind & CTL_REAR_ALL) && (pad & bind) == bind)
+         b |= ctl_default(a);
+   }
    return b;
 }
 
@@ -4857,7 +4948,7 @@ static void game_state_reset(void)
    g_blit_suppress = 0;
    g_app_drew = 0;
    g_app_keys = 0;
-   g_prev_pad = pspcompat_pad();   /* what is held now is not a new press */
+   g_prev_pad = pad_now();   /* what is held now is not a new press */
    g_pad_block = g_prev_pad;
    g_chord_frames = 0;
    chord_guard_reset();
@@ -5189,6 +5280,40 @@ static void ab_apply(void)
 
 int ui_host_ab_circle(void) { return ab_circle(); }
 void ui_host_buttons_changed(void) { ab_apply(); }
+
+/* Settings > Controls > Button test: the hardware as it is now (ui_host_hooks.h). */
+void ui_host_btn_read(ui_btn_state *s)
+{
+   plat_pad pp;
+   plat_touch_pt pt[6];
+   int x[4], y[4], i, n;
+   memset(s, 0, sizeof(*s));
+   memset(&pp, 0, sizeof(pp));
+   pp.lx = pp.ly = pp.rx = pp.ry = 128;
+   plat_pad_read(&pp);
+   s->buttons = pp.buttons & 0xFFFFu;
+   s->lx = pp.lx;
+   s->ly = pp.ly;
+   s->rx = pp.rx;
+   s->ry = pp.ry;
+   s->front_n = plat_touch_points(pt, 6);
+   if (s->front_n > 0)
+   {
+      s->front_x = pt[0].x;
+      s->front_y = pt[0].y;
+   }
+   n = plat_rear_points(pt, 4);
+   for (i = 0; i < n; i++)
+   {
+      x[i] = pt[i].x;
+      y[i] = pt[i].y;
+   }
+   s->rear_n = n;
+   s->rear = ctl_rear_zones(x, y, n);
+   s->front_use = zapper_active() ? "Aims and fires (Zapper)"
+                : g_sw.touch_menu && g_pcfg.touch && g_pcfg.tap_menu ? "A tap opens the menu"
+                : "Nothing";
+}
 
 int ui_host_overlay_on(void) { return g_sw.overlays; }
 
@@ -5527,6 +5652,8 @@ static int game_boot(const char *rom_path, fe_console_t console)
             gpath[0] = 0;
       }
       pcfg_game_begin(gpath, (int)console);
+      g_zap_told = -1;
+      g_zap_trig = 0;
       /* The crash-loop guard: the marker for this start; a game that closed
        * the app twice in a row starts with the safe picture */
       if (boot_guard_game_begin(rom_path, guard_risky((int)console)) &&
@@ -6243,7 +6370,7 @@ static void wake_overlay(void)
    fe_evt("wake_menu choice=%s", choice ? "game_list" : "continue");
    if (choice)
       g_quit = QUIT_GAMELIST;
-   g_prev_pad = pspcompat_pad();   /* the button that chose is not the game's */
+   g_prev_pad = pad_now();   /* the button that chose is not the game's */
    g_pad_block = g_prev_pad;
    g_tap.wait = 1;
    g_fps_t0 = 0;
@@ -6262,7 +6389,7 @@ static void game_loop(void)
    while (g_running && g_quit == QUIT_NONE)
    {
       unsigned pad, pad_new, fired, frames;
-      int session, local, runs, i, rs_side, rs_flick, rw_want, tx = 0, ty = 0;
+      int session, local, runs, i, rs_side, rs_flick, rw_want, tx = 0, ty = 0, tapped;
       int steady_on = 0;
       uint32_t caught_now = 0;
       uint64_t t_drawn = 0;
@@ -6299,7 +6426,7 @@ static void game_loop(void)
          }
       }
 
-      pad = pspcompat_pad();
+      pad = pad_now();
       pad_new = pad & ~g_prev_pad;
       g_prev_pad = pad;
       g_app_pad = pad;
@@ -6318,7 +6445,8 @@ static void game_loop(void)
           * cross, the game's: those shortcuts give way to it there (the
           * right stick still fast-forwards). */
          unsigned wb = ui_active() ? 0
-                     : ws_buttons(chord_guard(pad & ~g_pad_block, pad));
+                     : ws_buttons(chord_guard(pad & ~g_pad_block, pad) |
+                                  ws_rear_keys(pad & ~g_pad_block));
          if (wscore_showing() == WSCORE_SHOW_HORIZONTAL)
             wb &= ~(WSCORE_SQUARE | WSCORE_TRIANGLE);
          else
@@ -6556,7 +6684,18 @@ static void game_loop(void)
       }
 
       /* ---- the finger ------------------------------------------------------ */
-      if (touch_tap(&tx, &ty))
+      tapped = touch_tap(&tx, &ty);
+      if (g_game_console == FE_CONSOLE_NES && zapper_active() != g_zap_told)
+      {
+         g_zap_told = zapper_active();
+         fe_evt("zapper active=%d", g_zap_told);
+      }
+      if (zapper_active())
+      {
+         zapper_frame();               /* the screen is the gun's */
+         tapped = 0;
+      }
+      if (tapped)
       {
          vid_rect_t r;
          if (g_sgb_shown)
@@ -6569,13 +6708,13 @@ static void game_loop(void)
              * The one already in hand: the menu, as with one game (found on
              * a console: with taps taken for switching there was no way to
              * the menu but the chord). */
-            if (link_local_tap(tx, ty) == 2 && g_sw.touch_menu && g_pcfg.tap_menu && !pad)
+            if (link_local_tap(tx, ty) == 2 && g_sw.touch_menu && g_pcfg.tap_menu && !(pad & ~CTL_REAR_ALL))
             {
                menu_open("touch");
                continue;
             }
          }
-         else if (g_sw.touch_menu && g_pcfg.tap_menu && !pad && !link_net_busy() && g_last.pix)
+         else if (g_sw.touch_menu && g_pcfg.tap_menu && !(pad & ~CTL_REAR_ALL) && !link_net_busy() && g_last.pix)
          {
             /* A tap on the screen opens the menu, which is the touch
              * screen's from there on.  Conservative: a short still tap, no
@@ -7392,7 +7531,8 @@ int main(int argc, char **argv)
           * then 0 and saved at once): how to reach the menu, and what
           * Square does. */
          /* (UX review G1: it ran off both screen edges; 40 characters) */
-         osd_toast(g_pcfg.touch && g_sw.touch_menu && g_pcfg.tap_menu
+         osd_toast(g_pcfg.touch && g_sw.touch_menu && g_pcfg.tap_menu &&
+                   !zapper_active()
                    ? "Menu: tap the screen, or START + SELECT"
                    : "Menu: hold START + SELECT");
          fe_evt("hints shown have=%d", g_pcfg.hints);

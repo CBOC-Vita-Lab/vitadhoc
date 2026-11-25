@@ -216,6 +216,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
       g_pcfg.ab_buttons = -1;
    g_pcfg.stick_rewind = (int)fe_ini_get_int(cfg_path, "stick_rewind", 0) ? 1 : 0;
    g_pcfg.tap_menu = (int)fe_ini_get_int(cfg_path, "tap_menu", 1) ? 1 : 0;
+   g_pcfg.rear_touch = (int)fe_ini_get_int(cfg_path, "rear_touch", 0) ? 1 : 0;
    g_pcfg.ws_blend = (int)fe_ini_get_int(cfg_path, "ws_blend", 1) ? 1 : 0;
    g_pcfg.nes_wide = (int)fe_ini_get_int(cfg_path, "nes_wide", 0);
    g_pcfg.nes_pal_smooth = (int)fe_ini_get_int(cfg_path, "nes_pal_smooth", 1) ? 1 : 0;
@@ -718,6 +719,9 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "stick_rewind", g_pcfg.stick_rewind);
    if (!g_pcfg.tap_menu || fe_ini_get_int(cfg_path, "tap_menu", 1) == 0)
       fe_ini_set_int(cfg_path, "tap_menu", g_pcfg.tap_menu);
+   /* only once chosen: a player who never turns it on keeps the same file */
+   if (g_pcfg.rear_touch || fe_ini_get_int(cfg_path, "rear_touch", 0))
+      fe_ini_set_int(cfg_path, "rear_touch", g_pcfg.rear_touch);
    if (!g_pcfg.steady_pacing || fe_ini_get_int(cfg_path, "steady_pacing", 1) == 0)
       fe_ini_set_int(cfg_path, "steady_pacing", g_pcfg.steady_pacing);
    if (!g_pcfg.smooth_handoff || fe_ini_get_int(cfg_path, "smooth_handoff", 1) == 0)
@@ -1349,6 +1353,8 @@ const char *pcfg_ws_rotation_name(int m)
 static void pgame_defaults(void)
 {
    g_pgame.quick = -1;
+   g_pgame.rear = -1;
+   g_pgame.nes_port2 = PCFG_PORT2_AUTO;
    g_pgame.ws_rotation = PCFG_WS_ROT_AUTO;
    g_pgame.ws_vplay = 0;
    g_pgame.ws_palette = 0;
@@ -1383,6 +1389,9 @@ static void pgame_render(char *out, size_t cap)
                 g_pgame.level_down);
    if (n > 0 && (size_t)n < cap)
       n += snprintf(out + n, cap - (size_t)n, " q%d", g_pgame.quick);
+   if (n > 0 && (size_t)n < cap)
+      n += snprintf(out + n, cap - (size_t)n, " r%d/p%d", g_pgame.rear,
+                    g_pgame.nes_port2);
    if (n > 0 && (size_t)n < cap)
       n += snprintf(out + n, cap - (size_t)n, " ws%d/%d/%d", g_pgame.ws_rotation,
                     g_pgame.ws_vplay, g_pgame.ws_palette);
@@ -1460,6 +1469,10 @@ void pcfg_game_begin(const char *path, int console)
       g_pgame.ws_palette = fe_ini_doc_get_int(&doc, "ws_palette", 0) == 1;
       g_pgame.quick = pgame_clampi(fe_ini_doc_get_int(&doc, "quick_response", -1),
                                    0, 2, -1);
+      g_pgame.rear = pgame_clampi(fe_ini_doc_get_int(&doc, "rear_touch", -1),
+                                  0, 1, -1);
+      g_pgame.nes_port2 = pgame_clampi(fe_ini_doc_get_int(&doc, "nes_port2", 0),
+                                       0, PCFG_PORT2_MODES - 1, PCFG_PORT2_AUTO);
    }
    g_pgame.on = 1;
    pgame_render(pgame_written, sizeof(pgame_written));
@@ -1515,6 +1528,11 @@ int pcfg_game_save(void)
    rc |= fe_ini_doc_set_int(&doc, "level_down", g_pgame.level_down);
    if (g_pgame.quick >= 0 || fe_ini_doc_get_int(&doc, "quick_response", -1) >= 0)
       rc |= fe_ini_doc_set_int(&doc, "quick_response", g_pgame.quick);
+   if (g_pgame.rear >= 0 || fe_ini_doc_get_int(&doc, "rear_touch", -1) >= 0)
+      rc |= fe_ini_doc_set_int(&doc, "rear_touch", g_pgame.rear);
+   if (g_pgame.nes_port2 != PCFG_PORT2_AUTO ||
+       fe_ini_doc_get_int(&doc, "nes_port2", 0) != 0)
+      rc |= fe_ini_doc_set_int(&doc, "nes_port2", g_pgame.nes_port2);
    if (g_pgame.console == FE_CONSOLE_WSWAN)
    {
       rc |= fe_ini_doc_set_int(&doc, "ws_rotation", g_pgame.ws_rotation);

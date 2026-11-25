@@ -58,6 +58,9 @@
 #include "pal_pace.h"
 #include "pk_palsmooth.h"
 #include "pk_gfx_vita.h"
+#include "pk_screenlut.h"
+#include "pk_crt.h"
+#include "pk_uilook.h"
 #include "pk_cores.h"
 #include "pk_scale.h"
 #define STB_IMAGE_IMPLEMENTATION
@@ -552,6 +555,10 @@ static uint16_t *g_mix_prev, *g_mix_out;           /* 512 x 512 each, allocated 
 static int g_mix_w, g_mix_h, g_mix_margin, g_mix_valid;
 static pic_info g_mix_gi;
 
+static pk::ScreenLut g_screen_lut;      /* the Screen profile's table and its copy of the picture (video_upload's thread only) */
+static pk::CrtMask g_crt;               /* the CRT mask's texture */
+static pk::Gfx *g_crt_gfx;              /* the menu's Gfx, set once it exists */
+
 /* Copies the picture into a texture the GPU is done with, and scales it when the look says so. Returns 1 when the picture changed. */
 static int video_upload(const pic_settings &ps, int frame_no, const Pic &s0, const pic_info &gi)
 {
@@ -589,6 +596,14 @@ static int video_upload(const pic_settings &ps, int frame_no, const Pic &s0, con
 			for (int x = 0; x < w; x++) o[x] = g_lcd[row[x]];
 		}
 		scaler_src = lcdbuf; scaler_pitch_px = w;
+	}
+
+	/* Screen (display.ini): a profile that changes colours takes the picture through its table once, here, so the scaler and the
+	 * texture below both read the corrected copy (after the Game Gear's LCD table, which it composes with); neutral: nothing */
+	{
+		int sp = scaler_pitch_px * 2;
+		scaler_src = g_screen_lut.frame(pk_screen_resolve(g_pl->ui().screen, sceKernelIsPSVitaTV()), scaler_src, w, h, &sp);
+		scaler_pitch_px = sp / 2;
 	}
 
 	/* the pixel art scaler: the look's choice for this picture, into a scaled texture the GPU is done with */
@@ -794,6 +809,9 @@ static bool frame_draw(const pic_settings &ps, int extras, int frame_no)
 				rect_batch_draw(gcol);
 			}
 		}
+		/* CRT mask: one quad, multiplied over the picture (pk_crt.h) */
+		if (extras && ps.crt > 0 && g_crt_gfx) g_crt.draw(g_crt_gfx, ps.crt, r.dx, r.dy, r.dw, r.dh, r.sw);
+		else if (g_crt_gfx) g_crt.release();
 	}
 	if (bezel) vita2d_draw_texture_scale(g_bezel.t, 0, 0, (float) SCREEN_W / g_bezel_w, (float) SCREEN_H / g_bezel_h);
 	return true;
@@ -1439,6 +1457,7 @@ int main(int argc, char **argv)
 	vita2d_init();
 	vita2d_set_clear_color(0xFF000000);
 	g_gfx = new pk::VitaGfx();
+	g_crt_gfx = g_gfx;
 	g_text = new pk::Text(g_gfx);
 	pk::scale_init();
 	video_init();
@@ -1478,6 +1497,8 @@ int main(int argc, char **argv)
 	}
 	cdc.enterButtonAssign = sr.enter_is_cross ? SCE_SYSTEM_PARAM_ENTER_BUTTON_CROSS : SCE_SYSTEM_PARAM_ENTER_BUTTON_CIRCLE;
 	sceCommonDialogSetConfigParam(&cdc);
+	/* Text size and High contrast (display.ini): the notices and the menu both draw with this Text */
+	g_text->set_look(pk_text_pct(g_pl->ui().text_large), g_pl->ui().contrast != 0);
 	/* a two-player link: the connection is made again here (netplay.h); a link that cannot start returns to the app */
 	if (g_pl->linked()) {
 		mdnet::Env env;

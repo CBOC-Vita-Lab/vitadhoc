@@ -708,6 +708,16 @@ void vb_tquads(vb_tex *t, const vb_tquad *q, int n, uint32_t tint, int filter)
    }
 }
 
+/* vb_tquads_mul: the same draw with vita2d's multiply program set
+ * (third_party/vita2d, vita2d_set_blend_mode_mul): dst * texel, no tint. */
+void vb_tquads_mul(vb_tex *t, const vb_tquad *q, int n, int filter)
+{
+   if (!vita2d_set_blend_mode_mul(1))
+      return;                       /* no multiply programs: no mask */
+   vb_tquads(t, q, n, 0xFFFFFFFFu, filter);
+   vita2d_set_blend_mode_mul(0);
+}
+
 int vb_readback(uint32_t *dst)
 {
    const uint32_t *fb;

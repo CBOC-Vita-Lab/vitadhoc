@@ -171,6 +171,16 @@ void VitaGfx::tex_draw(Texture *t, float sx, float sy, float sw, float sh, float
 	vita2d_draw_texture_tint_part_scale(t->tex, dx, dy, sx, sy, sw, sh, dw / sw, dh / sh, tint);
 }
 
+/* the CRT mask: the same draw with vita2d's multiply blend set (third_party/vita2d, vita2d_set_blend_mode_mul): dst * texel */
+void VitaGfx::tex_draw_mul(Texture *t, float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh)
+{
+	if (!t || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
+	vita2d_texture_set_filters(t->tex, SCE_GXM_TEXTURE_FILTER_POINT, SCE_GXM_TEXTURE_FILTER_POINT);
+	if (!vita2d_set_blend_mode_mul(1)) return;      /* no multiply programs: no mask */
+	vita2d_draw_texture_tint_part_scale(t->tex, dx, dy, sx, sy, sw, sh, dw / sw, dh / sh, 0xFFFFFFFFu);
+	vita2d_set_blend_mode_mul(0);
+}
+
 void VitaGfx::clip(float x, float y, float w, float h)
 {
 	vita2d_enable_clipping();

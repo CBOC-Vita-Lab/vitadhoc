@@ -9,6 +9,7 @@
 #include "pk_gfx.h"
 #include "pk_glyphs.h"
 #include "pk_utf8.h"
+#include "pk_uilook.h"
 #include <math.h>
 #include <string.h>
 #include <vector>
@@ -44,6 +45,8 @@ struct Text::Impl {
 	Texture *gtex[F_COUNT];
 	bool gtried[F_COUNT];
 	GlyphSide side[F_COUNT];
+	int pct;           /* 100 Normal, 120 Large */
+	bool contrast;
 };
 
 static void glyph_upload(void *user, int x, int y, int w, int h, const uint8_t *pix, int pitch)
@@ -60,6 +63,7 @@ Text::Text(Gfx *g) : p_(new Impl)
 		p_->gc[i] = 0; p_->gtex[i] = 0; p_->gtried[i] = false;
 		p_->side[i].impl = p_; p_->side[i].face = i;
 	}
+	p_->pct = 100; p_->contrast = false;
 }
 
 Text::~Text()
@@ -73,6 +77,10 @@ Text::~Text()
 }
 
 void Text::frame() { pk_gc_tick(); }
+
+void Text::set_look(int pct, bool contrast) { p_->pct = pct < 50 ? 50 : pct > 200 ? 200 : pct; p_->contrast = contrast; }
+int Text::pct() const { return p_->pct; }
+bool Text::contrast() const { return p_->contrast; }
 
 void Text::set_face(int face, const FaceData *fd)
 {
@@ -141,13 +149,14 @@ static const Glyph &qmark(const FaceData *fd) { return fd->g['?' - 32]; }
 static float char_adv(Text::Impl *p, int face, uint32_t cp)
 {
 	const FaceData *fd = p->fd[face];
-	if (cp >= 32 && cp <= 126) return fd->g[cp - 32].adv;
+	const float S = (float) p->pct * 0.01f;
+	if (cp >= 32 && cp <= 126) return fd->g[cp - 32].adv * S;
 	if (cp >= 0x80 && cp < PK_U8_RAW) {
 		pk_gcache *c = gcache(p, face);
 		float a;
-		if (c && pk_gc_adv(c, cp, &a)) return a;
+		if (c && pk_gc_adv(c, cp, &a)) return a * S;
 	}
-	return qmark(fd).adv;
+	return qmark(fd).adv * S;
 }
 
 float Text::draw(int face, float x, float y, const char *s, uint32_t rgba)
@@ -155,6 +164,9 @@ float Text::draw(int face, float x, float y, const char *s, uint32_t rgba)
 	if (face < 0 || face >= F_COUNT || !s) return x;
 	const FaceData *fd = p_->fd[face];
 	if (!fd) return x;
+	if (p_->contrast) rgba = pk_text_tint(rgba);
+	const float S = (float) p_->pct * 0.01f;
+	const bool sm = p_->pct != 100;                 /* a glyph at 120 % is resampled: smooth */
 	Texture *t = (rgba >> 24) ? face_tex(p_, face) : 0;
 	while (*s) {
 		bool skip;
@@ -163,8 +175,8 @@ float Text::draw(int face, float x, float y, const char *s, uint32_t rgba)
 		if (cp >= 32 && cp <= 126) {
 			const Glyph &g = fd->g[cp - 32];
 			if (t && g.w > 0 && g.h > 0)
-				p_->gfx->tex_draw(t, g.ax, g.ay, g.w, g.h, floorf(x + g.ox + 0.5f), floorf(y + g.oy + 0.5f), g.w, g.h, rgba, false);
-			x += g.adv;
+				p_->gfx->tex_draw(t, g.ax, g.ay, g.w, g.h, floorf(x + g.ox * S + 0.5f), floorf(y + g.oy * S + 0.5f), g.w * S, g.h * S, rgba, sm);
+			x += g.adv * S;
 			continue;
 		}
 		if (cp >= 0x80 && cp < PK_U8_RAW) {
@@ -175,15 +187,15 @@ float Text::draw(int face, float x, float y, const char *s, uint32_t rgba)
 			else if (c) { g.w = g.h = 0; ok = pk_gc_adv(c, cp, &g.adv) != 0; }      /* invisible: only the pen moves */
 			if (ok) {
 				if (g.w > 0 && g.h > 0 && p_->gtex[face])
-					p_->gfx->tex_draw(p_->gtex[face], g.x, g.y, g.w, g.h, floorf(x + g.ox + 0.5f), floorf(y + g.oy + 0.5f), g.w, g.h, rgba, false);
-				x += g.adv;
+					p_->gfx->tex_draw(p_->gtex[face], g.x, g.y, g.w, g.h, floorf(x + g.ox * S + 0.5f), floorf(y + g.oy * S + 0.5f), g.w * S, g.h * S, rgba, sm);
+				x += g.adv * S;
 				continue;
 			}
 		}
 		const Glyph &g = qmark(fd);                 /* a control, a stray byte, a character no font has */
 		if (t && g.w > 0 && g.h > 0)
-			p_->gfx->tex_draw(t, g.ax, g.ay, g.w, g.h, floorf(x + g.ox + 0.5f), floorf(y + g.oy + 0.5f), g.w, g.h, rgba, false);
-		x += g.adv;
+			p_->gfx->tex_draw(t, g.ax, g.ay, g.w, g.h, floorf(x + g.ox * S + 0.5f), floorf(y + g.oy * S + 0.5f), g.w * S, g.h * S, rgba, sm);
+		x += g.adv * S;
 	}
 	return x;
 }
@@ -201,8 +213,8 @@ float Text::width(int face, const char *s)
 	return w;
 }
 
-int Text::line_h(int face) const { return (face >= 0 && face < F_COUNT && p_->fd[face]) ? p_->fd[face]->line_h : 0; }
-int Text::ascent(int face) const { return (face >= 0 && face < F_COUNT && p_->fd[face]) ? p_->fd[face]->ascent : 0; }
+int Text::line_h(int face) const { return (face >= 0 && face < F_COUNT && p_->fd[face]) ? (p_->fd[face]->line_h * p_->pct + 50) / 100 : 0; }
+int Text::ascent(int face) const { return (face >= 0 && face < F_COUNT && p_->fd[face]) ? (p_->fd[face]->ascent * p_->pct + 50) / 100 : 0; }
 
 void Text::draw_center(int face, float cx, float y, const char *s, uint32_t rgba)
 {

@@ -148,6 +148,7 @@ typedef struct vita2d_fragment_programs {
 struct {
 	vita2d_fragment_programs blend_mode_normal;
 	vita2d_fragment_programs blend_mode_add;
+	vita2d_fragment_programs blend_mode_mul;
 } _vita2d_fragmentPrograms;
 
 // Temporary memory pool
@@ -757,6 +758,17 @@ static int vita2d_init_internal(unsigned int temp_pool_size, SceGxmMultisampleMo
 		.colorMask = SCE_GXM_COLOR_MASK_ALL
 	};
 
+	/* GBAdhoc: multiply, out = src * dst (the CRT mask) */
+	static const SceGxmBlendInfo blend_info_mul = {
+		.colorFunc = SCE_GXM_BLEND_FUNC_ADD,
+		.alphaFunc = SCE_GXM_BLEND_FUNC_ADD,
+		.colorSrc  = SCE_GXM_BLEND_FACTOR_DST_COLOR,
+		.colorDst  = SCE_GXM_BLEND_FACTOR_ZERO,
+		.alphaSrc  = SCE_GXM_BLEND_FACTOR_ZERO,
+		.alphaDst  = SCE_GXM_BLEND_FACTOR_ONE,
+		.colorMask = SCE_GXM_COLOR_MASK_ALL
+	};
+
 	// get attributes by name to create vertex format bindings
 	const SceGxmProgramParameter *paramClearPositionAttribute = sceGxmProgramFindParameterByName(clearVertexProgramGxp, "aPosition");
 
@@ -902,6 +914,7 @@ static int vita2d_init_internal(unsigned int temp_pool_size, SceGxmMultisampleMo
 	// Create variations of the fragment program based on blending mode
 	_vita2d_make_fragment_programs(&_vita2d_fragmentPrograms.blend_mode_normal, &blend_info, msaa);
 	_vita2d_make_fragment_programs(&_vita2d_fragmentPrograms.blend_mode_add, &blend_info_add, msaa);
+	_vita2d_make_fragment_programs(&_vita2d_fragmentPrograms.blend_mode_mul, &blend_info_mul, msaa);
 
 	// Default to "normal" blending mode (non-additive)
 	vita2d_set_blend_mode_add(0);
@@ -979,6 +992,7 @@ int vita2d_fini()
 
 	_vita2d_free_fragment_programs(&_vita2d_fragmentPrograms.blend_mode_normal);
 	_vita2d_free_fragment_programs(&_vita2d_fragmentPrograms.blend_mode_add);
+	_vita2d_free_fragment_programs(&_vita2d_fragmentPrograms.blend_mode_mul);
 
 	gpu_free(linearIndicesUid);
 	gpu_free(clearVerticesUid);
@@ -1399,6 +1413,23 @@ void vita2d_pool_reset()
 	pool_bank = -1;
 	pool_addr = NULL;
 	pool_index = 0;
+}
+
+/* GBAdhoc: 1 when the multiply set is now in use (or was left, enable 0); 0
+ * when the shader patcher could not make it at start-up: the normal set
+ * stays and the caller must not draw (a mask laid over the picture with
+ * the normal blend would replace it). */
+int vita2d_set_blend_mode_mul(int enable)
+{
+	vita2d_fragment_programs *in = enable ? &_vita2d_fragmentPrograms.blend_mode_mul
+	    : &_vita2d_fragmentPrograms.blend_mode_normal;
+
+	if (enable && (!in->color || !in->texture || !in->textureTint))
+		return 0;
+	_vita2d_colorFragmentProgram = in->color;
+	_vita2d_textureFragmentProgram = in->texture;
+	_vita2d_textureTintFragmentProgram = in->textureTint;
+	return 1;
 }
 
 void vita2d_set_blend_mode_add(int enable)

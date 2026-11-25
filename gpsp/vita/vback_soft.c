@@ -156,8 +156,82 @@ static int noraster(void)
    return v;
 }
 
+/* GBADHOC_TEXT_BOXES=file (the tests' text-fit audit, app_tests.py
+ * t_text_large): every draw from a coverage (A8) texture -- a string from a
+ * glyph atlas, an icon, a rounded corner -- of the frame a screenshot is
+ * taken of, one line each: the union of its quads, the scissor in force
+ * and the texture's size.  Nothing is kept or written without the
+ * variable. */
+typedef struct { float x0, y0, x1, y1; int sc[4], tw, th, n; unsigned tint; } tb_rec;
+static tb_rec *g_tb;
+static int     g_tb_n, g_tb_cap;
+const char    *vb_soft_shot_tag;      /* plat_host.c: the screenshot being written */
+
+static const char *tb_path(void)
+{
+   static int v = -1;
+   static const char *p;
+   if (v < 0)
+   {
+      p = getenv("GBADHOC_TEXT_BOXES");
+      v = p && *p;
+   }
+   return v ? p : NULL;
+}
+
+static void tb_note(const vb_tex *t, const vb_tquad *q, int n, unsigned tint)
+{
+   tb_rec *r;
+   int i, k = 0;
+   if (g_tb_n == g_tb_cap)
+   {
+      int cap = g_tb_cap ? g_tb_cap * 2 : 256;
+      tb_rec *nb = (tb_rec *)realloc(g_tb, (size_t)cap * sizeof(*nb));
+      if (!nb)
+         return;
+      g_tb = nb; g_tb_cap = cap;
+   }
+   r = &g_tb[g_tb_n];
+   for (i = 0; i < n; i++)
+   {
+      if (!(q[i].x1 > q[i].x0) || !(q[i].y1 > q[i].y0))
+         continue;
+      if (!k++)
+      {
+         r->x0 = q[i].x0; r->y0 = q[i].y0; r->x1 = q[i].x1; r->y1 = q[i].y1;
+         continue;
+      }
+      if (q[i].x0 < r->x0) r->x0 = q[i].x0;
+      if (q[i].y0 < r->y0) r->y0 = q[i].y0;
+      if (q[i].x1 > r->x1) r->x1 = q[i].x1;
+      if (q[i].y1 > r->y1) r->y1 = q[i].y1;
+   }
+   if (!k)
+      return;
+   r->sc[0] = g_sc_on ? g_sc_x0 : 0;  r->sc[1] = g_sc_on ? g_sc_y0 : 0;
+   r->sc[2] = g_sc_on ? g_sc_x1 : VB_W; r->sc[3] = g_sc_on ? g_sc_y1 : VB_H;
+   r->tw = t->w; r->th = t->h; r->n = k; r->tint = tint;
+   g_tb_n++;
+}
+
+static void tb_dump(void)
+{
+   FILE *f = vb_soft_shot_tag ? fopen(tb_path(), "a") : NULL;
+   int i;
+   if (!f)
+      return;
+   fprintf(f, "SHOT %s\n", vb_soft_shot_tag);
+   for (i = 0; i < g_tb_n; i++)
+      fprintf(f, "B %.1f %.1f %.1f %.1f %d %d %d %d %d %d %d %08X\n",
+              g_tb[i].x0, g_tb[i].y0, g_tb[i].x1, g_tb[i].y1,
+              g_tb[i].sc[0], g_tb[i].sc[1], g_tb[i].sc[2], g_tb[i].sc[3],
+              g_tb[i].tw, g_tb[i].th, g_tb[i].n, g_tb[i].tint);
+   fclose(f);
+}
+
 void vb_frame_begin(int clear)
 {
+   g_tb_n = 0;
    if (clear && !noraster())
    {
       int i;
@@ -255,6 +329,16 @@ static inline uint32_t blend(uint32_t dst, unsigned r, unsigned g, unsigned b,
    return VB_RGBA(r, g, b, 255);
 }
 
+/* vb_tquads_mul: the texel's colour multiplies what is there (dst * texel / 255), alpha ignored */
+static int g_mul;
+
+static inline uint32_t blend_mul(uint32_t dst, unsigned r, unsigned g, unsigned b)
+{
+   unsigned dr = dst & 0xFF, dg = (dst >> 8) & 0xFF, db = (dst >> 16) & 0xFF;
+   return VB_RGBA((dr * r + 127) / 255, (dg * g + 127) / 255,
+                  (db * b + 127) / 255, 255);
+}
+
 void vb_cquads(const vb_cquad *q, int n)
 {
    int i;
@@ -320,6 +404,8 @@ void vb_tquads(vb_tex *t, const vb_tquad *q, int n, uint32_t tint, int filter)
    /* A target cannot sample itself. */
    if (t->px == g_tgt)
       return;
+   if (t->fmt == VB_FMT_A8 && !g_rt_on && ta && tb_path())
+      tb_note(t, q, n, tint);
    for (i = 0; i < n; i++)
    {
       float x0 = q[i].x0, y0 = q[i].y0, x1 = q[i].x1, y1 = q[i].y1;
@@ -375,10 +461,17 @@ void vb_tquads(vb_tex *t, const vb_tquad *q, int n, uint32_t tint, int filter)
             }
             r = (r * tr + 127) / 255; g = (g * tg + 127) / 255;
             b = (b * tb + 127) / 255; a = (a * ta + 127) / 255;
-            d[x] = blend(d[x], r, g, b, a);
+            d[x] = g_mul ? blend_mul(d[x], r, g, b) : blend(d[x], r, g, b, a);
          }
       }
    }
+}
+
+void vb_tquads_mul(vb_tex *t, const vb_tquad *q, int n, int filter)
+{
+   g_mul = 1;
+   vb_tquads(t, q, n, 0xFFFFFFFFu, filter);
+   g_mul = 0;
 }
 
 int vb_readback(uint32_t *dst)
@@ -387,6 +480,8 @@ int vb_readback(uint32_t *dst)
       return -1;
    memcpy(dst, g_fb, sizeof(g_fb));
    g_open = 0;
+   if (tb_path())
+      tb_dump();
    return 0;
 }
 

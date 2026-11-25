@@ -154,6 +154,12 @@ typedef struct
     * is expected to be small, but "expected" is not "measured". */
    int  ff_audio;
    int  theme;        /* UI palette: 0 = dark (default), 1 = light */
+   /* Screen colour profile, Text size and High contrast: one setting for
+    * every console, the app and both players (playerkit/src/pk_screen.h,
+    * pk_uiprefs.h); kept in <root>/display.ini beside config.ini, which the
+    * players read too.  screen: PK_SCREEN_* (0 Auto); text_large 0 Normal /
+    * 1 Large; contrast 0 Off / 1 On. */
+   int  screen, text_large, contrast;
    /* Game-list shell: 0 = Shelf (default, list + art panel),
     * 1 = Marquee (art fills the screen).  The browser reads it once at
     * startup, so like me_mode it applies on the next launch. */
@@ -536,6 +542,7 @@ typedef struct
     * glow (pcfg_display), mirrored like scale and filter. */
    int  color, ghost, wide, wide_fill;
    int  scan, grid, glow;
+   int  crt;            /* CRT mask 0..10 (pcfg_display), mirrored like scan */
    int  sgb_border;     /* the GB profile's Super Game Boy border (pcfg_display) */
    int  quality;      /* 0 legacy auto; 1 native; 2/3 enhancement factor */
 #endif
@@ -705,6 +712,9 @@ typedef struct
     *          where the old mode was on, 0 where it was off). */
    int color, ghost, quality;
    int scan, grid, glow;
+   /* CRT mask 0..10 (crt_<c>, absent: 0): an aperture grille multiplied
+    * over the picture, one extra quad (playerkit/src/pk_screen.h). */
+   int crt;
    /* WIDE VIEW (gpsp/wide.c), CONFIG.INI wide_gba: more of the game beside
     * the console's 240 pixels instead of bars.
     *   0 off; 1 in the games it has a profile for (the default);
@@ -728,6 +738,7 @@ typedef struct
 #define PCFG_GLOW_DEF   5
 #define PCFG_SCAN_DEF   0
 #define PCFG_GRID_DEF   0
+#define PCFG_CRT_DEF    0
 #define PCFG_GHOST_DEF  0
 /* The strength a file's pre-2.0 `filter` of LCD grid or scanlines becomes:
  * vita.ini's grid_strength (main_vita.c sets it before pcfg_load; 5 else). */

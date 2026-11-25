@@ -14,6 +14,7 @@ void pic_defaults(pic_settings *s)
 	s->glow = 5;
 	s->scan = 0;
 	s->grid = 0;
+	s->crt = 0;
 	s->scaler = SCALER_AUTO;
 	s->gg_colors = 1;
 	s->use_game = 0;
@@ -49,6 +50,7 @@ int pic_load(const char *path, pic_settings *s)
 		else if (!strcmp(line, "glow")) s->glow = clampi(v, 0, 10);
 		else if (!strcmp(line, "scanlines")) s->scan = clampi(v, 0, 10);
 		else if (!strcmp(line, "lcd_grid")) s->grid = clampi(v, 0, 10);
+		else if (!strcmp(line, "crt_mask")) s->crt = clampi(v, 0, 10);
 		else if (!strcmp(line, "scaler")) s->scaler = clampi(v, 0, SCALER_CHOICES - 1);
 		else if (!strcmp(line, "gg_colors")) s->gg_colors = v ? 1 : 0;
 		else if (!strcmp(line, "own_settings")) s->use_game = v ? 1 : 0;
@@ -64,8 +66,8 @@ int pic_save(const char *path, const pic_settings *s)
 	snprintf(tmp, sizeof tmp, "%s.tmp", path);
 	FILE *f = fopen(tmp, "wb");
 	if (!f) return 1;
-	fprintf(f, "shape=%d\npixel_square=%d\nquality=%d\nglow=%d\nscanlines=%d\nlcd_grid=%d\nscaler=%d\ngg_colors=%d\nown_settings=%d\nwide_view=%d\n",
-	    s->shape, s->pixel_sq, s->quality, s->glow, s->scan, s->grid, s->scaler, s->gg_colors, s->use_game, s->wide);
+	fprintf(f, "shape=%d\npixel_square=%d\nquality=%d\nglow=%d\nscanlines=%d\nlcd_grid=%d\ncrt_mask=%d\nscaler=%d\ngg_colors=%d\nown_settings=%d\nwide_view=%d\n",
+	    s->shape, s->pixel_sq, s->quality, s->glow, s->scan, s->grid, s->crt, s->scaler, s->gg_colors, s->use_game, s->wide);
 	int bad = ferror(f);
 	if (fclose(f) != 0 || bad) { remove(tmp); return 2; }
 	remove(path);

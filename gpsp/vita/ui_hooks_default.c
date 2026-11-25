@@ -37,6 +37,8 @@ UI_WEAK void ui_host_look_changed(void)
                                                           : VID_COLOR_RAW,
                 g_pcfg.ghost);
    vid_set_overlays(g_pcfg.scan, g_pcfg.grid);
+   vid_set_crt(g_pcfg.crt);
+   vid_set_text_look(g_pcfg.text_large, g_pcfg.contrast);
    vid_ambient_strength(g_pcfg.glow);
    vid_ambient_mode(g_pcfg.glow ? g_pcfg.ambient : 0);
 }

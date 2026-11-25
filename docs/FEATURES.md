@@ -452,6 +452,39 @@ PNG screen overlays are separate: put a transparent image in
 console-wide fallback. A 960 x 544 image matches the output; other sizes up
 to 1024 x 1024 stretch to fit.
 
+**Screen, CRT mask, Text size and High contrast** (the same words in the app and both
+players; one global setting each, stored in `display.ini` beside `config.ini`):
+
+- **Screen: Auto / OLED (PCH-1000) / LCD (PCH-2000) / PS TV** is a mild colour
+  correction folded into the colour table (no extra pass). Exact transform on
+  RGB565 pixels: LCD and PS TV are the identity. OLED: each channel as a
+  number from 0 to 1, `Y = 0.299 R + 0.587 G + 0.114 B`,
+  `c = Y + 0.92 (c - Y)`, clamp, then `c = c^1.06`, back to RGB565. Black and white stay put. The
+  numbers are estimates chosen to be mild, not measured. Auto = PS TV when
+  running on a PS TV, otherwise LCD (there is no reliable way to read the
+  handheld model). GBA screen colours are applied first and the profile after,
+  in one table.
+- **CRT mask 0 to 10** (off by default) draws an aperture-grille stripe
+  pattern (R, G, B columns) as one extra multiplied quad. The column width is
+  the picture's pixel scale divided by 3 (rounded, 1 to 8 screen pixels); the
+  stripes darken by `0.45 * strength / 10`, so the mean brightness is
+  `1 - 0.03 * strength` (30% less at 10). Cost: one extra textured quad per
+  frame plus a tiny texture rebuilt only when strength or size changes (not
+  yet measured on a Vita; the twin and tests check the pattern, host only).
+- **Text size: Normal / Large** and **High contrast: Off / On** are the first
+  two rows of **Settings > Interface** in the app and the **Interface** page
+  of each player's Settings. High contrast pushes pale text toward white and
+  dark text toward black (coloured text less) and gives the app a pure black
+  or white page. Large is 120%, and it applies where the page was laid out
+  for it and checked on the PC test twin:
+
+  | Where | Large |
+  |---|---|
+  | Super NES and Sega players: every menu page | Yes (each page is checked for text off the screen or over other text) |
+  | App: home screen, console list, in-game menu, empty-library messages, pop-up messages | Yes |
+  | App: Settings | Yes. A value too long for its row ends in "..."; a help text too long for two large lines stays at the normal size |
+  | App: Save states, Cheats, Button mapping, Cover picture, Play together, the plain list view | Not yet: these keep the normal size, apart from the page title (their rows are built for it) |
+
 **Settings > Display > Screen overlay** controls overlays. **Scanlines** and **LCD grid**
 are separate rows, each 0 (off, the default) to 10. Screenshots use
 **Settings > Interface > Screenshot folder**, or the default

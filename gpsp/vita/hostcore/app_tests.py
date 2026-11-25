@@ -369,7 +369,8 @@ def set_down(n):
 
 
 def set_up(n):
-    """UP n times from where Settings opens (the list wraps)."""
+    """UP n times from where Settings opens (the list wraps).  In the browser the
+    first two UPs are High contrast and Text size (2.0: above Theme)."""
     return "+20:up\n" + "+8:up\n" * (n - 1)
 
 
@@ -757,9 +758,9 @@ def t_ff(S):
         S.summary["ff_%s.audio_crc" % name] = r.host.get("audio_crc")
 
     # Settings > Fast-forward, in game: Settings opens on Screen size
-    # (Display); Fast-forward is the first Gameplay row, ten DOWN.
+    # (Display); Fast-forward is the first Gameplay row, twelve DOWN (2.0: CRT mask and Screen joined Display).
     # RIGHT: 3x -> 3x with sound, saved.
-    pick = menu_pick(4, wait=100) + set_down(10)
+    pick = menu_pick(4, wait=100) + set_down(12)
     r = S.run("ff_row", pick + "+10:shot=row.png\n+4:right\n"
               "+10:shot=row_sound.png\n+4:circle\n+10:circle\n+30:quit\n",
               autoboot="gbadhoc-test.gba")
@@ -953,11 +954,11 @@ def t_sensors(S):
     S.check(near(b[2][1], (0x3A0 + 112) // 8) and near(b[2][0], 0x392 // 8),
             "top edge down half a g: Y higher (%d px)" % b[2][1])
 
-    # Settings > THIS GAME, in a tilt game: 25 DOWN from Screen size is Level -- X makes the way the Vita is held now level, and
+    # Settings > THIS GAME, in a tilt game: 27 DOWN from Screen size is Level -- X makes the way the Vita is held now level, and
     # the game's file keeps it.
     r = run("level", "gbadhoc-tilt.gba",
             "1:motion=0.0/0.0/0\n100:motion=0.3/0.6/0\n" +
-            menu_pick(4, wait=60) + set_down(25) + "+10:shot=level_row.png\n"
+            menu_pick(4, wait=60) + set_down(27) + "+10:shot=level_row.png\n"
             "+4:cross\n+20:up\n+20:shot=rows.png\n+4:circle\n+10:circle\n"
             "+120:shot=level.png\n+10:quit\n")
     S.picture(r, "rows.png")
@@ -1068,10 +1069,10 @@ def t_game_look(S):
                                        "gbadhoc-test.gba.ini")).read() \
         if os.path.exists(os.path.join(r.root, "games",
                                        "gbadhoc-test.gba.ini")) else ""
-    # Settings opens on Screen size; THIS GAME's Display settings is 21 DOWN; CROSS gives the game its own look.  Then TRIANGLE (the
+    # Settings opens on Screen size; THIS GAME's Display settings is 23 DOWN; CROSS gives the game its own look.  Then TRIANGLE (the
     # size preset) makes it stretch: the game's file, not config.ini.
     r = S.run("game_look_on", menu_pick(4, wait=60) +
-              set_down(21) + "+10:shot=row.png\n+4:cross\n"
+              set_down(23) + "+10:shot=row.png\n+4:cross\n"
               "+10:shot=row_own.png\n+4:circle\n+10:circle\n+40:triangle\n"
               "+60:shot=stretch.png\n+10:quit\n",
               autoboot="gbadhoc-test.gba", config=cfg)
@@ -1095,7 +1096,7 @@ def t_game_look(S):
     # Next time it starts in its own look; turning it off brings the
     # console's back, and the next start is the console's.
     r = S.run("game_look_off", menu_pick(4, wait=60) +
-              set_down(21) + "+4:cross\n+4:circle\n+10:circle\n+30:quit\n",
+              set_down(23) + "+4:cross\n+4:circle\n+10:circle\n+30:quit\n",
               autoboot="gbadhoc-test.gba", config=cfg,
               extra={"games/gbadhoc-test.gba.ini":
                      "override = 1\nscale = 2\nquality = 1\nfilter = 4\n"})
@@ -1184,7 +1185,7 @@ def t_recent(S):
     # Settings > LIBRARY > Game order, from the game list: the browser's
     # Settings, wrapping upwards from the top: Button mapping, then Game
     # order (LIBRARY, between GAMEPLAY and CONTROLS).
-    r = S.run("recent_setting", "60:start\n+30:up\n+10:shot=row.png\n"
+    r = S.run("recent_setting", "60:start\n+30:up\n+8:up\n+8:up\n+10:shot=row.png\n"
               "+4:right\n+10:shot=row_last.png\n+4:circle\n+60:left\n+30:cross\n"
               "+30:quit\n", config=base, extra=extra)
     S.clean(r)
@@ -1501,8 +1502,8 @@ def t_gb_type(S):
     S.check(r.has(r"^EVT game rom=.*gbsave\.gb size=\d+ console=GB code="),
             "no override: the cartridge header decides (a Game Boy)")
     # three presses: Game Boy, Game Boy Color, back to Auto
-    # (21 DOWN: the Quick response row comes before the game's own Game Boy type for a Game Boy game)
-    steps = menu_pick(4, wait=60) + set_down(21) + "+10:shot=row.png\n"
+    # (23 DOWN: the Quick response row comes before the game's own Game Boy type for a Game Boy game)
+    steps = menu_pick(4, wait=60) + set_down(23) + "+10:shot=row.png\n"
     r = S.run("gb_type_row", steps + "+6:cross\n+30:quit\n", autoboot="gbsave.gb",
               extra={"gb_override.txt": keep})
     S.clean(r)
@@ -4111,7 +4112,7 @@ def near(px, want, tol=40):
 # Settings by wrapping UP: Button mapping, Game order, Game folders, then it.
 # start, then up: Button mapping, Game order, Game folders, Sync RetroArch
 # saves, Cover picture
-COVER_ROW = "60:start\n+30:up\n" + "+8:up\n" * 3
+COVER_ROW = "60:start\n+30:up\n" + "+8:up\n" * 5
 
 
 def t_cover_menu(S):
@@ -4403,9 +4404,9 @@ def t_fullspeed(S):
                 swap=max(int(w.get("swap_us", "0/0").split("/")[0])
                          for w in wins[1:]) if len(wins) > 1 else -1,
                 under=int(au[-1].get("under", 0)) if au else -1)
-    # ---- the row: Keep full speed is 14 DOWN from Screen size; CROSS turns
+    # ---- the row: Keep full speed is 16 DOWN from Screen size; CROSS turns
     # it off, and config.ini keeps that
-    script = menu_pick(4, wait=100) + set_down(14) + "+10:shot=row.png\n" \
+    script = menu_pick(4, wait=100) + set_down(16) + "+10:shot=row.png\n" \
         "+4:cross\n+10:shot=row_off.png\n+4:circle\n+10:circle\n+30:quit\n"
     r = S.run("fullspeed_row", script, autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -5842,7 +5843,7 @@ def t_save_sync(S):
     S.check(not r.has(r"^EVT save_sync_out "), "...and nothing was written back")
     S.check(ours(r)[64:32768] == src[64:], "the save was still imported")
     # 7. the Settings row (Library, above Game folders): default on, toggles, persists
-    walk = "60:start\n+30:up\n" + "+8:up\n" * 2 + "+10:shot=row.png\n"
+    walk = "60:start\n+30:up\n" + "+8:up\n" * 4 + "+10:shot=row.png\n"
     r = S.run("save_sync_row", walk + "+4:right\n+20:circle\n+30:quit\n")
     S.clean(r)
     S.check(r.has(r"^EVT sync_ra_saves on=0 saved=1"), "the row turns it off and saves it")
@@ -6025,9 +6026,9 @@ def t_save_clock(S):
     else:
         S.note("no private Emerald copy here: that leg is skipped")
     # 5. The rows: Save type and Clock (RTC) sit at the top of THIS GAME,
-    #    19 DOWN from Screen size.  X steps a value.
+    #    21 DOWN from Screen size.  X steps a value.
     r = S.run("save_type_rows", menu_pick(4, wait=60) +
-              set_down(19) + "+10:shot=rows.png\n"
+              set_down(21) + "+10:shot=rows.png\n"
               "+4:cross\n+4:cross\n+8:down\n+4:cross\n+10:circle\n"
               "+10:circle\n+30:quit\n", autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -6310,7 +6311,7 @@ def t_folders_ui(S):
     os.symlink(os.path.join(root, "mine"), A)
     # START: Settings; UP wraps to Button mapping, then Game order, then
     # Game folders
-    walk = "60:start\n+30:up\n+8:up\n+10:shot=row.png\n+4:cross\n"
+    walk = "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n+4:cross\n"
     r = S.run("folders_ui", walk + "+4:type=%s\n+40:circle\n+90:quit\n" % A,
               prepared=True)
     S.clean(r)
@@ -6545,19 +6546,22 @@ def t_display_rows(S):
     # browser Settings opens on Theme: 20 DOWN to Screen size (2.0 added Join online and the About row), 7 more to
     # Scanlines (Screen fill is skipped: Wide view is off here), LCD grid is the row below
     walk = "60:start\n" + "+8:down\n" * 27 + "+20:shot=grid.png\n"
-    r = S.run("display_rows", walk + "+4:right\n+10:down\n+4:right\n+8:right\n+10:down\n+10:shot=overlay.png\n"
+    r = S.run("display_rows", walk + "+4:right\n+10:down\n+4:right\n+8:right\n+10:down\n+4:right\n+4:right\n+4:right\n+10:down\n+10:shot=overlay.png\n"
               "+4:cross\n+20:circle\n+30:quit\n")
     S.clean(r)
     look = r.evt("display_look")
     S.check(look and (look[-1]["scan"], look[-1]["grid"]) == ("1", "2"),
             "Scanlines 0 -> 1 and LCD grid 0 -> 2, each on its own (%s)" %
             (look[-1]["_"] if look else "-"))
+    scr = r.evt("display_screen")
+    S.check(scr and scr[-1]["crt"] == "3", "CRT mask 0 -> 3, the row below LCD grid (%s)" % (scr[-1]["_"] if scr else "-"))
     S.check(r.has(r"^EVT overlays on=0 saved=1"), "Screen overlay on -> off")
     ini = open(os.path.join(r.root, "vita.ini")).read()
     S.check(re.search(r"^overlays = 0$", ini, re.M), "overlays kept in vita.ini (%r)" % ini)
     cfg = open(os.path.join(r.root, "config.ini")).read()
-    S.check(re.search(r"^scan_gba = 1$", cfg, re.M) and re.search(r"^grid_gba = 2$", cfg, re.M),
-            "scan_gba = 1 and grid_gba = 2 are kept in config.ini")
+    S.check(re.search(r"^scan_gba = 1$", cfg, re.M) and re.search(r"^grid_gba = 2$", cfg, re.M) and
+            re.search(r"^crt_gba = 3$", cfg, re.M),
+            "scan_gba = 1, grid_gba = 2 and crt_gba = 3 are kept in config.ini")
     # Settings > Interface > Screenshot folder, typed on the keyboard
     shots = "/tmp/vad-shots-%d" % os.getpid()
     shutil.rmtree(shots, ignore_errors=True)
@@ -6597,6 +6601,202 @@ def t_display_rows(S):
     S.check(g[0] == 0 and g[0] < g[1] < g[2] < g[3], "Ambient glow 0 is black, and brighter with each step (%s)" % g)
 
 
+def t_screen_crt_text(S):
+    """2.0 display rows: Screen (colour profile), CRT mask, Text size, High contrast.
+    The twin draws with the same colour table and one multiplied quad as the Vita."""
+    base = {"filter_gba": 2, "quality_gba": 0, "scale_gba": 1, "glow_gba": 0, "color_gba": 1}
+
+    def shot(tag, cfg=None, ini="", env=None):
+        r = S.run(tag, "150:shot=g.png\n+5:quit\n", autoboot="gbadhoc-test.gba",
+                  config=dict(base, **(cfg or {})), extra={"display.ini": ini} if ini else None, env=env)
+        S.clean(r)
+        return r, r.shot("g.png").convert("RGB")
+    _, plain = shot("scr_plain")
+    _, lcd = shot("scr_lcd", ini="screen=lcd\n")
+    _, auto = shot("scr_auto", ini="screen=auto\n")
+    r, pstv = shot("scr_pstv_auto", ini="screen=auto\n", env={"GBADHOC_FAKE_PSTV": "1"})
+    S.check(plain.tobytes() == lcd.tobytes() == auto.tobytes() == pstv.tobytes(),
+            "Screen LCD, PS TV and Auto (twin, not a PS TV) leave the picture as it was, bit for bit")
+    scr = r.evt("display_screen")
+    S.check(scr and scr[-1]["profile"] in ("pstv", "PS TV"), "Auto on a PS TV resolves to PS TV (%s)" % (scr[-1]["_"] if scr else "-"))
+    r, oled = shot("scr_oled", ini="screen=oled\n")
+    S.check(oled.tobytes() != lcd.tobytes(), "Screen OLED changes the picture")
+    # mild: the mean colour moves by a few percent, and saturation drops
+    mean = lambda im: [sum(im.split()[i].tobytes()) / (im.size[0] * im.size[1]) for i in range(3)]
+    ml, mo = mean(lcd), mean(oled)
+    S.check(all(abs(a - b) < 0.12 * max(a, 1) + 3 for a, b in zip(ml, mo)), "OLED is a mild change (%s vs %s, twin)" % (ml, mo))
+    _, raw_oled = shot("scr_raw_oled", cfg={"color_gba": 0}, ini="screen=oled\n")
+    _, raw = shot("scr_raw", cfg={"color_gba": 0})
+    S.check(raw_oled.tobytes() != raw.tobytes() and raw.tobytes() != lcd.tobytes(),
+            "the profile composes with the GBA colours: raw, GBA colours, and either with OLED are four different pictures")
+    S.check(len({raw.tobytes(), raw_oled.tobytes(), lcd.tobytes(), oled.tobytes()}) == 4, "all four combinations differ")
+    # CRT mask: darker with strength, stripes follow the picture scale
+    dk = {}
+    for lv in (0, 1, 5, 10):
+        _, im = shot("crt_%d" % lv, cfg={"crt_gba": lv})
+        dk[lv] = sum(im.convert("L").tobytes())
+    S.check(dk[0] > dk[1] > dk[5] > dk[10], "CRT mask 0 is off, each step darker (%s, twin)" % dk)
+    S.check(dk[0] == sum(plain.convert("L").tobytes()), "CRT mask 0 draws nothing")
+    ratio = dk[10] / dk[0]
+    S.check(0.55 < ratio < 0.85, "CRT mask 10 keeps about 70%% of the light (%.3f, twin; the model says 0.70 of a flat picture)" % ratio)
+    _, c10 = shot("crt_stripes", cfg={"crt_gba": 10})
+    # a white run of the unmasked picture (the test card's white block): there the mask itself shows.  The picture is
+    # 3.4 screen pixels to a source pixel here, so the columns are 1 px (pk_crt_col_w) and the period 3: each pixel
+    # equals the one three to its right, the three of a period pass red, green and blue in turn, and the other two
+    # colours sit at the dark level of strength 10 (255 - 115 = 140 of 255)
+    w, h = c10.size
+    run = None
+    for y in range(0, h, 4):
+        x = 0
+        while x < w and run is None:
+            x1 = x
+            while x1 < w and min(plain.getpixel((x1, y))) > 200:
+                x1 += 1
+            if x1 - x >= 60:
+                run = (y, x + 6, x1 - 6)
+            x = x1 + 1
+        if run:
+            break
+    S.check(run is not None, "the test card has a white run to read the mask on")
+    if run:
+        y, xa, xb = run
+        row = [c10.getpixel((x, y)) for x in range(xa, xb)]
+        S.check(all(row[i] == row[i + 3] for i in range(len(row) - 3)), "the stripes repeat every 3 screen pixels (y %d, x %d..%d)" % (y, xa, xb))
+        peaks = sorted(max(range(3), key=lambda c: row[i][c]) for i in range(3))
+        S.check(peaks == [0, 1, 2], "one column each for red, green and blue (%s)" % (row[:3],))
+        white = plain.getpixel((xa, y))
+        dark = [row[i][c] * 255.0 / max(white[c], 1) for i in range(3) for c in range(3) if row[i][c] != max(row[i])]
+        S.check(dark and all(abs(d - 140) <= 3 for d in dark), "the other two colours are at the dark level of strength 10, 140/255 (%s)" % [round(d) for d in dark])
+    # Text size and High contrast: the menu draws wider / brighter; the files are kept
+    def menu(tag, ini):
+        r = S.run(tag, "60:start\n+30:shot=m.png\n+4:quit\n", extra={"display.ini": ini} if ini else None)
+        S.clean(r)
+        return r.shot("m.png").convert("L")
+    def ink(im, thr=140):
+        w, h = im.size
+        px = im.load()
+        xs = [x for y in range(h) for x in range(w) if px[x, y] > thr]
+        return len(xs), (min(xs), max(xs)) if xs else (0, 0)
+    n0 = menu("txt_normal", "")
+    n1 = menu("txt_large", "text_size=large\n")
+    n2 = menu("txt_hc", "contrast=on\n")
+    S.check(n0.tobytes() != n1.tobytes(), "Text size Large changes the menu")
+    S.check(n0.tobytes() != n2.tobytes(), "High contrast changes the menu")
+    a, b = ink(n0), ink(n1)
+    S.check(b[1][1] <= n1.size[0] - 4 and b[1][0] >= 0, "Large text stays inside the screen (ink x %s of %d)" % (b[1], n1.size[0]))
+    # display.ini that is not text at all, or holds words nobody wrote: the defaults, and the picture as it was
+    _, junk = shot("scr_junk", ini=b"\x00\xff\xfe=\n=\nscreen\nscreen=plasma\ntext_size=huge\ncontrast=maybe\n" + bytes(range(256)))
+    S.check(junk.tobytes() == plain.tobytes(), "a damaged display.ini means the defaults: the picture is as it was")
+    # Settings > Interface > Text size is the row two above Theme (where the list's Settings opens): RIGHT makes it
+    # Large and display.ini keeps it beside a key it does not know; the other two keys are written with it
+    r = S.run("txt_row", "60:start\n+30:up\n+8:up\n+10:right\n+20:shot=row.png\n+10:circle\n+30:quit\n", extra={"display.ini": "future = 7\n"})
+    S.clean(r)
+    ini = open(os.path.join(r.root, "display.ini")).read()
+    S.check(re.search(r"^text_size\s*=\s*large$", ini, re.M) and re.search(r"^screen\s*=\s*auto$", ini, re.M) and
+            re.search(r"^contrast\s*=\s*off$", ini, re.M) and re.search(r"^future\s*=\s*7$", ini, re.M),
+            "the Text size row writes display.ini and keeps a key it does not know (%r)" % ini)
+    S.check(not os.path.exists(os.path.join(r.root, "display.ini.tmp")), "no half-written copy is left beside it")
+
+
+def text_boxes(path):
+    """GBADHOC_TEXT_BOXES (vback_soft.c): {screenshot: [box]} of every draw from a glyph atlas in the frame of
+    each screenshot.  A box is one string: x0, y0, x1, y1 of its glyph cells, the scissor in force, and the ink it
+    can hold (a cell is taller than its letters: the top quarter is above the capitals, the bottom fifth is below
+    the baseline's descenders)."""
+    shots, cur = {}, None
+    if not os.path.exists(path):
+        return shots
+    for line in open(path):
+        f = line.split()
+        if f[0] == "SHOT":
+            cur = shots.setdefault(f[1], [])
+        elif f[0] == "B" and cur is not None and int(f[9]) >= 256:      # an atlas, not an icon or a corner
+            x0, y0, x1, y1 = [float(v) for v in f[1:5]]
+            h = y1 - y0
+            cur.append({"box": (x0, y0, x1, y1), "sc": [int(v) for v in f[5:9]],
+                        "ink": (x0, y0 + 0.24 * h, x1, y1 - 0.22 * h)})
+    return shots
+
+
+def text_misfits(boxes):
+    """What does not fit among one frame's strings: (ink off the screen or cut by a scissor's side, pairs of
+    different strings whose ink overlaps)."""
+    seen = []
+    off = []
+    for b in boxes:
+        i, sc = b["ink"], b["sc"]
+        if i[3] <= sc[1] or i[1] >= sc[3] or i[2] <= sc[0] or i[0] >= sc[2]:
+            continue                      # a row scrolled out of its list: not drawn
+        if i[0] < -1 or i[2] > 961 or i[1] < -1 or i[3] > 541.5 or i[2] > sc[2] + 1 or i[0] < sc[0] - 1:
+            off.append(b["box"])
+        seen.append(b)
+    over = []
+    for a in range(len(seen)):
+        for c in range(a + 1, len(seen)):
+            A, B = seen[a]["ink"], seen[c]["ink"]
+            if abs(A[0] - B[0]) < 4 and abs(A[1] - B[1]) < 4 and abs(A[2] - B[2]) < 4:
+                continue                  # a shadow, or the same line drawn twice
+            if min(A[2], B[2]) - max(A[0], B[0]) > 3 and min(A[3], B[3]) - max(A[1], B[1]) > 3:
+                over.append((seen[a]["box"], seen[c]["box"]))
+    return off, over
+
+
+def t_text_large(S):
+    """Text size Large in the app: Settings holds the larger lines, the other old-layout pages keep Normal.
+    Every row of Settings is visited at Large: no string leaves the screen and none is drawn over another."""
+    def walk(tag, ini, script, **kw):
+        bx = os.path.join(S.outdir, tag + ".boxes")
+        if os.path.exists(bx):
+            os.remove(bx)
+        r = S.run(tag, script, extra={"display.ini": ini} if ini else None, env={"GBADHOC_TEXT_BOXES": bx}, **kw)
+        S.clean(r)
+        return r, text_boxes(bx)
+    rows = 60          # more than the list has: once round, back past Theme
+    script = "60:start\n+30:shot=r000.png\n" + "".join("+8:down\n+14:shot=r%03d.png\n" % i for i in range(1, rows)) + "+10:quit\n"
+    rn, normal = walk("text_set_normal", "", script)
+    rl, large = walk("text_set_large", "text_size=large\n", script)
+    visited = set(d["row"] for d in rl.evt("settings_row"))
+    S.check(len(large) == rows and len(visited) >= 40, "every Settings row was visited at Large (%d pictures, %d rows)" % (len(large), len(visited)))
+    bad = {}
+    for shot, boxes in sorted(large.items()):
+        off, over = text_misfits(boxes)
+        if off or over:
+            bad[shot] = (off[:2], over[:2])
+    S.check(not bad, "Settings at Large: no text off the screen, none over other text (%s)" % (dict(list(bad.items())[:3]) or "all fit"))
+    worst = {}
+    for shot, boxes in normal.items():
+        off, over = text_misfits(boxes)
+        if off or over:
+            worst[shot] = (off[:2], over[:2])
+    S.check(not worst, "...and the same holds at Normal, as it always did (%s)" % (dict(list(worst.items())[:3]) or "all fit"))
+    # the lines really are larger: the tallest ordinary row line is a fifth taller than Normal's
+    tall = lambda shots, name: max([b["box"][3] - b["box"][1] for b in shots.get(name, [])] or [0])
+    S.check(tall(large, "r000.png") >= tall(normal, "r000.png") * 1.15, "the Settings lines are about a fifth taller at Large (%.0f px against %.0f)" % (tall(large, "r000.png"), tall(normal, "r000.png")))
+    # the footer's hints are whole: the last line's cell ends on the screen
+    foot = max([b["box"][3] for b in large.get("r000.png", [])] or [0])
+    S.check(foot <= 546, "the hint line at the bottom is on the screen at Large (its cell ends at %.0f of 544)" % foot)
+    # a page of the same text outside Settings (Save states, in a game) keeps the Normal faces: its lines are
+    # exactly as tall as with Text size Normal, and nothing of it is off the screen either
+    states = "100:shot=game.png\n" + menu_pick(1, wait=20) + "+40:shot=states.png\n+10:circle\n+10:circle\n+30:quit\n"
+    _, sn = walk("text_states_normal", "", states, autoboot="gbadhoc-test.gba")
+    _, sl = walk("text_states_large", "text_size=large\n", states, autoboot="gbadhoc-test.gba")
+    off, over = text_misfits(sl.get("states.png", []))
+    offn, overn = text_misfits(sn.get("states.png", []))
+    S.check(sl.get("states.png") and len(off) <= len(offn) and len(over) <= len(overn),
+            "Save states at Large: nothing more off the screen or overlapping than at Normal (%s %s)" % (off[:2], over[:2]))
+    # the home screen's own faces follow Text size, and fit
+    home = "90:shot=home.png\n+10:quit\n"
+    _, hn = walk("text_home_normal", "", home, config={"ui_home": 1})
+    _, hl = walk("text_home_large", "text_size=large\n", home, config={"ui_home": 1})
+    off, over = text_misfits(hl.get("home.png", []))
+    offn, overn = text_misfits(hn.get("home.png", []))
+    S.check(hl.get("home.png") and len(off) <= len(offn) and len(over) <= len(overn),
+            "the home screen at Large: nothing more off the screen or overlapping than at Normal (%s %s)" % (off[:2], over[:2]))
+    # (the focused game's name is already the largest thing there and stays; the lines around it grow)
+    mid = lambda shots: sorted(b["box"][3] - b["box"][1] for b in shots.get("home.png", [{"box": (0, 0, 0, 0)}]))[len(shots.get("home.png", [0])) // 2]
+    S.check(mid(hl) > mid(hn), "the home screen's lines are larger at Large (the middle one %.0f px against %.0f)" % (mid(hl), mid(hn)))
+
+
 def t_cpu_speed(S):
     """Settings > CPU speed (cpuclock.c): 500 MHz by default, 444 as the
     other value; the system's refusal falls back to 444; with PSVshellPlus
@@ -6606,8 +6806,8 @@ def t_cpu_speed(S):
     import tempfile
     good = bytes.fromhex("50535653" "30333030" "0b000000" "f4010000"
                          "de000000" "de000000" "a6000000")
-    # the row, in game: CPU speed is 15 DOWN from Screen size
-    pick = menu_pick(4, wait=100) + set_down(15) + "+10:shot=row.png\n"
+    # the row, in game: CPU speed is 17 DOWN from Screen size
+    pick = menu_pick(4, wait=100) + set_down(17) + "+10:shot=row.png\n"
     quit_ = "+4:circle\n+10:circle\n+30:quit\n"
 
     made = []
@@ -7052,7 +7252,7 @@ def t_snes_library(S):
 
 
 # Settings > LIBRARY > Game names: one above Cover picture (GitHub #16).
-NAMES_ROW = "60:start\n+30:up\n" + "+8:up\n" * 4
+NAMES_ROW = "60:start\n+30:up\n" + "+8:up\n" * 6
 
 
 def names_library(S):
@@ -7991,8 +8191,8 @@ def t_hand_set_rows(S):
     r = S.run("hand_quality_bad", "100:shot=a.png\n+10:quit\n", autoboot="gbadhoc-test.gba",
               config={"quality_gba": 9})
     S.check(r.has(r"display_quality console=GBA quality=0"), "an unknown quality falls back to Auto")
-    # Fourth core: 18 DOWN from Screen size (after Smooth hand-over)
-    script = (menu_pick(4, wait=100) + set_down(18) + "+10:shot=core4.png\n+8:right\n"
+    # Fourth core: 20 DOWN from Screen size (after Smooth hand-over)
+    script = (menu_pick(4, wait=100) + set_down(20) + "+10:shot=core4.png\n+8:right\n"
               "+10:shot=core4_off.png\n+4:circle\n+10:circle\n+30:quit\n")
     r = S.run("hand_core4", script, autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -8014,7 +8214,7 @@ def t_handoff(S):
     for the same frame, in order, through a menu (a flush) and the Settings
     row turned off and on again in the middle; (3) the census line says it
     ran; (4) off in a local link."""
-    toggle = menu_pick(4, wait=30) + set_down(17) + "+10:shot=row.png\n+10:cross\n" + \
+    toggle = menu_pick(4, wait=30) + set_down(19) + "+10:shot=row.png\n+10:cross\n" + \
         "+6:circle\n+10:circle\n"
     script = ("100:right:40\n+30:shot=a.png\n+5:a:3\n+40:shot=b.png\n" + menu_pick(0, wait=20) +
               "+60:shot=c.png\n" + toggle + "+80:shot=d.png\n+5:b:10\n" + toggle +
@@ -8103,7 +8303,7 @@ def t_export_row(S):
     rom = "gbadhoc-test"
     ra = "retroarch/savefiles/%s.srm" % rom
     mine = bytes((i * 7 + 21) & 0xFF for i in range(32768))
-    row = menu_pick(4, wait=60) + set_down(23) + "+10:shot=row.png\n"
+    row = menu_pick(4, wait=60) + set_down(25) + "+10:shot=row.png\n"
     r = S.run("export_row_ra", "30:left:2\n" + row + "+10:cross\n+20:shot=toast.png\n+6:circle\n+10:circle\n+30:quit\n",
               autoboot=rom + ".gba", extra={"roms/%s.sav" % rom: mine,
                                             "retroarch/savefiles/Other Game.srm": b"\x01" * 64},
@@ -8133,7 +8333,7 @@ def t_save_heal_nes_ws(S):
         stem = name.rsplit(".", 1)[0]
         mine = bytes((i * 5 + 3) & 0xFF for i in range(8192))
         # Export is after Display settings (a NES game's NTSC colours row, and a WonderSwan game's three rows) and the game's Rear touch panel (a NES game's Port 2 too)
-        row = menu_pick(4, wait=60) + set_down(24 if kind == "nes" else 26)
+        row = menu_pick(4, wait=60) + set_down(26 if kind == "nes" else 28)
         r = S.run("heal_" + kind, "30:left:2\n" + row + "+10:cross\n+20:circle\n+10:circle\n+30:quit\n",
                   autoboot=name, extra={"roms/" + name: rom, "roms/%s.srm" % stem: mine},
                   vita_ini={"sync_ra_saves": 0})
@@ -9559,7 +9759,7 @@ TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicato
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("biossound", t_biossound), ("chain", t_chain), ("objprio", t_objprio), ("smc", t_smc),
          ("realtime", t_realtime),
          ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_heal", t_save_heal), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("gb_type", t_gb_type), ("launch_param", t_launch_param),
-         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("archives", t_archives), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("hand_set_rows", t_hand_set_rows), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
+         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("archives", t_archives), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("screen_crt_text", t_screen_crt_text), ("text_large", t_text_large), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("hand_set_rows", t_hand_set_rows), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
          ("controls_defaults", t_controls_defaults),
          ("names_cjk", t_names_cjk),
          ("names_filename", t_names_filename), ("names_duplicate_subtitle", t_names_duplicate_subtitle),

@@ -60,6 +60,12 @@ public:
 	virtual void tex_draw(Texture *t, float sx, float sy, float sw, float sh,
 	                      float dx, float dy, float dw, float dh, uint32_t tint, bool smooth) = 0;
 
+	/* The same draw, multiplying what is already there by the texel instead of laying it over:
+	 * out = dst * texel per colour channel (no tint, the texel's alpha ignored), nearest. One draw, no shader
+	 * (vita2d's multiply blend on the console). The CRT mask. The default draws nothing. */
+	virtual void tex_draw_mul(Texture *t, float sx, float sy, float sw, float sh,
+	                          float dx, float dy, float dw, float dh) { (void) t; (void) sx; (void) sy; (void) sw; (void) sh; (void) dx; (void) dy; (void) dw; (void) dh; }
+
 	/* clip to a rectangle (lists that scroll); clip_off() lifts it */
 	virtual void clip(float x, float y, float w, float h) = 0;
 	virtual void clip_off() = 0;
@@ -98,6 +104,12 @@ public:
 	void set_face(int face, const FaceData *fd);
 	/* one frame has passed: the glyph atlases may reuse cells idle for a few frames (Menu::draw calls it) */
 	void frame();
+	/* TEXT SIZE and HIGH CONTRAST (pk_uilook.h): pct 100 = Normal, 120 = Large -- every glyph is drawn, measured and
+	 * spaced that much larger (line_h and ascent too, so layouts that ask see it); contrast pushes the colour of
+	 * every glyph toward white or black (pk_text_tint). Set once; applies to everything drawn after. */
+	void set_look(int pct, bool contrast);
+	int pct() const;
+	bool contrast() const;
 	/* draws with the line box's top-left at x,y; returns the pen x after it */
 	float draw(int face, float x, float y, const char *s, uint32_t rgba);
 	float width(int face, const char *s);

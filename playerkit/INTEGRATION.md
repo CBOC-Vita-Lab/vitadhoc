@@ -489,3 +489,38 @@ Both standalone players (`snes.bin`, `md.bin`) use the same three modules.
 - **Tests:** `make -C playerkit test` (unit tests, `ra-test` against a fake
   server), then each player's twin: `player_twin speed ...`, `player_twin ra ...`,
   `player_twin costs ...` (per frame costs, host numbers).
+
+## 11. Screen, CRT mask, Text size and High contrast (`pk_screen.h`, `pk_crt.h`, `pk_uilook.h`, `pk_uiprefs.h`)
+
+Header-only, shared with the main app (which includes the same headers from C).
+
+- **`display.ini`** in the data root, beside `config.ini`: `screen=auto|oled|lcd|pstv`,
+  `text_size=normal|large`, `contrast=off|on`. The app writes it from Settings, a
+  player reads it at start (`pk::uiprefs_load(root)`) and writes it when its own
+  rows change (`pk::uiprefs_save`, an atomic write; unknown keys are kept). The
+  app and a player never run at the same time (one starts the other and ends),
+  so there is one writer at a time. A missing or damaged file means the defaults
+  (Auto, Normal, Off).
+- **Screen profile:** `pk_screen_resolve(choice, sceKernelIsPSVitaTV())` once the
+  choice is known, then `pk::ScreenLut::frame()` on the core's RGB565 picture
+  before the scaler and the texture upload. Neutral profiles (LCD, PS TV, Auto on
+  a handheld) return the picture itself: no copy, no table, the same pixels as
+  before.
+- **CRT mask:** `CAP_CRT` in `MenuConfig::caps` shows the row (`ROW_PIC_CRT`,
+  0..10, per-game like Scanlines). The host draws it after the picture and the
+  other overlays: `pk::CrtMask::draw(gfx, strength, dx, dy, dw, dh, src_w)`, which
+  makes a `dw` x 1 texture once and draws one quad through `Gfx::tex_draw_mul`
+  (`out = dst * texel`). On the console that is vita2d's own shaders with a
+  multiply blend state (`vita2d_set_blend_mode_mul`, a local change recorded in
+  the vendored library's PROVENANCE); no new shader. Strength 0 draws nothing
+  and frees the texture.
+- **Rows:** `ROW_PIC_SCREEN` (Picture page, not part of "Apply to"), `ROW_UI_TEXT`
+  and `ROW_UI_CONTRAST` (the Interface page). The host stores them in
+  `display.ini` from `on_change` and hands them back in `sync_menu_values`.
+  `Menu::draw` sets the Text's look from the two rows each frame; call
+  `Text::set_look(pk_text_pct(large), contrast)` once at start as well, for the
+  notices drawn before the menu opens.
+- **Tests:** `test_screen.cpp` (profile maths, table, mask pattern),
+  `test_uilook.cpp` (tint, `display.ini` round trip, the mask through `SoftGfx`,
+  and a text-fit audit of every menu page at Normal and Large, with and without
+  High contrast: no glyph off the screen, none over another string).

@@ -21,6 +21,19 @@ void vv_text_cap(int *top, int *h);          /* logical rows of 'H' (ui)  */
  * native size and the advance used (2 x the PSP's), in native pixels. */
 float vv_text_worst_dev(int hd, int *ch, float *mean_abs);
 
+/* TEXT SIZE and HIGH CONTRAST (Settings > Interface; vid_set_text_look).
+ * vv_text_pct: 100 Normal, 120 Large (pk_uilook.h) -- every face is baked
+ * and measured that much larger (the PSP-layout faces here and vstyle.c's
+ * natural ones); vv_text_hc: the colour of every glyph is pushed toward
+ * white on a light-on-dark colour and toward black on a dark one
+ * (vv_text_tint).  The change is applied at the start of the next frame,
+ * when no draw can still be using an atlas (vv_text_look_apply). */
+extern int vv_text_pct, vv_text_hc;
+uint32_t vv_text_tint(uint32_t rgba);
+void vv_text_look_apply(void);
+/* vstyle.c: forget the baked faces (they bake again at the new size) */
+void vs_text_reset(void);
+
 /* video_vita.c: called by anything about to draw into the frame. */
 void vv_frame_need(void);
 

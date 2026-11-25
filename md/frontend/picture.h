@@ -23,6 +23,7 @@ typedef struct {
 	int glow;      /* ambient glow 0 (off) .. 10 */
 	int scan;      /* CRT scanlines 0 (off) .. 10 */
 	int grid;      /* LCD grid 0 (off) .. 10 */
+	int crt;       /* CRT mask 0 (off) .. 10 (playerkit/src/pk_screen.h, pk_crt.h) */
 	int scaler;    /* SCALER_* (default Auto) */
 	int gg_colors; /* Game Gear: 1 = LCD colours (softer, lifted blacks), 0 = the core's colours */
 	int use_game;  /* 1: this game has its own file; 0: the console file is used */

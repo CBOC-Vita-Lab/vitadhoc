@@ -47,6 +47,14 @@ declares their functions; nothing here calls them.  Text is drawn by
    made it destroy a render target and free a GPU memory block it did not
    own (`gpu/native_geometry_test.c --texture-destructor`).
 
+6. `vita2d_set_blend_mode_mul()` (declared in `include/vita2d.h`): a third
+   set of the fragment programs, made from the same precompiled shaders with
+   a multiply blend state (`out = src * dst`, `SCE_GXM_BLEND_FACTOR_DST_COLOR`
+   / `ZERO`), beside `normal` and `add`.  `vback_vita2d.c` `vb_tquads_mul`
+   switches to it for one draw and back; the CRT mask uses it.  The call
+   returns 0 when the set could not be made (nothing is drawn then).  Compile-checked
+   only (no console here).
+
 Checked 2026-11-06: upstream master is still a8f15ab (no commit since
 2021-11-26), and utils.c, vita2d_draw.c and the shared headers are
 byte-identical to it, so there is nothing newer to take.

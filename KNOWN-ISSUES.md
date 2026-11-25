@@ -43,6 +43,19 @@ response, No sprite flicker.
   button by name.
 - **The Button test** shows the WonderSwan's buttons for a game held
   sideways only.
+- **Text size Large does not reach every page of the app yet.** It applies to
+  the home screen, the console list, the in-game menu and Settings, and to
+  every menu page of the Super NES and Sega players. Save states, Cheats,
+  Button mapping, Cover picture, Play together and the plain list view keep
+  the normal size, apart from their title and pop-up messages: their rows are
+  built for it. High contrast applies everywhere.
+- **CRT mask** is drawn with a blend the app did not use before (the picture
+  multiplied by a stripe texture). It was checked on the PC test twin and
+  compiled for the Vita, not run on one. If it misbehaves, set it to 0 (Off,
+  the default): nothing extra is drawn then.
+- **Screen: OLED** uses estimated numbers, not a measurement of the panel, and
+  Auto cannot tell the first Vita from the second: owners of a PCH-1000 choose
+  OLED by hand. Screenshots are taken with the correction applied.
 - **The CBOC Vita Installer** may not offer the NES, WonderSwan or Sega
   folders yet; copy those games with VitaShell (for example `ux0:ROMS/NES`,
   `ux0:ROMS/MD`).

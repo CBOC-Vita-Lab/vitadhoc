@@ -28,6 +28,7 @@
 #include "pk_notice.h"
 #include "pk_pace.h"
 #include "pk_look.h"
+#include "pk_uiprefs.h"
 #include "pk_speed.h"
 #include "pk_ra.h"
 
@@ -210,6 +211,9 @@ public:
 
 	/* ---- for the platform and tests ---- */
 	const pic_settings &picture() const { return eff_; }   /* ps_ with the look governor applied */
+	/* Screen, Text size, High contrast: the settings every console shares (display.ini, pk_uiprefs.h); ui_serial() counts changes */
+	const pk::UiPrefs &ui() const { return ui_; }
+	unsigned ui_serial() const { return ui_serial_; }
 	const pk::LaunchRequest &request() const { return req_; }
 	bool have_launch_file() const { return have_launch_; }
 	const std::string &game_name() const { return game_; }
@@ -296,6 +300,8 @@ private:
 	pk::LaunchRequest req_;
 	bool have_launch_ = false;
 	std::string root_, snes_dir_, game_, rom_, srm_;
+	pk::UiPrefs ui_;               /* display.ini: Screen, Text size, High contrast */
+	unsigned ui_serial_ = 0;
 	pic_settings ps_;              /* what the player chose (and what the files hold) */
 	pic_settings eff_;             /* ps_ with the governor's sacrifices: what is shown */
 	pk::LookGovernor look_;

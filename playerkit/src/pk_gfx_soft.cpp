@@ -238,6 +238,21 @@ void SoftGfx::tex_draw(Texture *t, float sx, float sy, float sw, float sh,
 		}
 }
 
+void SoftGfx::tex_draw_mul(Texture *t, float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh)
+{
+	if (!t || dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
+	for (int py = std::max((int) floorf(dy), cy0_); py < std::min((int) ceilf(dy + dh), cy1_); py++)
+		for (int px = std::max((int) floorf(dx), cx0_); px < std::min((int) ceilf(dx + dw), cx1_); px++) {
+			float u = sx + (px + 0.5f - dx) * sw / dw, v = sy + (py + 0.5f - dy) * sh / dh;
+			float r, g, b, a;
+			texel(t, (int) floorf(u), (int) floorf(v), &r, &g, &b, &a);
+			const uint32_t d = fb_[(size_t) py * w_ + px];
+			const unsigned R = ((d & 0xFF) * (unsigned) (r + 0.5f) + 127) / 255, G = (((d >> 8) & 0xFF) * (unsigned) (g + 0.5f) + 127) / 255,
+			               B = (((d >> 16) & 0xFF) * (unsigned) (b + 0.5f) + 127) / 255;
+			fb_[(size_t) py * w_ + px] = PK_RGBA(R, G, B, 255);
+		}
+}
+
 /* ---- PNG ---------------------------------------------------------------- */
 
 static void put32(std::vector<uint8_t> &o, uint32_t v)

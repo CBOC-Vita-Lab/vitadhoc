@@ -107,7 +107,7 @@ static const char *kMultitapGames[] = { "BOMBERMAN", "SECRET OF MANA", "SEIKEN D
 /* fields of pic_settings the player changed in the menu (only these are written back to the files, so a
  * per-game value the app sent in the launch file never leaks into picture.ini) */
 enum { CH_SHAPE = 1, CH_PIXEL = 2, CH_QUALITY = 4, CH_GLOW = 8, CH_SCAN = 16, CH_GRID = 32, CH_HIRES = 64, CH_ILACE = 128,
-       CH_MULTITAP = 256, CH_USEGAME = 512, CH_WIDE = 1024, CH_SCALER = 2048 };
+       CH_MULTITAP = 256, CH_USEGAME = 512, CH_WIDE = 1024, CH_SCALER = 2048, CH_CRT = 4096 };
 static unsigned g_changed;
 static pic_settings g_ps_file;
 
@@ -119,6 +119,7 @@ static void overlay_changed(pic_settings &dst, const pic_settings &src, unsigned
 	if (m & CH_GLOW) dst.glow = src.glow;
 	if (m & CH_SCAN) dst.scan = src.scan;
 	if (m & CH_GRID) dst.grid = src.grid;
+	if (m & CH_CRT) dst.crt = src.crt;
 	if (m & CH_HIRES) dst.hires_blend = src.hires_blend;
 	if (m & CH_ILACE) dst.interlace_blend = src.interlace_blend;
 	if (m & CH_MULTITAP) dst.multitap = src.multitap;
@@ -456,6 +457,11 @@ void SnesPlayer::apply_overrides()
 	if ((v = req_.override_int("lcd_grid", -1)) >= 0) ps_.grid = clampi(v, 0, 10);
 	if ((v = req_.override_int("grid", -1)) >= 0) ps_.grid = clampi(v, 0, 10);
 	if ((v = req_.override_int("glow", -1)) >= 0) ps_.glow = clampi(v, 0, 10);
+	if ((v = req_.override_int("crt_mask", -1)) >= 0) ps_.crt = clampi(v, 0, 10);
+	/* the settings every console shares (for the tests and the session runner: display.ini is the real source) */
+	if (req_.overrides.count("screen")) { const std::string w = lower(req_.overrides.find("screen")->second); for (int i = 0; i < PK_SCREEN_CHOICES; i++) if (w == pk_screen_tag(i)) ui_.screen = i; }
+	if (req_.overrides.count("text_size")) ui_.text_large = lower(req_.overrides.find("text_size")->second) == "large" ? 1 : 0;
+	if (req_.overrides.count("contrast")) { const std::string w = lower(req_.overrides.find("contrast")->second); ui_.contrast = w == "on" || w == "1" ? 1 : 0; }
 	if ((v = req_.override_int("pixel_square", -1)) >= 0) ps_.pixel_sq = v ? 1 : 0;
 	if ((v = req_.override_int("hires_blend", -1)) >= 0) ps_.hires_blend = v ? 1 : 0;
 	if ((v = req_.override_int("interlace_blend", -1)) >= 0) ps_.interlace_blend = v ? 1 : 0;
@@ -484,6 +490,10 @@ void SnesPlayer::sync_menu_values()
 	menu_.set_value(ROW_PIC_SCANLINES, ps_.scan);
 	menu_.set_value(ROW_PIC_GRID, ps_.grid);
 	menu_.set_value(ROW_PIC_GLOW, ps_.glow);
+	menu_.set_value(ROW_PIC_CRT, ps_.crt);
+	menu_.set_value(ROW_PIC_SCREEN, ui_.screen);
+	menu_.set_value(ROW_UI_TEXT, ui_.text_large);
+	menu_.set_value(ROW_UI_CONTRAST, ui_.contrast);
 	menu_.set_value(ROW_PIC_APPLY, ps_.use_game ? 1 : 0);
 	menu_.set_value(ROW_PIXELS, ps_.pixel_sq ? 1 : 0);
 	menu_.set_value(ROW_HIRES, ps_.hires_blend ? 1 : 0);
@@ -516,6 +526,7 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	StartResult res;
 	init_shared();
 	root_ = root;
+	ui_ = pk::uiprefs_load(root_);          /* Screen, Text size, High contrast: the same file as the app's Settings */
 	snes_dir_ = path_join(root, "snes");
 	make_dirs(path_join(snes_dir_, "games"));
 	make_dirs(path_join(path_join(root, "backups"), "snes"));
@@ -683,7 +694,7 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	cfg.console_label = "Super Nintendo";
 	cfg.exit_label = "Exit";
 	cfg.exit_help = "Close VitAdhoc";
-	cfg.caps = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_GLOW |
+	cfg.caps = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_CRT | CAP_GLOW |
 	           CAP_WIDE | CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT | CAP_CHEAT_SEARCH | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_REWIND;
 	cfg.enter_is_cross = req_.enter_is_cross;
 	cfg.players = 4;
@@ -1151,10 +1162,19 @@ void SnesPlayer::on_change(int row, int v)
 	case ROW_PIC_SCANLINES: ps_.scan = clampi(v, 0, 10); g_changed |= CH_SCAN; break;
 	case ROW_PIC_GRID: ps_.grid = clampi(v, 0, 10); g_changed |= CH_GRID; break;
 	case ROW_PIC_GLOW: ps_.glow = clampi(v, 0, 10); g_changed |= CH_GLOW; break;
+	case ROW_PIC_CRT: ps_.crt = clampi(v, 0, 10); g_changed |= CH_CRT; break;
+	case ROW_PIC_SCREEN: case ROW_UI_TEXT: case ROW_UI_CONTRAST:
+		/* shared by every console and the app: display.ini, written at once (a few bytes) */
+		if (row == ROW_PIC_SCREEN) ui_.screen = pk_screen_clamp(v);
+		else if (row == ROW_UI_TEXT) ui_.text_large = v ? 1 : 0;
+		else ui_.contrast = v ? 1 : 0;
+		ui_serial_++;
+		if (!pk::uiprefs_save(root_, ui_)) notice("Could not save the screen settings", NOTICE_ERROR, false);
+		return;
 	case ROW_PIC_APPLY:
 		ps_.use_game = v ? 1 : 0;
 		/* "This game" stores every value as now shown; "All games" only what was changed here */
-		g_changed |= CH_USEGAME | (v ? 0xFFF : 0);
+		g_changed |= CH_USEGAME | (v ? 0x1FFF : 0);
 		break;
 	case ROW_PIXELS: ps_.pixel_sq = v ? 1 : 0; g_changed |= CH_PIXEL; break;
 	case ROW_HIRES: ps_.hires_blend = v ? 1 : 0; g_changed |= CH_HIRES; break;

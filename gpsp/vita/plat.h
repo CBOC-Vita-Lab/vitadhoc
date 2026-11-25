@@ -86,6 +86,10 @@ unsigned plat_refresh_mhz(void);
  * 0 and 0.  For the log. */
 unsigned plat_arm_mhz(void);
 unsigned plat_arm_mhz_measured(void);
+/* 1 on a PlayStation TV (sceKernelIsPSVitaTV), 0 on a handheld.  Settings >
+ * Display > Screen "Auto" reads it (playerkit/src/pk_screen.h).  The twin:
+ * 1 only when GBADHOC_FAKE_PSTV is set. */
+int plat_is_pstv(void);
 /* Ask for the CPU clock (500 or 444 MHz; the bus is set to 222, the GPU to
  * 222 and the crossbar to 166).  0 or more: the system took it; negative:
  * refused (no overclock plugin).  The twin: refused for 500 when

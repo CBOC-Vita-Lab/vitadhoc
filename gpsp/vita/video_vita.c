@@ -44,6 +44,7 @@
 #include "vstyle.h"
 #include "vglyph.h"
 #include "ambient_look.h"
+#include "pk_screen.h"         /* the screen profile and the CRT mask (playerkit/src, MIT) */
 #include "fe_evt.h"
 #include "upscale_vita.h"
 #include "mmpx_vita.h"
@@ -131,6 +132,7 @@ void vv_frame_need(void)
 {
    if (!vb_frame_open())
    {
+      vv_text_look_apply();          /* Text size: faces baked again before any draw of this frame */
       vb_frame_begin(g_clear_req);
       g_clear_req = 0;
    }
@@ -1366,18 +1368,88 @@ static vb_tex *lcd_tex(unsigned w, const vid_geo *g)
    return g_lcd_tex;
 }
 
-/* The grid / scanlines over the picture just drawn at `g`. */
+/* CRT MASK (Settings > Display > CRT mask, 0 off, 1..10; playerkit/src/
+ * pk_screen.h has the maths and the numbers): an aperture grille, three
+ * phosphor columns per period, drawn over the picture as ONE textured quad
+ * with a multiply blend (vb_tquads_mul).  The pattern is made on the CPU
+ * once into a one row RGBA8 texture as wide as the picture on the screen
+ * (at most 960 x 1 texels = 3.8 KB) and stretched down it: columns do not
+ * change with the row, and the backends clamp rather than repeat, so the
+ * period is tiled into the row.  The column width is the whole number of
+ * screen pixels nearest a third of a source pixel (pk_crt_col_w), so it
+ * follows the on-screen pixel scale: 1 px columns up to a source pixel of
+ * 4 screen pixels, 2 px up to 7, ...  Rebuilt only when the picture's width
+ * on the screen, its source width or the strength changes.  Cost: one quad
+ * over the picture (the GPU's fill of dw x dh pixels with a multiply: about
+ * what the scanlines' quad costs; model, not measured on a console). */
+static vb_tex *g_crt_tex;
+static int     g_crt_lvl, g_crt_dw, g_crt_w, g_crt_built = -1;
+static unsigned g_crt_fail;
+
+void vid_set_crt(int strength)
+{
+   g_crt_lvl = strength < 0 ? 0 : strength > 10 ? 10 : strength;
+}
+int vid_overlay_crt(void) { return g_crt_lvl; }
+
+static vb_tex *crt_tex(unsigned w, const vid_geo *g)
+{
+   static uint32_t row[VB_W];
+   uint8_t pat[4 * PK_CRT_MAX_W];
+   int x, cw, n;
+   if (!g_crt_lvl || g->dw <= 0 || g->dw > VB_W || g->dh <= 0 || !w)
+      return NULL;
+   if (g_crt_tex && g_crt_dw == g->dw && g_crt_w == (int)w &&
+       g_crt_built == g_crt_lvl)
+      return g_crt_tex;
+   if (g_crt_fail && g_frame_no + 1 - g_crt_fail < ST_RETRY)
+      return NULL;
+   g_crt_fail = g_frame_no + 1;
+   if (g_crt_tex)
+      vb_tex_destroy(g_crt_tex);
+   g_crt_tex = NULL;
+   cw = pk_crt_col_w((float)g->dw / (float)w);
+   n = pk_crt_make(g_crt_lvl, cw, pat);
+   if (!n)
+      return NULL;
+   for (x = 0; x < g->dw; x++)
+      memcpy(&row[x], pat + 4 * (x % n), 4);
+   g_crt_tex = vb_tex_create(g->dw, 1, VB_FMT_RGBA8, 0);
+   if (g_crt_tex)
+   {
+      vb_tex_update(g_crt_tex, 0, 0, g->dw, 1, row, (size_t)g->dw * 4);
+      g_crt_fail = 0;
+   }
+   g_crt_dw = g->dw; g_crt_w = (int)w; g_crt_built = g_crt_lvl;
+   return g_crt_tex;
+}
+
+static void crt_overlay_draw(unsigned w, const vid_geo *g)
+{
+   vb_tquad q;
+   vb_tex *t = crt_tex(w, g);
+   if (!t)
+      return;
+   q.x0 = (float)g->ox; q.y0 = (float)g->oy;
+   q.x1 = (float)(g->ox + g->dw); q.y1 = (float)(g->oy + g->dh);
+   q.u0 = 0; q.v0 = 0; q.u1 = (float)g->dw; q.v1 = 1;
+   vb_tquads_mul(t, &q, 1, VB_NEAREST);
+}
+
+/* The grid / scanlines over the picture just drawn at `g`, then the CRT mask. */
 static void lcd_overlay_draw(unsigned w, const vid_geo *g)
 {
    vb_tquad q;
    vb_tex *lcd = lcd_tex(w, g);
-   if (!lcd)
-      return;
-   q.x0 = (float)g->ox; q.y0 = (float)g->oy;
-   q.x1 = (float)(g->ox + g->dw); q.y1 = (float)(g->oy + g->dh);
-   q.u0 = 0; q.v0 = 0; q.u1 = (float)g->dw; q.v1 = (float)g->dh;
-   /* Black, the texture's byte as alpha. */
-   vb_tquads(lcd, &q, 1, VB_RGBA(0, 0, 0, 255), VB_NEAREST);
+   if (lcd)
+   {
+      q.x0 = (float)g->ox; q.y0 = (float)g->oy;
+      q.x1 = (float)(g->ox + g->dw); q.y1 = (float)(g->oy + g->dh);
+      q.u0 = 0; q.v0 = 0; q.u1 = (float)g->dw; q.v1 = (float)g->dh;
+      /* Black, the texture's byte as alpha. */
+      vb_tquads(lcd, &q, 1, VB_RGBA(0, 0, 0, 255), VB_NEAREST);
+   }
+   crt_overlay_draw(w, g);
 }
 
 /* ---- xBRZ on the GPU ------------------------------------------------------
@@ -1865,9 +1937,48 @@ void vid_set_look(int color, int ghost)
    g_look_w[0] = g_look_w[1] = 0;     /* nothing to mix the next frame with */
 }
 
+/* SCREEN PROFILE (Settings > Display > Screen; playerkit/src/pk_screen.h): the
+ * colour table every console's picture goes through already, with the
+ * profile folded in -- table[v] = profile(console's table[v]) -- so the
+ * picture still passes through ONE 65536 entry table, no extra pass.  The
+ * neutral profiles use the console's table (or none) exactly as before.
+ * Built when the profile or the console's colour mode changes. */
+static int       g_screen;                    /* the resolved profile (PK_SCREEN_*) */
+static uint16_t *g_scr;                       /* 65536 entries: profile(console's table) */
+static int       g_scr_key = -1;              /* what g_scr was built for */
+
+static const uint16_t *look_lut(void)
+{
+   const int key = g_screen * 16 + g_color;
+   if (!pk_screen_active(g_screen))
+      return g_color ? g_cc : NULL;
+   if (!g_scr)
+      g_scr = (uint16_t *)malloc(65536 * sizeof(uint16_t));
+   if (!g_scr)
+      return g_color ? g_cc : NULL;
+   if (g_scr_key != key)
+   {
+      pk_screen_lut565(g_screen, g_color ? g_cc : NULL, g_scr);
+      g_scr_key = key;
+   }
+   return g_scr;
+}
+
+void vid_set_screen(int profile)
+{
+   VID_ENTER();
+   profile = pk_screen_clamp(profile);
+   if (profile == PK_SCREEN_AUTO)
+      profile = PK_SCREEN_LCD;       /* callers resolve Auto (pk_screen_resolve) */
+   g_screen = profile;
+   g_scr_key = -1;
+   g_look_w[0] = g_look_w[1] = 0;
+}
+int vid_screen_profile(void) { return g_screen; }
+
 static const uint16_t *vv_look_lut(void)
 {
-   return g_color ? g_cc : NULL;
+   return look_lut();
 }
 
 int vid_look_color(void) { return g_color; }
@@ -1880,7 +1991,7 @@ int vid_look_blend(void) { return g_blend; }
 static const uint16_t *look_frame(int who, const uint16_t *pix, unsigned w,
                                   unsigned h, size_t *pitch_bytes)
 {
-   const uint16_t *lut = g_color ? g_cc : NULL;
+   const uint16_t *lut = look_lut();
    const size_t n = (size_t)w * h, pitch = *pitch_bytes / 2;
    uint16_t *o, *p;
    unsigned x, y, wp;
@@ -2651,6 +2762,9 @@ void vid_term(void)
    upscale_shutdown();
    free(g_cc);
    g_cc = NULL;
+   free(g_scr);
+   g_scr = NULL;
+   g_scr_key = -1;
    {
       int k;
       for (k = 0; k < 2; k++)
@@ -2688,6 +2802,9 @@ void vid_term(void)
    vb_tex_destroy(g_amb_tex);   g_amb_tex = NULL;
    vb_tex_destroy(g_lcd_tex);   g_lcd_tex = NULL;
    g_lcd_fail = 0;
+   vb_tex_destroy(g_crt_tex);   g_crt_tex = NULL;
+   g_crt_fail = 0;
+   g_crt_built = -1;
    vb_tex_destroy(g_sharp_rt);  g_sharp_rt = NULL;
    g_sharp_tried = 0;
    g_amb_src = AMB_SRC_NONE;

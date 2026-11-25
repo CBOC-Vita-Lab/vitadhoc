@@ -141,6 +141,29 @@ int  vid_set_overlay(const char *png_path);
 void vid_set_overlays(int scan, int grid);
 int  vid_overlay_scan(void);
 int  vid_overlay_grid(void);
+/* CRT MASK 0..10 (0 off): an aperture grille multiplied over the picture,
+ * one extra quad (playerkit/src/pk_screen.h).  Over any picture, like the
+ * grid. */
+void vid_set_crt(int strength);
+int  vid_overlay_crt(void);
+/* SCREEN PROFILE: the resolved choice (PK_SCREEN_OLED / LCD / PSTV; the
+ * caller turns Auto into one with pk_screen_resolve).  Folded into the
+ * colour table every console's picture passes through. */
+void vid_set_screen(int profile);
+/* TEXT SIZE (Normal / Large) and HIGH CONTRAST (Off / On) of every menu the
+ * renderer draws, both text systems (the PSP-layout one and vstyle.h's).
+ * The faces bake again at the start of the next frame. */
+void vid_set_text_look(int large, int contrast);
+int  vid_text_pct(void);
+/* The PSP-layout text (vid_text and its family) is Large only between
+ * vid_text_scope(1) and vid_text_scope(0): a page asks for it once its
+ * fixed rows hold the larger lines (Settings does); everywhere else that
+ * text stays at Normal, so it cannot outgrow a row.  The newer faces
+ * (vstyle.h: the home screen, the console list, toasts) follow Text size
+ * everywhere.  Both return 1 while the Large faces are the ones in use. */
+int  vid_text_scope(int large_ok);
+int  vid_text_scope_large(void);
+int  vid_screen_profile(void);
 /* AMBIENT GLOW strength 0..10: how bright the colours beside the picture are
  * (0 black bars, 5 the look the bars have always had).  vid_ambient_mode
  * says what the colours come from. */

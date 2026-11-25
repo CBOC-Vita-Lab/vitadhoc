@@ -340,6 +340,11 @@ unsigned plat_arm_mhz(void)
    return mhz > 0 ? (unsigned)mhz : 0;
 }
 
+int plat_is_pstv(void)
+{
+   return sceKernelIsPSVitaTV() ? 1 : 0;
+}
+
 /* SUBS + BNE: one iteration a cycle on the Cortex-A9 (the branch predicted
  * taken).  The best of three runs, against an interruption. */
 unsigned plat_arm_mhz_measured(void)

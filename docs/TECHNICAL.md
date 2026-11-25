@@ -1566,9 +1566,14 @@ Also in 2.0, from the commit record:
   8:7 crop and shrink to 128x112) and `fe_gbprinter.h` (the printer protocol on
   the serial port, answered from `gb_serial_transfer` when no link partner is
   there and the game starts a packet with `$88`; strips are handed to the
-  platform, which writes the PNG). `plat_camera_*` is SceCamera on the Vita
+  platform, which writes the PNG on the worker the clip export uses
+  (`plat_job_*`), the strip copied first). `plat_camera_*` is SceCamera on the Vita
   (ABGR into a 256 KB CDRAM block, read without waiting; compiled with the
-  SDK, never run) and a script feed on the twin. Tests: `gbcore/tests/gbcam.c`,
+  SDK, never run) and a script feed on the twin. `gbcore_camera_requests`
+  counts the captures a game starts; `main_vita.c gbcam_frame` opens the
+  camera on the first one and closes it after 120 frames (about 2 s) without
+  another, and calls it stopped after 60 frames (180 while it is warming up)
+  with no picture. Tests: `gbcore/tests/gbcam.c`,
   `gbprinter.c`, `app_tests.py --only gbcam,gbprinter`.
 - **Super FX.** `gsu_fast`, an exact block-cache interpreter for the chip
   (pre-decoded blocks, block chaining, fused prefixes, dead-flag elimination,

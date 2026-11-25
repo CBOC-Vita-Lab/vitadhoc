@@ -122,8 +122,13 @@ pattern.  State: 64 bytes of the reserved block at offset 192 (`CAM1`, busy
 count, 54 registers), written and read only for a `$FC` cartridge, so every
 other cartridge's state is byte for byte what it was; `gb.c` gets one call in
 each of the four save / load sites and one in `gb_run`.  Not modelled: the
-sensor's analogue side, RAM blanking during a capture, double-speed timing
-(the same number of scanlines).  Test: `gbcore/tests/gbcam.c`.
+sensor's analogue side, double-speed timing (the same number of scanlines).
+The gain table is an own smooth curve (steps of the fourth root of two, x0.5 to
+x6.7), not the datasheet's decibels.  Cartridge RAM is closed while a capture
+runs: `cpu.c` reads 0 and drops writes at `$A000..$BFFF` through
+`mbc_cam_ram_blocked()` (always 0 for any other cartridge), and `mbc_cam_starts()`
+counts started captures for the frontend (`gbcore_camera_requests`).  Test:
+`gbcore/tests/gbcam.c`.
 
 ## Two machines in one program (GB link sessions)
 

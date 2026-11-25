@@ -218,8 +218,12 @@ and in emulators; none of it has run on a real Vita yet (see
   the library shows the list once and hides its discs, saves and saved moments
   are kept under the list's name, and Settings > Speed > Change disc in the
   game opens the disc tray, swaps the disc and closes it, as a console would.
-  A saved moment remembers which disc was in. Checked on the PC with synthetic
-  discs; no real multi-disc game has run.
+  A saved moment remembers which disc was in. A list with no disc line (a
+  music playlist, another system's list) is not listed as a game. A game
+  that was played from its first disc before the list existed takes that
+  disc's save and saved moments over on its first start (copied, the first
+  disc's files stay). Checked on the PC with synthetic discs; no real
+  multi-disc game has run.
 - **Fast forward at normal pitch**, with the sound kept low and smooth.
 - **Tap screen for menu** can be turned off for thumbs that touch the screen;
   Start + Select always opens the menu.
@@ -256,12 +260,18 @@ and in emulators; none of it has run on a real Vita yet (see
   Vita without a camera, or one that cannot start it, uses the file or a test
   picture. Exposure, gain, edge enhancement and the dither pattern the game
   sets are followed; a real camera's sensor noise and infrared glow are not.
+  The Vita's camera runs only while the game is taking pictures and is
+  switched off after about two seconds without one, so a Camera game left in
+  its menus does not drain the battery. The gain steps follow a smoother
+  curve than the sensor's decibel table (a picture differs from earlier test
+  builds), and the cartridge's RAM reads 0 during a capture, as on hardware.
 - **Game Boy Printer.** Games that print (Game Boy Camera, Pokemon's Pokedex,
   Zelda DX's photos, ...) find a printer on the cable when nobody is linked.
   A print is saved as a PNG in `prints/` (`<game>-<date>-<n>.png`) in the
   game's colours, grey by default, and a toast says "Printed: saved to prints".
-  Long pictures printed in bands are one file. Settings > This game > Game Boy
-  Printer turns it Off; it never answers during a link.
+  Long pictures printed in bands are one file, and the file is written while
+  the game keeps running. Settings > This game > Game Boy Printer turns it
+  Off; it never answers during a link.
 
 **Online and multiplayer**
 

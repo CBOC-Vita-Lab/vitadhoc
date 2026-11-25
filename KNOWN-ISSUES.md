@@ -64,8 +64,10 @@ response, No sprite flicker.
   made for the purpose (the PC test twin), never with the real Camera cartridge
   or a real Vita camera: the sensor's exposure scale and the printer's margin
   length are estimates, a real camera's pictures will differ in detail, and the
-  Vita's camera code (the CDRAM buffer, the non-waiting read) has only been
-  compiled. A rewound or loaded state keeps the live camera picture. A game
+  Vita's camera code (the CDRAM buffer, the non-waiting read, opening it on
+  the first capture and closing it after about two seconds without one, the
+  one-second stopped-camera check) has only been compiled; how long a real
+  camera takes to deliver its first picture is not known. A rewound or loaded state keeps the live camera picture. A game
   that prints more than one sheet is saved once. The printer does not answer
   during a link, and a state loaded in the middle of a print leaves the game
   and the printer out of step until the next initialise.

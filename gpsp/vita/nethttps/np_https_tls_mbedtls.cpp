@@ -8,6 +8,13 @@
 #include <string.h>
 #include <strings.h>
 
+// Mbed TLS is built with -fno-short-enums (gpsp/vita/deps/Makefile.mbedtls), while arm-vita-eabi-gcc defaults to
+// 1-byte enums. This file holds the library's own structs (mbedtls_ssl_config, mbedtls_x509_crt ...), whose sizes and
+// field offsets change with the enum size (on the Vita: ssl_config 112 against 116 bytes, x509_crt 404 against 408),
+// so it must be compiled with the library's setting (gpsp/vita/Makefile: NET_ENUM_FLAGS) or every call corrupts them.
+#if defined(__ARM_EABI__) && defined(__ARM_SIZEOF_MINIMAL_ENUM) && __ARM_SIZEOF_MINIMAL_ENUM != 4
+#error "np_https_tls_mbedtls.cpp must be built with -fno-short-enums, as Mbed TLS is"
+#endif
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/entropy.h"
 #include "mbedtls/net_sockets.h"   // (only its error codes: the library's sockets are not used)

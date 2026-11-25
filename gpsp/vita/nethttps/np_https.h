@@ -56,7 +56,8 @@ typedef enum NpHttpsError {
     NP_HTTPS_E_TIMEOUT,        // a time limit ran out; stage says in which step
     NP_HTTPS_E_TOO_LARGE,      // the answer is over max_response
     NP_HTTPS_E_CANCELLED,
-    NP_HTTPS_E_MEMORY
+    NP_HTTPS_E_MEMORY,
+    NP_HTTPS_E_FORCE32 = 0x7fffffff   // never used: keeps the type 4 bytes wide whatever -fshort-enums says (see np_https_tls_mbedtls.cpp)
 } NpHttpsError;
 
 // Why a certificate was refused (NpHttpsResult::cert_flags; several may be set).
@@ -71,7 +72,8 @@ enum {
 
 // Where a request is / was (NpHttpsResult::stage; also visible while pending).
 typedef enum NpHttpsStage {
-    NP_HTTPS_S_QUEUED = 0, NP_HTTPS_S_DNS, NP_HTTPS_S_CONNECT, NP_HTTPS_S_TLS, NP_HTTPS_S_SEND, NP_HTTPS_S_RESPONSE, NP_HTTPS_S_DONE
+    NP_HTTPS_S_QUEUED = 0, NP_HTTPS_S_DNS, NP_HTTPS_S_CONNECT, NP_HTTPS_S_TLS, NP_HTTPS_S_SEND, NP_HTTPS_S_RESPONSE, NP_HTTPS_S_DONE,
+    NP_HTTPS_S_FORCE32 = 0x7fffffff   // never used: 4 bytes wide whatever -fshort-enums says
 } NpHttpsStage;
 
 typedef struct NpHttpsRequest {

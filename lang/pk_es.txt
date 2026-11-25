@@ -1,0 +1,1088 @@
+# context: on-screen text
+input.a_game_button_takes_one_button	Un botón del juego admite un solo botón
+# context: on-screen text
+input.a_shortcut_takes_at_most_four	Un atajo admite como máximo cuatro botones
+# context: on-screen text
+input.button_1	Botón 1
+# context: on-screen text
+input.button_2	Botón 2
+# context: on-screen text
+input.circle	Círculo
+# context: on-screen text
+input.cross	Cruz
+# context: on-screen text
+input.d_pad_down	Cruceta abajo
+# context: on-screen text
+input.d_pad_left	Cruceta izquierda
+# context: on-screen text
+input.d_pad_right	Cruceta derecha
+# context: on-screen text
+input.d_pad_up	Cruceta arriba
+# context: on-screen text
+input.down	Abajo
+# context: on-screen text
+input.fast_forward	Avance rápido
+# context: on-screen text
+input.left	Izquierda
+# context: on-screen text
+input.left_stick_down	Palanca izq. abajo
+# context: on-screen text
+input.left_stick_left	Palanca izq. izquierda
+# context: on-screen text
+input.left_stick_right	Palanca izq. derecha
+# context: on-screen text
+input.left_stick_up	Palanca izq. arriba
+# context: on-screen text
+input.mode	Mode
+# context: on-screen text
+input.no_such_button	Ese botón no existe
+# context: on-screen text
+input.not_set	Sin asignar
+# context: on-screen text
+input.only_player_1_has_shortcuts	Solo el jugador 1 tiene atajos
+# context: on-screen text
+input.pause	Pausa
+# context: on-screen text
+input.quick_load	Carga rápida
+# context: on-screen text
+input.quick_save	Guardado rápido
+# context: on-screen text
+input.rear_touch_bottom_left	Táctil trasero: abajo izquierda
+# context: on-screen text
+input.rear_touch_bottom_right	Táctil trasero: abajo derecha
+# context: on-screen text
+input.rear_touch_top_left	Táctil trasero: arriba izquierda
+# context: on-screen text
+input.rear_touch_top_right	Táctil trasero: arriba derecha
+# context: on-screen text
+input.rewind	Rebobinar
+# context: on-screen text
+input.right	Derecha
+# context: on-screen text
+input.right_stick_down	Palanca der. abajo
+# context: on-screen text
+input.right_stick_left	Palanca der. izquierda
+# context: on-screen text
+input.right_stick_right	Palanca der. derecha
+# context: on-screen text
+input.right_stick_up	Palanca der. arriba
+# context: on-screen text
+input.screenshot	Captura de pantalla
+# context: on-screen text
+input.select	Select
+# context: on-screen text
+input.square	Cuadrado
+# context: on-screen text
+input.start	Start
+# context: on-screen text
+input.start_select_opens_the_menu_pick	Start + Select abre el menú; elige otros botones
+# context: on-screen text
+input.triangle	Triángulo
+# context: on-screen text
+input.turbo_a	Turbo A
+# context: on-screen text
+input.turbo_b	Turbo B
+# context: on-screen text
+input.up	Arriba
+# context: Language row: follows the Vita system language
+lang.auto	Automático
+# context: on-screen text
+link.connecting_over_the_internet	Conectando por internet
+# context: on-screen text
+link.connecting_through_the_relay	Conectando mediante el relé
+# context: on-screen text
+link.ending_the_link_together	Cerrando la conexión entre ambos
+# context: on-screen text
+link.link_ended	Conexión terminada
+# context: on-screen text
+link.link_lost_the_other_vita_is	Conexión perdida: la otra Vita ya no está.
+# context: on-screen text
+link.nobody_answered	Nadie respondió.
+# context: on-screen text
+link.opening_a_path_to_the_other	Abriendo camino a la otra consola
+# context: on-screen text
+link.playing_together	Jugando juntos
+# context: on-screen text
+link.reaching_player_1	Contactando con el jugador 1
+# context: on-screen text
+link.receiving_the_game_from_player_1	Recibiendo el juego del jugador 1
+# context: on-screen text
+link.sending_the_game_to_player_2	Enviando el juego al jugador 2
+# context: on-screen text
+link.starting_the_game_together	Iniciando el juego juntos
+# context: on-screen text
+link.the_game_could_not_be_saved	No se pudo guardar el juego.
+# context: on-screen text
+link.the_game_could_not_be_started	No se pudo iniciar el juego juntos.
+# context: on-screen text
+link.the_game_did_not_arrive_intact	El juego no llegó completo. Inténtalo de nuevo.
+# context: row value
+link.the_link_failed	La conexión falló.
+# context: on-screen text
+link.the_link_failed_2	La conexión falló
+# context: on-screen text
+link.the_link_is_fine	La conexión va bien.
+# context: on-screen text
+link.the_link_was_cancelled	Se canceló la conexión.
+# context: on-screen text
+link.the_other_vita_ended_the_link	La otra Vita terminó la conexión.
+# context: on-screen text
+link.the_other_vita_plays_a_different	La otra Vita juega a otro juego.
+# context: on-screen text
+link.the_other_vita_runs_a_different	La otra Vita usa otra versión de VitAdhoc.
+# context: on-screen text
+link.the_other_vita_s_game_did	El juego de la otra Vita no coincidía.
+# context: on-screen text
+link.the_two_games_fell_out_of	Los dos juegos se desincronizaron. La conexión terminó y no se guardó nada.
+# context: on-screen text
+link.there_was_not_enough_memory_to	No había memoria suficiente para iniciar la conexión.
+# context: on-screen text
+link.this_vita_went_to_sleep_so	Esta Vita entró en reposo, así que la conexión terminó.
+# context: on-screen text
+link.waiting_for_player_2	Esperando al jugador 2
+# context: row value of a governed picture row; %s is the current choice (xBRZ 4x, ...)
+look.auto	Auto (%s)
+# context: row value of a governed picture row eased for speed; %s is the current choice
+look.auto_eased	Auto (%s, suave)
+# context: on-screen text
+md.128_kb	128 KB
+# context: on-screen text
+md.16_kb	16 KB
+# context: on-screen text
+md.256_kb	256 KB
+# context: on-screen text
+md.32_kb	32 KB
+# context: on-screen text
+md.3_buttons	3 botones
+# context: on-screen text
+md.512_kb	512 KB
+# context: on-screen text
+md.64_kb	64 KB
+# context: on-screen text
+md.6_buttons	6 botones
+# context: on-screen text
+md.a_game_gear_game_has_one	Un juego de Game Gear tiene un solo mando.
+# context: on-screen text
+md.a_game_gear_game_has_one_2	Un juego de Game Gear tiene un solo mando
+# context: on-screen text
+md.asic	ASIC
+# context: on-screen text
+md.auto_follows_the_game_3_buttons	Auto sigue al juego: 3 botones o 6. Unos pocos leen mal el mando de 6; elige 3 botones para ellos.
+# context: on-screen text
+md.auto_follows_the_game_europe_runs	Auto sigue al juego. Europa lo ejecuta a 50 Hz, EE. UU. y Japón a 60 Hz; algunos juegos solo funcionan en su región.
+# context: on-screen text
+md.both_edges	Ambos bordes
+# context: on-screen text
+md.change_disc	Cambiar disco
+# context: on-screen text
+md.cheat_code_game_genie_pro_action	Código de truco (Game Genie, Pro Action Replay o dirección:valor)
+# context: toast; %s is the file
+md.cheat_list_not_saved	Lista de trucos sin guardar: %s. Se conservó el archivo anterior.
+# context: on-screen text
+md.console	Consola
+# context: on-screen text
+md.disc	Disco %d
+# context: toast notice
+md.disc_could_not_be_read	No se pudo leer el disco %d: %s
+# context: toast notice
+md.disc_inserted	Disco %d insertado
+# context: toast notice
+md.disc_is_in_the_drive_already	El disco %d ya está en la unidad
+# context: toast notice
+md.disc_is_missing	Falta el disco %d: %s
+# context: toast notice
+md.disc_tray_open	Bandeja de disco abierta
+# context: on-screen text
+md.discrete	Discreto
+# context: on-screen text
+md.enhanced	Mejorado
+# context: on-screen text
+md.europe_50_hz	Europa (50 Hz)
+# context: on-screen text
+md.extra_save_memory_some_games_can	Memoria de guardado extra que algunos juegos pueden usar además de los 8 KB de la consola. 512 KB es lo habitual; 128 KB es lo que vendió Sega; No deja la ranura vacía. Un guardado de otro tamaño se conserva y vuelve al elegir ese tamaño. Surte efecto al próximo inicio. Dos jugadores siempre usa 512 KB.
+# context: on-screen text
+md.fm_sound	Sonido FM
+# context: on-screen text
+md.fm_sound_unit	Unidad de sonido FM
+# context: on-screen text
+md.for_a_game_on_several_discs	Para un juego en varios discos: abre la bandeja, saca el disco, pone el que elijas y la cierra, como a mano. Hazlo cuando el juego pida otro disco. Las partidas y los momentos guardados siguen con el juego.
+# context: on-screen text
+md.games_on_the_master_system_cover	Los juegos de Master System tapan las 8 primeras columnas con un color de borde al desplazarse. Esto las oculta: la imagen mide 248 de ancho.
+# context: on-screen text
+md.hide_masked_edge	Ocultar borde tapado
+# context: on-screen text
+md.how_far_back_rewind_reaches_short	Hasta dónde llega el rebobinado: Corto unos 30 segundos, Medio un minuto. Los momentos de un juego en disco son grandes (1 MB cada uno): las escenas tranquilas conservan esta duración; una que redibuja toda la pantalla (vídeo) solo unos segundos. La memoria que puede usar es fija.
+# context: on-screen text
+md.japan	Japón
+# context: on-screen text
+md.lcd_colours	Colores LCD
+# context: on-screen text
+md.lcd_ghosting	Estela LCD
+# context: on-screen text
+md.left_edge	Borde izquierdo
+# context: toast notice
+md.look_eased_to_keep_full_speed	Aspecto suave para mantener la velocidad total
+# context: error screen: keep the file extensions
+md.m3u_empty	La lista .m3u no tiene ningún disco (.cue, .chd o .iso).
+# context: error screen; %s is the list of missing disc files
+md.m3u_none_found	No se encontró ninguno de los discos de la lista .m3u: %s
+# context: error screen: keep the file extension
+md.m3u_unreadable	No se pudo leer la lista .m3u.
+# context: on-screen text
+md.no_sprite_flicker	Sin parpadeo de sprites
+# context: on-screen text
+md.pad_type	Tipo de mando
+# context: on-screen text
+md.ram_cartridge	Cartucho RAM
+# context: on-screen text
+md.region	Región
+# context: error screen: keep the file names and the folder as they are
+md.sega_cd_bios_missing	Juego de Sega CD: pon tu propia BIOS de Sega CD (por ejemplo us_scd1_9210.bin, eu_mcd1_9210.bin o jp_mcd1_9112.bin) en ux0:data/GBAdhoc/bios o junto al juego
+# context: notice kept for the app (session report): keep the folder as it is
+md.sega_cd_bios_missing_notice	Un juego de Sega CD necesita su BIOS: ponla en ux0:data/GBAdhoc/bios
+# context: error screen; the first %s is the core's own message (English), the second the BIOS regions found
+md.sega_cd_load_failed	%s. Sega CD: revisa la imagen de disco (.cue con sus .bin, .chd o .iso). BIOS encontrada: %s.
+# context: on-screen text
+md.start_sega_games_from_vitadhoc	Inicia los juegos de Sega desde VitAdhoc.
+# context: on-screen text
+md.that_code_is_already_in_the	Ese código ya está en la lista
+# context: on-screen text
+md.that_code_points_at_an_address	Ese código apunta a una dirección que este juego no tiene
+# context: on-screen text
+md.that_is_not_a_cheat_code	Eso no es un código de truco. Usa XXXX-XXXX (Game Genie) o AAAAAA:VVVV (Pro Action Replay)
+# context: on-screen text
+md.that_is_not_a_cheat_code_2	Eso no es un código de truco. Usa XXX-XXX (Game Genie), 00AA-AAVV (Pro Action Replay) o AAAA:VV
+# context: on-screen text
+md.the_console_drew_only_4_sprites	La consola dibujaba solo 4 sprites por línea y los juegos parpadeaban el resto. Sí los dibuja todos; el juego va exactamente igual.
+# context: on-screen text
+md.the_console_drew_only_8_sprites	La consola dibujaba solo 8 sprites por línea y los juegos parpadeaban el resto. Sí los dibuja todos; el juego va exactamente igual.
+# context: toast notice
+md.the_disc_is_being_changed_already	El disco ya se está cambiando
+# context: on-screen text
+md.the_game_gear_s_screen_showed	La pantalla de Game Gear mostraba colores más suaves y nunca un negro real. Sí los dibuja así.
+# context: toast notice
+md.the_list_names_a_disc_that_is_missing	La lista nombra un disco que falta: %s
+# context: on-screen text
+md.the_master_system_s_fm_add	El complemento FM de Master System, que usan algunos juegos. Auto lo activa en los juegos que lo piden.
+# context: toast notice
+md.the_ram_cartridge_changes_when_the_game	El cartucho RAM cambia cuando el juego vuelve a empezar
+# context: on-screen text
+md.the_sega_core_could_not_start	No se pudo iniciar el núcleo de Sega.
+# context: on-screen text
+md.the_slow_game_gear_screen_left	La lenta pantalla de Game Gear dejaba rastro tras lo que se movía. 0 es no, 10 es fuerte.
+# context: on-screen text
+md.the_sound_chip_discrete_is_the	El chip de sonido: Discreto es el YM2612 original, ASIC el posterior YM3438, Mejorado añade los agudos que faltan.
+# context: on-screen text
+md.usa	EE. UU.
+# context: row value
+menu.10_a_second	10 por segundo
+# context: row value
+menu.15_a_second	15 por segundo
+# context: row value
+menu.30_a_second	30 por segundo
+# context: on-screen text
+menu.a_faint_pixel_grid_like_a	Una tenue rejilla de píxeles, como una portátil. 1 tenue, 10 fuerte.
+# context: row value
+menu.a_number_you_type	Un número que escribes
+# context: help line under a row
+menu.a_shortcut_can_be_one_button	Un atajo puede ser un botón o una combinación: púlsalos a la vez.
+# context: on-screen text
+menu.a_soft_glow_beside_the_picture	Un suave brillo junto a la imagen en vez de bandas negras.
+# context: row label
+menu.add_a_cheat	Añadir un truco
+# context: row value
+menu.all_games	Todos los juegos
+# context: row label
+menu.ambient_glow	Brillo ambiental
+# context: question box
+menu.anything_the_game_has_not_saved	Se pierde lo que el juego no haya guardado.
+# context: row label
+menu.apply_to	Aplicar a
+# context: row value
+menu.auto	Auto
+# context: on-screen text
+menu.auto_adapts_to_keep_60_fps	Auto se adapta para mantener 60 fps; suaviza si puede.
+# context: button hint at the bottom
+menu.back	Atrás
+# context: on-screen text
+menu.back_to_the_game	Volver al juego
+# context: question box
+menu.back_to_the_game_list	¿Volver a la lista de juegos?
+# context: on-screen text
+menu.bigger_text_in_the_menus_of	Texto más grande en los menús de la app y los reproductores.
+# context: row value
+menu.bilinear	Bilineal
+# context: on-screen text
+menu.brighter_text_and_clearer_edges_in	Texto más claro y bordes más nítidos en los menús de la app y los reproductores.
+# context: Button test: a shortcut made of several buttons; %s is the action
+menu.btntest.chord	%s (combinación)
+# context: help line under a row
+menu.button_mapping	Asignación de botones
+# context: help line under a row
+menu.button_mapping_for_every_player_the	Asignación de botones de cada jugador, palancas y botones turbo.
+# context: help line under a row
+menu.button_test	Prueba de botones
+# context: row value
+menu.buttons	Botones
+# context: button hint at the bottom
+menu.cancel	Cancelar
+# context: button hint at the bottom
+menu.change	Cambiar
+# context: toast
+menu.cheat_deleted	Truco borrado
+# context: toast; %s is the cheat name
+menu.cheat_deleted_name	Borrado: %s
+# context: row label
+menu.cheats	Trucos
+# context: help line under a row
+menu.cheats_you_add_or_turn_on	Los trucos que añadas o actives aparecen aquí.
+# context: on-screen text
+menu.choose_which_vita_button_does_what	Elige qué botón de la Vita hace qué, para cada jugador.
+# context: question box
+menu.clear	Borrar
+# context: toast notice
+menu.cleared	%s borrado
+# context: on-screen text
+menu.coloured_stripes_like_a_crt_tube	Rayas de color como un tubo CRT. Oscurece algo la imagen. 1 tenue, 10 fuerte.
+# context: row label
+menu.coming	Próximamente
+# context: button hint at the bottom
+menu.confirm	Confirmar
+# context: row label
+menu.controls	Controles
+# context: toast notice
+menu.controls_reset_to_the_defaults	Controles restablecidos a los valores originales
+# context: toast; %s is the reason (util.write_*)
+menu.controls_save_failed	No se pudieron guardar los controles: %s
+# context: toast notice
+menu.could_not_save_the_state_the	No se pudo guardar el estado: no se pudo capturar el juego
+# context: row label
+menu.crt_mask	Máscara CRT
+# context: row value
+menu.customised	Personalizado
+# context: row value
+menu.d_pad	Cruceta
+# context: on-screen text
+menu.dark_lines_between_the_rows_like	Líneas oscuras entre las filas, como una tele. 1 tenue, 10 fuerte.
+# context: row value
+menu.default	Predeterminado
+# context: button hint at the bottom
+menu.delete	Eliminar
+# context: question box
+menu.delete_slot	¿Eliminar la ranura %d?
+# context: question box
+menu.delete_this_cheat	¿Borrar este truco?
+# context: on-screen text
+menu.empty_slot	Ranura vacía
+# context: row value
+menu.enhanced_2x	Mejorado 2x
+# context: row value
+menu.enhanced_3x	Mejorado 3x
+# context: row value
+menu.enhanced_4x	Mejorado 4x
+# context: question box
+menu.every_button_stick_and_turbo_setting	Todos los botones, palancas y ajustes turbo vuelven a los valores originales.
+# context: card label on the control centre and button of the exit question
+menu.exit	Salir
+# context: help line of the Exit card on the control centre
+menu.exit_help	Cerrar VitAdhoc
+# context: row label
+menu.fast_forward	Avance rápido
+# context: help line under a row
+menu.fast_forward_and_sound_while_it	Avance rápido y sonido mientras funciona.
+# context: on-screen text
+menu.ff_button	Botón de avance
+# context: row value
+menu.find_a_value_s_address	Encontrar la dirección de un valor
+# context: help line under a row
+menu.find_where_the_game_keeps_lives	Averigua dónde guarda el juego vidas, dinero o salud: anota el número y redúcelo según cambie. Convierte un resultado en truco.
+# context: row label
+menu.game_list	Lista de juegos
+# context: on-screen text
+menu.h_m_played	%lldh %02lldm jugados
+# context: row label
+menu.high_contrast	Alto contraste
+# context: row value
+menu.hold	Mantener
+# context: on-screen text
+menu.hold_the_fast_forward_button_or	Mantén el botón de avance rápido, o púlsalo una vez para activarlo y desactivarlo.
+# context: on-screen text
+menu.hold_the_rewind_button_to_run	Mantén el botón de rebobinado para ejecutar el juego hacia atrás.
+# context: on-screen text
+menu.hold_turbo_runs_while_the_button	Mantener: el turbo actúa mientras mantienes el botón. Alternar: pulsa una vez para empezar y otra para parar.
+# context: on-screen text
+menu.how_fast_it_runs_2x_and	A qué velocidad corre. 2x y 3x pueden acelerar el sonido o mantener el tono. Sin límite y Sin límite suave no tienen sonido: tantos fotogramas como quepan, una imagen cada dos refrescos (Sin límite) o cada refresco (Sin límite suave).
+# context: on-screen text
+menu.how_fast_turbo_a_presses_10	Con qué rapidez pulsa Turbo A: 10, 15 o 30 veces por segundo.
+# context: on-screen text
+menu.how_fast_turbo_b_presses_10	Con qué rapidez pulsa Turbo B: 10, 15 o 30 veces por segundo.
+# context: on-screen text
+menu.how_large_the_game_is_drawn	Qué tamaño tiene el juego. Original conserva la forma de la consola; Píxel perfecto usa pasos enteros.
+# context: help line under a row
+menu.how_the_game_is_run_and	Cómo se ejecuta y se muestra el juego.
+# context: row label
+menu.image_quality	Calidad de imagen
+# context: row value
+menu.in_the_list	%d en la lista
+# context: row label
+menu.interface	Interfaz
+# context: toast notice
+menu.is_now	%s ahora es %s
+# context: question box
+menu.keep	Conservar
+# context: row label
+menu.keep_sound	Mantener sonido
+# context: on-screen text
+menu.keep_the_places_that_are_just	Conserva los lugares que son justo como en el último paso.
+# context: on-screen text
+menu.keep_the_places_that_are_not	Conserva los lugares que no son como en el último paso.
+# context: on-screen text
+menu.keep_the_places_that_do_not	Conserva los lugares que no contienen el número que escribes.
+# context: on-screen text
+menu.keep_the_places_that_hold_less	Conserva los lugares que contienen menos que el número que escribes.
+# context: on-screen text
+menu.keep_the_places_that_hold_more	Conserva los lugares que contienen más que el número que escribes.
+# context: help line under a row
+menu.keep_the_places_that_hold_the	Conserva los lugares que contienen el número que escribes. Míralo en el juego.
+# context: on-screen text
+menu.keep_the_places_that_went_down	Conserva los lugares que bajaron desde el último paso.
+# context: on-screen text
+menu.keep_the_places_that_went_up	Conserva los lugares que subieron desde el último paso.
+# context: on-screen text
+menu.keep_these_controls_for_every_game	Mantén estos controles en todos los juegos, o solo en este.
+# context: on-screen text
+menu.keep_these_picture_settings_for_every	Mantén estos ajustes de imagen en todos los juegos, o solo en este.
+# context: row label (Settings > Interface)
+menu.language	Idioma
+# context: row value
+menu.large	Grande
+# context: row label
+menu.lcd_grid	Rejilla LCD
+# context: row value
+menu.lcd_pch_2000	LCD (PCH-2000)
+# context: on-screen text
+menu.leave_this_game_for_the_game	Salir de este juego a la lista de juegos
+# context: row label
+menu.left_stick	Palanca izquierda
+# context: on-screen text
+menu.left_stick_2	Palanca izquierda  %d, %d
+# context: on-screen text
+menu.lets_the_rear_touch_panel_s	Permite que las cuatro esquinas del panel táctil trasero actúen como botones asignables.
+# context: button hint at the bottom
+menu.load	Cargar
+# context: toast notice
+menu.load_undone	Carga deshecha
+# context: toast notice
+menu.loading_states_is_not_available	Cargar estados no está disponible
+# context: row value
+menu.look_at_the_game_s_memory	Mirar la memoria del juego ahora
+# context: help line under a row
+menu.make_this_a_cheat_that_keeps	Crea un truco que mantiene el valor actual.
+# context: help line of a button mapping row; %s is the game button
+menu.map.press_ok_for	Pulsa OK y luego el botón de la Vita que será %s.
+# context: row value
+menu.medium	Medio
+# context: on-screen text
+menu.min_played	%lld min jugados
+# context: row value
+menu.mmpx_2x	MMPX 2x
+# context: on-screen text
+menu.mmpx_at_twice_its_size_crisp	MMPX al doble de tamaño: pixel art nítido, ligero para la Vita.
+# context: question box body
+menu.modal.cheat_delete_body	El truco se quita de la lista. No se puede deshacer.
+# context: question box body; %s is the cheat name
+menu.modal.cheat_delete_body_named	"%s" se quita de la lista. No se puede deshacer.
+# context: question box title
+menu.modal.exit_title	¿Cerrar VitAdhoc?
+# context: question box title built from a host text
+menu.modal.exit_title_named	¿%s?
+# context: help line under a row
+menu.most_counters_are_1_byte_try	Casi todos los contadores son de 1 byte. Prueba 2 para dinero y puntos. Cualquier dirección mira también lugares raros. Se usa en la próxima Búsqueda nueva.
+# context: on-screen text
+menu.most_counters_are_1_byte_try_2	Casi todos los contadores son de 1 byte. Prueba 2 para dinero y puntos, 4 para números grandes. Se usa en la próxima Búsqueda nueva.
+# context: toast notice
+menu.moved_here_from	%s se movió aquí desde %s
+# context: on-screen text
+menu.moves_like_the_d_pad	Se mueve como la cruceta
+# context: on-screen text
+menu.narrow_it_down_to_or_fewer	Redúcelos a %d o menos para verlos.
+# context: row label
+menu.new_search	Búsqueda nueva
+# context: row label
+menu.no_cheats_for_this_game	No hay trucos para este juego
+# context: row value
+menu.no_cheats_yet	Aún no hay trucos
+# context: on-screen text
+menu.no_picture	Sin imagen
+# context: toast notice
+menu.no_results_start_a_new_search	Sin resultados. Empieza una búsqueda nueva
+# context: toast notice
+menu.no_saved_state_in_this_slot	Sin estado guardado en esta ranura
+# context: row value
+menu.normal	Normal
+# context: row value
+menu.normal_pitch	Tono normal
+# context: on-screen text
+menu.not_set	Sin asignar
+# context: on-screen text
+menu.not_usable_here	No se puede usar aquí
+# context: on-screen text
+menu.not_used	Sin usar
+# context: help line under a row
+menu.nothing_matched_start_a_new_search	Sin coincidencias. Empieza una búsqueda nueva.
+# context: toast notice
+menu.nothing_pressed_the_button_was_not	No se pulsó nada: el botón no cambió
+# context: toast notice
+menu.nothing_to_undo	Nada que deshacer
+# context: row value
+menu.off	Desactivado
+# context: row value
+menu.oled_pch_1000	OLED (PCH-1000)
+# context: row value
+menu.on	Activado
+# context: row value
+menu.original	Original
+# context: question box
+menu.overwrite	Sobrescribir
+# context: question box
+menu.overwrite_slot	¿Sobrescribir la ranura %d?
+# context: on-screen text
+menu.pick_a_result_to_make_it	Elige un resultado para convertirlo en un truco que mantiene su valor.
+# context: help line under a row
+menu.pick_the_player_whose_buttons_you	Elige el jugador cuyos botones vas a cambiar.
+# context: row label
+menu.picture	Imagen
+# context: on-screen text
+menu.picture_controls_speed_and_text	Imagen, controles, velocidad y texto
+# context: row label
+menu.play_together	Jugar juntos
+# context: on-screen text
+menu.play_with_a_friend	Juega con un amigo
+# context: row label
+menu.player	Jugador
+# context: on-screen text
+menu.player_2	Jugador %d
+# context: toast notice
+menu.player_buttons_reset	Botones del jugador %d restablecidos
+# context: question box
+menu.press_a_button_for	Pulsa un botón para %s
+# context: help line under a row
+menu.press_ok_then_the_vita_button	Pulsa OK y luego el botón de la Vita para eso.
+# context: question box
+menu.press_one_button_or_hold_several	Pulsa un botón, o mantén varios juntos para una combinación.
+# context: question box
+menu.press_the_vita_button_stick_direction	Pulsa el botón de la Vita, dirección de palanca o esquina trasera que quieras usar.
+# context: row value
+menu.ps_tv	PS TV
+# context: on-screen text
+menu.put_every_button_stick_and_turbo	Devuelve todos los botones, palancas y ajustes turbo a los valores originales.
+# context: help line under a row
+menu.put_this_player_s_buttons_back	Devuelve los botones de este jugador a los valores originales.
+# context: question box
+menu.quit	Salir
+# context: row label
+menu.rear_touch_panel	Panel táctil trasero
+# context: why Play together is greyed
+menu.reason.no_link	No disponible para esta consola: el reproductor no tiene conexión
+# context: why a row is greyed
+menu.reason.unsupported	No disponible en este reproductor
+# context: help line under a row
+menu.remember_the_game_s_memory_as	Recuerda la memoria del juego tal como está ahora. Sigue jugando y reduce la lista con los pasos de abajo.
+# context: question box
+menu.reset	Reiniciar
+# context: row label
+menu.reset_game	Reiniciar juego
+# context: question box
+menu.reset_the_controls	¿Restablecer los controles?
+# context: question box
+menu.reset_the_game	¿Reiniciar el juego?
+# context: row label
+menu.reset_this_player_s_buttons	Restablecer botones de este jugador
+# context: help line under a row
+menu.reset_to_defaults	Restablecer valores
+# context: row label
+menu.results	Resultados
+# context: button hint at the bottom
+menu.resume	Reanudar
+# context: row label
+menu.rewind	Rebobinar
+# context: help line under a row
+menu.rewind_length_help	Hasta dónde llega el rebobinado: Corto unos 30 segundos, Medio un minuto. Un juego exigente guarda algo menos: la memoria que puede usar es fija.
+# context: row label
+menu.right_stick	Palanca derecha
+# context: on-screen text
+menu.right_stick_2	Palanca derecha  %d, %d
+# context: button hint at the bottom
+menu.save	Guardar
+# context: button hint at the bottom
+menu.save_here	Guardar aquí
+# context: on-screen text
+menu.save_or_load_the_game_of	Guardar o cargar el juego: %d de %d ranuras usadas
+# context: row label
+menu.save_states	Estados guardados
+# context: on-screen text
+menu.saved	Guardado
+# context: toast notice
+menu.saving_states_is_not_available	Guardar estados no está disponible
+# context: toast notice
+menu.saving_to_slot	Guardando en la ranura %d...
+# context: row label
+menu.scanlines	Líneas de barrido
+# context: row label
+menu.screen	Pantalla
+# context: row label
+menu.screen_size	Tamaño de pantalla
+# context: help line under a row
+menu.screen_size_image_quality_scanlines_lcd	Tamaño de pantalla, calidad de imagen, líneas de barrido, rejilla LCD y brillo ambiental.
+# context: title of the keyboard that asks for a number; %s is the step (Equal to, ...)
+menu.search.ask_number	%s (un número)
+# context: name given to a cheat made from a search result; %s is the address
+menu.search.found_at	Encontrado en %s
+# context: one result found
+menu.search.n_result	%d resultado
+# context: number of results found (not one)
+menu.search.n_results	%d resultados
+# context: row label
+menu.search_memory	Buscar en memoria
+# context: toast notice
+menu.search_started_places_play_on_then	Búsqueda iniciada: %d lugares. Sigue jugando y luego redúcela
+# context: button hint at the bottom
+menu.select	Elegir
+# context: row label
+menu.settings	Ajustes
+# context: row value: how large the picture is drawn
+menu.shape.fit	Ajustar
+# context: row value: whole-number picture sizes
+menu.shape.pixel_perfect	Píxel perfecto
+# context: row value: how large the picture is drawn
+menu.shape.stretch	Estirar
+# context: row value: how large the picture is drawn
+menu.shape.zoom	Zoom
+# context: row value
+menu.sharp_bilinear	Bilineal nítido
+# context: row value
+menu.short	Corto
+# context: on-screen text
+menu.shows_each_button_stick_and_touch	Muestra cada botón, palanca y pantalla táctil al pulsarse, y qué hace.
+# context: on-screen text
+menu.shows_more_of_the_world_than	Muestra más mundo que la consola, en juegos con perfil de vista ancha.
+# context: row value
+menu.since_the_last_step	Desde el último paso
+# context: row label
+menu.size_of_the_number	Tamaño del número
+# context: on-screen text
+menu.slot	Ranura %d
+# context: toast notice
+menu.slot_deleted	Ranura %d eliminada
+# context: on-screen text
+menu.slot_of	Ranura %d de %d
+# context: on-screen text
+menu.smoothed_at_four_times_its_size	Suavizado al cuádruple de tamaño. El más detallado y exigente.
+# context: on-screen text
+menu.smoothed_at_three_times_its_size	Suavizado al triple de tamaño. Más detalle, más trabajo.
+# context: on-screen text
+menu.smoothed_at_twice_the_game_s	Suavizado al doble del tamaño del juego, y luego ajustado.
+# context: row value
+menu.sped_up	Acelerado
+# context: row label
+menu.speed	Velocidad
+# context: value of the Speed link; %s is the mode (2x, Unlimited, ...)
+menu.speed.value_ff	Avance rápido %s
+# context: row value
+menu.start_again	Empezar de nuevo
+# context: on-screen text
+menu.start_the_game_again_from_the	Empezar el juego de nuevo desde el principio
+# context: toast notice
+menu.state_loaded_from_slot	Estado cargado de la ranura %d
+# context: toast notice
+menu.state_saved_to_slot	Estado guardado en la ranura %d
+# context: save slot with no state; also after the dash in the caption
+menu.states.empty	Vacía
+# context: question box
+menu.stay	Quedarse
+# context: row label
+menu.text_size	Tamaño de texto
+# context: help line under a row
+menu.text_size_and_high_contrast_for	Tamaño de texto y alto contraste para los menús de la app y los reproductores.
+# context: toast notice
+menu.the_cheat_could_not_be_deleted	No se pudo borrar el truco
+# context: on-screen text
+menu.the_game_s_own_pixels_evenly	Los píxeles del juego, de tamaño uniforme en cualquier pantalla.
+# context: question box
+menu.the_game_starts_again_from_the	El juego empieza de nuevo desde el principio. Se pierde lo que no haya guardado.
+# context: question box
+menu.the_saved_state_and_its_picture	El estado guardado y su imagen se eliminan. No se puede deshacer.
+# context: toast notice
+menu.the_search_could_not_start_not	No se pudo iniciar la búsqueda: memoria insuficiente
+# context: on-screen text
+menu.the_sound_while_fast_forwarding_off	El sonido durante el avance rápido: apagado, acelerado con el juego o con su tono normal.
+# context: toast notice
+menu.the_state_could_not_be_deleted	No se pudo borrar el estado
+# context: toast notice
+menu.the_state_could_not_be_loaded	No se pudo cargar el estado: este juego o versión no puede leerlo
+# context: question box
+menu.the_state_saved_there_will_be	El juego tal como está ahora reemplazará el estado guardado allí.
+# context: toast notice
+menu.the_undo_could_not_be_applied	No se pudo aplicar el deshacer
+# context: toast notice
+menu.there_is_no_memory_to_search	Este juego no tiene memoria donde buscar
+# context: toast notice
+menu.there_is_no_search_to_narrow	No hay ninguna búsqueda que reducir
+# context: row value
+menu.this_game	Este juego
+# context: toast notice
+menu.this_place_cannot_be_made_into	Aquí este lugar no se puede convertir en truco
+# context: on-screen text
+menu.to_leave_hold_start_select_or	Para salir: mantén Start + Select, o pon un dedo en esta línea
+# context: row value
+menu.toggle	Alternar
+# context: on-screen text
+menu.touch_screen	Pantalla táctil
+# context: on-screen text
+menu.touch_screen_2	Pantalla táctil  %d, %d
+# context: on-screen text
+menu.touching	Tocando
+# context: row label
+menu.turbo_a_speed	Velocidad Turbo A
+# context: row label
+menu.turbo_b_speed	Velocidad Turbo B
+# context: row label
+menu.turbo_mode	Modo turbo
+# context: on-screen text
+menu.turn_cheats_on_and_off	Activar y desactivar trucos
+# context: help line under a row
+menu.turn_this_cheat_on_or_off	Activa o desactiva este truco.
+# context: help line under a row
+menu.turn_this_cheat_on_or_off_2	Activa o desactiva este truco. Triángulo o Borr lo elimina.
+# context: help line under a row
+menu.type_a_game_genie_pro_action	Escribe con el teclado un código Game Genie, Pro Action Replay o dirección=valor.
+# context: toast notice
+menu.type_a_whole_number_from_0	Escribe un número entero de 0 a %u (o 0x y hex)
+# context: help line under the Language row
+menu.ui.language_help	Idioma de los menús de la app y los reproductores. Automático sigue el idioma de la Vita; un idioma sin traducción muestra inglés.
+# context: value of the Interface link
+menu.ui.large_text	Texto grande
+# context: value of the Interface link
+menu.ui.normal_text	Texto normal
+# context: value of the Interface link; %s is Normal text or Large text
+menu.ui.value_contrast	%s, alto contraste
+# context: on-screen text
+menu.undo_last_load	Deshacer última carga
+# context: row value
+menu.unlimited	Sin límite
+# context: row value
+menu.unlimited_smooth	Sin límite suave
+# context: help line under a row
+menu.video_filter_help	Cómo se ajusta la imagen a la pantalla. Bilineal nítido: píxeles exactos con bordes suavizados, a cualquier tamaño. Bilineal: suave, cada píxel se mezcla con el siguiente.
+# context: row label
+menu.waiting	Esperando...  %d
+# context: on-screen text
+menu.what_the_left_stick_does_nothing	Qué hace la palanca izquierda: nada, la cruceta o sus propios botones asignables.
+# context: on-screen text
+menu.what_the_right_stick_does_nothing	Qué hace la palanca derecha: nada, la cruceta o sus propios botones asignables.
+# context: on-screen text
+menu.which_vita_screen_this_is_oled	Qué pantalla de Vita es. OLED suaviza un poco los colores. Todas las consolas.
+# context: row label
+menu.wide_view	Vista ancha
+# context: on-screen text
+patch.patch_applied_checksums_match	Parche aplicado (las sumas de control coinciden)
+# context: on-screen text
+patch.patch_applied_this_kind_of_patch	Parche aplicado (este tipo de parche no puede comprobar la ROM)
+# context: on-screen text
+patch.the_patch_file_is_cut_short	El archivo del parche está incompleto
+# context: on-screen text
+patch.the_patch_file_is_damaged	El archivo del parche está dañado
+# context: on-screen text
+patch.the_patch_file_is_not_valid	El archivo del parche no es válido
+# context: on-screen text
+patch.the_patched_rom_does_not_match	La ROM parcheada no coincide con la suma de control del parche
+# context: on-screen text
+patch.the_patched_rom_would_be_too	La ROM parcheada sería demasiado grande
+# context: on-screen text
+patch.this_patch_was_made_for_a	Este parche se hizo para otra ROM
+# context: on-screen text
+player.a_name_for_it_you_can	Un nombre (puedes dejarlo vacío)
+# context: toast notice
+player.brought_in_the_newer_retroarch_save	Se trajo la partida más reciente de RetroArch
+# context: hint at the bottom of the two-player connection screen; %s is the button (Circle or Cross)
+player.cancel_hint	%s: cancelar
+# context: toast; %s is the cheat name
+player.cheat_added	Truco añadido y activado: %s
+# context: toast; %s is the reason
+player.cheat_added_not_saved	Truco añadido y activado, pero no se pudo guardar la lista: %s
+# context: toast; %s is the reason
+player.cheat_deleted_not_saved	Truco borrado, pero no se pudo guardar la lista: %s
+# context: toast; %s is the cheat name
+player.cheat_off	Truco desactivado: %s
+# context: toast; %s is the reason
+player.cheat_off_not_saved	Truco desactivado, pero no se pudo guardar la lista: %s
+# context: toast; %s is the cheat name
+player.cheat_on	Truco activado: %s
+# context: toast; %s is the reason
+player.cheat_on_not_saved	Truco activado, pero no se pudo guardar la lista: %s
+# context: on-screen text
+player.cheats_are_off_while_linked_to	Los trucos están desactivados mientras estás conectado a otra consola.
+# context: toast notice
+player.could_not_bring_in_the_retroarch	No se pudo traer la partida de RetroArch: se conservó la anterior
+# context: toast after Continue; %s is the reason
+player.could_not_continue	No se pudo continuar: %s
+# context: toast notice
+player.could_not_continue_the_resume_point	No se pudo continuar: el punto de reanudación no corresponde a este juego
+# context: toast notice
+player.could_not_save_the_screen_settings	No se pudieron guardar los ajustes de pantalla
+# context: on-screen text
+player.draws_each_picture_on_its_own	Dibuja cada imagen en su propio hilo, así que las opciones de imagen exigentes no frenan el juego. Desactívalo si la imagen falla alguna vez.
+# context: on-screen text
+player.european_games_run_at_50_hz	Los juegos europeos van a 50 Hz. 50 Hz suave los juega a su velocidad real y uniformiza la imagen: una de cada seis actualizaciones mezcla dos fotogramas. 50 Hz real repite un fotograma de cada seis; 60 Hz rápido los acelera un 20 % frente al original, como en una pantalla de 60 Hz.
+# context: on-screen text
+player.fast_60_hz	60 Hz rápido
+# context: notice kept for the app; %s is the core's own message (English)
+player.game_not_started_err	No se pudo iniciar este juego: %s
+# context: toast notice
+player.hardcore_mode_the_game_starts_from	Modo Hardcore: el juego empieza desde el principio
+# context: toast
+player.moved_old_states	Se pasaron %d estados guardados antiguos a las ranuras nuevas
+# context: toast (one state)
+player.moved_one_old_state	Se pasó %d estado guardado antiguo a las ranuras nuevas
+# context: on-screen text
+player.no_game_was_given	No se indicó ningún juego.
+# context: toast notice
+player.no_point_to_continue_from_the	No hay punto desde el que continuar: el juego empieza desde el principio
+# context: on-screen text
+player.not_enough_memory	Memoria insuficiente.
+# context: on-screen text
+player.pal_games_speed	Velocidad juegos PAL
+# context: notice kept for the app; %s is the reason
+player.patch_failed_notice	No se pudo aplicar el parche: %s
+# context: on-screen text
+player.quick_response	Respuesta rápida
+# context: on-screen text
+player.returning_to_vitadhoc	Volviendo a VitAdhoc...
+# context: help line under a row
+player.rewind_length	Duración del rebobinado
+# context: toast; %s is the reason
+player.save_failed_retry	No se pudo guardar la partida: %s. Se conservó la anterior; reintentando.
+# context: on-screen text
+player.shows_what_you_press_one_frame	Muestra antes lo que pulsas, un fotograma: se calcula y muestra el siguiente por adelantado. El juego va igual. Auto lo usa mientras el juego deja tiempo.
+# context: toast notice
+player.slot	Ranura %d: %s
+# context: toast notice
+player.slot_1_is_empty	La ranura 1 está vacía
+# context: toast notice
+player.slot_could_not_be_loaded_this	No se pudo cargar la ranura %d: este juego no puede leerla
+# context: on-screen text
+player.smooth_50_hz	50 Hz suave
+# context: on-screen text
+player.smooth_hand_over	Transición suave
+# context: on-screen text
+player.start_it_from_the_game_list	Inícialo desde la lista de juegos: Ajustes > Dos jugadores
+# context: toast notice
+player.state_loaded_from_slot_1	Estado cargado de la ranura 1
+# context: on-screen text
+player.steady_pacing	Ritmo estable
+# context: on-screen text
+player.that_code_is_too_long_16	Ese código es demasiado largo (16 partes como máximo)
+# context: on-screen text
+player.the_cheat_could_not_be_added	No se pudo añadir el truco
+# context: on-screen text
+player.the_cheat_list_is_full	La lista de trucos está llena
+# context: on-screen text
+player.the_connection_could_not_be_opened	No se pudo abrir la conexión.
+# context: on-screen text
+player.the_game_file_could_not_be	No se pudo leer el archivo del juego.
+# context: on-screen text
+player.the_game_file_could_not_be_2	No se pudo volver a leer el archivo del juego.
+# context: toast notice
+player.the_game_is_saved_again	La partida se guardó de nuevo
+# context: toast notice
+player.the_game_was_reset	Se reinició el juego
+# context: on-screen text
+player.the_patch_could_not_be_applied	No se pudo aplicar el parche, así que no se inició el juego.
+# context: toast notice
+player.the_resume_point_was_made_with	El punto de reanudación se hizo con otro parche: el juego empieza desde el principio
+# context: on-screen text
+player.the_two_player_game_could_not	No se pudo iniciar el juego de dos jugadores.
+# context: on-screen text
+player.the_two_player_link_could_not	No se pudo iniciar la conexión de dos jugadores.
+# context: toast notice
+player.this_cheat_cannot_be_switched_on	Este truco no se puede activar aquí
+# context: on-screen text
+player.this_game_could_not_be_started	No se pudo iniciar este juego.
+# context: on-screen text
+player.true_50_hz	50 Hz real
+# context: on-screen text
+player.two_player_game	Juego de dos jugadores
+# context: reason in the sentence above
+player.unknown_error	error desconocido
+# context: help line under a row
+player.video_filter	Filtro de vídeo
+# context: on-screen text
+player.when_a_scene_is_too_heavy	Cuando una escena es demasiado pesada para todos los fotogramas, se muestra uno de cada dos, parejo. El juego mantiene toda la velocidad.
+# context: toast on an unlock: title and points
+ra.achievement	Logro: %s (%u)
+# context: on-screen text
+ra.achievements_sent	Logros enviados
+# context: on-screen text
+ra.achievements_will_be_sent_when_back	Los logros se enviarán al volver a estar en línea
+# context: indicator on screen while a challenge is active; %s is its title
+ra.challenge	Reto: %s
+# context: indicator on screen
+ra.challenges_active	%u retos activos
+# context: toast: every achievement of the game; %s is the game
+ra.completed	Completado: %s
+# context: toast; %s is the server's message
+ra.error	RetroAchievements: %s
+# context: notice
+ra.hardcore_no_cheats	Modo Hardcore: trucos desactivados
+# context: notice
+ra.hardcore_no_rewind	Modo Hardcore: rebobinado desactivado
+# context: notice (RetroAchievements Hardcore)
+ra.hardcore_no_states	Modo Hardcore: no se pueden cargar estados
+# context: toast; %s is the leaderboard
+ra.leaderboard_attempt	Intento de clasificación: %s
+# context: toast; %s is the leaderboard
+ra.leaderboard_failed	Intento de clasificación fallido: %s
+# context: toast: leaderboard title and the score
+ra.leaderboard_submitted	Enviado: %s %s
+# context: toast: every achievement of the game in Hardcore; %s is the game
+ra.mastered	Dominado: %s
+# context: on-screen text
+ra.no_achievements_for_this_game_yet	Aún no hay logros para este juego
+# context: toast when a game starts: unlocked of all
+ra.progress	%u de %u logros
+# context: toast when a game starts in Hardcore mode
+ra.progress_hardcore	%u de %u logros - Hardcore
+# context: toast after a leaderboard: rank of entries
+ra.rank	Puesto %u de %u
+# context: on-screen text
+ra.retroachievements_does_not_know_this_version	RetroAchievements no conoce esta versión
+# context: toast
+ra.server_error	RetroAchievements: error del servidor
+# context: toast; %s is the set title
+ra.set_completed	Conjunto completado: %s
+# context: toast
+ra.sign_in_retry	RetroAchievements: no se pudo iniciar sesión, se reintentará
+# context: toast; %s is the server's message
+ra.unavailable_error	Logros no disponibles: %s
+# context: toast
+ra.unavailable_no_answer	Logros no disponibles: sin respuesta
+# context: chip on screen while rewinding
+rewind.chip	<< REBOBINAR %u s
+# context: chip on screen while rewinding at the oldest point
+rewind.chip_oldest	<< REBOBINAR %u s (más antiguo)
+# context: on-screen text
+rewind.rewind_failed	Falló el rebobinado
+# context: on-screen text
+rewind.rewind_is_off_while_games_are	El rebobinado está desactivado con juegos conectados
+# context: on-screen text
+rewind.rewind_is_switched_off_settings	El rebobinado está desactivado (Ajustes)
+# context: on-screen text
+rewind.rewind_not_enough_memory_for_it	Rebobinado: memoria insuficiente
+# context: on-screen text
+rewind.this_is_as_far_back_as	Hasta aquí llega el rebobinado
+# context: on-screen text
+search.1_byte	1 byte
+# context: on-screen text
+search.2_bytes	2 bytes
+# context: on-screen text
+search.2_bytes_any_address	2 bytes, cualquier dirección
+# context: on-screen text
+search.4_bytes	4 bytes
+# context: on-screen text
+search.4_bytes_any_address	4 bytes, cualquier dirección
+# context: on-screen text
+search.changed	Cambió
+# context: on-screen text
+search.decreased	Disminuyó
+# context: on-screen text
+search.equal_to	Igual a
+# context: on-screen text
+search.greater_than	Mayor que
+# context: on-screen text
+search.increased	Aumentó
+# context: on-screen text
+search.less_than	Menor que
+# context: on-screen text
+search.not_equal_to	Distinto de
+# context: on-screen text
+search.unchanged	Sin cambios
+# context: on-screen text
+snes.8_7_console	8:7 (consola)
+# context: on-screen text
+snes.averages_pairs_of_columns_in_512	Promedia pares de columnas en imágenes de 512 de ancho y suaviza sus transparencias con tramado. Suaviza el texto.
+# context: on-screen text
+snes.averages_pairs_of_lines_in_interlaced	Promedia pares de líneas en imágenes entrelazadas, lo que quita su parpadeo.
+# context: on-screen text
+snes.blend_hi_res_columns	Mezclar columnas hi-res
+# context: on-screen text
+snes.blend_interlace_lines	Mezclar líneas entrelazadas
+# context: on-screen text
+snes.cheat_code_game_genie_pro_action	Código de truco (Game Genie, Pro Action Replay o dirección=valor)
+# context: toast notice
+snes.look_eased_to_keep_full_speed	Aspecto suave para mantener la velocidad total
+# context: on-screen text
+snes.multitap	Multitap
+# context: on-screen text
+snes.pixel_perfect_only_the_console_s	Solo Píxel perfecto: los píxeles algo anchos de la consola (8:7), o cuadrados.
+# context: on-screen text
+snes.pixel_shape	Forma del píxel
+# context: on-screen text
+snes.start_snes_games_from_vitadhoc	Inicia los juegos de SNES desde VitAdhoc.
+# context: on-screen text
+snes.that_code_points_at_address_0	Ese código apunta a la dirección 0, que no se puede cambiar
+# context: on-screen text
+snes.that_is_not_a_cheat_code	Eso no es un código de truco. Usa XXXX-XXXX (Game Genie), AAAAAAVV (Pro Action Replay) o AAAAAA=VV
+# context: on-screen text
+snes.the_snes_core_could_not_start	No se pudo iniciar el núcleo de SNES.
+# context: on-screen text
+snes.the_super_multitap_for_players_3	El Super Multitap para los jugadores 3 y 4. Auto lo activa en los juegos que se sabe que lo usan.
+# context: on-screen text
+speed.unlimited	>> Sin límite
+# context: on-screen text
+speed.unlimited_smooth	>> Sin límite suave
+# context: on-screen text
+states.apr	abr
+# context: on-screen text
+states.aug	ago
+# context: on-screen text
+states.could_not_save_the_state	No se pudo guardar el estado: %s
+# context: on-screen text
+states.dec	dic
+# context: on-screen text
+states.feb	feb
+# context: on-screen text
+states.jan	ene
+# context: on-screen text
+states.jul	jul
+# context: on-screen text
+states.jun	jun
+# context: on-screen text
+states.mar	mar
+# context: on-screen text
+states.may	may
+# context: on-screen text
+states.no_saved_state_in_this_slot	Sin estado guardado en esta ranura
+# context: on-screen text
+states.no_such_slot	Esa ranura no existe
+# context: on-screen text
+states.nov	nov
+# context: on-screen text
+states.oct	oct
+# context: on-screen text
+states.sep	sep
+# context: on-screen text
+states.the_state_could_not_be_read	No se pudo leer el estado de la tarjeta de memoria
+# context: on-screen text
+states.the_state_could_not_be_written	No se pudo escribir el estado
+# context: on-screen text
+states.the_state_file_is_damaged	El archivo de estado está dañado
+# context: on-screen text
+states.the_state_file_is_too_large	El archivo de estado es demasiado grande
+# context: on-screen text
+util.bad_request	solicitud incorrecta
+# context: on-screen text
+util.could_not_replace_the_old_file	no se pudo reemplazar el archivo anterior (se conservó)
+# context: on-screen text
+util.could_not_write_to_the_memory	no se pudo escribir en la tarjeta de memoria (llena o protegida contra escritura)
+# context: on-screen text
+util.the_card_did_not_keep_what	la tarjeta no conservó lo escrito

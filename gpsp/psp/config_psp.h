@@ -194,6 +194,11 @@ typedef struct
     * buttons do (Start + Select, L + R + Start), so a ghost tap cannot.
     * Passed to the Super NES and Sega players in the launch file. */
    int  tap_menu;
+   /* Settings > Controls > Rear touch panel (CONFIG.INI rear_touch): 1 =
+    * the rear panel's four corners are inputs (ctl_map.h CTL_REAR_*) that
+    * Button mapping can give to any action; 0 (the default) = the panel is
+    * not read.  A game's own choice (pcfg_game.rear) comes first. */
+   int  rear_touch;
    /* Settings > Display > WonderSwan smoothing (CONFIG.INI ws_blend): 1 =
     * the 75 Hz console's frames blended into each 60 Hz refresh (smooth
     * scrolling, the default); 0 = the newest frame only. */
@@ -800,9 +805,14 @@ typedef struct
    /* Game Boy Camera (games/<ROM>.ini camera): what the sensor looks at,
     * PCFG_CAM_* */
    int camera;
+   /* Rear touch panel for this game (games/<ROM>.ini rear_touch): -1 follows Settings, else 0 Off, 1 On */
+   int rear;
+   /* NES: Port 2 (games/<ROM>.ini nes_port2): 0 Auto (the games the game database lists get the Zapper), 1 Zapper, 2 Controller */
+   int nes_port2;
 } pcfg_game;
 enum { PCFG_CAM_FRONT, PCFG_CAM_BACK, PCFG_CAM_FILE, PCFG_CAM_MODES };
 const char *pcfg_camera_name(int m);
+enum { PCFG_PORT2_AUTO, PCFG_PORT2_ZAPPER, PCFG_PORT2_PAD, PCFG_PORT2_MODES };
 enum { PCFG_WS_ROT_AUTO, PCFG_WS_ROT_HORIZONTAL, PCFG_WS_ROT_VERTICAL, PCFG_WS_ROT_MODES };
 const char *pcfg_ws_rotation_name(int m);
 extern pcfg_game g_pgame;

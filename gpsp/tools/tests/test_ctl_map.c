@@ -263,7 +263,7 @@ static void test_rules(void)
    CHECK(ctl_check(CTL_GAME_A, 0) == CTL_OK);
    CHECK(ctl_check(CTL_GAME_A, TRI) == CTL_OK);
    CHECK(ctl_check(CTL_GAME_A, TRI | SQ) == CTL_E_SINGLE);
-   CHECK(ctl_check(CTL_GAME_A, 0x10000) == CTL_E_BITS);
+   CHECK(ctl_check(CTL_GAME_A, 0x100000u) == CTL_E_BITS);
    CHECK(ctl_check(CTL_SC_FF, L | R) == CTL_OK);
    CHECK(ctl_check(CTL_SC_FF, START | SEL) == CTL_E_RESERVED);
    CHECK(ctl_check(CTL_SC_FF, START | SEL | L) == CTL_E_RESERVED);
@@ -891,7 +891,7 @@ static void test_stick(void)
 
    /* the stick's bits are not the buttons', and together they are CTL_ALL */
    CHECK((CTL_STICK_ALL & CTL_BUTTONS) == 0);
-   CHECK((CTL_STICK_ALL | CTL_BUTTONS) == CTL_ALL);
+   CHECK((CTL_STICK_ALL | CTL_BUTTONS | CTL_REAR_ALL) == CTL_ALL);
    CHECK(ctl_popcount(CTL_STICK_ALL) == 4);
    CHECK(ctl_stick_only(CTL_STICK_UP));
    CHECK(ctl_stick_only(CTL_STICK_UP | CTL_STICK_LEFT));
@@ -934,6 +934,72 @@ static void test_stick(void)
    ctl_defaults(&m);
    for (s = 0; s < CTL_ACTIONS; s++)
       CHECK(!(m.bind[s] & CTL_STICK_ALL));
+}
+
+/* THE REAR PANEL (ctl_map.h): four corners as inputs, from touch points. */
+static void test_rear(void)
+{
+   ctl_map m, r;
+   int s, x[4], y[4];
+   char buf[64];
+   unsigned mask;
+   const char *ini = "/tmp/t_ctl_rear.ini";
+
+   /* the zones: left/right at x = 960, top/bottom at y = 499, the middle of
+    * the 108..889 the panel reports (the players' split) */
+   x[0] = 0;   y[0] = 108; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_TL);
+   x[0] = 959; y[0] = 498; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_TL);
+   x[0] = 960; y[0] = 498; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_TR);
+   x[0] = 959; y[0] = 499; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_BL);
+   x[0] = 960; y[0] = 499; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_BR);
+   /* the two halves are the same height */
+   CHECK(CTL_REAR_MID_Y - CTL_REAR_Y0 == CTL_REAR_Y1 + 1 - CTL_REAR_MID_Y);
+   x[0] = 1919; y[0] = 889; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_BR);
+   CHECK(ctl_rear_zones(x, y, 0) == 0);
+   CHECK(ctl_rear_zones(NULL, NULL, 2) == 0);
+   /* two fingers light two corners; the same corner twice lights it once */
+   x[0] = 100; y[0] = 100; x[1] = 1800; y[1] = 800;
+   CHECK(ctl_rear_zones(x, y, 2) == (CTL_REAR_TL | CTL_REAR_BR));
+   x[1] = 200; y[1] = 200;
+   CHECK(ctl_rear_zones(x, y, 2) == CTL_REAR_TL);
+   /* only the panel's four report slots are read */
+   x[0] = 1; x[1] = 1; x[2] = 1; x[3] = 1; y[0] = 1; y[1] = 1; y[2] = 1; y[3] = 1;
+   CHECK(ctl_rear_zones(x, y, 9) == CTL_REAR_TL);
+   CHECK(ctl_popcount(CTL_REAR_ALL) == 4);
+   CHECK((CTL_REAR_ALL & (CTL_BUTTONS | CTL_STICK_ALL)) == 0);
+
+   /* bindable like any input: a game button, a shortcut, a chord with a button */
+   ctl_defaults(&m);
+   CHECK(ctl_assign(&m, CTL_SC_FF, CTL_REAR_TL, &s) == CTL_OK && s == -1);
+   CHECK(ctl_assign(&m, CTL_SC_SAVE, CTL_REAR_TR, &s) == CTL_OK && s == -1);
+   CHECK(ctl_assign(&m, CTL_GAME_L, CTL_REAR_BL, &s) == CTL_OK);
+   CHECK(ctl_game_mask(&m, CTL_REAR_BL) == (1u << JP_L));
+   CHECK(ctl_shortcuts(&m, CTL_REAR_TR, CTL_REAR_TR) & CTL_FIRE_SAVE);
+   CHECK(!(ctl_shortcuts(&m, CTL_REAR_TR, 0) & CTL_FIRE_SAVE));   /* held: once */
+   CHECK(ctl_shortcuts(&m, CTL_REAR_TL, 0) & CTL_FIRE_FF_HELD);
+   CHECK(ctl_assign(&m, CTL_SC_LOAD, CTL_SELECT | CTL_REAR_BR, &s) == CTL_OK);
+   CHECK(ctl_check(CTL_GAME_A, CTL_REAR_TL | CTL_REAR_TR) == CTL_E_SINGLE);
+   CHECK(ctl_check(CTL_GAME_A, 0x100000u) == CTL_E_BITS);
+   /* the conflict rule works across kinds */
+   CHECK(ctl_assign(&m, CTL_SC_SHOT, CTL_REAR_TL, &s) == CTL_OK && s == CTL_SC_FF);
+   CHECK(m.bind[CTL_SC_FF] == 0);
+
+   /* names: CONFIG.INI spelling round trip */
+   CHECK(ctl_parse("rear_tl", &mask) == 0 && mask == CTL_REAR_TL);
+   CHECK(ctl_parse("SELECT + Rear_BR", &mask) == 0 && mask == (CTL_SELECT | CTL_REAR_BR));
+   ctl_format(CTL_L | CTL_REAR_BR | CTL_REAR_TR, buf, sizeof(buf), NULL, NULL);
+   CHECK(strcmp(buf, "L+REAR_TR+REAR_BR") == 0);
+   CHECK(ctl_parse(buf, &mask) == 0 && mask == (CTL_L | CTL_REAR_TR | CTL_REAR_BR));
+   remove(ini);
+   CHECK(ctl_save_ini(&m, ini) == 0);
+   CHECK(ctl_load_ini(&r, ini) == 0);
+   for (s = 0; s < CTL_ACTIONS; s++)
+      CHECK(r.bind[s] == m.bind[s]);
+   /* the defaults never mention the rear panel */
+   ctl_defaults(&m);
+   for (s = 0; s < CTL_ACTIONS; s++)
+      CHECK(!(m.bind[s] & CTL_REAR_ALL));
+   remove(ini);
 }
 
 /* ---- TURBO BUTTONS (docs/CONTROL-REMAP.md section 13) --------------------- */
@@ -1312,7 +1378,7 @@ static void test_turbo(void)
    CHECK(ctl_check(CTL_TURBO_A1, L | R) == CTL_E_SINGLE);
    CHECK(ctl_assign(&m, CTL_TURBO_A1, L | R, &s) == CTL_E_SINGLE && s == -1);
    CHECK(m.bind[CTL_TURBO_A1] == 0 && m.bind[CTL_GAME_L] == L);
-   CHECK(ctl_check(CTL_TURBO_B2, 0x10000) == CTL_E_BITS);
+   CHECK(ctl_check(CTL_TURBO_B2, 0x100000u) == CTL_E_BITS);
    /* any single bindable input, the stick's directions included */
    for (i = 0; i < CTL_NBUTTONS; i++)
       CHECK(ctl_check(CTL_TURBO_B2, ctl_button_order(i)) == CTL_OK);
@@ -1871,6 +1937,7 @@ int main(void)
    return 0;
 #endif
    test_stick();
+   test_rear();
    test_table();
    test_rules();
    test_parse_format();

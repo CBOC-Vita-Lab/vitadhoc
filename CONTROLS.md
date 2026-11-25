@@ -54,6 +54,39 @@ VitAdhoc's own screenshot (L + R + Select, saved in
 `ux0:data/GBAdhoc/screenshots/`) is off. Settings > Controls > Screenshot
 button combo turns it on; Button mapping can give Screenshot any other chord.
 
+## Rear Touch Panel And Button Test
+
+The back of the Vita is a touch panel. **Settings > Controls > Rear touch
+panel** (Off by default) makes its four corners (top left, top right, bottom
+left, bottom right) inputs like any button: while it is on, **Button mapping** can give each one
+any game button, shortcut or turbo button, alone or in a chord. The panel is split
+in the middle both ways, so a finger lights one corner and two fingers two. A
+game can have its own choice: **Settings > This game > Rear touch panel**
+(Settings, Off or On). The Super NES and Sega players have the same row in their
+Controls page. Nothing is on a corner until you put it there; mind that the
+grips of the Vita rest against the panel, so give a corner a button you do not mind
+pressing by accident. On the WonderSwan, which plays the Vita's own buttons, a
+corner bound to a game button presses what that button's key presses.
+
+**Settings > Controls > Button test** shows every button, both sticks, the touch
+screen and the four rear corners live, and what each does for the console on
+screen, from your current mapping. Use it to check a worn button or a mapping.
+Every button is being tested, so none of them leaves the page: hold Start +
+Select for half a second, or, if one of those two is the worn button, hold a
+finger on the line at the bottom of the page for a second. The Super NES and Sega players have it on the
+Controls page of their menu (Start + Select, Settings, Controls).
+
+## NES Zapper
+
+Games that use the NES Zapper (Duck Hunt, Hogan's Alley, Wild Gunman, Gumshoe and
+the others the game database lists) use the front touch screen as the gun: touch
+the picture where you want to aim, and the trigger is pulled while the finger is
+down. A quick tap is enough: the gun stays on the spot for a moment after the
+finger lifts. In those games a tap does not open the menu; hold Start + Select. Nothing
+is drawn on the picture. **Settings > This game > Port 2** (NES only) is Auto
+(the database decides), Zapper (any game) or Controller (never); it is read when the
+game starts.
+
 ## Sega Genesis / Mega Drive, Sega CD, Master System, Game Gear, SG-1000
 
 These play in `md.bin` (Sega CD with the Genesis pad: the same buttons). Every button can be remapped per game in its menu,

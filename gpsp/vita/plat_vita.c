@@ -921,6 +921,30 @@ int plat_touch_points(plat_touch_pt *out, int max)
    return n;
 }
 
+/* The rear panel, every finger on it (plat.h): its own units (x 0..1919, y 108..889). */
+int plat_rear_points(plat_touch_pt *out, int max)
+{
+   static int started;
+   SceTouchData td;
+   int i, n = 0;
+   if (!started)
+   {
+      sceTouchSetSamplingState(SCE_TOUCH_PORT_BACK,
+                               SCE_TOUCH_SAMPLING_STATE_START);
+      started = 1;
+   }
+   memset(&td, 0, sizeof(td));
+   if (sceTouchPeek(SCE_TOUCH_PORT_BACK, &td, 1) < 0)
+      return 0;
+   for (i = 0; i < (int)td.reportNum && n < max; i++)
+   {
+      out[n].x = td.report[i].x;
+      out[n].y = td.report[i].y;
+      n++;
+   }
+   return n;
+}
+
 /* ---- the motion sensor (plat.h) ------------------------------------------ */
 
 static int g_motion_on;

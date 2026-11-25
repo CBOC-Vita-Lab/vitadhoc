@@ -628,6 +628,23 @@ def t_ports(S):
             "every setup in the table agrees")
 
 
+def t_zapper_map(S):
+    """The NES Zapper on the touch screen (../zapper_map.h): a touch of the
+    screen to a pixel of the NES picture, through the screen size, the wide
+    view and the overscan crop."""
+    exe = os.path.join(S.outdir, "zapper_map_test")
+    os.makedirs(S.outdir, exist_ok=True)
+    cc = subprocess.run(["cc", "-Wall", "-Wextra", "-o", exe,
+                         os.path.join(HERE, "zapper_map_test.c")],
+                        capture_output=True, text=True)
+    S.check(cc.returncode == 0, "the zapper map compiles: %s" % cc.stderr[-200:])
+    if cc.returncode:
+        return
+    p = subprocess.run([exe], capture_output=True, text=True)
+    S.check(p.returncode == 0 and p.stdout.strip() == "ok zapper_map",
+            "every case of the touch-to-pixel map agrees (%s)" % p.stdout[-200:])
+
+
 def t_twopads(S):
     """Two controllers: two equal pictures side by side (even with the
     large + small layout chosen), each pad its own game, either player opens
@@ -2224,7 +2241,7 @@ def t_speed(S):
 
 
 TESTS = [("linktest", t_linktest), ("menu", t_menu), ("switch", t_switch),
-         ("ports", t_ports), ("twopads", t_twopads), ("touch2", t_touch2),
+         ("ports", t_ports), ("zapper_map", t_zapper_map), ("twopads", t_twopads), ("touch2", t_touch2),
          ("save", t_save), ("cycle", t_cycle), ("cheats", t_cheats),
          ("audio", t_audio), ("states", t_states), ("ff", t_ff),
          ("other", t_other), ("gb", t_gb), ("gb_mixed", t_gb_mixed), ("exclusive", t_exclusive),

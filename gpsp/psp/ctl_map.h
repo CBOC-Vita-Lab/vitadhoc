@@ -57,13 +57,23 @@ extern "C" {
 #define CTL_STICK_LEFT  0x0400u
 #define CTL_STICK_RIGHT 0x0800u
 #define CTL_STICK_ALL   0x0C06u
-/* The sixteen bindable inputs: twelve buttons and the stick's four
- * directions.  pad.Buttons also carries HOME, HOLD, the WLAN switch, NOTE,
+/* THE REAR TOUCH PANEL, as four more inputs (the Vita's; the players have the
+ * same four).  The panel is split into four corners by ctl_rear_zones() and
+ * from there on each corner is an ordinary input, bindable like any button.
+ * The bits sit above the PSP's sixteen, so a PSP build never sees them.
+ * They only exist while Settings > Controls > Rear touch panel is on. */
+#define CTL_REAR_TL     0x10000u
+#define CTL_REAR_TR     0x20000u
+#define CTL_REAR_BL     0x40000u
+#define CTL_REAR_BR     0x80000u
+#define CTL_REAR_ALL    0xF0000u
+/* The twenty bindable inputs: twelve buttons, the stick's four directions
+ * and the rear panel's four corners.  pad.Buttons also carries HOME, HOLD, the WLAN switch, NOTE,
  * SCREEN and the volume keys; none of them is bindable, and every
  * comparison here masks them away first. */
 #define CTL_BUTTONS   0xF3F9u           /* the twelve real buttons */
-#define CTL_ALL       0xFFFFu
-#define CTL_NBUTTONS  16
+#define CTL_ALL       0xFFFFFu
+#define CTL_NBUTTONS  20
 /* The fixed menu chord.  A shortcut containing both is refused. */
 #define CTL_MENU_CHORD (CTL_START | CTL_SELECT)
 /* Longest chord a shortcut may use (the longest 3.0 had was four buttons). */
@@ -128,7 +138,7 @@ typedef struct
 
 typedef struct
 {
-   uint16_t bind[CTL_ACTIONS];  /* PSP button mask; 0 = unbound           */
+   uint32_t bind[CTL_ACTIONS];  /* PSP button mask; 0 = unbound           */
    /* Sticky "this key is in CONFIG.INI" flag.  A binding is written when it
     * differs from its default OR its key is already in the file -- so a
     * player who never remaps gets a byte-identical config.ini, and a reset
@@ -180,6 +190,19 @@ int ctl_stick_parse(const char *s, int *out);  /* 0 and *out, or -1 */
 #define CTL_STICK_ON      72
 #define CTL_STICK_OFF_AT  52
 unsigned ctl_stick_bits(int mode, int lx, int ly, unsigned *state);
+/* THE REAR PANEL.  `x`/`y` are the touch points in the panel's own units
+ * (sceTouchGetPanelInfo of the back panel: x 0..1919, y 108..889 -- the
+ * panel is shorter than the screen and its reports do not start at 0), `n`
+ * how many.  A point in the left half is "left", in the upper half "top"
+ * (the same split the players use: x < 960, y < 499, the middle of what the
+ * panel reports), so each finger lights one corner; the result is the
+ * CTL_REAR_* bits of every corner touched.  Pure: the caller reads the
+ * panel. */
+#define CTL_REAR_W  1920
+#define CTL_REAR_Y0 108
+#define CTL_REAR_Y1 889
+#define CTL_REAR_MID_Y ((CTL_REAR_Y0 + CTL_REAR_Y1 + 1) / 2)
+unsigned ctl_rear_zones(const int *x, const int *y, int n);
 /* 1 if `mask` is bound to the stick alone: one or more stick directions
  * and no real button. */
 int ctl_stick_only(unsigned mask);

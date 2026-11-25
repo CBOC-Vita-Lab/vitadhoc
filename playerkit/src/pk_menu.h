@@ -60,6 +60,7 @@ enum RowId {
 	ROW_CTL_STICK_L, ROW_CTL_STICK_R, ROW_CTL_REAR, ROW_CTL_MAPPING, ROW_CTL_TURBO_A, ROW_CTL_TURBO_B, ROW_CTL_TURBO_MODE,
 	ROW_CTL_APPLY, ROW_CTL_RESET,
 	ROW_SPD_FF, ROW_SPD_SOUND, ROW_SPD_MODE, ROW_SPD_REWIND,
+	ROW_CTL_BTNTEST,             /* Settings > Controls > Button test (an action row: no value) */
 	ROW_COUNT,
 	ROW_HOST_BASE = 1000          /* rows the host adds itself (add_host_row) have ids from here */
 };
@@ -202,6 +203,7 @@ public:
 	void select_slot(int slot);        /* 1..10 */
 	int selected_slot() const { return slot_; }
 	bool modal_open() const { return modal_ != 0; }
+	bool button_test_open() const { return modal_ == M_BTNTEST; }
 	int modal_kind() const { return modal_; }
 	enum { REGION_CARD = 1, REGION_ROW, REGION_ARROW_L, REGION_ARROW_R, REGION_SLIDER, REGION_SLOT, REGION_BUTTON, REGION_OUTSIDE, REGION_DELETE };
 	struct Region {
@@ -232,7 +234,7 @@ private:
 		std::vector<int> map;         /* a picker with some choices left out: choices[i] stands for value map[i] */
 		Row() : id(-1), kind(K_INFO), vmin(0), vmax(0), value(0), enabled(true), tag(0) {}
 	};
-	enum { M_NONE = 0, M_OVERWRITE, M_DELETE, M_LIST, M_EXIT, M_RESET, M_CTL_RESET, M_CAPTURE, M_CHEAT_DELETE };
+	enum { M_NONE = 0, M_OVERWRITE, M_DELETE, M_LIST, M_EXIT, M_RESET, M_CTL_RESET, M_CAPTURE, M_CHEAT_DELETE, M_BTNTEST };
 	enum { CARD_RESUME = 0, CARD_STATES, CARD_TOGETHER, CARD_CHEATS, CARD_SETTINGS, CARD_RESET, CARD_LIST, CARD_EXIT, CARD_COUNT };
 	enum { BTN_PRIMARY = 1, BTN_SECONDARY, BTN_LOAD, BTN_SAVE, BTN_DELETE, BTN_UNDO, BTN_CLEAR, BTN_CANCEL };
 
@@ -357,6 +359,13 @@ private:
 	Texture *thumb_tex_[STATE_SLOTS];
 	Texture *shot_tex_;
 	bool tex_dirty_;
+	/* Button test: the pad as read now, and how long Start + Select have been held */
+	PadSample bt_pad_;
+	TouchPoint bt_touch_;
+	int bt_hold_ms_, bt_touch_ms_;
+	void bt_update(const MenuInput &in);
+	void draw_btntest(Gfx *g, Text *t);
+	std::string bt_actions(uint32_t bit) const;
 	/* capture */
 	int cap_action_, cap_ms_, cap_window_ms_;
 	uint32_t cap_bits_;

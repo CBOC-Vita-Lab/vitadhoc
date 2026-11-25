@@ -208,6 +208,31 @@ int main(int argc, char **argv)
 	pkh::press(menu, PH_CROSS);
 	EXPECT(menu.page() == Menu::PAGE_CONTROLS);
 	w.snap(menu, "11_controls");
+	{
+		/* the Button test: Cross, a corner of the rear panel, the left stick and a finger lit */
+		pkh::press(menu, PH_DOWN);
+		for (int i = 0; i < 3; i++) pkh::press(menu, PH_DOWN);
+		pkh::press(menu, PH_CROSS);
+		EXPECT(menu.button_test_open());
+		pk::MenuInput in = pkh::idle();
+		in.pads[0].buttons = PH_CROSS | PH_L;
+		in.pads[0].lx = 255;
+		in.pads[0].back = 2;
+		in.touch.down = true; in.touch.x = 300; in.touch.y = 200;
+		menu.update(in);
+		advance(menu, 100);
+		menu.update(in);
+		w.snap(menu, "11b_button_test");
+		in = pkh::idle();
+		in.pads[0].buttons = PH_START | PH_SELECT;
+		for (int k = 0; k < 40; k++) menu.update(in);
+		EXPECT(!menu.button_test_open());
+		menu.update(pkh::idle());
+		pkh::press(menu, PH_UP);
+		pkh::press(menu, PH_UP);
+		pkh::press(menu, PH_UP);
+		pkh::press(menu, PH_UP);
+	}
 	for (int i = 0; i < 3; i++) pkh::press(menu, PH_DOWN);
 	pkh::press(menu, PH_CROSS);
 	EXPECT(menu.page() == Menu::PAGE_MAPPING);

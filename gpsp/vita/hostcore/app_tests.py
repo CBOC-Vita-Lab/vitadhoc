@@ -6818,9 +6818,9 @@ def t_controls_defaults(S):
             "with Circle as A, Cross does not play")
 
     # -- the three rows, at the end of Settings (UP from the top wraps to
-    # Button mapping, then Screenshot button combo, Rewind with right stick,
-    # A and B buttons)
-    walk = ("60:start\n" + "+8:up\n" * 10 + "+10:shot=ab.png\n+4:right\n"
+    # Button mapping, then Button test, Rear touch panel, Tap screen for menu,
+    # Screenshot button combo, Rewind with right stick, A and B buttons)
+    walk = ("60:start\n" + "+8:up\n" * 12 + "+10:shot=ab.png\n+4:right\n"
             "+10:shot=ab2.png\n+8:down\n+4:right\n+10:shot=stick.png\n"
             "+8:down\n+4:right\n+10:shot=combo.png\n"
             "+8:down\n+4:right\n+10:shot=tap.png\n+20:quit\n")
@@ -6840,7 +6840,7 @@ def t_controls_defaults(S):
     for n in ("ab.png", "ab2.png", "stick.png", "combo.png", "tap.png"):
         S.picture(r, n)
     # ...and the screenshot row switches it off again
-    r = S.run("controls_rows", "60:start\n" + "+8:up\n" * 8 +
+    r = S.run("controls_rows", "60:start\n" + "+8:up\n" * 10 +
               "+4:right\n+10:shot=off.png\n+20:quit\n", prepared=True)
     S.clean(r)
     S.check(r.has(r"^EVT screenshot_combo_setting on=0") and
@@ -7558,6 +7558,185 @@ def t_nes_rewind(S):
     S.check(r.has(r"^EVT rewind begin") and r.has(r"^EVT rewind end"), "the right stick rewinds a NES game")
 
 
+def t_rear_touch(S):
+    """Settings > Controls > Rear touch panel (2.0): the rear panel's four corners are
+    inputs Button mapping can give to any action.  Off by default: a touch on the back does
+    nothing.  On: a corner bound to A / B presses it for as long as it is touched; two
+    corners at once are two buttons; the game's own choice wins over Settings."""
+    cfg = {"bind_a": "REAR_TL", "bind_b": "REAR_BR", "bind_start": "REAR_TR",
+           "bind_select": "REAR_BL"}
+    script = ("100:rear=200/200:10\n+0:shot=tl.png\n"
+              "+20:rear=1700/800:10\n+0:shot=br.png\n"
+              "170:rear=200/200:10\n170:rear=1700/800:10\n+0:shot=two.png\n"
+              "+20:rear=1700/200:10\n+0:shot=tr.png\n"
+              "+20:rear=959/889:10\n+0:shot=edge_left.png\n"
+              "+20:rear=960/889:10\n+0:shot=edge_right.png\n"
+              "+20:quit\n")
+
+    def lit(name, config, extra=None):
+        r = S.run(name, script, config=config, autoboot="gbadhoc-test.gba", extra=extra)
+        S.clean(r)
+        return r, [key_boxes(r.shot(n)) for n in ("tl.png", "br.png", "two.png", "tr.png",
+                                                  "edge_left.png", "edge_right.png")]
+
+    r, got = lit("rear_default", dict(cfg))
+    S.check(got == [""] * 6, "Off by default: the rear panel does nothing (lit: %s)" % got)
+    r, got = lit("rear_on", dict(cfg, rear_touch=1))
+    S.check(got == ["A", "B", "A+B", "Start", "Select", "B"],
+            "On: the corners are A, B, both, Start; the halves meet at x = 960, y = 499 "
+            "(lit: %s)" % got)
+    r, got = lit("rear_game_on", dict(cfg), {"games/gbadhoc-test.gba.ini": "rear_touch = 1\n"})
+    S.check(got == ["A", "B", "A+B", "Start", "Select", "B"],
+            "this game's own On wins over Settings Off (lit: %s)" % got)
+    r, got = lit("rear_game_off", dict(cfg, rear_touch=1),
+                 {"games/gbadhoc-test.gba.ini": "rear_touch = 0\n"})
+    S.check(got == [""] * 6, "this game's own Off wins over Settings On (lit: %s)" % got)
+    # a corner is a shortcut too: quick save on the top right, no button
+    r = S.run("rear_save", "100:rear=1700/200:10\n+30:quit\n",
+              config={"rear_touch": 1, "bind_quicksave": "REAR_TR"},
+              autoboot="gbadhoc-test.gba")
+    S.clean(r)
+    S.check(len(r.evt("state_save")) >= 1, "a rear corner bound to Quick save saves the game")
+    # the setting is kept by config.ini, only once chosen
+    r = S.run("rear_row", "60:start\n" + "+8:up\n" * 8 + "+10:right\n+10:shot=row.png\n+20:quit\n")
+    S.clean(r)
+    ini = open(os.path.join(r.root, "config.ini")).read()
+    S.check(r.has(r"^EVT rear_touch_setting on=1") and re.search(r"^rear_touch = 1$", ini, re.M),
+            "Settings > Controls > Rear touch panel turns it on and config.ini keeps it")
+    S.picture(r, "row.png")
+    # Button mapping (here from the game list) takes a corner as it takes a button, and names it
+    r = S.run("rear_capture", "60:start\n" + "+8:up\n" * 6 + "+10:cross\n+30:cross\n+20:rear=200/200:10\n+40:shot=bound.png\n"
+              "+10:circle\n+20:quit\n", config={"rear_touch": 1, "bind_quicksave": "REAR_BR+L"})
+    S.clean(r)
+    S.check(r.has(r"^EVT ctl_bind key=bind_a mask=0x10000 err=0 .*via=capture"),
+            "Button mapping captures the top left corner for A (%s)" % [d["_"] for d in r.evt("ctl_bind")])
+    S.picture(r, "bound.png")
+    # ...and with the row Off a finger resting on the back is not part of what is captured
+    # (in a game: Settings, up to Button mapping)
+    r = S.run("rear_capture_off", menu_pick(4, wait=100) + set_up(13) + "+10:cross\n+30:cross\n+10:rear=200/200:120\n"
+              "+30:triangle\n+60:circle\n+20:quit\n", autoboot="gbadhoc-test.gba")
+    S.clean(r)
+    S.check(r.has(r"^EVT ctl_bind key=bind_a mask=0x1000 err=0 .*via=capture"),
+            "Off: a finger on the back while a button is captured is not in the binding (%s)" % [d["_"] for d in r.evt("ctl_bind")])
+    r = S.run("rear_untouched", "60:quit\n")
+    S.clean(r)
+    S.check("rear_touch" not in open(os.path.join(r.root, "config.ini")).read()
+            if os.path.exists(os.path.join(r.root, "config.ini")) else True,
+            "a player who never chose it keeps the same config.ini")
+
+
+def t_button_test(S):
+    """Settings > Controls > Button test (2.0): a page that shows every input; Start +
+    Select held leaves it, no single button does."""
+    script = ("60:start\n" + "+8:up\n" * 7 + "+10:cross\n+20:shot=open.png\n"
+              "+4:cross:20\n+0:circle:20\n+0:l+r:20\n+0:triangle:20\n+0:start:40\n+0:select:40\n"
+              "+30:touch=480/272:20\n+0:rear=200/200:20\n+0:shot=lit.png\n"
+              "+40:shot=still.png\n"
+              "+4:start+select:8\n+30:shot=short.png\n"
+              "+4:start+select:50\n+30:shot=left.png\n+10:quit\n")
+    r = S.run("button_test", script, config={"bind_a": "REAR_TL", "rear_touch": 1})
+    S.clean(r)
+    scr = [d["name"] for d in r.evt("ui_screen")]
+    S.check(scr[-2:] == ["button_test", "settings"] and scr.count("button_test") == 1,
+            "the row opens the page, and only Start + Select held leaves it (screens: %s)" % scr)
+    for n in ("open.png", "lit.png", "still.png", "short.png", "left.png"):
+        S.picture(r, n)
+    a, b = r.shot("open.png"), r.shot("lit.png")
+    S.check(ImageChops.difference(a, b).getbbox() is not None,
+            "the inputs light up on the page")
+    # the page's own words: it never opens the in-game menu or touches the settings by its buttons
+    S.check(not r.evt("menu_open"), "no touch or button on the page opens the menu")
+    # a console whose Start or Select is the worn button is not kept on the page: a finger held on the footer's
+    # line for a second leaves too (a shorter touch there, or a long one anywhere else, does not)
+    r = S.run("button_test_touch", "60:start\n" + "+8:up\n" * 7 + "+10:cross\n+30:touch=480/272:90\n+100:touch=480/530:30\n"
+              "+40:shot=stays.png\n+10:touch=480/530:90\n+30:shot=holding.png\n+80:shot=left.png\n+30:quit\n")
+    S.clean(r)
+    scr = [d["name"] for d in r.evt("ui_screen")]
+    S.check(scr == ["settings", "button_test", "settings"],
+            "a finger held on the footer's line leaves the page, and lifting it does nothing more (screens: %s)" % scr)
+    a, b = r.shot("stays.png"), r.shot("left.png")
+    S.check(ImageChops.difference(a, b).getbbox() is not None, "...a short touch there and a long one elsewhere did not")
+    S.picture(r, "holding.png")
+    # in a game: the same page, and the chord that leaves it leaves the menu open behind it
+    r = S.run("button_test_game", menu_pick(4, wait=100) + set_up(14) + "+10:cross\n+30:shot=page.png\n"
+              "+10:start+select:50\n+40:shot=back.png\n+10:quit\n", autoboot="gbadhoc-test.gba")
+    S.clean(r)
+    scr = [d["name"] for d in r.evt("ui_screen")]
+    S.check(scr[-2:] == ["button_test", "settings"] and len(r.evt("menu_open")) == 1 and not r.evt("menu_closed"),
+            "in a game Start + Select leaves the page for Settings, the menu stays open (screens: %s)" % scr)
+    S.picture(r, "page.png")
+
+
+def t_zapper(S):
+    """NES Zapper on the touch screen (2.0): a game the core's database lists (here: a header
+    that names the Zapper) takes the touch screen as its gun: a touch aims and fires, a tap
+    does not open the menu; Settings > THIS GAME > Port 2 forces it on or off."""
+    gun = nes_rom(S, "gun.nes")
+    gunh = nes_rom(S, "gun_hdr.nes")
+    # 1. the game says Zapper: Auto
+    r = S.run("zapper_auto", "300:touch=480/272:20\n+40:touch=5/5:20\n+40:quit\n",
+              autoboot="Gun.nes", extra={"roms/Gun.nes": gunh})
+    S.clean(r)
+    S.check(r.has(r"^EVT zapper active=1"), "a game with a Zapper is told so (Port 2: Auto)")
+    z = r.evt("zapper")
+    trig = [d for d in z if "trigger" in d]
+    S.check(len(trig) == 4 and [d["trigger"] for d in trig] == ["1", "0", "1", "0"],
+            "a touch pulls the trigger while the finger is down (%s)" % [d["_"] for d in trig])
+    if len(trig) >= 3:
+        x, y = int(trig[0]["x"]), int(trig[0]["y"])
+        S.check(abs(x - 128) <= 3 and abs(y - 120) <= 3,
+                "the middle of the screen is the middle of the picture: NES pixel %d,%d (want 128,120)" % (x, y))
+        S.check(trig[2]["x"] == "-1" and trig[2]["y"] == "-1",
+                "a touch beside the picture points off the screen (%s,%s)" % (trig[2]["x"], trig[2]["y"]))
+    S.check(not r.evt("menu_open"), "a touch does not open the menu: the screen is the gun's")
+    # a tap is shorter than a game's look for the light (it comes some frames after the trigger): the gun stays
+    # where the finger was for a while after it lifts
+    r = S.run("zapper_tap", "300:touch=480/272:3\n+60:quit\n", autoboot="Gun.nes", extra={"roms/Gun.nes": gunh})
+    S.clean(r)
+    trig = [d for d in r.evt("zapper") if "trigger" in d]
+    off = [d for d in r.evt("zapper") if "aim_off" in d["_"]]
+    S.check(len(trig) == 2 and trig[1]["trigger"] == "0" and (trig[1]["x"], trig[1]["y"]) == (trig[0]["x"], trig[0]["y"])
+            and trig[0]["x"] != "-1" and len(off) == 1 and (off[0]["x"], off[0]["y"]) == (trig[0]["x"], trig[0]["y"]),
+            "after a short tap the gun still points where the finger was, then lets go (%s)" % [d["_"] for d in r.evt("zapper")])
+    # Screen size 4x crop shows the middle rows of the picture only (181 of the 224, from row 21): the top of the
+    # glass is row 8 + 21 of the NES frame, not its first row; the middle is the middle at every size
+    for scale, top in ((0, None), (1, 8), (2, 8), (3, 29), (4, None)):
+        r = S.run("zapper_scale%d" % scale, "300:touch=480/1:10\n+40:touch=480/272:10\n+40:quit\n",
+                  autoboot="Gun.nes", config={"scale_nes": scale}, extra={"roms/Gun.nes": gunh})
+        S.clean(r)
+        trig = [d for d in r.evt("zapper") if d.get("trigger") == "1"]
+        if S.check(len(trig) == 2, "Screen size %d: two touches, two shots" % scale):
+            x, y = int(trig[1]["x"]), int(trig[1]["y"])
+            S.check(abs(x - 128) <= 1 and abs(y - 120) <= 1, "Screen size %d: the middle is NES pixel %d,%d (want 128,120)" % (scale, x, y))
+            if top is None:
+                S.check(trig[0]["y"] == "-1", "Screen size %d: the top edge of the glass is above the picture (%s)" % (scale, trig[0]["y"]))
+            else:
+                S.check(abs(int(trig[0]["y"]) - top) <= 1, "Screen size %d: the top of the glass is NES row %s (want %d)" % (scale, trig[0]["y"], top))
+    # with the menus' touch switched off (config.ini touch = 0) the gun still works, also after the menu was open
+    r = S.run("zapper_touch_off", "200:start+select:20\n+40:circle\n+60:touch=480/272:10\n+40:quit\n", autoboot="Gun.nes",
+              config={"touch": 0}, extra={"roms/Gun.nes": gunh})
+    S.clean(r)
+    S.check(len(r.evt("menu_open")) == 1 and any(d.get("trigger") == "1" for d in r.evt("zapper")),
+            "touch = 0 and the menu opened once: the gun still fires (%s)" % [d["_"] for d in r.evt("zapper")])
+    # 2. a game without one: a tap opens the menu as ever, and the gun is not on
+    r = S.run("zapper_none", "300:touch=480/272\n+40:quit\n", autoboot="Gun.nes",
+              extra={"roms/Gun.nes": gun})
+    S.clean(r)
+    S.check(r.has(r"^EVT zapper active=0") and not r.has(r"^EVT zapper trigger"), "Auto leaves a game the database does not list alone")
+    S.check(len(r.evt("menu_open")) == 1, "...and a tap on it opens the menu")
+    # 3. Port 2: Zapper forces it on any game; Controller turns it off for a listed one
+    r = S.run("zapper_forced", "300:touch=480/272:20\n+40:quit\n", autoboot="Gun.nes",
+              extra={"roms/Gun.nes": gun, "games/Gun.nes.ini": "nes_port2 = 1\n"})
+    S.clean(r)
+    S.check(r.has(r"^EVT zapper active=1") and any(d.get("trigger") == "1" for d in r.evt("zapper"))
+            and not r.evt("menu_open"), "Port 2: Zapper puts the gun on the touch screen of any game")
+    r = S.run("zapper_off", "300:touch=480/272\n+40:quit\n", autoboot="Gun.nes",
+              extra={"roms/Gun.nes": gunh, "games/Gun.nes.ini": "nes_port2 = 2\n"})
+    S.clean(r)
+    S.check(r.has(r"^EVT zapper active=0") and len(r.evt("menu_open")) == 1,
+            "Port 2: Controller leaves the touch screen to the menu")
+
+
 def t_cheats_consoles(S):
     """Cheats on every console, the same page: a Game Boy GameShark code from
     the game's .cht changes the game; on a WonderSwan game a RAM code typed
@@ -7924,7 +8103,7 @@ def t_export_row(S):
     rom = "gbadhoc-test"
     ra = "retroarch/savefiles/%s.srm" % rom
     mine = bytes((i * 7 + 21) & 0xFF for i in range(32768))
-    row = menu_pick(4, wait=60) + set_down(22) + "+10:shot=row.png\n"
+    row = menu_pick(4, wait=60) + set_down(23) + "+10:shot=row.png\n"
     r = S.run("export_row_ra", "30:left:2\n" + row + "+10:cross\n+20:shot=toast.png\n+6:circle\n+10:circle\n+30:quit\n",
               autoboot=rom + ".gba", extra={"roms/%s.sav" % rom: mine,
                                             "retroarch/savefiles/Other Game.srm": b"\x01" * 64},
@@ -7953,8 +8132,8 @@ def t_save_heal_nes_ws(S):
                             ("wswan", "Heal Test.ws", ws_rom(S, "h_sram.ws"))):
         stem = name.rsplit(".", 1)[0]
         mine = bytes((i * 5 + 3) & 0xFF for i in range(8192))
-        # Export is after Display settings (a NES game's NTSC colours row, and a WonderSwan game's three rows)
-        row = menu_pick(4, wait=60) + set_down(22 if kind == "nes" else 25)
+        # Export is after Display settings (a NES game's NTSC colours row, and a WonderSwan game's three rows) and the game's Rear touch panel (a NES game's Port 2 too)
+        row = menu_pick(4, wait=60) + set_down(24 if kind == "nes" else 26)
         r = S.run("heal_" + kind, "30:left:2\n" + row + "+10:cross\n+20:circle\n+10:circle\n+30:quit\n",
                   autoboot=name, extra={"roms/" + name: rom, "roms/%s.srm" % stem: mine},
                   vita_ini={"sync_ra_saves": 0})
@@ -9355,7 +9534,7 @@ def t_gbprinter(S):
 
 
 TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicators", t_ra_indicators), ("snes_library", t_snes_library), ("snes_two", t_snes_two), ("sega_two", t_sega_two), ("sega_library", t_sega_library), ("sega_exts", t_sega_exts), ("sega_session", t_sega_session), ("nes_library", t_nes_library),
-         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_soft_edge", t_nes_soft_edge), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("tap_menu", t_tap_menu), ("census", t_census), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
+         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_soft_edge", t_nes_soft_edge), ("nes_rewind", t_nes_rewind), ("zapper", t_zapper), ("rear_touch", t_rear_touch), ("button_test", t_button_test), ("ws_boot", t_ws_boot), ("tap_menu", t_tap_menu), ("census", t_census), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("picker", t_picker), ("old_states", t_old_states), ("find", t_find), ("collections", t_collections), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),

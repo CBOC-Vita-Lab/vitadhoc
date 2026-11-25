@@ -294,6 +294,10 @@ int  plat_pad_read2(plat_pad *pad);
  * (vita/local_vita.c); pspcompat_touch is the UI's one finger. */
 typedef struct plat_touch_pt { int x, y; } plat_touch_pt;
 int  plat_touch_points(plat_touch_pt *out, int max);
+/* Every finger on the REAR panel, in the panel's own units (x 0..1919,
+ * y 108..889).  Sampling starts at the first call.  For the rear touch panel
+ * (Settings > Controls; ctl_map.h ctl_rear_zones). */
+int  plat_rear_points(plat_touch_pt *out, int max);
 
 /* ---- the twin's script: a finger and a keyboard ----------------------------
  * The Vita's touch panel and system keyboard are pspcompat.c's (the UI's).

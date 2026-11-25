@@ -65,6 +65,9 @@ void vid_pair_rects(unsigned w, unsigned h, int layout, vid_rect_t *left,
                     vid_rect_t *right);
 /* Where a single w x h picture lands at the current scale (native pixels). */
 void vid_picture_rect(unsigned w, unsigned h, vid_rect_t *out);
+/* ...and which of its rows that rectangle shows: `count` rows from `first`
+ * (all h of them from 0, except at "4x crop", which shows the middle ones). */
+void vid_picture_rows(unsigned w, unsigned h, int *first, int *count);
 void vid_set_quality(int quality);
 /* Of the `margin` extra columns a wide picture has on each side of the
  * console's w x h: how many fit on the screen at the scale in use. */

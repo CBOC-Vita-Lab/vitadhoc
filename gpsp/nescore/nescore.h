@@ -117,6 +117,17 @@ void nescore_set_soft_edge(int on);
 /* 1 while the last frame handed over was the wider picture */
 int nescore_wide_shown(void);
 
+/* The Zapper (the light gun on the touch screen).  The mode is read at the next load: NESCORE_PORT2_AUTO (the games the core's
+ * game database lists as Zapper games get one), NESCORE_PORT2_ZAPPER (one on port 2 for any game), NESCORE_PORT2_PAD (never).
+ * nescore_zapper_active() is 1 when the loaded game has one.  nescore_set_zapper(): where the gun points this frame, in the
+ * core's own 256 x 240 picture pixels (anything outside = off the screen), and whether the trigger is held; it stays until
+ * the next call.  nescore_top() is the picture's first row in that 240-row frame: the app crops the overscan. */
+enum { NESCORE_PORT2_AUTO = 0, NESCORE_PORT2_ZAPPER = 1, NESCORE_PORT2_PAD = 2 };
+void nescore_set_port2(int mode);
+int nescore_zapper_active(void);
+void nescore_set_zapper(int x, int y, int trigger);
+unsigned nescore_top(void);
+
 #ifdef __cplusplus
 }
 #endif

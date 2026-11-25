@@ -69,6 +69,12 @@ UI_WEAK const char *ui_host_cpu_note(void) { return ""; }
 UI_WEAK int         ui_host_overlay_on(void) { return 0; }
 UI_WEAK void        ui_host_overlay_set(int on) { (void)on; }
 UI_WEAK const char *ui_host_overlay_name(void) { return ""; }
+UI_WEAK void        ui_host_btn_read(ui_btn_state *s)
+{
+   memset(s, 0, sizeof(*s));
+   s->lx = s->ly = s->rx = s->ry = 128;
+   s->front_use = "Nothing";
+}
 UI_WEAK int         ui_host_ab_circle(void) { return g_pcfg.ab_buttons == 1; }
 UI_WEAK void        ui_host_buttons_changed(void) { }
 UI_WEAK const char *ui_host_shot_dir(void) { return ""; }

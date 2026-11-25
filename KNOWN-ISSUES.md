@@ -27,6 +27,22 @@ response, No sprite flicker.
   upscalers and Image quality do that job.
 - **The console picker** (Triangle on the home screen) is new and was checked
   on the PC test twin only.
+- **The NES Zapper on the touch screen** was tried on PC with hand-made test
+  cartridges only, never with Duck Hunt or any real game, and not on a Vita.
+  Where the shot lands depends on the touch panel's calibration; the gun's
+  tolerance is a six-pixel target. A tap does not open the menu in a Zapper
+  game: use Start + Select. If a game that uses the Zapper is not in the core's
+  database, set Settings > This game > Port 2 to Zapper.
+- **The rear touch panel** (main app and players) has no hold time or grip
+  area: the Vita's grips can touch it. Where its halves meet comes from the
+  report range other Vita software uses (y 108 to 889), not from a measurement
+  on a console. It is Off until you turn it on, and
+  nothing is bound to a corner until you bind it. On the WonderSwan a corner
+  can press the buttons the Vita's own buttons press (it follows the game's
+  turn: the d-pad is the Y buttons in an upright game), not a WonderSwan
+  button by name.
+- **The Button test** shows the WonderSwan's buttons for a game held
+  sideways only.
 - **The CBOC Vita Installer** may not offer the NES, WonderSwan or Sega
   folders yet; copy those games with VitaShell (for example `ux0:ROMS/NES`,
   `ux0:ROMS/MD`).

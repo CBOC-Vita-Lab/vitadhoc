@@ -45,6 +45,8 @@
  *     FRAME:touch=X/Y[:DURATION]   a finger on the screen at native X, Y
  *                                  (960x544) for DURATION frames (3: a tap)
  *     FRAME:drag=X0/Y0/X1/Y1:DURATION   ...moving from one point to another
+ *     FRAME:rear=X/Y[:DURATION]    a finger on the REAR panel at its own
+ *                                  units (x 0..1919, y 108..889) for DURATION frames (3)
  *     FRAME:type=TEXT              what the system keyboard returns the
  *                                  next time it is opened (a few frames
  *                                  after it opens); "type=" alone cancels
@@ -138,7 +140,7 @@ static struct
    struct { unsigned frame, len; uint32_t buttons; int pad2; } press[MAX_PRESS];
    unsigned    npress;
    int         have_pad2;
-   struct { unsigned frame, len; int x0, y0, x1, y1; } touch[MAX_TOUCH];
+   struct { unsigned frame, len; int x0, y0, x1, y1; int rear; } touch[MAX_TOUCH];
    unsigned    ntouch;
    struct { unsigned frame; char text[TYPE_CAP]; int cancel; } type[MAX_TYPE];
    unsigned    ntype;
@@ -628,9 +630,11 @@ static void parse_input(const char *script, unsigned *cursor)
       if (n > 5 && !strncasecmp(p, "shot=", 5))
          add_shot(frame, p + 5, n - 5);
       else if ((n > 6 && !strncasecmp(p, "touch=", 6)) ||
+               (n > 5 && !strncasecmp(p, "rear=", 5)) ||
                (n > 5 && !strncasecmp(p, "drag=", 5)))
       {
          int drag = (p[0] | 0x20) == 'd', v[4] = { 0, 0, 0, 0 }, k;
+         int rear = (p[0] | 0x20) == 'r';
          const char *q = strchr(p, '=') + 1;
          for (k = 0; k < (drag ? 4 : 2); k++)
          {
@@ -652,6 +656,7 @@ static void parse_input(const char *script, unsigned *cursor)
          opt.touch[opt.ntouch].y0 = v[1];
          opt.touch[opt.ntouch].x1 = drag ? v[2] : v[0];
          opt.touch[opt.ntouch].y1 = drag ? v[3] : v[1];
+         opt.touch[opt.ntouch].rear = rear;
          opt.ntouch++;
       }
       else if (n >= 5 && !strncasecmp(p, "type=", 5))
@@ -1640,12 +1645,13 @@ int plat_motion_read(plat_motion *m)
 
 /* Every touch entry that is down this frame is a finger (the script's
  * overlapping touch= entries are a multi-touch). */
-int plat_touch_points(plat_touch_pt *out, int max)
+static int touch_points(plat_touch_pt *out, int max, int rear)
 {
    unsigned i, f = script_frame();
    int n = 0;
    for (i = 0; i < opt.ntouch && n < max; i++)
-      if (f >= opt.touch[i].frame && f < opt.touch[i].frame + opt.touch[i].len)
+      if (opt.touch[i].rear == rear &&
+          f >= opt.touch[i].frame && f < opt.touch[i].frame + opt.touch[i].len)
       {
          int span = opt.touch[i].len > 1 ? (int)opt.touch[i].len - 1 : 1;
          int k = (int)(f - opt.touch[i].frame);
@@ -1656,11 +1662,23 @@ int plat_touch_points(plat_touch_pt *out, int max)
    return n;
 }
 
+int plat_touch_points(plat_touch_pt *out, int max)
+{
+   return touch_points(out, max, 0);
+}
+
+/* The rear panel, the script's rear= fingers (the panel's own units). */
+int plat_rear_points(plat_touch_pt *out, int max)
+{
+   return touch_points(out, max, 1);
+}
+
 int plat_script_touch(int *nx, int *ny)
 {
    unsigned i, f = script_frame();
    for (i = 0; i < opt.ntouch; i++)
-      if (f >= opt.touch[i].frame && f < opt.touch[i].frame + opt.touch[i].len)
+      if (!opt.touch[i].rear &&
+          f >= opt.touch[i].frame && f < opt.touch[i].frame + opt.touch[i].len)
       {
          /* a drag arrives at its end point on its last frame */
          int span = opt.touch[i].len > 1 ? (int)opt.touch[i].len - 1 : 1;

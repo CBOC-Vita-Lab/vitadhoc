@@ -119,6 +119,9 @@ static const struct { unsigned bit; const char *name; } BUTTONS[CTL_NBUTTONS] = 
    /* The stick's directions last: the first twelve slots are 3.5.0's. */
    { CTL_STICK_UP, "STICK_UP" }, { CTL_STICK_DOWN, "STICK_DOWN" },
    { CTL_STICK_LEFT, "STICK_LEFT" }, { CTL_STICK_RIGHT, "STICK_RIGHT" },
+   /* The rear panel's corners after them: the first sixteen slots are 3.6's. */
+   { CTL_REAR_TL, "REAR_TL" }, { CTL_REAR_TR, "REAR_TR" },
+   { CTL_REAR_BL, "REAR_BL" }, { CTL_REAR_BR, "REAR_BR" },
 };
 
 const ctl_action_info *ctl_info(int a)
@@ -162,7 +165,7 @@ static void defaults_in(ctl_map *m, int legacy_swap)
    int a;
    for (a = 0; a < CTL_ACTIONS; a++)
    {
-      m->bind[a] = (uint16_t)load_default(a, legacy_swap);
+      m->bind[a] = (uint32_t)load_default(a, legacy_swap);
       m->keep[a] = 0;
    }
    m->menu_home = CTL_MENU_START_SELECT;
@@ -185,7 +188,7 @@ void ctl_reset(ctl_map *m)
 {
    int a;
    for (a = 0; a < CTL_ACTIONS; a++)
-      m->bind[a] = (uint16_t)ctl_default(a);
+      m->bind[a] = (uint32_t)ctl_default(a);
    m->menu_home = CTL_MENU_START_SELECT;
    for (a = 0; a < CTL_TURBO_N; a++)
    {
@@ -329,6 +332,21 @@ unsigned ctl_stick_bits(int mode, int lx, int ly, unsigned *state)
              (d & CTL_STICK_LEFT ? CTL_LEFT : 0) |
              (d & CTL_STICK_RIGHT ? CTL_RIGHT : 0);
    return 0;
+}
+
+unsigned ctl_rear_zones(const int *x, const int *y, int n)
+{
+   unsigned z = 0;
+   int i;
+   if (!x || !y)
+      return 0;
+   for (i = 0; i < n && i < 4; i++)
+   {
+      int left = x[i] < CTL_REAR_W / 2, top = y[i] < CTL_REAR_MID_Y;
+      z |= top ? (left ? CTL_REAR_TL : CTL_REAR_TR)
+               : (left ? CTL_REAR_BL : CTL_REAR_BR);
+   }
+   return z;
 }
 
 int ctl_stick_only(unsigned mask)
@@ -476,7 +494,7 @@ int ctl_assign(ctl_map *m, int a, unsigned mask, int *stolen)
       if (stolen)
          *stolen = j;
    }
-   m->bind[a] = (uint16_t)mask;
+   m->bind[a] = (uint32_t)mask;
    return CTL_OK;
 }
 
@@ -517,7 +535,7 @@ static int repair_in(ctl_map *m, int legacy_swap,
       }
       if (ctl_check(a, m->bind[a]) != CTL_OK)
       {
-         m->bind[a] = (uint16_t)load_default(a, legacy_swap);
+         m->bind[a] = (uint32_t)load_default(a, legacy_swap);
          changed++;
          if (note)
             note(user, a, -1);
@@ -604,7 +622,7 @@ int ctl_load_ini(ctl_map *m, const char *path)
          err = ctl_check(a, mask);
       if (err == CTL_OK)
       {
-         m->bind[a] = (uint16_t)mask;
+         m->bind[a] = (uint32_t)mask;
          continue;
       }
       bad++;

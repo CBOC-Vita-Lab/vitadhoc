@@ -461,7 +461,9 @@ enum { SCR_MENU, SCR_SETTINGS, SCR_WIRELESS, SCR_SCAN, SCR_MGIFT,
        /* 2.0 online play (vita/ui_vita_online.h): the code pad, the room card */
        SCR_ONLINE_CODE, SCR_ONLINE_CARD,
        /* Search memory (vita/ui_vita_cheats.h) */
-       SCR_CHEAT_SEARCH
+       SCR_CHEAT_SEARCH,
+       /* 2.0: Settings > Controls > Button test (vita/ui_vita_btntest.h) */
+       SCR_BTNTEST
 #endif
      };
 
@@ -1418,7 +1420,7 @@ static void screen_to(int scr)
         "controls", "host", "join_ask", "cheats"
 #ifdef VITA
         , "join", "address", "adhoc", "local", "connection", "help",
-        "cheat_add", "ra", "online_code", "online_card", "cheat_search"
+        "cheat_add", "ra", "online_code", "online_card", "cheat_search", "button_test"
 #endif
       };
 #ifdef VITA
@@ -2376,10 +2378,18 @@ static void ov_scrollbar(int x, int y, int h, int pos, int view, int total)
 static const char *const CTL_UI_NAMES[CTL_NBUTTONS] = {
    "SELECT", "START", "L", "R", "UP", "DOWN", "LEFT", "RIGHT",
    VID_GLYPH_TRI, VID_GLYPH_O, VID_GLYPH_X, VID_GLYPH_SQ,
-   "STICK UP", "STICK DOWN", "STICK LEFT", "STICK RIGHT"
+   "STICK UP", "STICK DOWN", "STICK LEFT", "STICK RIGHT",
+   /* (short: a chord of them has to fit Button mapping's column; the Button
+    * test page spells them out) */
+   "REAR TL", "REAR TR", "REAR BL", "REAR BR"
 };
 
 static ui_action screen_controls(unsigned edges, unsigned pad);
+#ifdef VITA
+static ui_action screen_btntest(unsigned edges);   /* vita/ui_vita_btntest.h */
+static int g_bt_hold;                              /* ...Start + Select held, frames */
+static int g_bt_touch;                             /* ...a finger on its footer, frames */
+#endif
 static ui_action screen_state_slots(unsigned edges);
 #ifdef GPSP_CHEATS
 static void cht_page_reset(void);
@@ -2452,6 +2462,8 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        /* 2.0: a Game Boy Camera game's picture source, and the Game Boy
         * Printer on the serial port (a Game Boy game's) */
        SET_CAMERA, SET_PRINTER,
+       /* 2.0: this game's own Rear touch panel, and a NES game's Port 2 (Zapper) */
+       SET_REARGAME, SET_PORT2,
        /* 1.4: the running game's save as a plain file for other emulators
         * (docs/SAVES.md; ui_host_export_save) */
        SET_EXPORT,
@@ -2460,6 +2472,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        /* The three plain choices of the controls come before Button mapping,
         * which stays last (the harness walkers wrap up to it). */
        SET_HDR_CTL, SET_ABSWAP, SET_STICKRW, SET_SHOTCOMBO, SET_TAPMENU,
+       SET_REARTOUCH, SET_BTNTEST,
        SET_CONTROLS,
        SET_COUNT };
 #define SET_FIRST SET_NAME
@@ -2654,6 +2667,8 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Quick response" },
    { 0, "Camera" },
    { 0, "Game Boy Printer" },
+   { 0, "Rear touch panel" },
+   { 0, "Port 2" },
    { 0, "Export save for other emulators" },
    { 1, "ABOUT" },
    { 0, "Extra CPU core" },
@@ -2676,6 +2691,8 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Rewind with right stick" },
    { 0, "Screenshot button combo" },
    { 0, "Tap screen for menu" },
+   { 0, "Rear touch panel" },
+   { 0, "Button test" },
 #endif
    { 0, "Button mapping" },
 };
@@ -2725,6 +2742,13 @@ static int set_row_shown(int idx)
       return g_ov_browse || (g_pgame.on && app_quick_supported(g_pgame.console));
    if (idx == SET_QUICKGAME)
       return !g_ov_browse && g_pgame.on && app_quick_supported(g_pgame.console);
+   /* the players have these two on their own Controls page */
+   if (idx == SET_BTNTEST || idx == SET_REARTOUCH)
+      return !ui_console_is_player(pcfg_display_console());
+   if (idx == SET_REARGAME)
+      return !g_ov_browse && g_pgame.on;
+   if (idx == SET_PORT2)
+      return !g_ov_browse && g_pgame.on && g_pgame.console == FE_CONSOLE_NES;
    if (idx == SET_GBTYPE || idx == SET_PRINTER)
       return !g_ov_browse && g_pgame.on &&
              (g_pgame.console == FE_CONSOLE_GB || g_pgame.console == FE_CONSOLE_GBC);
@@ -2909,6 +2933,8 @@ static int set_start_row(void)
 #ifdef VITA
    if (g_scr_from == SCR_CONTROLS)
       return SET_CONTROLS;          /* back from Button mapping */
+   if (g_scr_from == SCR_BTNTEST)
+      return SET_BTNTEST;           /* back from Button test */
    return g_ov_browse ? SET_THEME : SET_SCALE;
 #else
    return SET_FIRST;
@@ -3536,6 +3562,23 @@ static void settings_adjust(int id, int dir)
    case SET_TAPMENU:
       g_pcfg.tap_menu = !g_pcfg.tap_menu;
       fe_evt("tap_menu_setting on=%d", g_pcfg.tap_menu);
+      break;
+   case SET_REARTOUCH:
+      g_pcfg.rear_touch = !g_pcfg.rear_touch;
+      fe_evt("rear_touch_setting on=%d", g_pcfg.rear_touch);
+      break;
+   case SET_REARGAME:
+      /* Follows Settings (-1) / Off / On, kept in the game's own file */
+      g_pgame.rear = (g_pgame.rear + 1 + 3 + (dir < 0 ? -1 : 1)) % 3 - 1;
+      (void)pcfg_game_save();
+      fe_evt("rear_touch_setting game=%d", g_pgame.rear);
+      break;
+   case SET_PORT2:
+      /* Auto / Zapper / Controller, kept in the game's own file; read when the game starts */
+      g_pgame.nes_port2 = (g_pgame.nes_port2 + PCFG_PORT2_MODES +
+                           (dir < 0 ? -1 : 1)) % PCFG_PORT2_MODES;
+      (void)pcfg_game_save();
+      fe_evt("port2_setting game=%d", g_pgame.nes_port2);
       break;
    case SET_SHOTCOMBO:
    {
@@ -4203,6 +4246,20 @@ static const char *set_help(int id)
       return g_pcfg.tap_menu
          ? "A tap on the game opens the menu. Start + Select always does."
          : "Only Start + Select (or L + R + Start) opens the menu.";
+   case SET_REARTOUCH:
+      return g_pcfg.rear_touch
+         ? "The rear panel's four corners can be buttons. Set them in Button mapping."
+         : "The rear panel does nothing.";
+   case SET_REARGAME:
+      return "This game's own choice. Settings follows the Controls row.";
+   case SET_PORT2:
+      return g_pgame.nes_port2 == PCFG_PORT2_ZAPPER
+         ? "Zapper: touch the screen to aim and fire. Next time the game starts."
+         : g_pgame.nes_port2 == PCFG_PORT2_PAD
+         ? "Controller: a Zapper game is played with the pad. Next time the game starts."
+         : "Auto: games that use the Zapper get it on the touch screen. Next time the game starts.";
+   case SET_BTNTEST:
+      return "Shows each button, stick and touch panel as it is pressed, and what it does.";
    case SET_SHOTCOMBO:
       return g_pcfg.controls.bind[CTL_SC_SHOT]
          ? "Shot with the buttons set in Button mapping."
@@ -4509,6 +4566,14 @@ static ui_action screen_settings(unsigned edges)
       settings_adjust(g_cursor, -1);
    if (edges & PSP_CTRL_RIGHT)
       settings_adjust(g_cursor, +1);
+#ifdef VITA
+   if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_BTNTEST)
+   {
+      g_bt_hold = g_bt_touch = 0;
+      screen_to(SCR_BTNTEST);
+      return screen_btntest(0);       /* draw this frame as the new page */
+   }
+#endif
    if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_CONTROLS)
    {
       screen_to(SCR_CONTROLS);
@@ -4997,6 +5062,22 @@ static ui_action screen_settings(unsigned edges)
                   q == 0 ? "Off" : q == 1 ? "Auto" : "On");
          break;
       }
+      case SET_REARTOUCH:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.rear_touch ? "On" : "Off");
+         break;
+      case SET_REARGAME:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pgame.rear < 0 ? "Settings" : g_pgame.rear ? "On" : "Off");
+         break;
+      case SET_PORT2:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pgame.nes_port2 == PCFG_PORT2_ZAPPER ? "Zapper"
+                  : g_pgame.nes_port2 == PCFG_PORT2_PAD ? "Controller" : "Auto");
+         break;
+      case SET_BTNTEST:
+         set_item(y, g_cursor == i, 1, set_rows[i].label, "");
+         break;
       case SET_QUICKGAME:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   g_pgame.quick < 0 ? "Settings" : g_pgame.quick == 0 ? "Off"
@@ -5189,7 +5270,8 @@ static ui_action screen_settings(unsigned edges)
           ? VID_GLYPH_X " set level now   DPAD move   " VID_GLYPH_O " back"
           : g_cursor == SET_EXPORT
           ? VID_GLYPH_X " export   DPAD move/choose   " VID_GLYPH_O " back"
-          : g_cursor == SET_NAME || g_cursor == SET_CONTROLS
+          : g_cursor == SET_NAME || g_cursor == SET_CONTROLS ||
+            g_cursor == SET_BTNTEST
           ? VID_GLYPH_X " open   DPAD move   " VID_GLYPH_O " back"
           : g_cursor == SET_COVERS
           ? VID_GLYPH_X " retry missing   DPAD move   " VID_GLYPH_O " back"
@@ -7208,6 +7290,7 @@ static char g_menu_note[80];         /* the menu's plate, until the next key */
 #include "ui_vita_snes.h"
 #include "ui_vita_md.h"
 #include "ui_vita_cheats.h"
+#include "ui_vita_btntest.h"
 #include "ui_vita_ra.h"
 #include "ui_vita_menu.h"
 #else
@@ -8240,6 +8323,9 @@ ui_action ui_frame(unsigned pad, int session_active, const char *session_info)
       break;
    case SCR_RA:
       act = screen_ra(edges);
+      break;
+   case SCR_BTNTEST:
+      act = screen_btntest(edges);
       break;
 #else
    case SCR_WIRELESS:
@@ -12925,6 +13011,9 @@ static int browser_settings(void)
    g_share_req = 0;
    while (g_running && !g_sh_quit &&
           (g_screen == SCR_SETTINGS || g_screen == SCR_CONTROLS ||
+#ifdef VITA
+           g_screen == SCR_BTNTEST ||
+#endif
            g_screen == SCR_SCAN))
    {
       SceCtrlData pd;
@@ -12935,6 +13024,14 @@ static int browser_settings(void)
       sceCtrlPeekBufferPositive(&pd, 1);
       pad = ui_demo_running() ? demo_pad() : pd.Buttons;
 #ifdef VITA
+      /* Button mapping takes the rear panel's corners here as it does in a
+       * game: while Rear touch panel is on (no game's own choice out here) */
+      if (g_screen == SCR_CONTROLS && g_cap.on && g_pcfg.rear_touch && !ui_demo_running())
+      {
+         ui_btn_state bs;
+         ui_host_btn_read(&bs);
+         pad |= bs.rear & CTL_REAR_ALL;
+      }
       edges = vita_frame_begin(&pad);
 #else
       edges = pad_edges(pad);
@@ -12945,6 +13042,10 @@ static int browser_settings(void)
       vid_overlay_begin(1);
       if (g_screen == SCR_CONTROLS)
          screen_controls(edges, pad);
+#ifdef VITA
+      else if (g_screen == SCR_BTNTEST)
+         screen_btntest(edges);
+#endif
 #ifndef VITA
       else if (g_screen == SCR_SCAN)
       {

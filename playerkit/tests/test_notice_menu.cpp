@@ -354,6 +354,129 @@ TEST(menu_tap_outside_the_sheet_resumes)
 	CHECK_EQ(e, MENU_RESUME);
 }
 
+namespace {
+/* Settings > Controls > Button test: on the Controls page it is the row after Button mapping */
+void open_button_test(Fixture &f)
+{
+	f.menu.goto_page(Menu::PAGE_CONTROLS);
+	f.menu.update(pkh::idle());
+	for (int i = 0; i < 4; i++) pkh::press(f.menu, PH_DOWN);
+	CHECK_STR(f.menu.row_label(f.menu.cursor()).c_str(), "Button test");
+	pkh::press(f.menu, PH_CROSS);
+}
+}  // namespace
+
+TEST(button_test_row_is_on_the_controls_page_after_button_mapping)
+{
+	Fixture f;
+	f.menu.goto_page(Menu::PAGE_CONTROLS);
+	f.menu.update(pkh::idle());
+	CHECK_STR(f.menu.row_label(3).c_str(), "Button mapping");
+	CHECK_STR(f.menu.row_label(4).c_str(), "Button test");
+	CHECK(f.menu.row_enabled(4));
+}
+
+TEST(button_test_shows_inputs_and_leaves_only_by_start_select_held)
+{
+	Fixture f;
+	open_button_test(f);
+	CHECK(f.menu.button_test_open());
+	CHECK(f.menu.regions().empty());                 /* nothing on the page can be touched */
+	/* every button is the test's: none of them leaves the page, whatever the Enter convention says */
+	uint32_t all = PH_UP | PH_DOWN | PH_LEFT | PH_RIGHT | PH_CROSS | PH_CIRCLE | PH_SQUARE | PH_TRIANGLE | PH_L | PH_R | PH_START | PH_SELECT;
+	for (int b = 0; b < 12; b++) {
+		pk::MenuInput in = pkh::idle();
+		in.pads[0].buttons = 1u << b;
+		for (int k = 0; k < 40; k++) f.menu.update(in);
+		CHECK(f.menu.button_test_open());
+		(void) all;
+	}
+	/* a finger on the screen, a rear corner and a stick are only shown */
+	{
+		pk::MenuInput in = pkh::idle();
+		in.touch.down = true; in.touch.x = 100; in.touch.y = 100;
+		in.pads[0].back = 5; in.pads[0].lx = 255;
+		for (int k = 0; k < 40; k++) f.menu.update(in);
+		CHECK(f.menu.button_test_open());
+	}
+	/* Start alone, or Select alone, held for a long time: still here */
+	{
+		pk::MenuInput in = pkh::idle();
+		in.pads[0].buttons = PH_START;
+		for (int k = 0; k < 100; k++) f.menu.update(in);
+		CHECK(f.menu.button_test_open());
+	}
+	/* both, for less than half a second, then let go: still here */
+	{
+		pk::MenuInput in = pkh::idle(16);
+		in.pads[0].buttons = PH_START | PH_SELECT;
+		for (int k = 0; k < 20; k++) f.menu.update(in);       /* 320 ms */
+		in.pads[0].buttons = 0;
+		f.menu.update(in);
+		CHECK(f.menu.button_test_open());
+		in.pads[0].buttons = PH_START | PH_SELECT;
+		for (int k = 0; k < 20; k++) f.menu.update(in);       /* the clock started again: 320 ms */
+		CHECK(f.menu.button_test_open());
+	}
+	/* both held half a second: back on the Controls page */
+	{
+		pk::MenuInput in = pkh::idle(16);
+		in.pads[0].buttons = PH_START | PH_SELECT;
+		for (int k = 0; k < 20; k++) f.menu.update(in);
+		CHECK(!f.menu.button_test_open());
+		CHECK(f.menu.is_open());
+		CHECK_EQ(f.menu.page(), Menu::PAGE_CONTROLS);
+		/* the two held buttons did not act on the page behind */
+		CHECK_EQ(f.menu.page(), Menu::PAGE_CONTROLS);
+	}
+}
+
+TEST(button_test_leaves_by_a_finger_held_on_its_footer_too)
+{
+	/* a console whose Start or Select is the worn button must not be kept on the page */
+	Fixture f;
+	open_button_test(f);
+	pk::MenuInput in = pkh::idle(16);
+	in.touch.down = true; in.touch.x = 480; in.touch.y = 520;
+	for (int k = 0; k < 40; k++) f.menu.update(in);          /* 640 ms: not yet */
+	CHECK(f.menu.button_test_open());
+	f.menu.update(pkh::idle(16));                             /* lifted: the clock starts again */
+	for (int k = 0; k < 40; k++) f.menu.update(in);
+	CHECK(f.menu.button_test_open());
+	in.touch.y = 300;                                         /* held anywhere else: only shown */
+	for (int k = 0; k < 200; k++) f.menu.update(in);
+	CHECK(f.menu.button_test_open());
+	in.touch.y = 520;
+	for (int k = 0; k < 70; k++) f.menu.update(in);           /* more than a second on the line */
+	CHECK(!f.menu.button_test_open());
+	CHECK(f.menu.is_open());
+	CHECK_EQ(f.menu.page(), Menu::PAGE_CONTROLS);
+	/* the finger that left is not a tap on the page behind, held or lifted */
+	int cur = f.menu.cursor();
+	for (int k = 0; k < 10; k++) f.menu.update(in);
+	for (int k = 0; k < 10; k++) f.menu.update(pkh::idle(16));
+	CHECK(!f.menu.button_test_open());
+	CHECK(!f.menu.modal_open());
+	CHECK_EQ(f.menu.page(), Menu::PAGE_CONTROLS);
+	CHECK_EQ(f.menu.cursor(), cur);
+}
+
+TEST(button_test_names_what_each_input_does_from_the_profile)
+{
+	/* the page reads player 1's profile: a rear corner bound to Quick save shows up where the corner is */
+	Fixture f;
+	CHECK(f.profile.bind[0][ACT_QSAVE] != 0);
+	open_button_test(f);
+	pk::MenuInput in = pkh::idle();
+	in.pads[0].buttons = PH_CROSS;
+	f.menu.update(in);
+	CHECK(f.menu.button_test_open());
+	/* drawing needs a Gfx; the harness draws in menu_walk. Here: the profile is untouched by the page */
+	Profile before = f.profile;
+	for (int k = 0; k < 30; k++) f.menu.update(in);
+	for (int a = 0; a < ACT_COUNT; a++) CHECK_EQ(f.profile.bind[0][a], before.bind[0][a]);
+}
+
 TEST(menu_reset_and_exit_need_confirmation)
 {
 	Fixture f;

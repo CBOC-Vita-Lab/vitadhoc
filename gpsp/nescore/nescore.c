@@ -35,6 +35,14 @@ static nescore_video_frame_t g_last_vf;   /* the last picture handed over */
 static unsigned g_wide_dark;     /* frames in a row with no real side picture */
 #define WIDE_MARGIN 84           /* 240 lines at square pixels on 16:9 */
 
+static int g_port2 = NESCORE_PORT2_AUTO;
+void nescore_set_port2(int mode)
+{
+  g_port2 = mode == NESCORE_PORT2_ZAPPER || mode == NESCORE_PORT2_PAD ? mode : NESCORE_PORT2_AUTO;
+}
+int nescore_zapper_active(void) { return nes_host_zapper_active(); }
+void nescore_set_zapper(int x, int y, int trigger) { nes_host_set_zapper(x, y, trigger); }
+
 void nescore_set_wide(int mode)
 {
   g_wide = mode == NESCORE_WIDE_ON || mode == NESCORE_WIDE_OFF ? mode : NESCORE_WIDE_AUTO;
@@ -157,6 +165,7 @@ nescore_t *nescore_create(const char *rom_path, const char *srm_path,
   name = strrchr(rom_path, '/');
   name = name ? name + 1 : rom_path;
   nes_host_set_audio_rate(48000);
+  nes_host_set_option("zapper", g_port2);
   if (nes_host_load_mem(rom, n, name, g_err, sizeof(g_err)) != 0)
   {
     free(rom);
@@ -375,6 +384,7 @@ void nescore_shutdown(nescore_t *core)
 }
 
 unsigned nescore_sample_rate(const nescore_t *core) { (void)core; return nes_host_audio_rate(); }
+unsigned nescore_top(void) { return g_live ? g_core.top : 0; }
 unsigned nescore_frame_width(const nescore_t *core) { return core ? core->width : 0; }
 unsigned nescore_frame_height(const nescore_t *core) { return core ? core->height : 0; }
 double nescore_fps(const nescore_t *core) { (void)core; return nes_host_fps(); }

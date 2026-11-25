@@ -882,7 +882,7 @@ static bool touch_read(pk::TouchPoint *tp, uint8_t *back, uint64_t now_us, bool 
 	*back = 0;
 	if (sceTouchPeek(SCE_TOUCH_PORT_BACK, &d, 1) > 0)
 		for (unsigned i = 0; i < d.reportNum && i < 4; i++) {
-			bool left = d.report[i].x < 960, top = d.report[i].y < 445;
+			bool left = d.report[i].x < 960, top = d.report[i].y < 499;   /* the panel reports y 108..889 */
 			*back |= (uint8_t) (top ? (left ? 1 : 2) : (left ? 4 : 8));
 		}
 	return true;

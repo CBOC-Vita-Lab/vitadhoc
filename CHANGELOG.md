@@ -166,6 +166,26 @@ and in emulators; none of it has run on a real Vita yet (see
 - **Fast forward at normal pitch**, with the sound kept low and smooth.
 - **Tap screen for menu** can be turned off for thumbs that touch the screen;
   Start + Select always opens the menu.
+- **Rear touch panel in the main app** (Game Boy Advance, Game Boy, Game Boy
+  Color, NES and WonderSwan), as the Super NES and Sega players already had it.
+  Settings > Controls > Rear touch panel (Off by default) makes the panel's four
+  corners inputs that Button mapping can give to any button, shortcut or turbo
+  button; Settings > This game can switch it on or off for one game. On a
+  WonderSwan a corner bound to a game button presses that button.
+- **The NES Zapper on the touch screen.** Duck Hunt, Hogan's Alley, Wild Gunman,
+  Gumshoe and the other games that use the light gun (the game's own database
+  says which) take the touch screen as the gun: touch the picture to aim, and
+  the trigger is pulled while your finger is down. A tap no longer opens the
+  menu in those games (Start + Select does), and nothing is drawn for the gun.
+  Settings > This game > Port 2 (Auto, Zapper, Controller) forces the Zapper on
+  for any game or turns it off. Checked on PC with test cartridges, not with the
+  real games, and not on a Vita.
+- **Button test** (Settings > Controls): shows every button, both sticks, the
+  touch screen and the four corners of the rear panel as you press them, with
+  what each one does for the console you are on, so you can check a worn button
+  or a mapping. Hold Start + Select to leave (or a finger on the bottom line,
+  if one of the two is the worn button). The Super NES and Sega players
+  have the same page in their menu's Controls.
 - **More covers found** (a few percent more of the full game lists on Game Boy
   Advance and Super NES), and a failed save now says what is really wrong
   instead of "the card is full".

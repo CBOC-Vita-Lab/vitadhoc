@@ -95,6 +95,12 @@ next frame's picture, and answers a press one frame sooner (a small test cartrid
 later: 1 frame plain, 0 with run-ahead); and a state loaded at frame N then run M frames equals the run that was never interrupted (picture, sound,
 state, RAM, battery RAM of every frame; same machine, a reloaded ROM, a fresh machine; worker on and off).
 
+Game Boy Camera and Game Boy Printer: `gpsp/gbcore/tests/gbcam.c` (a hand-assembled cartridge drives the camera registers; pixels, capture time,
+banking, state, the frontend's crop and mirror, checked against answers worked out by hand) and `gbprinter.c` (packets, compression, checksum errors,
+multi-band strips, the strip pause, and the same stream through the core's serial port) run in `gpsp/gbcore/tests/run_accuracy.py` (host, sanitizers);
+`app_tests.py --only gbcam,gbprinter` runs the whole app on small cartridges (camera feed in the three modes, the saved photo, the PNG in `prints/`
+decoded and compared pixel by pixel, the setting Off). The twin's script has `camera=ramp|step|dark|bright` for the camera.
+
 `app-ahead` and `app-ahead-latency` (default tier; `gpsp/vita/hostcore/ahead_check.sh`, `ahead_latency.sh`) are the same proof for the app's own Quick
 response on Game Boy, Game Boy Color, NES and WonderSwan: per ROM the app twin runs with it off and with it forced on (`GBADHOC_AHEAD=0` / `2`, every
 frame at normal speed), and the sound, the quick save and the battery file must be identical (the cartridge clocks are frozen so two runs start

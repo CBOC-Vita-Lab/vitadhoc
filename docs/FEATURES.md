@@ -427,6 +427,40 @@ colours. The tables are data from SameBoy (Expat) and Gambatte (GPL-2); see
 `notices/THIRD-PARTY.md`. Linked peers see grey for the palettes outside the
 original DMG model, so both screens stay readable.
 
+## Game Boy Camera And Game Boy Printer
+
+**Game Boy Camera** (cartridge type `$FC`, the Pocket Camera): the mapper, the
+camera registers and the M64282FP sensor as the game uses them (exposure, gain,
+invert, edge enhancement, the dither matrix, the capture time), and the 128 KB
+of photos saved like any battery RAM. **Settings > This game > Camera** (shown
+for a Camera game only; the game's own file keeps it):
+
+| Camera | The picture |
+| --- | --- |
+| Front | The Vita's front camera, mirrored left to right, the 8:7 middle of it |
+| Back | The back camera, as it is |
+| Picture file | `camera.png` in the data folder (any size; its 8:7 middle) |
+
+With no camera (a PS TV, another app using it) or no `camera.png`, the game
+gets a test picture and a toast says so. The picture is an input, like the
+buttons: a rewound or loaded state keeps the live one. The sensor's noise and
+infrared response are not modelled, and the exposure scale is an estimate, so a
+real camera's pictures differ in detail; the game's own auto-exposure follows
+the picture either way.
+
+**Game Boy Printer**: with no link partner the serial port has a printer on
+it. It answers the game's packets (initialise, data with or without
+compression, print, break, status; bad checksums are flagged and dropped) and
+sets the status bytes games wait on. A print becomes a 160-pixel-wide PNG in
+`prints/` as `<game>-<date>-<n>.png`, in the game's colours (Settings > Game Boy
+colours; grey by default), and a toast says "Printed: saved to prints". A
+print whose bottom margin is not zero tears the strip off; a long picture
+printed in bands stays one strip until its last band, or two seconds of quiet.
+**Settings > This game > Game Boy Printer** (On by default; Game Boy and Game
+Boy Color games) turns it Off. During a link session there is no printer.
+A margin step is 8 pixels (an estimate) and a print of several sheets is
+saved once.
+
 ## RetroAchievements
 
 Sign in through Settings. The password is sent for authentication, not stored;

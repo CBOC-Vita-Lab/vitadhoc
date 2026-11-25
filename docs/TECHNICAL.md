@@ -1559,6 +1559,16 @@ write-ups of single areas.
 
 Also in 2.0, from the commit record:
 
+- **Game Boy Camera and Game Boy Printer.** `gpsp/gbcore/tgbdual/gbcam.h` (cartridge `$FC`: the
+  mapper, the camera registers, the M64282FP model, state in the core's reserved
+  block; see LOCAL-PATCHES.md), `frontend-common/fe_gbcam_fit.h` (the camera's
+  8:7 crop and shrink to 128x112) and `fe_gbprinter.h` (the printer protocol on
+  the serial port, answered from `gb_serial_transfer` when no link partner is
+  there and the game starts a packet with `$88`; strips are handed to the
+  platform, which writes the PNG). `plat_camera_*` is SceCamera on the Vita
+  (ABGR into a 256 KB CDRAM block, read without waiting; compiled with the
+  SDK, never run) and a script feed on the twin. Tests: `gbcore/tests/gbcam.c`,
+  `gbprinter.c`, `app_tests.py --only gbcam,gbprinter`.
 - **Super FX.** `gsu_fast`, an exact block-cache interpreter for the chip
   (pre-decoded blocks, block chaining, fused prefixes, dead-flag elimination,
   folded delay slots, precomputed cycle costs, per-depth plot routines): about

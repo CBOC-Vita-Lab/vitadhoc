@@ -1420,6 +1420,10 @@ static int gb_prn_serial(uint8_t outgoing, int internal_clock, uint8_t *received
    if (!gb_prn_on || !internal_clock || ahead_quiet ||
        (host.console != FE_CONSOLE_GB && host.console != FE_CONSOLE_GBC))
       return 0;
+   /* A game probing for a link partner sends something other than a packet
+    * header: it hears what an empty port gives (0xFF), as before. */
+   if ((!gb_prn || gb_prn->state == 0) && outgoing != 0x88)
+      return 0;
    if (!gb_prn)
    {
       gb_prn = (gbprn *)calloc(1, sizeof(*gb_prn));

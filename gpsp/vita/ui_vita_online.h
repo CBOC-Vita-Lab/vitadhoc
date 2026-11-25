@@ -113,74 +113,74 @@ void ui_online_fail_text(int why, const char *arg1, const char *arg2,
    switch (why)
    {
    case UI_FAIL_ONLINE_CODE:
-      s1 = "That code is wrong or has expired.";
-      s2 = "Codes last 10 minutes. Ask your friend for a new one.";
+      s1 = tr("online.that_code_is_wrong_or_has");
+      s2 = tr("online.codes_last_10_minutes_ask_your");
       break;
    case UI_FAIL_ONLINE_UPDATE:
-      s1 = "This version of VitAdhoc is too old for online play.";
-      s2 = "Install the latest version on this " UI_DEV ", then try again.";
+      s1 = tr("online.this_version_of_vitadhoc_is_too");
+      s2 = tr("online.install_the_latest_version_on_this");
       break;
    case UI_FAIL_ONLINE_VER_OLD_HERE:
-      snprintf(b1, sizeof(b1), "Your friend has a newer VitAdhoc (%s).", a1);
+      snprintf(b1, sizeof(b1), tr("online.your_friend_has_a_newer_vitadhoc"), a1);
       s1 = b1;
-      s2 = "Update this " UI_DEV " to the same version, then join again.";
+      s2 = tr("online.update_this_vita_to_the_same");
       break;
    case UI_FAIL_ONLINE_VER_OLD_THERE:
-      snprintf(b1, sizeof(b1), "Your friend has an older VitAdhoc (%s).", a1);
-      snprintf(b2, sizeof(b2), "Ask them to update to %s, then host again.", a2);
+      snprintf(b1, sizeof(b1), tr("online.your_friend_has_an_older_vitadhoc"), a1);
+      snprintf(b2, sizeof(b2), tr("online.ask_them_to_update_to_then"), a2);
       s1 = b1;
       s2 = b2;
       break;
    case UI_FAIL_ONLINE_SETUP:
-      s1 = "Both run the same VitAdhoc, but the Game Boy Advance setup differs.";
-      s2 = "Use the same BIOS file and CPU setting on both, then try again.";
+      s1 = tr("online.both_run_the_same_vitadhoc_but");
+      s2 = tr("online.use_the_same_bios_file_and");
       break;
    case UI_FAIL_ONLINE_CLOCK:
-      s1 = "This " UI_DEV "'s date is wrong.";
-      s2 = "Set the date and time in Settings, then try again.";
+      s1 = tr("online.this_vita_s_date_is_wrong");
+      s2 = tr("online.set_the_date_and_time_in");
       break;
    case UI_FAIL_ONLINE_GAME:
-      s1 = "Your friend is playing a different game.";
-      snprintf(b2, sizeof(b2), "Add %s to this " UI_DEV " to join.", a1);
+      s1 = tr("online.your_friend_is_playing_a_different");
+      snprintf(b2, sizeof(b2), tr("online.add_to_this_vita_to_join"), a1);
       s2 = b2;
       break;
    case UI_FAIL_ONLINE_GAME_FILE:
-      snprintf(b1, sizeof(b1), "Your copy of %s is a different file from "
-               "your friend's.", a1);
+      snprintf(b1, sizeof(b1), tr("online.your_copy_of_is_a_different")
+, a1);
       s1 = b1;
-      s2 = "The link checks it when it starts.";
+      s2 = tr("online.the_link_checks_it_when_it");
       break;
    case UI_FAIL_ONLINE_FULL:
-      s1 = "Somebody already joined that room.";
-      s2 = "Ask your friend to host again.";
+      s1 = tr("online.somebody_already_joined_that_room");
+      s2 = tr("online.ask_your_friend_to_host_again");
       break;
    case UI_FAIL_ONLINE_UNREACHABLE:
-      s1 = "Couldn't reach your friend.";
-      s2 = "Try again, or both use Same Wi-Fi.";
+      s1 = tr("online.couldn_t_reach_your_friend");
+      s2 = tr("online.try_again_or_both_use_same");
       break;
    case UI_FAIL_ONLINE_BUSY:
-      s1 = "Online play is busy for today.";
-      s2 = "Try again tomorrow, or both use Same Wi-Fi.";
+      s1 = tr("online.online_play_is_busy_for_today");
+      s2 = tr("online.try_again_tomorrow_or_both_use");
       break;
    case UI_FAIL_ONLINE_SLOW:
-      s1 = "Too many tries from this network.";
-      s2 = "Wait a minute and try again.";
+      s1 = tr("online.too_many_tries_from_this_network");
+      s2 = tr("online.wait_a_minute_and_try_again");
       break;
    case UI_FAIL_ONLINE_SERVICE:
-      s1 = "The online service could not be reached.";
-      s2 = "Check this " UI_DEV "'s internet connection and try again.";
+      s1 = tr("online.the_online_service_could_not_be");
+      s2 = tr("online.check_this_vita_s_internet_connection");
       break;
    case UI_FAIL_ONLINE_CONSOLE:
-      s1 = "Online play is not ready for this console yet.";
-      s2 = "The online service must be updated. Use Same Wi-Fi for now.";
+      s1 = tr("online.online_play_is_not_ready_for");
+      s2 = tr("online.the_online_service_must_be_updated");
       break;
    case UI_FAIL_ONLINE_CLOSED:
-      s1 = "Your friend closed the room.";
-      s2 = "Ask them to host again.";
+      s1 = tr("online.your_friend_closed_the_room");
+      s2 = tr("online.ask_them_to_host_again");
       break;
    default:
-      s1 = "The online service could not be reached.";
-      s2 = "Check this " UI_DEV "'s internet connection and try again.";
+      s1 = tr("online.the_online_service_could_not_be");
+      s2 = tr("online.check_this_vita_s_internet_connection");
       break;
    }
    if (l1) *l1 = s1;
@@ -191,17 +191,17 @@ void ui_online_fail_text(int why, const char *arg1, const char *arg2,
  * session forms): who, and how good the line is. */
 void ui_online_connected_toast(const char *peer, int quality)
 {
-   const char *w = quality == ONLINE_Q_GREAT ? "Great"
-                 : quality == ONLINE_Q_GOOD ? "Good"
-                 : quality == ONLINE_Q_SLOW ? "Slow" : NULL;
+   const char *w = quality == ONLINE_Q_GREAT ? tr("online.great")
+                 : quality == ONLINE_Q_GOOD ? tr("online.good")
+                 : quality == ONLINE_Q_SLOW ? tr("online.slow") : NULL;
    char who[24];
-   vw_clip(who, sizeof(who), peer && peer[0] ? peer : "your friend", 120);
+   vw_clip(who, sizeof(who), peer && peer[0] ? peer : tr("online.your_friend"), 120);
    if (w)
-      osd_toast("Connected to %s. Connection: %s", who, w);
+      osd_toast(tr("toast.connected_to_connection"), who, w);
    else
-      osd_toast("Connected to %s.", who);
+      osd_toast(tr("toast.connected_to"), who);
    if (quality == ONLINE_Q_SLOW)
-      osd_toast("Slow connection: the game may feel delayed.");
+      osd_toast(tr("toast.slow_connection_the_game_may_feel"));
 }
 
 /* ---- the host's page: the code, big ----------------------------------------- */
@@ -269,16 +269,16 @@ static void online_host_page(int y_top, const char *game)
    if (!code)
    {
       /* before the code exists: what the link is doing */
-      const char *why = st == ON_RESOLVE ? "Finding the service..."
-                      : st == ON_STUN ? "Checking your connection..."
-                      : "Asking for a code...";
-      vid_text_center(y + 44, "Getting a code...", C_ITEM);
+      const char *why = st == ON_RESOLVE ? tr("online.finding_the_service")
+                      : st == ON_STUN ? tr("online.checking_your_connection")
+                      : tr("online.asking_for_a_code");
+      vid_text_center(y + 44, tr("online.getting_a_code"), C_ITEM);
       vid_text_center(y + 64, why, C_DIM);
-      vw_ring((VID_SCR_W - vid_text_w("Getting a code...")) / 2 - 14, y + 44 + 8,
+      vw_ring((VID_SCR_W - vid_text_w(tr("online.getting_a_code"))) / 2 - 14, y + 44 + 8,
               C_TITLE);
       return;
    }
-   vid_text_center(y + 20, "Give this code to your friend", C_ITEM);
+   vid_text_center(y + 20, tr("online.give_this_code_to_your_friend"), C_ITEM);
    {
       char five[OC_LEN];
       int i;
@@ -287,17 +287,17 @@ static void online_host_page(int y_top, const char *game)
       oc_boxes(y + 42, 48, 56, 8, five, -1, 0, 1);
    }
    if (relay)
-      vid_text_center(y + 108, "Connecting through the relay.", C_VALUE);
+      vid_text_center(y + 108, tr("online.connecting_through_the_relay"), C_VALUE);
    else if (st >= ON_PUNCH)
-      vid_text_center(y + 108, "Your friend is joining...", C_VALUE);
+      vid_text_center(y + 108, tr("online.your_friend_is_joining"), C_VALUE);
    else if (g_link.online_ttl_s > 0)
    {
-      snprintf(line, sizeof(line), "expires in %d:%02d",
+      snprintf(line, sizeof(line), tr("online.expires_in"),
                g_link.online_ttl_s / 60, g_link.online_ttl_s % 60);
       vid_text_center(y + 108, line, C_DIM);
    }
    else
-      vid_text_center(y + 108, "Waiting for your friend...", C_DIM);
+      vid_text_center(y + 108, tr("online.waiting_for_your_friend"), C_DIM);
 }
 
 /* ---- the code pad ------------------------------------------------------------- */
@@ -319,8 +319,8 @@ static void oc_init_keys(void)
       k->row = (unsigned char)(i / 8);
       k->span = 1;
    }
-   g_oc_keys[OC_KEY_DEL] = (kp_key){ "Del", 0, KP_DEL, 7, 3, 1 };
-   g_oc_keys[OC_KEY_JOIN] = (kp_key){ "Join", 0, KP_OK, 0, 4, 8 };
+   g_oc_keys[OC_KEY_DEL] = (kp_key){ tr("online.del"), 0, KP_DEL, 7, 3, 1 };
+   g_oc_keys[OC_KEY_JOIN] = (kp_key){ tr("online.join"), 0, KP_OK, 0, 4, 8 };
 }
 
 static void oc_clear_code(void)
@@ -466,8 +466,8 @@ static ui_action screen_online_code(unsigned edges)
    if ((edges & (PSP_CTRL_TRIANGLE | PSP_CTRL_START)) || act == KP_OK)
    {
       if (!full)
-         snprintf(g_play_note, sizeof(g_play_note), "Type all five characters, "
-                  "like K7M4Q.");
+         snprintf(g_play_note, sizeof(g_play_note), tr("online.type_all_five_characters_like_k7m4q")
+);
       else if (g_oc.modal == 2)
       {
          memcpy(g_oc.out, g_oc.c, OC_LEN);
@@ -509,28 +509,28 @@ static ui_action screen_online_code(unsigned edges)
    }
 
    ov_backdrop(OV_SCRIM_DENSE);
-   vw_head(NULL, "JOIN ONLINE");
+   vw_head(NULL, tr("online.join_online"));
    oc_boxes(46, 40, 28, 8, g_oc.c, on_box ? g_oc.box : -1, 1, 0);
    {
       char n[24];
       int k, have = 0;
       for (k = 0; k < OC_LEN; k++)
          have += g_oc.c[k] ? 1 : 0;
-      snprintf(n, sizeof(n), "%d of %d", have, OC_LEN);
+      snprintf(n, sizeof(n), tr("online.of"), have, OC_LEN);
       ov_text_right(460, 52, n, full ? C_VALUE : C_DIM);
    }
    kp_draw(&g_oc_pad, on_box ? -1 : g_cursor,
            full ? 0u : 1u << OC_KEY_JOIN);
-   vw_wrap(364, 84, 100, "Your friend's screen shows five letters and "
-           "numbers. There is no I, L, O, 0 or 1.", C_DIM, 8);
+   vw_wrap(364, 84, 100, tr("online.your_friend_s_screen_shows_five")
+, C_DIM, 8);
    if (g_play_note[0])
       vw_plate(g_play_note);
    else if (on_box)
-      footer("DPAD letter, move   " VID_GLYPH_X " pad   " VID_GLYPH_SQ
-             " delete   " VID_GLYPH_TRI " join   " VID_GLYPH_O " back");
+      footer(tr("hint.dpad_letter_move_x_pad_sq")
+);
    else
-      footer(VID_GLYPH_X " type   " VID_GLYPH_SQ " delete   " VID_GLYPH_TRI
-             " join   " VID_GLYPH_O " back");
+      footer(tr("hint.x_type_sq_delete_tri_join")
+);
    return UI_ACT_NONE;
 }
 
@@ -541,7 +541,7 @@ static ui_action screen_online_code(unsigned edges)
 static void oc_title_of(const ui_online_card *c, char *out, size_t cap)
 {
    const char *t = !strcmp(c->console, "gba") ? link_game_title(c->game) : NULL;
-   vw_clip(out, cap, t ? t : c->title[0] ? c->title : "a game", 330);
+   vw_clip(out, cap, t ? t : c->title[0] ? c->title : tr("online.a_game"), 330);
 }
 
 static void oc_bad(int why)
@@ -846,14 +846,14 @@ static ui_action screen_online_card(unsigned edges)
 
    /* the page */
    ov_backdrop(OV_SCRIM_DENSE);
-   vw_head(NULL, "JOIN ONLINE");
+   vw_head(NULL, tr("online.join_online"));
    ov_text_right(460, 48, g_oc.code, C_DIM);
    if (g_oc.phase == OCP_LOOK || g_oc.phase == OCP_BAD)
    {
       if (g_oc.phase == OCP_LOOK)
       {
-         vid_text(22, 70, "Looking for the room...", C_ITEM);
-         vw_ring(22 + vid_text_w("Looking for the room...") + 16, 70 + 8,
+         vid_text(22, 70, tr("online.looking_for_the_room"), C_ITEM);
+         vw_ring(22 + vid_text_w(tr("online.looking_for_the_room")) + 16, 70 + 8,
                  C_TITLE);
       }
       else
@@ -864,35 +864,35 @@ static ui_action screen_online_card(unsigned edges)
             vw_wrap(22, 134, 436, "A compressed .zip or .7z cannot be "
                     "checked here. Unpack the game into your games folder.", C_DIM, 2);
       }
-      footer(VID_GLYPH_O " back");
+      footer(tr("hint.o_back"));
       return act;
    }
    /* a room that can be entered: its game, kind and host */
    vw_line(22, 54, 436, g_oc.title, C_SEL);
-   snprintf(l, sizeof(l), "%s  -  hosted by %s", kind_name(g_oc.card.kind),
-            g_oc.card.nick[0] ? g_oc.card.nick : "a player");
+   snprintf(l, sizeof(l), tr("online.hosted_by"), kind_name(g_oc.card.kind),
+            g_oc.card.nick[0] ? g_oc.card.nick : tr("online.a_player"));
    vw_line(22, 82, 436, l, C_VALUE);
    y = 112;
    if (g_oc.phase == OCP_JOIN)
    {
-      vw_line(22, y, 436, "Your game can enter this room.", C_ITEM);
-      vw_row(OC_ROW_JOIN, y + 28, 440, 1, 1, "Join", NULL);
-      footer(VID_GLYPH_X " join   " VID_GLYPH_O " back");
+      vw_line(22, y, 436, tr("online.your_game_can_enter_this_room"), C_ITEM);
+      vw_row(OC_ROW_JOIN, y + 28, 440, 1, 1, tr("online.join"), NULL);
+      footer(tr("hint.x_join_o_back"));
    }
    else if (g_oc.phase == OCP_SEARCH)
    {
-      vid_text(22, y, "Looking in your games...", C_ITEM);
-      vw_ring(22 + vid_text_w("Looking in your games...") + 16, y + 8, C_TITLE);
-      footer(VID_GLYPH_O " back");
+      vid_text(22, y, tr("online.looking_in_your_games"), C_ITEM);
+      vw_ring(22 + vid_text_w(tr("online.looking_in_your_games")) + 16, y + 8, C_TITLE);
+      footer(tr("hint.o_back"));
    }
    else if (g_oc.phase == OCP_OPEN)
    {
       char t[100];
-      vw_line(22, y, 436, "You have this game. It starts, then joins.", C_ITEM);
-      snprintf(t, sizeof(t), "Open %s and join", g_oc.title);
+      vw_line(22, y, 436, tr("online.you_have_this_game_it_starts"), C_ITEM);
+      snprintf(t, sizeof(t), tr("online.open_and_join"), g_oc.title);
       vw_row(OC_ROW_JOIN, y + 28, 440, 1, 1, vw_clip(l, sizeof(l), t, 400),
              NULL);
-      footer(VID_GLYPH_X " open and join   " VID_GLYPH_O " back");
+      footer(tr("hint.x_open_and_join_o_back"));
    }
    else   /* OCP_ASK */
    {
@@ -907,16 +907,16 @@ static ui_action screen_online_card(unsigned edges)
       }
       else
       {
-         snprintf(l, sizeof(l), "You have more than one copy of %s.", g_oc.title);
+         snprintf(l, sizeof(l), tr("online.you_have_more_than_one_copy"), g_oc.title);
          vw_line(22, y - 6, 436, l, C_VALUE);
-         vw_line(22, y + 12, 436, "Pick the one to open.", C_ITEM);
+         vw_line(22, y + 12, 436, tr("online.pick_the_one_to_open"), C_ITEM);
       }
       for (i = g_oc.top; i < g_oc.nhit && i < g_oc.top + OC_LIST_ROWS; i++)
       {
          int ry = y + 38 + (i - g_oc.top) * VW_PITCH;
          oc_hit_names(g_oc.hit[i].path, nm, sizeof(nm), dir, sizeof(dir));
          if (g_oc.hit[i].patched)
-            snprintf(val, sizeof(val), "patched  -  %s", dir);
+            snprintf(val, sizeof(val), tr("online.patched"), dir);
          else
             snprintf(val, sizeof(val), "%s", dir);
          vw_row(i, ry, 440, g_cursor == i, 1, nm, val);
@@ -924,7 +924,7 @@ static ui_action screen_online_card(unsigned edges)
       if (g_oc.nhit > OC_LIST_ROWS)
          ov_scrollbar(470, y + 38, OC_LIST_ROWS * VW_PITCH, g_oc.top *
                       VW_PITCH, OC_LIST_ROWS * VW_PITCH, g_oc.nhit * VW_PITCH);
-      footer(VID_GLYPH_X " open and join   " VID_GLYPH_O " back");
+      footer(tr("hint.x_open_and_join_o_back"));
    }
    return act;
 }

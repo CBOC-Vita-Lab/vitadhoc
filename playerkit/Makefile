@@ -21,7 +21,7 @@ CXXFLAGS ?= -std=c++11 -Wall -Wextra -O3 -g -fno-omit-frame-pointer $(SAN)
 B        := build
 SHOTS    ?= $(B)/shots
 
-LIB_SRC  := src/pk_util.cpp src/pk_text.cpp src/pk_glyphs.cpp src/pk_font_data.cpp src/pk_icons.cpp src/pk_gfx_soft.cpp src/pk_states.cpp \
+LIB_SRC  := src/pk_util.cpp src/pk_i18n.cpp src/pk_text.cpp src/pk_glyphs.cpp src/pk_font_data.cpp src/pk_icons.cpp src/pk_gfx_soft.cpp src/pk_states.cpp \
             src/pk_launch.cpp src/pk_patch.cpp src/pk_input.cpp src/pk_notice.cpp src/pk_menu.cpp src/pk_pace.cpp src/pk_handoff.cpp src/pk_look.cpp src/pk_cores.cpp src/pk_scale.cpp src/pk_rewind.cpp src/pk_ff.cpp src/pk_speed.cpp src/pk_link.cpp
 LIB_OBJ  := $(patsubst src/%.cpp,$(B)/linux/%.o,$(LIB_SRC))
 TEST_SRC := $(wildcard tests/test_*.cpp)
@@ -29,11 +29,11 @@ TEST_OBJ := $(patsubst tests/%.cpp,$(B)/linux/tests/%.o,$(TEST_SRC))
 
 all: test
 
-$(B)/linux/%.o: src/%.cpp $(wildcard src/*.h)
+$(B)/linux/%.o: src/%.cpp $(wildcard src/*.h) $(wildcard src/*.inc)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -Isrc -c $< -o $@
 
-$(B)/linux/tests/%.o: tests/%.cpp $(wildcard src/*.h) $(wildcard tests/*.h) $(wildcard tools/*.h)
+$(B)/linux/tests/%.o: tests/%.cpp $(wildcard src/*.h) $(wildcard src/*.inc) $(wildcard tests/*.h) $(wildcard tools/*.h)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -Isrc -Itests -Itools -c $< -o $@
 
@@ -47,11 +47,15 @@ $(B)/linux/tests/main.o: tests/main.cpp tests/pk_test.h
 $(B)/menu_walk: $(LIB_OBJ) $(B)/linux/tests/menu_walk.o
 	$(CXX) $(CXXFLAGS) $^ -o $@
 
-$(B)/linux/tests/menu_walk.o: tests/menu_walk.cpp tests/harness.h $(wildcard src/*.h)
+$(B)/linux/tests/menu_walk.o: tests/menu_walk.cpp tests/harness.h $(wildcard src/*.h) $(wildcard src/*.inc)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -Isrc -Itests -c $< -o $@
 
-test: scale-check $(B)/unit_tests $(B)/menu_walk $(B)/vita_gxm $(B)/handoff_tsan $(B)/cores_tsan $(B)/spin_tsan stdio_lock link-test ra-test
+.PHONY: i18n-check
+i18n-check:
+	python3 tools/gen_strings.py --check
+
+test: i18n-check scale-check $(B)/unit_tests $(B)/menu_walk $(B)/vita_gxm $(B)/handoff_tsan $(B)/cores_tsan $(B)/spin_tsan stdio_lock link-test ra-test
 	TZ=UTC $(B)/unit_tests
 	TZ=UTC $(B)/menu_walk $(SHOTS)
 	$(B)/vita_gxm
@@ -99,8 +103,8 @@ include ra.mk
 $(B)/ra/pk_ra_plat_posix.o: ra/pk_ra_plat_posix.c src/pk_ra_plat.h
 	@mkdir -p $(B)/ra
 	$(CC) -std=gnu11 -O1 -g -w $(SAN) -Isrc -c -o $@ $<
-$(B)/ra_tests: tests/ra_tests_main.cpp tests/fake_ra.h tests/pk_test.h src/pk_ra.cpp src/pk_ra.h $(RA_OBJS) $(B)/ra/pk_ra_plat_posix.o
-	$(CXX) $(CXXFLAGS) -Isrc -Itests $(RA_INC) tests/ra_tests_main.cpp src/pk_ra.cpp \
+$(B)/ra_tests: tests/ra_tests_main.cpp tests/fake_ra.h tests/pk_test.h src/pk_ra.cpp src/pk_ra.h src/pk_i18n.cpp src/pk_i18n.h src/pk_strings_en.inc $(RA_OBJS) $(B)/ra/pk_ra_plat_posix.o
+	$(CXX) $(CXXFLAGS) -Isrc -Itests $(RA_INC) tests/ra_tests_main.cpp src/pk_ra.cpp src/pk_i18n.cpp \
 	  $(RA_OBJS) $(B)/ra/pk_ra_plat_posix.o -o $@ -pthread
 ra-test: $(B)/ra_tests
 	@if pgrep -af 'build/[r]a_tests' >/dev/null; then echo "another ra_tests run is active"; exit 1; fi
@@ -127,9 +131,9 @@ $(B)/cores_tsan: tests/cores_tsan_main.cpp src/pk_cores.cpp src/pk_cores.h
 	$(CXX) $(TSAN_FLAGS) -Isrc tests/cores_tsan_main.cpp src/pk_cores.cpp -o $@ -pthread
 
 # the spin lock (pk_util.h) with real threads under ThreadSanitizer
-$(B)/spin_tsan: tests/spin_tsan_main.cpp src/pk_util.cpp src/pk_util.h
+$(B)/spin_tsan: tests/spin_tsan_main.cpp src/pk_util.cpp src/pk_util.h src/pk_i18n.cpp src/pk_i18n.h src/pk_strings_en.inc
 	@mkdir -p $(B)
-	$(CXX) $(TSAN_FLAGS) -Isrc tests/spin_tsan_main.cpp src/pk_util.cpp -o $@ -pthread
+	$(CXX) $(TSAN_FLAGS) -Isrc tests/spin_tsan_main.cpp src/pk_util.cpp src/pk_i18n.cpp -o $@ -pthread
 
 # vita/pk_stdio_lock.c (the FILE-slot lock the console builds link with --wrap) on the host: the same
 # unlocked "scan, claim" through a fake libc, unwrapped (double claims, shown) and wrapped (none); the wrapped one
@@ -168,7 +172,7 @@ VITAFLAGS := -std=c++11 -Wall -Wextra -O2 -Isrc -I../snes/frontend/third_party/v
 VITA_SRC := $(filter-out src/pk_gfx_soft.cpp,$(LIB_SRC)) vita/pk_gfx_vita.cpp
 VITA_OBJ := $(patsubst %.cpp,$(B)/vita/%.o,$(VITA_SRC))
 
-$(B)/vita/%.o: %.cpp $(wildcard src/*.h) $(wildcard vita/*.h)
+$(B)/vita/%.o: %.cpp $(wildcard src/*.h) $(wildcard src/*.inc) $(wildcard vita/*.h)
 	@mkdir -p $(dir $@)
 	$(VITACXX) $(VITAFLAGS) -c $< -o $@
 

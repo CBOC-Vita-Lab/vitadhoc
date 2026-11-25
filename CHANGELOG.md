@@ -340,12 +340,35 @@ and in emulators; none of it has run on a real Vita yet (see
   Ordinary games sound the same (a sound register write now takes effect a few
   clocks later, well under one sample). Old save states load. Host results.
 
+**Interface languages**
+
+- **The app speaks eight languages**: English, Spanish, French, German,
+  Italian, Brazilian Portuguese, Japanese and Simplified Chinese. Pick one in
+  Settings > Interface > Language, or leave it on Automatic to follow the Vita
+  system language. The texts are plain files in `lang/` in the package, so a
+  fix or a new translation needs no new build. (The first release carries the
+  English text and the machinery; translations follow.)
+
 **Names in every alphabet**
 
 - Japanese (kana and kanji), Korean, fullwidth forms, accented Latin, Greek and
   Cyrillic names now show as written in the app and in the Super NES and Sega
   players' menus, instead of `?`. Names are never cut in the middle of a
   character, and long ones wrap at sensible places.
+
+**Your language in the players**
+
+- The Super NES and Sega players speak the language of the app: English,
+  Spanish, French, German, Italian, Brazilian Portuguese, Japanese and
+  Simplified Chinese. Settings > Interface has a Language row (Automatic
+  follows the Vita's system language; one the players do not have gives
+  English) and the choice is kept in `display.ini` next to the app's. Menus,
+  notices, help lines and error screens change at once, without restarting
+  the game. The texts live in `lang/pk_<code>.txt` (see
+  `lang/TRANSLATING-players.md`); a text a file lacks shows in English, and
+  the log stays English. Long translations wrap or end in an ellipsis rather
+  than shrink; every screen was checked with a test language 35% longer than
+  English. No translation ships yet: the catalogues are for translators.
 
 **Under the hood**
 

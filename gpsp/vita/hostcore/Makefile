@@ -190,7 +190,7 @@ APP_DEFS    += -DNP_HAVE_MBEDTLS -I$(MBEDTLS)/include
 MBEDTLS_LIBS := -L$(MBEDTLS)/lib -lmbedtls -lmbedx509 -lmbedcrypto
 endif
 
-APP_FLAGS := $(CORE_ARCH_FLAGS) -O2 -g -Wall -Wextra -std=gnu11 -MMD -MP \
+APP_FLAGS := $(CORE_ARCH_FLAGS) -O2 -g -Wall -Wextra -Wno-format-security -std=gnu11 -MMD -MP \
              $(SAN_FLAGS) \
              $(APP_DEFS) -DPSPCOMPAT_PLAT \
              $(if $(filter 1,$(GBA_LINK)),-DGBA_LINK) \

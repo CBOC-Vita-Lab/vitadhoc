@@ -70,6 +70,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 
+#include "i18n.h"
 #include "fe_host.h"
 #include "menu_load.h"
 #include "../gbcore/gbcore.h"   /* gbcore_set_color_correction */
@@ -1027,8 +1028,8 @@ static int snes_link_page(int is_host, const char *game, const char *title, link
    if (rc == -2)
    {
       char nb[64];
-      snprintf(nb, sizeof(nb), "Nearby isn't available for %s games", link_snes_console_name(link_snes_console_of_file(game)));
-      app_notice(nb, "Use Same Wi-Fi or Online for two players.", NULL, 5000);
+      snprintf(nb, sizeof(nb), tr("app.nearby_isn_t_available_for_games"), link_snes_console_name(link_snes_console_of_file(game)));
+      app_notice(nb, tr("notice.use_same_wi_fi_or_online"), NULL, 5000);
       return -1;
    }
    if (rc > 0)
@@ -1059,7 +1060,7 @@ static int snes_link_page(int is_host, const char *game, const char *title, link
       if (st == LSN_CANCELLED)
       {
          if (!link_snes_end_said())
-            osd_toast("Link cancelled.");
+            osd_toast(tr("toast.link_cancelled"));
          break;
       }
       if (st == LSN_FAILED)
@@ -1378,11 +1379,11 @@ static void ws_layout_hint(void)
       return;
    told |= 1u << show;
    if (show == WSCORE_SHOW_UPRIGHT)
-      toast_now("Vertical: the d-pad turns with the picture. L = A, R = B");
+      toast_now(tr("toast.vertical_the_d_pad_turns_with"));
    else if (show == WSCORE_SHOW_TURNED)
-      toast_now("Vertical: turn the Vita left. L = A, R = B");
+      toast_now(tr("toast.vertical_turn_the_vita_left_l"));
    else
-      toast_now("Horizontal: Circle = A, Cross = B");
+      toast_now(tr("toast.horizontal_circle_a_cross_b"));
 }
 
 /* The WonderSwan's buttons this frame: the Vita's own (the layout follows
@@ -1865,7 +1866,7 @@ static void gbcam_frame(void)
          plat_camera_close();
          g_cam_dev = 0;
          g_cam_lazy = 0;
-         toast_now("The camera stopped");
+         toast_now(tr("toast.the_camera_stopped"));
          fe_evt("camera_stopped");
       }
       if (g_cam_dev && now - g_cam_last >= CAM_IDLE_FRAMES)
@@ -1939,7 +1940,7 @@ static void gbprint_done(void)
 {
    fe_evt("gb_print_saved ok=%d file=%s w=%d h=%d", g_pr.ok,
           g_pr.ok ? g_pr.path : "", g_pr.w, g_pr.h);
-   toast_now(g_pr.ok ? "Printed: saved to prints" : "Print could not be saved");
+   toast_now(g_pr.ok ? tr("toast.printed_saved_to_prints") : tr("toast.print_could_not_be_saved"));
    free(g_pr.shades);
    g_pr.shades = NULL;
    g_pr.state = 0;
@@ -1967,7 +1968,7 @@ static void gbprint_frame(void)
          if (!g_pr.shades)
          {
             fe_evt("gb_print_saved ok=0 file= w=%d h=%d", w, h);
-            toast_now("Print could not be saved");
+            toast_now(tr("toast.print_could_not_be_saved"));
             return;
          }
          memcpy(g_pr.shades, strip, (size_t)w * (size_t)h);
@@ -2382,13 +2383,13 @@ static int patch_prepare(const char *rom_path, char *out, size_t cap,
        path_fmt(out, cap, "%s/patched/%s", g_app_root, base_name(rom_path)) != 0 ||
        path_fmt(key, sizeof(key), "%s.key", out) != 0)
    {
-      why = "a path too long";
+      why = tr("app.a_path_too_long");
       goto done;
    }
    patch = patch_read(ppath, &plen, 64L << 20);
    if (!patch)
    {
-      why = "could not be read";
+      why = tr("app.could_not_be_read");
       goto done;
    }
    kind = rom_patch_kind(patch, (size_t)plen);
@@ -2410,7 +2411,7 @@ static int patch_prepare(const char *rom_path, char *out, size_t cap,
    rom = patch_read(rom_path, &rlen, 64L << 20);
    if (!rom)
    {
-      why = "the game could not be read";
+      why = tr("app.the_game_could_not_be_read");
       goto done;
    }
    tlen = rom_patch_size(patch, (size_t)plen, (size_t)rlen, &why);
@@ -2418,13 +2419,13 @@ static int patch_prepare(const char *rom_path, char *out, size_t cap,
       goto done;
    if (tlen > (64u << 20))
    {
-      why = "too large";
+      why = tr("app.too_large");
       goto done;
    }
    dst = (unsigned char *)malloc(tlen);
    if (!dst)
    {
-      why = "not enough memory";
+      why = tr("app.not_enough_memory");
       goto done;
    }
    if (rom_patch_apply(patch, (size_t)plen, rom, (size_t)rlen, dst, tlen,
@@ -2448,7 +2449,7 @@ static int patch_prepare(const char *rom_path, char *out, size_t cap,
          remove(tmp);
          {
             static char wbuf[128];     /* what is true of the card, not a guess */
-            why = ds_failed_line("the patched game", out, wbuf, sizeof(wbuf));
+            why = ds_failed_line(tr("app.the_patched_game"), out, wbuf, sizeof(wbuf));
          }
          goto done;
       }
@@ -2467,11 +2468,11 @@ done:
    free(rom);
    free(dst);
    if (rc == 1)
-      snprintf(g_patch_note, sizeof(g_patch_note), "Patched with %s",
+      snprintf(g_patch_note, sizeof(g_patch_note), tr("app.patched_with"),
                base_name(ppath));
    else
       snprintf(g_patch_note, sizeof(g_patch_note), "%s: %s", base_name(ppath),
-               why ? why : "not a patch");
+               why ? why : tr("app.not_a_patch"));
    fe_evt("rom_patch file=%s kind=%d rc=%d size=%ld cached=%d why=\"%s\"",
           ppath, kind, rc, rc == 1 ? *out_size : 0L, cached,
           rc == 1 ? "" : (why ? why : "not a patch"));
@@ -2935,7 +2936,7 @@ static int rom_from_launch(char *out, size_t cap)
       break;
    case -2:
       fe_evt("launch_param refused reason=too_long");
-      snprintf(g_launch_note, sizeof(g_launch_note), "The path is too long.");
+      snprintf(g_launch_note, sizeof(g_launch_note), tr("app.the_path_is_too_long"));
       return 1;
    default:
       return -1;
@@ -2945,7 +2946,7 @@ static int rom_from_launch(char *out, size_t cap)
           ? path_fmt(out, cap, "%s", raw) != 0
           : path_fmt(out, cap, "%s/%s", g_app_rom_dir, raw) != 0)
    {
-      snprintf(g_launch_note, sizeof(g_launch_note), "The path is too long.");
+      snprintf(g_launch_note, sizeof(g_launch_note), tr("app.the_path_is_too_long"));
       return 1;
    }
    if (!has_ext(out, ".gba") && !has_ext(out, ".gb") && !has_ext(out, ".gbc") &&
@@ -2962,7 +2963,7 @@ static int rom_from_launch(char *out, size_t cap)
    if (file_size(out, &size) != 0 || size <= 0)
    {
       fe_evt("launch_param refused reason=missing path=\"%s\"", out);
-      snprintf(g_launch_note, sizeof(g_launch_note), "%.180s was not found.",
+      snprintf(g_launch_note, sizeof(g_launch_note), tr("app.was_not_found"),
                out);
       return 1;
    }
@@ -3018,7 +3019,7 @@ static void app_notice(const char *title, const char *l1, const char *l2,
    {
       uint64_t dt = plat_time_us() - t0;
       unsigned pad = pspcompat_pad();
-      const char *hint = "Press any button for the game list";
+      const char *hint = tr("app.press_any_button_for_the_game");
 
       vid_overlay_begin(1);
       /* VitAdhoc's look (vita/ui_vita_style.h): the navy page, a glow, the
@@ -3562,11 +3563,11 @@ static void update_say(int home)
       if (kind == UPD_NEWER && upd_take_notice(text, sizeof(text), 1))
          ;                       /* the notice below */
       else if (kind == UPD_CURRENT)
-         snprintf(text, sizeof(text), "VitAdhoc is up to date");
+         snprintf(text, sizeof(text), tr("app.vitadhoc_is_up_to_date"));
       else if (kind == UPD_NEWER)
-         snprintf(text, sizeof(text), "A newer VitAdhoc is out");
+         snprintf(text, sizeof(text), tr("app.a_newer_vitadhoc_is_out"));
       else
-         snprintf(text, sizeof(text), "Could not check for updates");
+         snprintf(text, sizeof(text), tr("app.could_not_check_for_updates"));
       fe_evt("update_toast by_hand=1 text=\"%s\"", text);
       osd_toast("%s", text);
    }
@@ -3586,12 +3587,12 @@ void app_update_options(void)
 void ui_host_update_now(void)
 {
    if (upd_busy())
-      osd_toast("Already checking for updates");
+      osd_toast(tr("toast.already_checking_for_updates"));
    else if (upd_check_now((time_t)plat_wallclock()) != 0)
-      osd_toast(upd_busy() ? "Already checking for updates"
-                           : "No network to check with");
+      osd_toast(upd_busy() ? tr("toast.already_checking_for_updates")
+                           : tr("toast.no_network_to_check_with"));
    else
-      osd_toast("Checking for updates...");
+      osd_toast(tr("toast.checking_for_updates"));
 }
 
 /* The home screen, once a frame (ui_vita_home.h): the day's check starts here
@@ -3662,9 +3663,9 @@ static void clip_export_service(void)
    fe_evt("clip_export done ok=%d frames=%u bytes=%u file=%s", ok, frames,
           bytes, path);
    if (ok)
-      osd_toast("Clip saved");
+      osd_toast(tr("toast.clip_saved"));
    else
-      osd_toast("The clip could not be saved");
+      osd_toast(tr("toast.the_clip_could_not_be_saved"));
 }
 
 /* keys_script (g_sw): the buttons of keys.txt, frame by frame. */
@@ -3758,7 +3759,7 @@ static void sink_yield(void)
 
 static void loading_progress(unsigned loaded, unsigned total)
 {
-   ui_loading_update(total ? "Reading ROM" : "Checking cartridge", loaded,
+   ui_loading_update(total ? tr("app.reading_rom") : tr("app.checking_cartridge"), loaded,
                      total);
 }
 
@@ -4467,7 +4468,7 @@ static void screenshot_write(void)
    if (!g_show.pix || !w || !h || w > SHOT_MAX_W ||
        h > PSP_STATE_SHOT_MAX_H)
    {
-      toast_now("No picture to save yet");
+      toast_now(tr("toast.no_picture_to_save_yet"));
       return;
    }
    for (y = 0; y < h; y++)
@@ -4522,14 +4523,14 @@ static void screenshot_write(void)
          if (stbi_write_png(path, (int)w, (int)h, 3, rgb, (int)w * 3))
          {
             fe_evt("screenshot file=%s w=%u h=%u", path, w, h);
-            toast_now("Screenshot saved");
+            toast_now(tr("toast.screenshot_saved"));
             return;
          }
          break;
       }
    }
    fe_evt("screenshot failed path=%s", path);
-   toast_now("Screenshot could not be saved");
+   toast_now(tr("toast.screenshot_could_not_be_saved"));
 }
 
 /* ---- power: suspend and resume ------------------------------------------------
@@ -4776,7 +4777,7 @@ const char *ui_host_look_label(void)
    if (!look_running() || !look_steps_on_row(LOOK_ROW_QUALITY))
       return NULL;
    (void)cap;
-   snprintf(l, sizeof(l), "Auto (%s, eased)",
+   snprintf(l, sizeof(l), tr("app.auto_eased"),
             look_tier_name()[0] ? look_tier_name() : "sharp");
    return l;
 }
@@ -5117,8 +5118,8 @@ static void ff_frame(unsigned fired, int session, int local)
       /* Both consoles of a session run in step: there is no 3x of that.
        * Nor of the local link, where one press would drive two games. */
       if (press || !g_ff.locked_told)
-         toast_now(session ? "Fast forward is off during a link session"
-                           : "Fast forward is off while two games are linked");
+         toast_now(session ? tr("toast.fast_forward_is_off_during_a")
+                           : tr("toast.fast_forward_is_off_while_two"));
       g_ff.locked_told = 1;
       want = 0;
       g_ff.toggled = 0;
@@ -5173,7 +5174,7 @@ static void fps_chip_frame(void)
          unsigned fps10 = (unsigned)((uint64_t)g_fps_emu * 10000000ull / el);
          unsigned drawn = (unsigned)(((uint64_t)g_fps_drawn * 1000000ull +
                                       el / 2) / el);
-         snprintf(g_fps_text, sizeof(g_fps_text), "%u.%u fps (%u)",
+         snprintf(g_fps_text, sizeof(g_fps_text), tr("app.fps"),
                   fps10 / 10, fps10 % 10, drawn);
          osd_chip_fps(g_fps_text);
       }
@@ -5608,7 +5609,7 @@ static void save_import(const char *rom_path, const char *save_path,
    {
       char dir[APP_PATH_CAP];
       snprintf(dir, sizeof(dir), "%.*s", (int)(bn - rom_path), rom_path);
-      TRY("this folder", "%s%s.srm", dir, stem)
+      TRY(tr("app.this_folder"), "%s%s.srm", dir, stem)
       if (!from && gb)
       {
          /* Game.sav is Game.gba's (or a zipped GBA game's) when that
@@ -5621,7 +5622,7 @@ static void save_import(const char *rom_path, const char *save_path,
              (path_fmt(probe3, sizeof(probe3), "%s%s.7z", dir, stem) != 0 ||
               file_size(probe3, NULL) != 0))
          {
-            TRY("this folder", "%s%s.sav", dir, stem)
+            TRY(tr("app.this_folder"), "%s%s.sav", dir, stem)
          }
       }
    }
@@ -5637,7 +5638,7 @@ static void save_import(const char *rom_path, const char *save_path,
       fe_evt("save_import failed from=\"%s\" to=\"%s\" size=%ld", cand,
              save_path, size);
       snprintf(g_import_note, sizeof(g_import_note),
-               "A save was found but could not be copied");
+               tr("app.a_save_was_found_but_could"));
       return;
    }
    fe_evt("save_import from=\"%s\" to=\"%s\" size=%ld where=%s", cand,
@@ -5648,7 +5649,7 @@ static void save_import(const char *rom_path, const char *save_path,
       if (rename(cand, probe) != 0)
          fe_evt("save_import keep_source rename_failed path=\"%s\"", cand);
    }
-   snprintf(g_import_note, sizeof(g_import_note), "Save imported from %s",
+   snprintf(g_import_note, sizeof(g_import_note), tr("app.save_imported_from"),
             from);
    /* A save from RetroArch (its folder, or Game.srm beside the game) stays
     * in step with RetroArch's file from now on (save_sync.h). */
@@ -5657,7 +5658,7 @@ static void save_import(const char *rom_path, const char *save_path,
       save_sync_link(save_path, cand);
       if (save_sync_enabled())
          snprintf(g_import_note, sizeof(g_import_note),
-                  "Save from RetroArch - kept in sync");
+                  tr("app.save_from_retroarch_kept_in_sync"));
    }
 }
 
@@ -5841,9 +5842,9 @@ void ui_host_btn_read(ui_btn_state *s)
    }
    s->rear_n = n;
    s->rear = ctl_rear_zones(x, y, n);
-   s->front_use = zapper_active() ? "Aims and fires (Zapper)"
-                : g_sw.touch_menu && g_pcfg.touch && g_pcfg.tap_menu ? "A tap opens the menu"
-                : "Nothing";
+   s->front_use = zapper_active() ? tr("app.aims_and_fires_zapper")
+                : g_sw.touch_menu && g_pcfg.touch && g_pcfg.tap_menu ? tr("app.a_tap_opens_the_menu")
+                : tr("app.nothing");
 }
 
 int ui_host_overlay_on(void) { return g_sw.overlays; }
@@ -5949,7 +5950,7 @@ static const char *arc_note(const char *path)
 {
    if (g_arc_note[0])
       return g_arc_note;
-   return has_ext(path, ".7z") ? "The .7z file could not be opened." : "The zip file could not be opened.";
+   return has_ext(path, ".7z") ? tr("app.the_7z_file_could_not_be") : tr("app.the_zip_file_could_not_be");
 }
 
 static int zip_unpack(const char *zip, fe_console_t console, char *out,
@@ -5972,15 +5973,15 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
    if (why)
    {
       if (rc == -2 && e.usize > ZIP_ROM_MAX)
-         snprintf(g_arc_note, sizeof(g_arc_note), "The game in it is over %lu MB: too large to unpack.", ZIP_ROM_MAX >> 20);
+         snprintf(g_arc_note, sizeof(g_arc_note), tr("app.the_game_in_it_is_over"), ZIP_ROM_MAX >> 20);
       else if (rc == -2 && e.method == 7 && e.csize > SZ_ROM_BLOCK_MAX)
-         snprintf(g_arc_note, sizeof(g_arc_note), "Its block is over %lu MB: too large to unpack.", SZ_ROM_BLOCK_MAX >> 20);
+         snprintf(g_arc_note, sizeof(g_arc_note), tr("app.its_block_is_over_mb_too"), SZ_ROM_BLOCK_MAX >> 20);
       else if (rc == -2)
-         snprintf(g_arc_note, sizeof(g_arc_note), "It is encrypted or packed in a way this app cannot read.");
+         snprintf(g_arc_note, sizeof(g_arc_note), tr("app.it_is_encrypted_or_packed_in"));
       else if (rc != 0)
-         snprintf(g_arc_note, sizeof(g_arc_note), "No game this app can start was found in it.");
+         snprintf(g_arc_note, sizeof(g_arc_note), tr("app.no_game_this_app_can_start"));
       else
-         snprintf(g_arc_note, sizeof(g_arc_note), "The game in it is for another console.");
+         snprintf(g_arc_note, sizeof(g_arc_note), tr("app.the_game_in_it_is_for"));
       fe_evt("boot_refused reason=%s path=%s", why, zip);
       return -1;
    }
@@ -6057,13 +6058,13 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
       }
    }
    remove(key);
-   ui_loading_update("Unpacking game", 0, 0);   /* the loading screen, when it is up: a big .7z takes a moment */
+   ui_loading_update(tr("app.unpacking_game"), 0, 0);   /* the loading screen, when it is up: a big .7z takes a moment */
    rc = zip_rom_extract(zip, &e, out);
    fe_evt("zip_unpack rc=%d entry=\"%s\" method=%d size=%lu path=%s", rc,
           e.name, e.method, e.usize, out);
    if (rc != 0)
    {
-      snprintf(g_arc_note, sizeof(g_arc_note), rc == -2 ? (e.method == 7 ? "It is damaged or packed in a way this app cannot read." : "The game in it is damaged (checksum).") : "The game in it could not be unpacked.");
+      snprintf(g_arc_note, sizeof(g_arc_note), rc == -2 ? (e.method == 7 ? tr("app.it_is_damaged_or_packed_in") : tr("app.the_game_in_it_is_damaged")) : tr("app.the_game_in_it_could_not"));
       fe_evt("boot_refused reason=%s path=%s",
              rc == -2 ? "zip_crc" : "zip_extract", zip);
       return -1;
@@ -6459,13 +6460,13 @@ static int game_boot(const char *rom_path, fe_console_t console)
           g_audio_ok, fe_host_sample_rate(), AUDIO_OUT_RATE, AUDIO_GRAIN,
           pace_speed_x1e6());
    if (!g_audio_ok)
-      osd_toast("Audio output unavailable");
+      osd_toast(tr("toast.audio_output_unavailable"));
    if (g_import_note[0])
       osd_toast("%s", g_import_note);
    if (g_patch_note[0])
    {
       if (!g_game.patched)
-         osd_toast("Patch not applied");
+         osd_toast(tr("toast.patch_not_applied"));
       osd_toast("%s", g_patch_note);
    }
    io_start();
@@ -6586,8 +6587,8 @@ static void menu_action(ui_action act)
       int rc = link_locks_states() ? -1
              : state_save_slot((unsigned)ui_state_slot());
       if (!ui_state_save_done(rc))
-         osd_toast(rc == 0 ? "State saved" : rc == -3 ? "Slot is locked"
-                                                      : "State save FAILED");
+         osd_toast(rc == 0 ? tr("toast.state_saved") : rc == -3 ? tr("toast.slot_is_locked")
+                                                      : tr("toast.state_save_failed"));
       break;
    }
    case UI_ACT_UNDOLOAD:
@@ -6597,7 +6598,7 @@ static void menu_action(ui_action act)
       if (rc == -2)
          fe_evt("hardcore_refused what=state_load via=undo");
       if (!ui_state_load_done(rc))
-         osd_toast(rc == 0 ? "Load undone" : "Nothing to undo");
+         osd_toast(rc == 0 ? tr("toast.load_undone") : tr("toast.nothing_to_undo"));
       break;
    }
    case UI_ACT_LOADSTATE:
@@ -6609,11 +6610,11 @@ static void menu_action(ui_action act)
       if (rc == -2)
          fe_evt("hardcore_refused what=state_load via=menu");
       if (!ui_state_load_done(rc))
-         osd_toast(rc == 0 ? "State loaded"
-                   : rc == -2 ? "Hardcore mode: states cannot be loaded"
+         osd_toast(rc == 0 ? tr("toast.state_loaded")
+                   : rc == -2 ? tr("toast.hardcore_mode_states_cannot_be_loaded")
                    : fe_host_state_other_core_take()
-                       ? "This state is from the other Game Boy core"
-                       : "No state to load");
+                       ? tr("toast.this_state_is_from_the_other_gb_core")
+                       : tr("toast.no_state_to_load"));
       break;
    }
 
@@ -6625,9 +6626,9 @@ static void menu_action(ui_action act)
       /* The menu stays open on its waiting page and reads the outcome from
        * the view (link_view_set): the room, or the reason. */
       if (link_local_active())
-         g_view_error = "Stop the two-player game on this Vita first.";
+         g_view_error = tr("app.stop_the_two_player_game_on");
       else if (mgift_vita_active())
-         g_view_error = "Stop Mystery Gift first.";
+         g_view_error = tr("app.stop_mystery_gift_first");
       else
       {
          g_view_err_part = ERR_NET;
@@ -6637,9 +6638,9 @@ static void menu_action(ui_action act)
    case UI_ACT_NET_JOIN:
       /* The menu has closed; what to join is *ui_join_target(). */
       if (link_local_active())
-         toast_now("Stop the two-player game on this Vita first");
+         toast_now(tr("toast.stop_the_two_player_game_on"));
       else if (mgift_vita_active())
-         toast_now("Stop Mystery Gift first");
+         toast_now(tr("toast.stop_mystery_gift_first"));
       else
          link_action(0);
       break;
@@ -6661,7 +6662,7 @@ static void menu_action(ui_action act)
     * The menu stays open on its page for all three. */
    case UI_ACT_NET_LOCAL:
       if (link_net_busy())
-         g_view_error = "End the network game first.";
+         g_view_error = tr("app.end_the_network_game_first");
       else
       {
          g_view_err_part = ERR_LOCAL;
@@ -6985,7 +6986,7 @@ static void game_loop(void)
             fe_evt("save_failed_shown count=%u", fails);
             {
                char line[128];
-               toast_now("%s", ds_failed_line("Save", g_game.save_path, line,
+               toast_now("%s", ds_failed_line(tr("app.save"), g_game.save_path, line,
                                               sizeof(line)));
             }
          }
@@ -7313,7 +7314,7 @@ static void game_loop(void)
       if (fired & CTL_FIRE_PAUSE)
       {
          if (session)
-            toast_now("Pause is off during a link session");
+            toast_now(tr("toast.pause_is_off_during_a_link"));
          else
             g_wake_menu = 1;
       }
@@ -7321,30 +7322,30 @@ static void game_loop(void)
       if (fired & CTL_FIRE_SAVE)
       {
          if (link_locks_states())
-            toast_now("Cannot save a state during a link session");
+            toast_now(tr("toast.cannot_save_a_state_during_a"));
          else
          {
             int src = state_save_slot(1);
-            toast_now(src == 0 ? "State saved" : src == -3 ? "Slot 1 is locked"
-                                                           : "Save failed");
+            toast_now(src == 0 ? tr("toast.state_saved") : src == -3 ? tr("toast.slot_1_is_locked")
+                                                           : tr("toast.save_failed"));
          }
       }
       else if (fired & CTL_FIRE_LOAD)
       {
          if (link_locks_states())
-            toast_now("Cannot load a state during a link session");
+            toast_now(tr("toast.cannot_load_a_state_during_a"));
          else if (ra_hardcore_active())
          {
             fe_evt("hardcore_refused what=state_load via=chord");
-            toast_now("Hardcore mode: states cannot be loaded");
+            toast_now(tr("toast.hardcore_mode_states_cannot_be_loaded"));
          }
          else
          {
             int lrc = state_load_slot(1, "chord");
-            toast_now(lrc == 0 ? "State loaded"
+            toast_now(lrc == 0 ? tr("toast.state_loaded")
                       : fe_host_state_other_core_take()
-                          ? "This state is from the other Game Boy core"
-                          : "No saved state");
+                          ? tr("toast.this_state_is_from_the_other_gb_core")
+                          : tr("toast.no_saved_state"));
          }
       }
       /* A state picked on the game list's shelf: once, as soon as the core
@@ -7361,7 +7362,7 @@ static void game_loop(void)
          {
             fe_evt("hardcore_refused what=state_load via=%s",
                    slot == PSP_STATE_RESUME ? "continue" : "shelf");
-            toast_now("Hardcore mode: starting from the save");
+            toast_now(tr("toast.hardcore_mode_starting_from_the_save"));
          }
          else if (slot == PSP_STATE_RESUME)
          {
@@ -7384,27 +7385,27 @@ static void game_loop(void)
             if (known && strcmp(had, g_patch_key[0] ? g_patch_key : "-\n"))
             {
                fe_evt("state_load via=continue refused=patch_changed");
-               toast_now("The patch changed: starting from the save");
+               toast_now(tr("toast.the_patch_changed_starting_from_the"));
             }
             else if (!known && g_game.patched && stat(g_res.path, &rs) == 0 &&
                 stat(g_game.boot_path, &ps) == 0 && rs.st_mtime < ps.st_mtime)
             {
                fe_evt("state_load via=continue refused=patched_since");
-               toast_now("Patched since it was left: starting from the save");
+               toast_now(tr("toast.patched_since_it_was_left_starting"));
             }
             else if (state_load_path(sidecar_read_path(g_res.path,
                         g_game.legacy_state_path, g_game.state_path, pt,
                         sizeof(pt)), "continue") != 0)
                toast_now(fe_host_state_other_core_take()
-                         ? "That state is from the other Game Boy core: starting from the save"
-                         : "Could not continue: starting from the save");
+                         ? tr("toast.that_state_is_from_the_other_gb_core_starting")
+                         : tr("toast.could_not_continue_starting_from_the"));
          }
          else if (state_load_slot((unsigned)slot, "shelf") != 0)
          {
             if (fe_host_state_other_core_take())
-               toast_now("This state is from the other Game Boy core");
+               toast_now(tr("toast.this_state_is_from_the_other_gb_core"));
             else
-               toast_now("Could not load state %d", slot);
+               toast_now(tr("toast.could_not_load_state"), slot);
          }
       }
       /* Not on the press that asked for the pause screen: with the default
@@ -7422,7 +7423,7 @@ static void game_loop(void)
          pcfg_display_save();    /* this console's profile only */
          fe_evt("video_mode scale=%s filter=%s", vid_scale_name(g_pcfg.scale),
                 vid_filter_name(vid_filter()));
-         toast_now("Video: %s", name);
+         toast_now(tr("toast.video"), name);
       }
       /* (not `local`: the local link fast-forwards both of its machines) */
       ff_frame(fired, session, 0);
@@ -7448,7 +7449,7 @@ static void game_loop(void)
             {
                hc_told = 1;
                fe_evt("hardcore_refused what=rewind");
-               toast_now("Hardcore mode: rewind is off");
+               toast_now(tr("toast.hardcore_mode_rewind_is_off"));
             }
             rw_want = 0;
          }
@@ -7597,7 +7598,7 @@ static void game_loop(void)
             g_faults_seen = faults;
             cheats_apply();
             ra_game_reset();
-            toast_now("Emulation fault - game was reset");
+            toast_now(tr("toast.emulation_fault_game_was_reset"));
          }
       }
       keys_script_frame(fe_host_frame_count());
@@ -7901,8 +7902,8 @@ int main(int argc, char **argv)
          g_launch_tried = 1;
       }
       if (launched == 1)
-         app_notice("This game could not be started", g_launch_note,
-                    "The launcher's path was used exactly as written.", 6000);
+         app_notice(tr("notice.this_game_could_not_be_started"), g_launch_note,
+                    tr("notice.the_launcher_s_path_was_used"), 6000);
       if (launched == 0)
       {
          console = console_for(rom_path);
@@ -7939,7 +7940,7 @@ int main(int argc, char **argv)
       upd_stop();                /* no request of ours while a game runs */
       if (!menu_log_stop())
       {
-         app_notice("Storage is still busy", "Please try again in a moment.",
+         app_notice(tr("notice.storage_is_still_busy"), tr("notice.please_try_again_in_a_moment"),
                     NULL, 2000);
          continue;
       }
@@ -7964,7 +7965,7 @@ int main(int argc, char **argv)
             size_t zl = strlen(rom_path);
             if (zip_unpack(rom_path, console, un, sizeof(un), &usz) != 0)
             {
-               app_notice("This game could not be started", base_name(rom_path),
+               app_notice(tr("notice.this_game_could_not_be_started"), base_name(rom_path),
                           arc_note(rom_path), 6000);
                continue;
             }
@@ -8017,7 +8018,7 @@ int main(int argc, char **argv)
             {
                /* Two players without its launch file would start the game alone while the other console waits */
                g_snes_lk = NULL;
-               app_notice("The two-player game could not start", "The launch file could not be written.", NULL, 5000);
+               app_notice(tr("notice.the_two_player_game_could_not"), tr("notice.the_launch_file_could_not_be"), NULL, 5000);
                continue;
             }
             play_name_of(rom_path, nm, sizeof(nm));
@@ -8027,7 +8028,7 @@ int main(int argc, char **argv)
          src = snes_launch(snes_arg);
          g_snes_lk = NULL;
          fe_evt("snes_launch failed rc=%08x", (unsigned)src);
-         app_notice("This game could not be started", base_name(rom_path),
+         app_notice(tr("notice.this_game_could_not_be_started"), base_name(rom_path),
                     "The SNES program (snes.bin) did not start.", 6000);
          continue;
       }
@@ -8052,7 +8053,7 @@ int main(int argc, char **argv)
             long usz = 0;
             if (zip_unpack(rom_path, console, game, sizeof(game), &usz) != 0)
             {
-               app_notice("This game could not be started", base_name(rom_path),
+               app_notice(tr("notice.this_game_could_not_be_started"), base_name(rom_path),
                           arc_note(rom_path), 6000);
                continue;
             }
@@ -8074,8 +8075,8 @@ int main(int argc, char **argv)
          if (player_launch_write(console, game, save, rom_path, slot) != 0)
          {
             g_snes_lk = NULL;
-            app_notice(two ? "The two-player game could not start" : "This game could not be started", base_name(rom_path),
-                       "The launch file could not be written.", 6000);
+            app_notice(two ? tr("notice.the_two_player_game_could_not") : tr("notice.this_game_could_not_be_started"), base_name(rom_path),
+                       tr("notice.the_launch_file_could_not_be"), 6000);
             continue;
          }
          play_name_of(rom_path, nm, sizeof(nm));
@@ -8083,7 +8084,7 @@ int main(int argc, char **argv)
          (void)play_log_save();
          src = sega_launch(console, game);
          fe_evt("sega_launch failed rc=%08x", (unsigned)src);
-         app_notice("This game could not be started", base_name(rom_path),
+         app_notice(tr("notice.this_game_could_not_be_started"), base_name(rom_path),
                     "The Sega program (md.bin) did not start.", 6000);
          continue;
       }
@@ -8094,10 +8095,10 @@ int main(int argc, char **argv)
          boot_guard_game_end();     /* refused cleanly: not a crash */
          pcfg_game_end();
          artfetch_pause(0);
-         app_notice("This game could not be started",
+         app_notice(tr("notice.this_game_could_not_be_started"),
                     base_name(rom_path),
                     is_arc(rom_path) ? arc_note(rom_path)
-                    : "The file may be damaged or not a game for this console.",
+                    : tr("notice.the_file_may_be_damaged_or"),
                     6000);
          continue;
       }
@@ -8116,8 +8117,8 @@ int main(int argc, char **argv)
          /* (UX review G1: it ran off both screen edges; 40 characters) */
          osd_toast(g_pcfg.touch && g_sw.touch_menu && g_pcfg.tap_menu &&
                    !zapper_active()
-                   ? "Menu: tap the screen, or START + SELECT"
-                   : "Menu: hold START + SELECT");
+                   ? tr("toast.menu_tap_the_screen_or_start")
+                   : tr("toast.menu_hold_start_select"));
          fe_evt("hints shown have=%d", g_pcfg.hints);
          g_pcfg.hints = 0;
          pcfg_save();
@@ -8190,7 +8191,7 @@ int main(int argc, char **argv)
          if (!to_list)
             break;
          if (why[0])
-            app_notice("The game was closed", why, NULL, 6000);
+            app_notice(tr("notice.the_game_was_closed"), why, NULL, 6000);
       }
    }
 

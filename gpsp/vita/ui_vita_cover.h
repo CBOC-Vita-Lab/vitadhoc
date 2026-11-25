@@ -114,7 +114,7 @@ static void cv_preview_draw(int x, int y, int w, int h)
    {
       vid_rect(x, y, w, h, C_CARD, 120);
       {
-         const char *m = g_cv.tex_wait ? "..." : "No preview";
+         const char *m = g_cv.tex_wait ? "..." : tr("cover.no_preview");
          vid_text(x + (w - vid_text_w(m)) / 2, y + h / 2 - 8, m, C_DIM);
       }
       return;
@@ -207,7 +207,7 @@ static void cv_apply(const char *path, const char *from)
    fe_evt("cover_set stem=%s rc=%d from=%s", g_cv.stem, rc, from);
    if (rc == 0)
    {
-      snprintf(g_cv.note, sizeof(g_cv.note), "Cover set. It shows at once.");
+      snprintf(g_cv.note, sizeof(g_cv.note), tr("cover.cover_set_it_shows_at_once"));
       cv_changed();
       cv_preview(NULL);
    }
@@ -222,14 +222,14 @@ static void cv_automatic(void)
    int rc = cover_auto(g_cv.stem);
    fe_evt("cover_auto stem=%s rc=%d", g_cv.stem, rc);
    if (rc == 1)
-      snprintf(g_cv.note, sizeof(g_cv.note), "The downloaded cover is back.");
+      snprintf(g_cv.note, sizeof(g_cv.note), tr("cover.the_downloaded_cover_is_back"));
    else if (rc == 2)
       snprintf(g_cv.note, sizeof(g_cv.note),
-               "Automatic. A cover is downloaded when there is Wi-Fi.");
+               tr("cover.automatic_a_cover_is_downloaded_when"));
    else if (rc == 0)
-      snprintf(g_cv.note, sizeof(g_cv.note), "It is automatic already.");
+      snprintf(g_cv.note, sizeof(g_cv.note), tr("cover.it_is_automatic_already"));
    else
-      snprintf(g_cv.note, sizeof(g_cv.note), "That did not work.");
+      snprintf(g_cv.note, sizeof(g_cv.note), tr("cover.that_did_not_work"));
    if (rc > 0)
    {
       cv_changed();
@@ -289,7 +289,7 @@ static int cv_screen(unsigned edges, const char *rom_dir)
             }
             else
                snprintf(g_cv.note, sizeof(g_cv.note),
-                        "No screenshot of this game yet.");
+                        tr("cover.no_screenshot_of_this_game_yet"));
          }
          else
             cv_automatic();
@@ -367,39 +367,39 @@ static int cv_screen(unsigned edges, const char *rom_dir)
    ov_backdrop(OV_SCRIM_DENSE);
    snprintf(nm, sizeof(nm), "%s", g_cv.name);
    clip_title(nm, 300);
-   vw_head(nm, "COVER PICTURE");
+   vw_head(nm, tr("cover.cover_picture"));
 
    if (g_cv.page == CV_MENU)
    {
-      static const char *const label[3] = { "Choose a picture...",
-         "Use a screenshot of the game", "Automatic (download)" };
+      const char *const label[3] = { tr("cover.choose_a_picture"),
+         tr("cover.use_a_screenshot_of_the_game"), tr("cover.automatic_download") };
       const int own = cover_state(g_cv.stem);
-      vid_text(22, 48, own ? "Now: your own picture" : "Now: automatic",
+      vid_text(22, 48, own ? tr("cover.now_your_own_picture") : tr("cover.now_automatic"),
                own ? C_VALUE : C_DIM);
       for (i = 0; i < 3; i++)
       {
          int y = 80 + i * 30;
-         const char *v = i == 2 && !own ? "in use" : "";
+         const char *v = i == 2 && !own ? tr("cover.in_use") : "";
          vw_row_h(i, y, 270, 30, g_cv.cur == i,
                   !(i == 1 && !g_cv.have_shot), label[i], v);
       }
-      vw_wrap(22, 178, 270, "A cover you pick always wins over downloaded "
-              "art. A PNG or JPG in covers/ named like the game is used too.",
+      vw_wrap(22, 178, 270, tr("cover.a_cover_you_pick_always_wins")
+,
               C_DIM, 4);
       cv_preview_draw(CV_PREV_X, CV_PREV_Y, CV_PREV_W, CV_PREV_H);
       /* the plate sits where the footer goes: one or the other */
       if (g_cv.note[0])
          vw_plate(g_cv.note);
       else
-         footer(VID_GLYPH_X " select   DPAD move   " VID_GLYPH_O " back");
+         footer(tr("hint.x_select_dpad_move_o_back"));
    }
    else if (g_cv.page == CV_PICK)
    {
       if (g_cv.npics == 0)
       {
-         vid_text(22, 56, "No pictures found.", C_ITEM);
-         vw_wrap(22, 56 + FE_FONT_H + 6, 436, "Take a screenshot, or copy a "
-                 "PNG or JPG into ux0:data/GBAdhoc/covers/ from a computer.",
+         vid_text(22, 56, tr("cover.no_pictures_found"), C_ITEM);
+         vw_wrap(22, 56 + FE_FONT_H + 6, 436, tr("cover.take_a_screenshot_or_copy_a")
+,
                  C_DIM, 4);
       }
       else
@@ -418,21 +418,21 @@ static int cv_screen(unsigned edges, const char *rom_dir)
          }
          vid_clip_off();
          cv_preview_draw(CV_PREV_X, CV_PREV_Y, CV_PREV_W, CV_PREV_H - 28);
-         snprintf(cnt, sizeof(cnt), "%d of %d", g_cv.cur + 1, g_cv.npics);
+         snprintf(cnt, sizeof(cnt), tr("cover.of"), g_cv.cur + 1, g_cv.npics);
          vid_text(CV_PREV_X, CV_PREV_Y + CV_PREV_H - 22,
                   g_cv.pics[g_cv.cur].label, C_DIM);
          vid_text(CV_PREV_X, CV_PREV_Y + CV_PREV_H - 6, cnt, C_DIM);
       }
-      footer(VID_GLYPH_X " look   DPAD move   L R page   " VID_GLYPH_O " back");
+      footer(tr("hint.x_look_dpad_move_l_r"));
    }
    else
    {
       char q[140];
       cv_preview_draw(60, 50, 360, 150);
-      snprintf(q, sizeof(q), "Use this as the cover for %s?", nm);
+      snprintf(q, sizeof(q), tr("cover.use_this_as_the_cover_for"), nm);
       clip_title(q, 440);
       vid_text_center(208, q, C_ITEM);
-      footer(VID_GLYPH_X " use it   " VID_GLYPH_O " back");
+      footer(tr("hint.x_use_it_o_back"));
    }
    return ret;
 }

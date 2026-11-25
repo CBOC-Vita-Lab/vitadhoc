@@ -61,6 +61,9 @@ APP_SRCS      += menu_load.c menu_files.c
 # names in other alphabets: kana, kanji, Hangul, accents, drawn from font files
 # on demand (vglyph.h; playerkit's glyph cache, MIT, in glyph_glue.cpp)
 APP_SRCS      += vglyph.c glyph_glue.cpp
+# the interface languages: the catalogue loader (i18n.h); the English text is
+# compiled in (lang_en.h, from lang/en.txt by tools/i18n/gen_lang_h.py)
+APP_SRCS      += i18n.c
 # steady pacing: playerkit's pacer (pace_steady.h)
 APP_SRCS      += pace_steady.cpp
 # smooth hand-over: playerkit's mailbox and the drawing thread (handoff_glue.h)
@@ -111,6 +114,9 @@ VPK_EXTRA     += assets/gamedb.txt=gamedb.txt
 # the UI's fonts beyond ASCII (tools/font/make_fonts.py; SIL OFL, licenses/):
 # the CJK file is read by the app and by both players the first time a name
 # needs it; the two Latin ones are the players' (the app has Inter inside it)
+# one catalogue per interface language (lang/<code>.txt; lang/TRANSLATING.md is
+# for the translators and stays out of the package)
+VPK_EXTRA     += $(foreach f,$(filter-out %/TRANSLATING.md %/pk_%.txt,$(wildcard $(V)/../../lang/*.txt)),$(f)=lang/$(notdir $(f)))
 VPK_EXTRA     += assets/cjkfont.otf=cjkfont.otf assets/latinfont.ttf=latinfont.ttf \
                  assets/latinfont-sb.ttf=latinfont-sb.ttf
 

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "i18n.h"
 #include "stb_truetype.h"
 
 #include "vstyle.h"
@@ -256,6 +257,9 @@ int vs_ascent(int fi)
 float vs_text(int fi, float x, float y, const char *s, uint32_t rgba)
 {
    vs_face *f = face(fi);
+   vb_text_mark();
+   if (i18n_audit_on)
+      i18n_audit(s);
    vb_tquad q[VS_BATCH], qx[VS_BATCH];
    vb_tex *xtex = NULL;
    const unsigned char *p = (const unsigned char *)s;

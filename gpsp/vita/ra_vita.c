@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
  * Copyright (c) 2026 VitAdhoc contributors */
 /* ra_vita.c -- see ra_vita.h. */
+#include "i18n.h"
 #include "ra_vita.h"
 
 #include <stdio.h>
@@ -255,24 +256,24 @@ static void RC_CCONV on_event(const rc_client_event_t *e, rc_client_t *client)
              e->achievement->points, e->achievement->title);
       snprintf(t, sizeof(t), "%s (%u)", e->achievement->title,
                e->achievement->points);
-      toast("Achievement: %s", t);
+      toast(tr("toast.achievement"), t);
       if (R.list)
          ra_list_build();           /* the page shows it at once */
       break;
    case RC_CLIENT_EVENT_GAME_COMPLETED:
       fe_evt("ra_completed hardcore=%d", R.game_hardcore);
-      toast(R.game_hardcore ? "Mastered: %s" : "Completed: %s", R.game_title);
+      toast(R.game_hardcore ? tr("toast.mastered") : tr("toast.completed"), R.game_title);
       break;
    case RC_CLIENT_EVENT_SUBSET_COMPLETED:
-      toast("Set completed: %s", e->subset ? e->subset->title : "");
+      toast(tr("toast.set_completed"), e->subset ? e->subset->title : "");
       break;
    case RC_CLIENT_EVENT_LEADERBOARD_STARTED:
       fe_evt("ra_lboard start id=%u", e->leaderboard->id);
-      toast("Leaderboard attempt: %s", e->leaderboard->title);
+      toast(tr("toast.leaderboard_attempt"), e->leaderboard->title);
       break;
    case RC_CLIENT_EVENT_LEADERBOARD_FAILED:
       fe_evt("ra_lboard failed id=%u", e->leaderboard->id);
-      toast("Leaderboard attempt failed: %s", e->leaderboard->title);
+      toast(tr("toast.leaderboard_attempt_failed"), e->leaderboard->title);
       break;
    case RC_CLIENT_EVENT_LEADERBOARD_SUBMITTED:
       fe_evt("ra_lboard submit id=%u value=%s", e->leaderboard->id,
@@ -281,7 +282,7 @@ static void RC_CCONV on_event(const rc_client_event_t *e, rc_client_t *client)
       snprintf(t, sizeof(t), "%s %s", e->leaderboard->title,
                e->leaderboard->tracker_value ? e->leaderboard->tracker_value
                                              : "");
-      toast("Submitted: %s", t);
+      toast(tr("toast.submitted"), t);
       break;
    case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW:
       fe_evt("ra_challenge show id=%u title=\"%s\"", e->achievement->id,
@@ -331,7 +332,7 @@ static void RC_CCONV on_event(const rc_client_event_t *e, rc_client_t *client)
              e->leaderboard_scoreboard->new_rank,
              e->leaderboard_scoreboard->num_entries,
              e->leaderboard_scoreboard->submitted_score);
-      snprintf(t, sizeof(t), "Rank %u of %u", e->leaderboard_scoreboard->new_rank,
+      snprintf(t, sizeof(t), tr("ra.rank_of"), e->leaderboard_scoreboard->new_rank,
                e->leaderboard_scoreboard->num_entries);
       toast("%s", t);
       break;
@@ -341,15 +342,15 @@ static void RC_CCONV on_event(const rc_client_event_t *e, rc_client_t *client)
              e->server_error->result,
              e->server_error->error_message ? e->server_error->error_message
                                             : "");
-      toast("RetroAchievements: %s", e->server_error->error_message);
+      toast(tr("toast.retroachievements"), e->server_error->error_message);
       break;
    case RC_CLIENT_EVENT_DISCONNECTED:
       fe_evt("ra_disconnected");
-      toast("%s", "Achievements will be sent when back online");
+      toast("%s", tr("toast.achievements_will_be_sent_when_back"));
       break;
    case RC_CLIENT_EVENT_RECONNECTED:
       fe_evt("ra_reconnected");
-      toast("%s", "Achievements sent");
+      toast("%s", tr("toast.achievements_sent"));
       break;
    case RC_CLIENT_EVENT_RESET:
       /* Only asked for when Hardcore is switched on mid-game, which this
@@ -409,15 +410,15 @@ static void RC_CCONV login_done(int result, const char *error,
       if (with_password)
       {
          if (account_save() != 0)
-            toast("%s", "Signed in, but the account could not be kept");
+            toast("%s", tr("toast.signed_in_but_the_account_could"));
          else
-            toast("Signed in to RetroAchievements as %s", u->display_name);
+            toast(tr("toast.signed_in_to_retroachievements_as"), u->display_name);
       }
       return;
    }
    if (with_password)
    {
-      toast("Sign-in failed: %s", error ? error : "no answer");
+      toast(tr("toast.sign_in_failed"), error ? error : tr("toast.no_answer"));
       /* the account that was signed in before stays the one */
       if (R.user[0] && R.token[0])
          token_login();
@@ -429,7 +430,7 @@ static void RC_CCONV login_done(int result, const char *error,
       R.token[0] = '\0';
       R.retry_login = 0;
       account_save();
-      toast("%s", "RetroAchievements: please sign in again");
+      toast("%s", tr("toast.retroachievements_please_sign_in_again"));
    }
    else
    {
@@ -439,8 +440,8 @@ static void RC_CCONV login_done(int result, const char *error,
       R.retry_login = 1;
       R.retry_wait = RETRY_PUMPS;
       if (!R.retry_told)
-         toast("RetroAchievements: %s",
-               error ? error : "could not sign in, will try again");
+         toast(tr("toast.retroachievements"),
+               error ? error : tr("toast.could_not_sign_in_will_try"));
       R.retry_told = 1;
    }
 }
@@ -687,22 +688,22 @@ static void RC_CCONV game_done(int result, const char *error,
              R.game_hardcore, R.game_title);
       if (s.num_core_achievements)
       {
-         snprintf(t, sizeof(t), "%u of %u achievements%s",
+         snprintf(t, sizeof(t), tr("ra.of_achievements"),
                   s.num_unlocked_achievements, s.num_core_achievements,
-                  R.game_hardcore ? " - Hardcore" : "");
+                  R.game_hardcore ? tr("ra.hardcore") : "");
          toast("%s", t);
       }
       else
-         toast("%s", "No achievements for this game yet");
+         toast("%s", tr("toast.no_achievements_for_this_game_yet"));
    }
    else
    {
       R.game_state = -1;
       fe_evt("ra_game ok=0 rc=%d msg=\"%s\"", result, error ? error : "");
       if (result == RC_NO_GAME_LOADED)
-         toast("%s", "RetroAchievements does not know this version");
+         toast("%s", tr("toast.retroachievements_does_not_know_this_version"));
       else if (result != RC_ABORTED && result != RC_LOGIN_REQUIRED)
-         toast("Achievements unavailable: %s", error ? error : "no answer");
+         toast(tr("toast.achievements_unavailable"), error ? error : tr("toast.no_answer"));
    }
    if (R.game_state < 0)
    {

@@ -57,6 +57,7 @@ public:
 	void apply(const SpeedSettings &s);
 	void stop();
 
+	/* why: a catalogue key (the notice says tr() of it; a plain text works too) */
 	void set_locked(bool locked, const char *why = 0) { locked_ = locked; why_ = why; }
 	/* Hardcore: rewinding is refused (a press gives `why`), fast forward stays */
 	void set_rewind_locked(bool locked, const char *why = 0) { rw_locked_ = locked; rw_why_ = why; }

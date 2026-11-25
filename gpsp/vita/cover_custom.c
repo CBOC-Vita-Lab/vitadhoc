@@ -1,4 +1,5 @@
 /* cover_custom.c -- see cover_custom.h. */
+#include "i18n.h"
 #include "cover_custom.h"
 
 #include <ctype.h>
@@ -254,7 +255,7 @@ static unsigned char *decode_file(const char *path, int *w, int *h, char *why,
    int nc = 0, x, y;
    if (!file)
    {
-      snprintf(why, cap, "That picture could not be read.");
+      snprintf(why, cap, tr("cover.that_picture_could_not_be_read"));
       return NULL;
    }
    rgb = decode_shot(file, len, w, h);
@@ -267,27 +268,27 @@ static unsigned char *decode_file(const char *path, int *w, int *h, char *why,
        *h <= 0)
    {
       free(file);
-      snprintf(why, cap, "That is not a PNG or JPG picture.");
+      snprintf(why, cap, tr("cover.that_is_not_a_png_or"));
       return NULL;
    }
    if ((uint64_t)*w * (uint64_t)*h > CV_MAX_PIX)
    {
       free(file);
-      snprintf(why, cap, "That picture is too big (8 megapixels at most).");
+      snprintf(why, cap, tr("cover.that_picture_is_too_big_8"));
       return NULL;
    }
    rgba = stbi_load_from_memory(file, (int)len, w, h, &nc, 4);
    free(file);
    if (!rgba)
    {
-      snprintf(why, cap, "That picture could not be opened.");
+      snprintf(why, cap, tr("cover.that_picture_could_not_be_opened"));
       return NULL;
    }
    rgb = (unsigned char *)malloc((size_t)*w * *h * 3);
    if (!rgb)
    {
       stbi_image_free(rgba);
-      snprintf(why, cap, "Not enough memory for that picture.");
+      snprintf(why, cap, tr("cover.not_enough_memory_for_that_picture"));
       return NULL;
    }
    /* a see-through picture is laid over the menu's dark, not over black */
@@ -369,7 +370,7 @@ static int set_from(const char *stem, const char *path, const char *src,
 
    if (!g_root[0] || !stem || !stem[0] || strlen(stem) >= CV_STEM)
    {
-      snprintf(why, cap, "That game has no name to keep a picture under.");
+      snprintf(why, cap, tr("cover.that_game_has_no_name_to"));
       return -1;
    }
    rgb = decode_file(path, &w, &h, reason, sizeof(reason));
@@ -384,14 +385,14 @@ static int set_from(const char *stem, const char *path, const char *src,
        snprintf(tmp, sizeof(tmp), "%s.tmp", png) >= (int)sizeof(tmp))
    {
       free(rgb);
-      snprintf(why, cap, "That game's name is too long.");
+      snprintf(why, cap, tr("cover.that_game_s_name_is_too"));
       return -1;
    }
    if (!stbi_write_png(tmp, w, h, 3, rgb, w * 3))
    {
       drop(tmp);
       free(rgb);
-      snprintf(why, cap, "The picture could not be saved. Check the card has room.");
+      snprintf(why, cap, tr("cover.the_picture_could_not_be_saved"));
       return -1;
    }
    /* keep what was there: a download, or a picture put there by hand */
@@ -402,7 +403,7 @@ static int set_from(const char *stem, const char *path, const char *src,
       {
          drop(tmp);
          free(rgb);
-         snprintf(why, cap, "The old cover could not be put aside.");
+         snprintf(why, cap, tr("cover.the_old_cover_could_not_be"));
          return -1;
       }
       moved = 1;
@@ -413,7 +414,7 @@ static int set_from(const char *stem, const char *path, const char *src,
          rename(dl, png);
       drop(tmp);
       free(rgb);
-      snprintf(why, cap, "The picture could not be saved.");
+      snprintf(why, cap, tr("cover.the_picture_could_not_be_saved_2"));
       return -1;
    }
    /* the note before the thumbnail: the fetcher's own thumbnail pass reads
@@ -427,7 +428,7 @@ static int set_from(const char *stem, const char *path, const char *src,
       if (moved)
          rename(dl, png);
       purge_caches(stem);
-      snprintf(why, cap, "The picture could not be saved.");
+      snprintf(why, cap, tr("cover.the_picture_could_not_be_saved_2"));
       return -1;
    }
    purge_caches(stem);
@@ -575,7 +576,7 @@ int cover_game_picture(const char *stem, const char *shot_dir,
       int slot;
       if (n > 1 && state1[n - 1] == '0')
          for (slot = 0; slot <= 9; slot++)
-            if (snprintf(p, sizeof(p), "%.*s%d.shot", (int)(n - 1), state1,
+            if (snprintf(p, sizeof(p), tr("cover.shot"), (int)(n - 1), state1,
                          slot) < (int)sizeof(p))
                consider(p, &t, best, sizeof(best), &found);
    }

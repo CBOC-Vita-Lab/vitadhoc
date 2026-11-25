@@ -1,5 +1,6 @@
 /* Fast forward and rewind for a player: see pk_speed.h. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE). */
 #include "pk_speed.h"
+#include "pk_i18n.h"
 
 #include <stdio.h>
 
@@ -86,7 +87,7 @@ bool Speed::run_frame(bool render)
 	if (act_ == RW_LAND) {
 		if (!host_->load_state(rw_.cur(), rw_.cur_size())) {
 			rw_.clear();
-			notice_ = "Rewind failed";
+			notice_ = tr("rewind.rewind_failed");
 			act_ = RW_PLAY;
 			return false;
 		}

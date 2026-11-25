@@ -23,6 +23,7 @@
  *
  * Everything here runs on the main thread, between frames.
  */
+#include "i18n.h"
 #include "cheats_vita.h"
 
 #include <ctype.h>
@@ -859,7 +860,7 @@ static void cht_read(const char *path)
       if (!s->desc || !s->desc[0])
       {
          free(s->desc);
-         snprintf(fallback, sizeof(fallback), "Cheat %d", g_count + 1);
+         snprintf(fallback, sizeof(fallback), tr("cheats.cheat"), g_count + 1);
          s->desc = dup_n(fallback, strlen(fallback));
       }
       entry_insert(g_count, s->desc, NULL, s->code, NULL, s->extra, s->enable, 0);
@@ -1484,7 +1485,7 @@ int cheats_add(const char *name, const char *code)
       int n = 0;
       for (i = 0; i < g_count; i++)
          n += !g_list[i].builtin;
-      snprintf(fallback, sizeof(fallback), "Cheat %d", n + 1);
+      snprintf(fallback, sizeof(fallback), tr("cheats.cheat"), n + 1);
       name = fallback;
    }
    cname = name_clean(name, strlen(name));
@@ -1602,11 +1603,11 @@ const char *cheats_note(int i)
    if (!g_list[i].usable)
       return cheats_error_text(g_x[i].rc);
    if (g_x[i].flags & CE_F_NOOP)
-      return "An enable code. Not needed on this console; harmless when on.";
+      return tr("cheats.an_enable_code_not_needed_on");
    if (g_x[i].flags & CE_F_BUTTON)
-      return "Acts while the cheat button is held.";
+      return tr("cheats.acts_while_the_cheat_button_is");
    if (g_x[i].flags & CE_F_ROM_PATCH)
-      return "Changes the game's program.";
+      return tr("cheats.changes_the_game_s_program");
    return "";
 }
 
@@ -1615,17 +1616,17 @@ const char *cheats_error_text(int rc)
    switch (rc)
    {
    case CHEATS_OK:            return "";
-   case CHEATS_E_FULL:        return "No room for more cheats.";
-   case CHEATS_E_FORMAT:      return "This is not a code for this console.";
-   case CHEATS_E_UNSUPPORTED: return "This kind of code cannot be used here.";
-   case CHEATS_E_TOO_LONG:    return "The code is too long.";
-   case CHEATS_E_IO:          return "The cheat file could not be saved.";
-   case CHEATS_E_RANGE:       return "No such cheat.";
-   case CHEATS_E_NEEDS_VALUE: return "Incomplete: replace ?? / XX with the value you want.";
-   case CHEATS_E_ENCRYPTED:   return "Encrypted: add this game's master code first.";
-   case CHEATS_E_SUSPENDED:   return "Cheats are off while playing over a link.";
-   case CHEATS_E_BUILTIN:     return "A built-in cheat cannot be deleted. Switch it off instead.";
-   default:                   return "The cheat could not be used.";
+   case CHEATS_E_FULL:        return tr("cheats.no_room_for_more_cheats");
+   case CHEATS_E_FORMAT:      return tr("cheats.this_is_not_a_code_for");
+   case CHEATS_E_UNSUPPORTED: return tr("cheats.this_kind_of_code_cannot_be");
+   case CHEATS_E_TOO_LONG:    return tr("cheats.the_code_is_too_long");
+   case CHEATS_E_IO:          return tr("cheats.the_cheat_file_could_not_be");
+   case CHEATS_E_RANGE:       return tr("cheats.no_such_cheat");
+   case CHEATS_E_NEEDS_VALUE: return tr("cheats.incomplete_replace_xx_with_the_value");
+   case CHEATS_E_ENCRYPTED:   return tr("cheats.encrypted_add_this_game_s_master");
+   case CHEATS_E_SUSPENDED:   return tr("cheats.cheats_are_off_while_playing_over");
+   case CHEATS_E_BUILTIN:     return tr("cheats.a_built_in_cheat_cannot_be");
+   default:                   return tr("cheats.the_cheat_could_not_be_used");
    }
 }
 
@@ -1633,28 +1634,28 @@ const char *cheats_kind_name(int kind)
 {
    switch (kind)
    {
-   case CHEAT_KIND_GBA_RAW:         return "Raw";
-   case CHEAT_KIND_GBA_CODEBREAKER: return "CodeBreaker";
-   case CHEAT_KIND_GBA_GAMESHARK:   return "GameShark";
-   case CHEAT_KIND_GBA_AR3:         return "Action Replay";
-   case CHEAT_KIND_GB_GAMESHARK:    return "GameShark";
-   case CHEAT_KIND_GB_GAMEGENIE:    return "Game Genie";
-   default:                         return "Unknown";
+   case CHEAT_KIND_GBA_RAW:         return tr("cheats.raw");
+   case CHEAT_KIND_GBA_CODEBREAKER: return tr("cheats.codebreaker");
+   case CHEAT_KIND_GBA_GAMESHARK:   return tr("cheats.gameshark");
+   case CHEAT_KIND_GBA_AR3:         return tr("cheats.action_replay");
+   case CHEAT_KIND_GB_GAMESHARK:    return tr("cheats.gameshark");
+   case CHEAT_KIND_GB_GAMEGENIE:    return tr("cheats.game_genie");
+   default:                         return tr("cheats.unknown");
    }
 }
 
 const char *cheats_format_hint(fe_console_t console)
 {
    if (console == FE_CONSOLE_GBA)
-      return "8 digits, space, 4 digits (CodeBreaker) or 8 digits "
-             "(GameShark, Action Replay). + between lines.";
+      return tr("cheats.8_digits_space_4_digits_codebreaker")
+;
    if (console == FE_CONSOLE_NES)
-      return "6 or 8 letters (Game Genie) or AAAA:VV (RAM). + between codes.";
+      return tr("cheats.6_or_8_letters_game_genie");
    if (console == FE_CONSOLE_WSWAN)
-      return "AAAAA:VV: a RAM address and a byte, in hex. + between codes.";
+      return tr("cheats.aaaaa_vv_a_ram_address_and");
    if (console == FE_CONSOLE_MD || console == FE_CONSOLE_SCD)
-      return "AAAAAA:VVVV: an address and a word, in hex. + between codes.";
+      return tr("cheats.aaaaaa_vvvv_an_address_and_a");
    if (console >= FE_CONSOLE_SMS && console < FE_CONSOLE_COUNT)
-      return "AAAA:VV or AAAA:VV:CC: an address, a byte and a compare byte, in hex.";
-   return "8 digits (GameShark) or 3-3-3 digits (Game Genie). + between codes.";
+      return tr("cheats.aaaa_vv_or_aaaa_vv_cc");
+   return tr("cheats.8_digits_gameshark_or_3_3");
 }

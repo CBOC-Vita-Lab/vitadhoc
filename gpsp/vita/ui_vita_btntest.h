@@ -73,7 +73,7 @@ static void bt_action_text(unsigned bit, int console, char *out, size_t n)
          continue;
       if (console == FE_CONSOLE_WSWAN && (a < CTL_GAME_COUNT))
          continue;            /* the WonderSwan's own layout, above */
-      lbl = ctl_info(a)->label;
+      lbl = tr(ctl_info(a)->label);
       if (o && o + 2 < n)
       {
          out[o++] = ',';
@@ -82,7 +82,7 @@ static void bt_action_text(unsigned bit, int console, char *out, size_t n)
       }
       if (o < n)
          o += (size_t)snprintf(out + o, n - o, "%s%s", lbl,
-                               b != bit ? " (chord)" : "");
+                               b != bit ? tr("btntest.chord") : "");
    }
    if (o >= n)
       out[n - 1] = '\0';
@@ -143,9 +143,9 @@ static ui_action screen_btntest(unsigned edges)
    }
 
    ov_backdrop(OV_SCRIM_DENSE);
-   vw_head(NULL, "BUTTON TEST");
+   vw_head(NULL, tr("btntest.button_test"));
 
-   vid_text(14, BT_Y0 - 16, "BUTTONS", C_ACCENT);
+   vid_text(14, BT_Y0 - 16, tr("btntest.buttons"), C_ACCENT);
    for (i = 0; i < (int)(sizeof(btn) / sizeof(btn[0])); i++)
    {
       bt_action_text(btn[i].bit, console, txt, sizeof(txt));
@@ -154,7 +154,7 @@ static ui_action screen_btntest(unsigned edges)
    }
 
    y = BT_Y0 - 16;
-   vid_text(BT_COL2, y, "STICKS AND TOUCH", C_ACCENT);
+   vid_text(BT_COL2, y, tr("btntest.sticks_and_touch"), C_ACCENT);
    y = BT_Y0 + 2;
    {
       /* the left stick is the d-pad's second hand; the right stick's words are its gestures */
@@ -166,15 +166,15 @@ static ui_action screen_btntest(unsigned edges)
       snprintf(num, sizeof(num), "%d, %d", s.rx, s.ry);
       bt_row(BT_COL2, y, 218, "RIGHT STICK", moved, num);
       y += BT_PITCH;
-      vid_text(BT_COL2 + 8, y, "Left stick: moves like the d-pad", C_DIM);
+      vid_text(BT_COL2 + 8, y, tr("btntest.left_stick_moves_like_the_d"), C_DIM);
       y += BT_PITCH;
-      vid_text(BT_COL2 + 8, y, "Right: left Rewind, right Fast-forward", C_DIM);
+      vid_text(BT_COL2 + 8, y, tr("btntest.right_left_rewind_right_fast_forward"), C_DIM);
       y += BT_PITCH;
       if (s.front_n > 0)
          snprintf(num, sizeof(num), "%d, %d", s.front_x, s.front_y);
       else
          num[0] = '\0';
-      bt_row(BT_COL2, y, 218, "FRONT TOUCH", s.front_n > 0,
+      bt_row(BT_COL2, y, 218, tr("btntest.front_touch"), s.front_n > 0,
              s.front_n > 0 ? num : (s.front_use ? s.front_use : ""));
       y += BT_PITCH;
       if (s.front_n > 0 && s.front_use)
@@ -185,7 +185,7 @@ static ui_action screen_btntest(unsigned edges)
    {
       bt_action_text(rear[i].bit, console, txt, sizeof(txt));
       if (!txt[0])
-         snprintf(txt, sizeof(txt), "not set");
+         snprintf(txt, sizeof(txt), tr("btntest.not_set"));
       bt_row(BT_COL2, y + i * BT_PITCH, 218, rear[i].name,
              (s.rear & rear[i].bit) != 0, txt);
    }
@@ -199,7 +199,7 @@ static ui_action screen_btntest(unsigned edges)
       vid_rect(140, 236, 200, 3, C_CARD, 255);
       vid_rect(140, 236, w, 3, C_ACCENT, 255);
    }
-   footer("To leave: hold Start + Select, or a finger on this line");
+   footer(tr("hint.to_leave_hold_start_select_or"));
    return UI_ACT_NONE;
 }
 

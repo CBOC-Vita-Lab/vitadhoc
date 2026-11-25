@@ -151,6 +151,7 @@
 
 #include <arpa/inet.h>
 
+#include "i18n.h"
 #include "fe_host.h"
 #include "fe_evt.h"
 #include "fe_util.h"
@@ -1589,7 +1590,7 @@ static void online_service(unsigned pad_new)
          {
             net_down();
             link_off();
-            osd_toast("The code expired. Host again for a new one.");
+            osd_toast(tr("toast.the_code_expired_host_again_for"));
             if (SL.on)
                SL.said = 1;
          }
@@ -1605,7 +1606,7 @@ static void online_service(unsigned pad_new)
       fe_evt("link_cancel phase=online stage=%d", v.stage);
       net_down();
       link_off();
-      osd_toast("Link cancelled.");
+      osd_toast(tr("toast.link_cancelled"));
       return;
    }
    if (v.stage == ON_CONNECTED)
@@ -1807,7 +1808,7 @@ static int session_begin(void)
       /* the game could not be put back: nothing to return to */
       net_down();
       link_off();
-      app_quit_game("The link could not start and the game had to close.");
+      app_quit_game(tr("link.the_link_could_not_start_and"));
       return rc;
    }
    if (rc != 0)
@@ -1816,7 +1817,7 @@ static int session_begin(void)
       link_off();
       if (L.is_host)
          L.error = fail_line(UI_FAIL_MEMORY);
-      osd_toast("The link could not start");
+      osd_toast(tr("toast.the_link_could_not_start"));
       return rc;
    }
    L.screen = 1;
@@ -1925,7 +1926,7 @@ static void adhoc_dialog_done(int st)
       net_down();
       link_off();
       if (!L.is_host)
-         osd_toast("Link cancelled.");
+         osd_toast(tr("toast.link_cancelled"));
       return;
    }
    if (st != VADHOC_DLG_OK)
@@ -1964,7 +1965,7 @@ void link_action(int is_host)
    if (L.phase != PH_OFF || fe_host_gblink_active())
    {
       if (!is_host)
-         osd_toast("Already linked. Disconnect first.");
+         osd_toast(tr("toast.already_linked_disconnect_first"));
       return;
    }
    L.is_host = is_host;
@@ -1989,11 +1990,11 @@ void link_action(int is_host)
    /* An ad hoc joiner has no list to learn the host's room number from:
     * its screens name the connection instead of guessing a room. */
    if (!is_host && L.conn == LINK_CONN_ADHOC)
-      snprintf(L.room, sizeof(L.room), "Ad hoc");
+      snprintf(L.room, sizeof(L.room), tr("link.ad_hoc"));
    else if (L.conn == LINK_CONN_ONLINE)
-      snprintf(L.room, sizeof(L.room), "Online");
+      snprintf(L.room, sizeof(L.room), tr("link.online"));
    else
-      snprintf(L.room, sizeof(L.room), ROOM_LABEL_WORD " %d", L.number);
+      snprintf(L.room, sizeof(L.room), tr("link.room"), L.number);
    /* What the room is and what this game can be in it: the Join list has
     * already refused the pairs that cannot work; a room that is not this
     * console's kind at all is refused here too. */
@@ -2143,7 +2144,7 @@ void link_disconnect(void)
       if (ui_active())
          ui_close();
       if (st == FE_GBLINK_RUNNING)
-         osd_toast("Ending the link...");
+         osd_toast(tr("toast.ending_the_link"));
       return;
    }
    if (L.phase == PH_OFF)
@@ -2156,9 +2157,9 @@ void link_disconnect(void)
       net_down();
       link_off();
       if (hosting)
-         osd_toast("Stopped hosting %s", room);
+         osd_toast(tr("toast.stopped_hosting"), room);
       else
-         osd_toast("Disconnected");
+         osd_toast(tr("toast.disconnected"));
    }
 }
 
@@ -2229,8 +2230,8 @@ void link_power(int resumed)
    if (L.resume_note)
    {
       osd_toast("%s", L.resume_note == LW_SLEEP
-                ? "The link ended when the Vita went to sleep."
-                : "The room was closed when the Vita went to sleep.");
+                ? tr("toast.the_link_ended_when_the_vita")
+                : tr("toast.the_room_was_closed_when_the"));
       fe_evt("link_resume note=%s", L.resume_note == LW_SLEEP ? "sleep"
                                                                : "room");
       L.resume_note = 0;
@@ -2399,7 +2400,7 @@ static void link_end(int st, unsigned pad_new)
    {
       net_down();
       link_off();
-      app_quit_game("The game could not be reloaded after the link.");
+      app_quit_game(tr("link.the_game_could_not_be_reloaded"));
       return;
    }
    app_frame_forget();
@@ -2420,37 +2421,37 @@ static void link_end(int st, unsigned pad_new)
       announce(1, 1);
       phase_set(PH_HOSTING);
       osd_toast("%s", e == FE_GBLINK_E_ROM_MISSING || e == FE_GBLINK_E_ROM_BAD
-                ? "The other Vita could not set up the game."
-                : "The other Vita left before the link started.");
+                ? tr("toast.the_other_vita_could_not_set")
+                : tr("toast.the_other_vita_left_before_the"));
       fe_evt("link_host_keeps_room room=\"%s\"", L.room);
       return;
    }
    link_off();
    if (was_pad && st == FE_GBLINK_DONE)
-      osd_toast(was_host ? "Link ended. Game saved."
-                          : "Link ended. Your own game is back.");
+      osd_toast(was_host ? tr("toast.link_ended_game_saved")
+                          : tr("toast.link_ended_your_own_game_is"));
    else if (was_pad && pr.ran)
       osd_toast(desync
-                ? "The games fell out of step. Your game is back where it was."
-                : "Link lost: the other Vita is gone. Your game is back where it was.");
+                ? tr("toast.the_games_fell_out_of_step")
+                : tr("toast.link_lost_the_other_vita_is"));
    else if (st == FE_GBLINK_DONE)
-      osd_toast("Link ended. Game saved.");
+      osd_toast(tr("toast.link_ended_game_saved"));
    else if (why == LW_CANCEL)
-      osd_toast("Link cancelled.");
+      osd_toast(tr("toast.link_cancelled"));
    else if (fail_screen)
       ;                              /* its two lines were the answer */
    else if (!pr.ran)
-      osd_toast(why == LW_WIFI ? "Wi-Fi was lost. The link did not start."
-                               : "The link did not start.");
+      osd_toast(why == LW_WIFI ? tr("toast.wi_fi_was_lost_the_link")
+                               : tr("toast.the_link_did_not_start"));
    else if (desync)
-      osd_toast("The games fell out of step. Link ended, nothing saved.");
+      osd_toast(tr("toast.the_games_fell_out_of_step_2"));
    else if (why == LW_WIFI)
-      osd_toast(was_cable ? "Wi-Fi was lost. Link ended; your game carries on."
-                          : "Wi-Fi was lost. Link ended, nothing saved.");
+      osd_toast(was_cable ? tr("toast.wi_fi_was_lost_link_ended")
+                          : tr("toast.wi_fi_was_lost_link_ended_2"));
    else
       osd_toast(was_cable
-                ? "Link lost: the other Vita is gone. Your game carries on."
-                : "Link lost: the other Vita is gone. Nothing saved.");
+                ? tr("toast.link_lost_the_other_vita_is_2")
+                : tr("toast.link_lost_the_other_vita_is_3"));
 }
 
 /* ---- once per loop iteration --------------------------------------------------------------- */
@@ -2478,13 +2479,13 @@ static void link_lost(int why)
       {
          if (hosting)
             L.error = fail_line(UI_FAIL_NO_WIFI);
-         osd_toast("Wi-Fi was lost. %s", hosting ? "The room is closed."
-                                                  : "The link has ended.");
+         osd_toast(tr("toast.wi_fi_was_lost"), hosting ? tr("toast.the_room_is_closed")
+                                                  : tr("toast.the_link_has_ended"));
       }
       else if (why == LW_OVERLOAD)
-         osd_toast("Link error: the connection could not keep up.");
+         osd_toast(tr("toast.link_error_the_connection_could_not"));
       else
-         osd_toast("The connection was lost. The link has ended.");
+         osd_toast(tr("toast.the_connection_was_lost_the_link"));
    }
 }
 
@@ -2545,7 +2546,7 @@ static void adapter_service(unsigned pad_new)
          hold_game(0);
          phase_set(PH_LINKED);
          peer_name_take();
-         osd_toast("Joined %s", L.room);
+         osd_toast(tr("toast.joined"), L.room);
          return;
       }
       if (pad_new & CTL_CIRCLE)
@@ -2553,7 +2554,7 @@ static void adapter_service(unsigned pad_new)
          fe_evt("link_cancel phase=joining");
          net_down();
          link_off();
-         osd_toast("Link cancelled.");
+         osd_toast(tr("toast.link_cancelled"));
          return;
       }
       if (fe_np_stop_reason() == ND_STOP_REFUSED)
@@ -2587,11 +2588,11 @@ static void adapter_service(unsigned pad_new)
          {
             peer_name_take();
             online_arrived();
-            osd_toast("%s joined %s", L.peer[0] ? L.peer : "A player",
+            osd_toast(tr("toast.joined_2"), L.peer[0] ? L.peer : tr("toast.a_player"),
                       L.room);
          }
          else
-            osd_toast("A player left %s", L.room);
+            osd_toast(tr("toast.a_player_left"), L.room);
       }
       phase_set(n > 0 ? PH_LINKED : PH_HOSTING);
    }
@@ -2601,8 +2602,8 @@ static void adapter_service(unsigned pad_new)
       fe_evt("link_adapter_end stop=%d", r);
       net_down();
       link_off();
-      osd_toast("%s", r == ND_STOP_HOST_BYE ? "The host closed the room."
-                : "Link lost: the other Vita is gone.");
+      osd_toast("%s", r == ND_STOP_HOST_BYE ? tr("toast.the_host_closed_the_room")
+                : tr("toast.link_lost_the_other_vita_is_4"));
       return;
    }
    exit_assist_frame();
@@ -2750,7 +2751,7 @@ static void mirror_service(unsigned pad_new)
          else if (L.ticks - L.t_stall >= T_STALL_NOTE && !L.stall_told)
          {
             L.stall_told = 1;
-            osd_toast("Waiting for the other Vita...");
+            osd_toast(tr("toast.waiting_for_the_other_vita"));
             fe_evt("link_stall_note frames=%u", frames);
          }
       }
@@ -2881,11 +2882,11 @@ static void amount_text(char *out, size_t cap, uint32_t done, uint32_t total)
    {
       unsigned d = (unsigned)(((uint64_t)done * 10u + 524288u) >> 20);
       unsigned t = (unsigned)(((uint64_t)total * 10u + 524288u) >> 20);
-      snprintf(out, cap, "%u.%u / %u.%u MB", d / 10u, d % 10u, t / 10u,
+      snprintf(out, cap, tr("link.mb"), d / 10u, d % 10u, t / 10u,
                t % 10u);
    }
    else
-      snprintf(out, cap, "%u / %u KB", (unsigned)((done + 512u) >> 10),
+      snprintf(out, cap, tr("link.kb"), (unsigned)((done + 512u) >> 10),
                (unsigned)((total + 512u) >> 10));
 }
 
@@ -2908,8 +2909,8 @@ static void linking_view(ui_linking_view *v, char *l1, size_t c1, char *l2,
 
    if (L.phase == PH_DIALOG)
    {
-      snprintf(l1, c1, "Connecting to the other Vita");
-      snprintf(l2, c2, "Follow the Vita's connection screen.");
+      snprintf(l1, c1, tr("link.connecting_to_the_other_vita"));
+      snprintf(l2, c2, tr("link.follow_the_vita_s_connection_screen"));
       v->footer = "";               /* the dialog has its own Cancel */
       return;
    }
@@ -2926,25 +2927,25 @@ static void linking_view(ui_linking_view *v, char *l1, size_t c1, char *l2,
    {
       online_view ov;
       online_get(&ov);
-      snprintf(l1, c1, "Joining %s", ov.code[0] ? ov.code : "the room");
+      snprintf(l1, c1, tr("link.joining"), ov.code[0] ? ov.code : tr("link.the_room"));
       if (ov.stage >= ON_RELAY_CREDS && ov.stage <= ON_RELAY_WAIT)
-         snprintf(l2, c2, "Connecting through the relay.");
+         snprintf(l2, c2, tr("link.connecting_through_the_relay"));
       else if (ov.stage == ON_PUNCH || ov.stage == ON_MEASURE ||
                ov.stage == ON_CONNECTED)
-         snprintf(l2, c2, "Connecting...");
+         snprintf(l2, c2, tr("link.connecting"));
       else
-         snprintf(l2, c2, "Finding your friend...");
+         snprintf(l2, c2, tr("link.finding_your_friend"));
       return;
    }
    if (L.phase == PH_JOINING)
    {
-      snprintf(l1, c1, "Joining %s by Wireless Adapter", L.room);
-      snprintf(l2, c2, "Finding the room...");
+      snprintf(l1, c1, tr("link.joining_by_wireless_adapter"), L.room);
+      snprintf(l2, c2, tr("link.finding_the_room"));
       return;
    }
 
    fe_host_gblink_facts(&pr);
-   snprintf(l1, c1, "Linking with %s", L.peer[0] ? L.peer : "the other Vita");
+   snprintf(l1, c1, tr("link.linking_with"), L.peer[0] ? L.peer : tr("link.the_other_vita"));
    /* A different game on the other Vita (Ruby with Sapphire): "Ruby <->
     * Sapphire" once its header is here. */
    if (!gb && pr.partner_other && pr.have_peer_header)
@@ -2955,97 +2956,97 @@ static void linking_view(ui_linking_view *v, char *l1, size_t c1, char *l2,
       pc[4] = '\0';
       t = link_game_title(pc);
       snprintf(nm, sizeof(nm), "%s", t ? t : pr.peer_title[0] ? pr.peer_title
-                                                          : "another game");
+                                                          : tr("link.another_game"));
       snprintf(l3, c3, "%.38s  <->  %.38s", g_game.name, nm);
       v->l3 = l3;
    }
    switch (pr.phase)
    {
    case FE_GBLINK_PH_CHECK:
-      snprintf(l2, c2, "Checking the game...");
+      snprintf(l2, c2, tr("link.checking_the_game"));
       if (pr.total)
          v->frac = (int)((uint64_t)pr.done * 100u / pr.total);
       break;
    case FE_GBLINK_PH_WAIT_PEER:
-      snprintf(l2, c2, L.is_host ? "Waiting for the other Vita..."
-                                 : "Finding the room...");
+      snprintf(l2, c2, L.is_host ? tr("link.waiting_for_the_other_vita")
+                                 : tr("link.finding_the_room"));
       break;
    case FE_GBLINK_PH_HELLO:
-      snprintf(l2, c2, "Checking the game...");
+      snprintf(l2, c2, tr("link.checking_the_game"));
       v->frac = 100;
       break;
    case FE_GBLINK_PH_ROM_RX:
    case FE_GBLINK_PH_ROM_TX:
       snprintf(l2, c2, "%s %s...",
-               pr.phase == FE_GBLINK_PH_ROM_RX ? "Receiving" : "Sending",
+               pr.phase == FE_GBLINK_PH_ROM_RX ? tr("link.receiving") : tr("link.sending"),
                pr.phase == FE_GBLINK_PH_ROM_RX
-                  ? (pr.peer_title[0] ? pr.peer_title : "the game")
-                  : (gb ? (g_game.gb_title[0] ? g_game.gb_title : "your game")
-                        : (g_game.name[0] ? g_game.name : "your game")));
+                  ? (pr.peer_title[0] ? pr.peer_title : tr("link.the_game"))
+                  : (gb ? (g_game.gb_title[0] ? g_game.gb_title : tr("link.your_game"))
+                        : (g_game.name[0] ? g_game.name : tr("link.your_game"))));
       amount_text(amt, ca, pr.done, pr.total);
       v->amount = amt;
       v->frac = pr.total ? (int)((uint64_t)pr.done * 1000u / pr.total) : 0;
       if (gb)
-         snprintf(l3, c3, "The game is kept in memory, not on the memory "
-                  "card.");
+         snprintf(l3, c3, tr("link.the_game_is_kept_in_memory")
+);
       else if (pr.eta_s)
       {
          /* once per game: the copy is kept for the next time */
          char left[24];
          if (pr.eta_s >= 90)
-            snprintf(left, sizeof(left), "about %u min", (pr.eta_s + 59) / 60);
+            snprintf(left, sizeof(left), tr("link.about_min"), (pr.eta_s + 59) / 60);
          else
-            snprintf(left, sizeof(left), "about %u s", pr.eta_s);
-         snprintf(l3, c3, "%s left. First time only. Cancel to stop.",
+            snprintf(left, sizeof(left), tr("link.about_s"), pr.eta_s);
+         snprintf(l3, c3, tr("link.left_first_time_only_cancel_to"),
                   left);
       }
       else
-         snprintf(l3, c3, "First time with this game only. Cancel to "
-                  "stop.");
+         snprintf(l3, c3, tr("link.first_time_with_this_game_only")
+);
       v->l3 = l3;
       break;
    case FE_GBLINK_PH_STORE:
-      snprintf(l2, c2, "Keeping a copy of %s...",
-               pr.peer_title[0] ? pr.peer_title : "the game");
+      snprintf(l2, c2, tr("link.keeping_a_copy_of"),
+               pr.peer_title[0] ? pr.peer_title : tr("link.the_game"));
       amount_text(amt, ca, pr.done, pr.total);
       v->amount = amt;
       v->frac = pr.total ? (int)((uint64_t)pr.done * 1000u / pr.total) : 0;
       break;
    case FE_GBLINK_PH_VERIFY:
-      snprintf(l2, c2, "Checking %s...",
-               pr.peer_title[0] ? pr.peer_title : "the other game");
+      snprintf(l2, c2, tr("link.checking"),
+               pr.peer_title[0] ? pr.peer_title : tr("link.the_other_game"));
       v->frac = pr.total ? (int)((uint64_t)pr.done * 1000u / pr.total) : 0;
       break;
    case FE_GBLINK_PH_SHARE:
-      snprintf(l2, c2, "%s", gb ? "Exchanging saves..."
-                                : "Sharing where you are...");
+      snprintf(l2, c2, "%s", gb ? tr("link.exchanging_saves")
+                                : tr("link.sharing_where_you_are"));
       amount_text(amt, ca, pr.done, pr.total);
       v->amount = amt;
       v->frac = pr.total ? (int)((uint64_t)pr.done * 1000u / pr.total) : 0;
       if (!gb && !v->l3)
       {
-         snprintf(l3, c3, "Both games carry on from where they are.");
+         snprintf(l3, c3, tr("link.both_games_carry_on_from_where"));
          v->l3 = l3;
       }
       break;
    case FE_GBLINK_PH_START:
    case FE_GBLINK_PH_RUNNING:
-      snprintf(l2, c2, "Starting together...");
+      snprintf(l2, c2, tr("link.starting_together"));
       v->frac = 1000;
       break;
    case FE_GBLINK_PH_ENDING:
    case FE_GBLINK_PH_DONE:
-      snprintf(l1, c1, "Ending the link...");
+      snprintf(l1, c1, tr("link.ending_the_link"));
       snprintf(l2, c2, "%s", pr.phase == FE_GBLINK_PH_DONE
-               ? "Link ended. Game saved."
-               : "Both Vitas agree where to stop.");
+               ? tr("link.link_ended_game_saved")
+               : tr("link.both_vitas_agree_where_to_stop"));
       v->footer = "";
       break;
    default:
       /* failed, and not (yet) a failure screen: a cancel, a host whose
        * visitor left, the wait for the last acknowledgement */
-      snprintf(l1, c1, "%s", L.why == LW_CANCEL ? "Link cancelled."
-                                                 : "Ending the link...");
+      snprintf(l1, c1, "%s", L.why == LW_CANCEL ? tr("link.link_cancelled")
+                                                 : tr("link.ending_the_link"));
       v->footer = "";
       break;
    }
@@ -3119,19 +3120,19 @@ static void chip_update(void)
    /* Online, once linked, the quality badge follows: the room word ("Online") is left out so the
     * chip still fits the screen with "Great (relay)" at its end. */
    else if (L.kind == LK_ADAPTER && L.conn == LINK_CONN_ONLINE && L.phase != PH_HOSTING)
-      snprintf(s, sizeof(s), "Wireless Adapter");
+      snprintf(s, sizeof(s), tr("link.wireless_adapter"));
    else if (L.kind == LK_ADAPTER)
-      snprintf(s, sizeof(s), "Wireless Adapter  %s%s", L.room,
+      snprintf(s, sizeof(s), tr("link.wireless_adapter_2"), L.room,
                L.phase == PH_HOSTING ? "  waiting" : "");
    else if (L.phase == PH_HOSTING || L.phase == PH_MEASURE)
-      snprintf(s, sizeof(s), "%s  %s  waiting",
-               L.kind == LK_PAD ? "Two players" : "Link Cable", L.room);
+      snprintf(s, sizeof(s), tr("link.waiting"),
+               L.kind == LK_PAD ? tr("link.two_players") : tr("link.link_cable"), L.room);
    else if ((st == FE_GBLINK_RUNNING || st == FE_GBLINK_ENDING) && L.conn == LINK_CONN_ONLINE)
       snprintf(s, sizeof(s), "%s  P%d",
-               L.kind == LK_PAD ? "Two players" : "Link Cable", L.is_host ? 1 : 2);
+               L.kind == LK_PAD ? tr("link.two_players") : tr("link.link_cable"), L.is_host ? 1 : 2);
    else if (st == FE_GBLINK_RUNNING || st == FE_GBLINK_ENDING)
       snprintf(s, sizeof(s), "%s  %s  P%d",
-               L.kind == LK_PAD ? "Two players" : "Link Cable", L.room,
+               L.kind == LK_PAD ? tr("link.two_players") : tr("link.link_cable"), L.room,
                L.is_host ? 1 : 2);
    /* The quality badge of an Online link (80 / 120 ms, online_vita.c): the
     * chip names it, so a slow line is no surprise when the game stutters. */
@@ -3145,9 +3146,9 @@ static void chip_update(void)
       {
          size_t n = strlen(s);
          snprintf(s + n, sizeof(s) - n, "  %s%s",
-                  ov.quality == ONLINE_Q_GREAT ? "Great"
-                  : ov.quality == ONLINE_Q_GOOD ? "Good" : "Slow",
-                  ov.relayed ? " (relay)" : "");
+                  ov.quality == ONLINE_Q_GREAT ? tr("link.great")
+                  : ov.quality == ONLINE_Q_GOOD ? tr("link.good") : tr("link.slow"),
+                  ov.relayed ? tr("link.relay") : "");
       }
    }
    if (strcmp(s, L.info) != 0)
@@ -3675,7 +3676,7 @@ int link_snes_begin(int is_host, const char *rom_path, const char *title)
    if (title && title[0])
       snprintf(SL.title, sizeof(SL.title), "%.39s", title);
    else
-      snprintf(SL.title, sizeof(SL.title), "%s game", link_snes_console_name(SL.console));
+      snprintf(SL.title, sizeof(SL.title), tr("link.game"), link_snes_console_name(SL.console));
    SL.on = 1;
    SL.phase = LSN_WORKING;
    SL.t_begin = SL.t_seen = L.ticks;
@@ -3782,18 +3783,18 @@ void link_snes_draw(void)
          online_view ov;
          online_get(&ov);
          if (ov.code[0])
-            snprintf(l1, sizeof(l1), "Room code  %s", ov.code);
+            snprintf(l1, sizeof(l1), tr("link.room_code"), ov.code);
          else
-            snprintf(l1, sizeof(l1), "Opening the room...");
+            snprintf(l1, sizeof(l1), tr("link.opening_the_room"));
       }
       else
-         snprintf(l1, sizeof(l1), "Waiting for the other Vita in %s", L.room);
-      snprintf(l2, sizeof(l2), SL.sub ? "Starting Two players..." : "Tell your friend to join. O cancels.");
+         snprintf(l1, sizeof(l1), tr("link.waiting_for_the_other_vita_in"), L.room);
+      snprintf(l2, sizeof(l2), SL.sub ? tr("link.starting_two_players") : tr("link.tell_your_friend_to_join_o"));
    }
    else
    {
-      snprintf(l1, sizeof(l1), "Joining %s", L.conn == LINK_CONN_ONLINE ? "the room" : L.room);
-      snprintf(l2, sizeof(l2), SL.sub ? "Starting Two players..." : "Finding your friend...");
+      snprintf(l1, sizeof(l1), tr("link.joining"), L.conn == LINK_CONN_ONLINE ? tr("link.the_room") : L.room);
+      snprintf(l2, sizeof(l2), SL.sub ? tr("link.starting_two_players") : tr("link.finding_your_friend"));
    }
    ui_linking_draw(&v);
 }
@@ -3852,20 +3853,20 @@ int link_snes_ended(int was_host, int online, const char *result, int error, con
       return 0;
    if (!strcmp(result, "done"))
    {
-      snprintf(toast, toast_cap, "%s", was_host ? "Link ended. Game saved." : "Link ended. Your own game is back.");
+      snprintf(toast, toast_cap, "%s", was_host ? tr("link.link_ended_game_saved") : tr("link.link_ended_your_own_game_is"));
       return 0;
    }
    if (asleep)
    {
-      snprintf(toast, toast_cap, "%s", "This Vita went to sleep, so the link ended.");
+      snprintf(toast, toast_cap, "%s", tr("link.this_vita_went_to_sleep_so"));
       return 0;
    }
    if (frames > 0)
    {
       /* it ran, and then it did not last (as link_end says it for the other games) */
       snprintf(toast, toast_cap, "%s",
-               gerr_known && !strcmp(name, "desync") ? "The games fell out of step. Link ended, nothing saved."
-                                                     : "Link lost: the other Vita is gone. Nothing saved.");
+               gerr_known && !strcmp(name, "desync") ? tr("link.the_games_fell_out_of_step")
+                                                     : tr("link.link_lost_the_other_vita_is"));
       return 0;
    }
    /* it never started: the joiner reads two lines (link_end's fail_screen), the host a toast */
@@ -3881,7 +3882,7 @@ int link_snes_ended(int was_host, int online, const char *result, int error, con
    {
       /* the host keeps no failure screen: its toast (link_end's) */
       snprintf(toast, toast_cap, "%s",
-               ui == UI_FAIL_ONLINE_GAME ? "The other Vita has a different game." : "The link did not start.");
+               ui == UI_FAIL_ONLINE_GAME ? tr("link.the_other_vita_has_a_different") : tr("link.the_link_did_not_start"));
       return was_host ? 0 : ui;
    }
    return ui;

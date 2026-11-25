@@ -162,7 +162,8 @@ static int noraster(void)
  * taken of, one line each: the union of its quads, the scissor in force
  * and the texture's size.  Nothing is kept or written without the
  * variable. */
-typedef struct { float x0, y0, x1, y1; int sc[4], tw, th, n; unsigned tint; } tb_rec;
+typedef struct { float x0, y0, x1, y1; int sc[4], tw, th, n; unsigned tint; int sid; } tb_rec;
+static int     g_tb_sid;              /* vb_text_mark: which string a draw belongs to */
 static tb_rec *g_tb;
 static int     g_tb_n, g_tb_cap;
 const char    *vb_soft_shot_tag;      /* plat_host.c: the screenshot being written */
@@ -210,7 +211,7 @@ static void tb_note(const vb_tex *t, const vb_tquad *q, int n, unsigned tint)
       return;
    r->sc[0] = g_sc_on ? g_sc_x0 : 0;  r->sc[1] = g_sc_on ? g_sc_y0 : 0;
    r->sc[2] = g_sc_on ? g_sc_x1 : VB_W; r->sc[3] = g_sc_on ? g_sc_y1 : VB_H;
-   r->tw = t->w; r->th = t->h; r->n = k; r->tint = tint;
+   r->tw = t->w; r->th = t->h; r->n = k; r->tint = tint; r->sid = g_tb_sid;
    g_tb_n++;
 }
 
@@ -222,12 +223,14 @@ static void tb_dump(void)
       return;
    fprintf(f, "SHOT %s\n", vb_soft_shot_tag);
    for (i = 0; i < g_tb_n; i++)
-      fprintf(f, "B %.1f %.1f %.1f %.1f %d %d %d %d %d %d %d %08X\n",
+      fprintf(f, "B %.1f %.1f %.1f %.1f %d %d %d %d %d %d %d %08X %d\n",
               g_tb[i].x0, g_tb[i].y0, g_tb[i].x1, g_tb[i].y1,
               g_tb[i].sc[0], g_tb[i].sc[1], g_tb[i].sc[2], g_tb[i].sc[3],
-              g_tb[i].tw, g_tb[i].th, g_tb[i].n, g_tb[i].tint);
+              g_tb[i].tw, g_tb[i].th, g_tb[i].n, g_tb[i].tint, g_tb[i].sid);
    fclose(f);
 }
+
+void vb_text_mark(void) { g_tb_sid++; }
 
 void vb_frame_begin(int clear)
 {

@@ -61,11 +61,11 @@ static const char *lib_view_name(int kind, int which)
 {
    switch (kind)
    {
-   case VK_ALL:      return "Games";
-   case VK_STAR:     return "Starred";
-   case VK_RECENT:   return "Recent";
-   case VK_MOST:     return "Most played";
-   case VK_UNPLAYED: return "Not played yet";
+   case VK_ALL:      return tr("lib.games");
+   case VK_STAR:     return tr("lib.starred");
+   case VK_RECENT:   return tr("lib.recent");
+   case VK_MOST:     return tr("lib.most_played");
+   case VK_UNPLAYED: return tr("lib.not_played_yet");
    case VK_COLL:
       return which >= 0 && (unsigned)which < g_coll.ncoll ? g_coll.name[which]
                                                           : "";

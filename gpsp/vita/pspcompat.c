@@ -223,6 +223,15 @@ void pspcompat_wait_vblank(void)
       g_vblank_fn();
 }
 
+int pspcompat_system_lang(void)
+{
+   int v = 1;
+   pspcompat_dialogs_init();
+   if (sceAppUtilSystemParamGetInt(SCE_SYSTEM_PARAM_ID_LANG, &v) < 0)
+      return 1;
+   return v;
+}
+
 static int g_pc_face_swap;
 
 void pspcompat_face_swap(int on) { g_pc_face_swap = on ? 1 : 0; }
@@ -643,6 +652,12 @@ int pspcompat_enter_is_circle(void)
 {
    const char *e = getenv("GBADHOC_ENTER_BUTTON");
    return e && strcmp(e, "circle") == 0;
+}
+
+int pspcompat_system_lang(void)
+{
+   const char *e = getenv("GBADHOC_FAKE_LANG");
+   return e && *e ? atoi(e) : 1;
 }
 
 int  pspcompat_battery_percent(void) { return 80; }

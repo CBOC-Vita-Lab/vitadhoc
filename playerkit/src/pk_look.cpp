@@ -1,5 +1,6 @@
 /* See pk_look.h. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE). */
 #include "pk_look.h"
+#include "pk_i18n.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -517,7 +518,7 @@ int look_ceiling_factor(int w, int h, int max_px)
 
 std::string look_auto_label(const std::string &current, bool eased)
 {
-	return "Auto (" + current + (eased ? ", eased" : "") + ")";
+	return trf(eased ? "look.auto_eased" : "look.auto", current.c_str());
 }
 
 }  // namespace pk

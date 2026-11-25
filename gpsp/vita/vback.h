@@ -151,6 +151,11 @@ void vb_cquads(const vb_cquad *q, int n);
 void vb_tquads(vb_tex *t, const vb_tquad *q, int n, uint32_t tint,
                int filter);
 
+/* A string is about to be drawn (one or more vb_tquads follow): the twin's
+ * text audit (GBADHOC_TEXT_BOXES) groups the draws of one string; the console
+ * does nothing. */
+void vb_text_mark(void);
+
 /* The same, multiplying what is already there instead of laying over it:
  * out = dst * texel (per channel, the texel's alpha ignored, no tint).  One
  * draw, no shader: on the console it is vita2d's texture program with a

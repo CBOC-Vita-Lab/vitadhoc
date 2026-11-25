@@ -1,5 +1,6 @@
 /* See pk_util.h. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE). */
 #include "pk_util.h"
+#include "pk_i18n.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -301,14 +302,14 @@ bool make_dirs(const std::string &path)
 
 /* ---- the safe write ---------------------------------------------------- */
 
-const char *write_result_text(WriteResult r)
+const char *write_result_text(WriteResult r, bool en)
 {
 	switch (r) {
 	case W_OK: return "saved";
-	case W_NO_WRITE: return "could not write to the memory card (full or write-protected)";
-	case W_VERIFY: return "the card did not keep what was written";
-	case W_NO_REPLACE: return "could not replace the old file (it was kept)";
-	default: return "bad request";
+	case W_NO_WRITE: return trl("util.could_not_write_to_the_memory", en);
+	case W_VERIFY: return trl("util.the_card_did_not_keep_what", en);
+	case W_NO_REPLACE: return trl("util.could_not_replace_the_old_file", en);
+	default: return trl("util.bad_request", en);
 	}
 }
 

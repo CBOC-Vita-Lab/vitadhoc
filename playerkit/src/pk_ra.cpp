@@ -1,5 +1,6 @@
 /* See pk_ra.h. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE). */
 #include "pk_ra.h"
+#include "pk_i18n.h"
 
 #include "pk_ra_plat.h"
 
@@ -122,7 +123,7 @@ struct RaCb {
 		/* Not reached (no Wi-Fi yet, a timeout): the token is still good; tried again every half minute and when a game starts. */
 		r->retry_login_ = true;
 		r->retry_wait_ = RETRY_PUMPS;
-		if (!r->retry_told_) r->toast(std::string("RetroAchievements: ") + (error ? error : "could not sign in, will try again"));
+		if (!r->retry_told_) r->toast(error ? trf("ra.error", error) : std::string(tr("ra.sign_in_retry")));
 		r->retry_told_ = true;
 	}
 	static void RC_CCONV game_done(int result, const char *error, rc_client_t *client, void *ud)
@@ -145,16 +146,15 @@ struct RaCb {
 			       s.num_unlocked_achievements, r->game_hardcore_, r->title_.c_str());
 			if (s.num_core_achievements) {
 				char t[96];
-				snprintf(t, sizeof t, "%u of %u achievements%s", s.num_unlocked_achievements, s.num_core_achievements,
-				         r->game_hardcore_ ? " - Hardcore" : "");
+				snprintf(t, sizeof t, tr(r->game_hardcore_ ? "ra.progress_hardcore" : "ra.progress"), s.num_unlocked_achievements, s.num_core_achievements);
 				r->toast(t);
-			} else r->toast("No achievements for this game yet");
+			} else r->toast(tr("ra.no_achievements_for_this_game_yet"));
 		} else {
 			r->game_state_ = -1;
 			r->log("ra_game ok=0 rc=%d msg=\"%s\"", result, error ? error : "");
-			if (result == RC_NO_GAME_LOADED) r->toast("RetroAchievements does not know this version");
+			if (result == RC_NO_GAME_LOADED) r->toast(tr("ra.retroachievements_does_not_know_this_version"));
 			else if (result != RC_ABORTED && result != RC_LOGIN_REQUIRED)
-				r->toast(std::string("Achievements unavailable: ") + (error ? error : "no answer"));
+				r->toast(error ? trf("ra.unavailable_error", error) : std::string(tr("ra.unavailable_no_answer")));
 		}
 		if (r->game_state_ < 0) rc_client_set_hardcore_enabled(client, 0);       /* nothing to protect */
 	}
@@ -166,28 +166,28 @@ struct RaCb {
 		switch (e->type) {
 		case RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED:
 			r->log("ra_unlock id=%u points=%u title=\"%s\"", e->achievement->id, e->achievement->points, e->achievement->title);
-			snprintf(t, sizeof t, "Achievement: %s (%u)", e->achievement->title, e->achievement->points);
+			snprintf(t, sizeof t, tr("ra.achievement"), e->achievement->title, e->achievement->points);
 			r->toast(t, NOTICE_OK);
 			if (r->n_unlocked_ < r->n_total_) r->n_unlocked_++;
 			break;
 		case RC_CLIENT_EVENT_GAME_COMPLETED:
 			r->log("ra_completed hardcore=%d", r->game_hardcore_);
-			r->toast(std::string(r->game_hardcore_ ? "Mastered: " : "Completed: ") + r->title_, NOTICE_OK);
+			r->toast(trf(r->game_hardcore_ ? "ra.mastered" : "ra.completed", r->title_.c_str()), NOTICE_OK);
 			break;
 		case RC_CLIENT_EVENT_SUBSET_COMPLETED:
-			r->toast(std::string("Set completed: ") + (e->subset && e->subset->title ? e->subset->title : ""), NOTICE_OK);
+			r->toast(trf("ra.set_completed", e->subset && e->subset->title ? e->subset->title : ""), NOTICE_OK);
 			break;
 		case RC_CLIENT_EVENT_LEADERBOARD_STARTED:
 			r->log("ra_lboard start id=%u", e->leaderboard->id);
-			r->toast(std::string("Leaderboard attempt: ") + e->leaderboard->title);
+			r->toast(trf("ra.leaderboard_attempt", e->leaderboard->title));
 			break;
 		case RC_CLIENT_EVENT_LEADERBOARD_FAILED:
 			r->log("ra_lboard failed id=%u", e->leaderboard->id);
-			r->toast(std::string("Leaderboard attempt failed: ") + e->leaderboard->title);
+			r->toast(trf("ra.leaderboard_failed", e->leaderboard->title));
 			break;
 		case RC_CLIENT_EVENT_LEADERBOARD_SUBMITTED:
 			r->log("ra_lboard submit id=%u", e->leaderboard->id);
-			r->toast(std::string("Submitted: ") + e->leaderboard->title + " " + (e->leaderboard->tracker_value ? e->leaderboard->tracker_value : ""), NOTICE_OK);
+			r->toast(trf("ra.leaderboard_submitted", e->leaderboard->title, e->leaderboard->tracker_value ? e->leaderboard->tracker_value : ""), NOTICE_OK);
 			break;
 		case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW: {
 			r->log("ra_challenge show id=%u", e->achievement->id);
@@ -227,20 +227,20 @@ struct RaCb {
 		case RC_CLIENT_EVENT_LEADERBOARD_SCOREBOARD:
 			r->log("ra_scoreboard id=%u rank=%u of=%u", e->leaderboard_scoreboard->leaderboard_id, e->leaderboard_scoreboard->new_rank,
 			       e->leaderboard_scoreboard->num_entries);
-			snprintf(t, sizeof t, "Rank %u of %u", e->leaderboard_scoreboard->new_rank, e->leaderboard_scoreboard->num_entries);
+			snprintf(t, sizeof t, tr("ra.rank"), e->leaderboard_scoreboard->new_rank, e->leaderboard_scoreboard->num_entries);
 			r->toast(t);
 			break;
 		case RC_CLIENT_EVENT_SERVER_ERROR:
 			r->log("ra_server_error api=%s rc=%d", e->server_error->api ? e->server_error->api : "", e->server_error->result);
-			r->toast(std::string("RetroAchievements: ") + (e->server_error->error_message ? e->server_error->error_message : "server error"), NOTICE_ERROR);
+			r->toast(e->server_error->error_message ? trf("ra.error", e->server_error->error_message) : std::string(tr("ra.server_error")), NOTICE_ERROR);
 			break;
 		case RC_CLIENT_EVENT_DISCONNECTED:
 			r->log("ra_disconnected");
-			r->toast("Achievements will be sent when back online");
+			r->toast(tr("ra.achievements_will_be_sent_when_back"));
 			break;
 		case RC_CLIENT_EVENT_RECONNECTED:
 			r->log("ra_reconnected");
-			r->toast("Achievements sent");
+			r->toast(tr("ra.achievements_sent"));
 			break;
 		default:
 			break;
@@ -282,8 +282,8 @@ std::string Ra::indicator() const
 	if (!indic_ || !rc_) return "";
 	if (!tracker_.empty()) return tracker_;
 	if (!progress_.empty()) return progress_;
-	if (challenges_.size() == 1) return "Challenge: " + challenges_[0].second;
-	if (challenges_.size() > 1) { char b[32]; snprintf(b, sizeof b, "%u challenges active", (unsigned) challenges_.size()); return b; }
+	if (challenges_.size() == 1) return trf("ra.challenge", challenges_[0].second.c_str());
+	if (challenges_.size() > 1) { char b[32]; snprintf(b, sizeof b, tr("ra.challenges_active"), (unsigned) challenges_.size()); return b; }
 	return "";
 }
 

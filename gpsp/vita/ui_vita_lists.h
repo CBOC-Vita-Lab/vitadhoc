@@ -42,8 +42,8 @@ static int ls_save(void)
    {
       lib_load_collections();
       snprintf(g_ls.note, sizeof(g_ls.note), rc == -2
-               ? "The collections file cannot be changed safely"
-               : "Could not save the collections");
+               ? tr("list.the_collections_file_cannot_be_changed")
+               : tr("list.could_not_save_the_collections"));
       if (g_ls.cur > (int)g_coll.ncoll)
          g_ls.cur = (int)g_coll.ncoll;
       g_ls.changed = 1;           /* what is on screen may differ from before */
@@ -63,16 +63,16 @@ static void ls_toggle(int k)
    {
       fe_coll_remove(&g_coll, k, rel);
       if (ls_save() == 0)
-         snprintf(g_ls.note, sizeof(g_ls.note), "Removed from \"%s\"", nm);
+         snprintf(g_ls.note, sizeof(g_ls.note), tr("list.removed_from"), nm);
       fe_evt("ui_collection op=remove name=\"%s\" rom=%s", nm, rel);
    }
    else
    {
       rc = fe_coll_add(&g_coll, k, rel);
       if (rc != 0)
-         snprintf(g_ls.note, sizeof(g_ls.note), "No room for more games");
+         snprintf(g_ls.note, sizeof(g_ls.note), tr("list.no_room_for_more_games"));
       else if (ls_save() == 0)
-         snprintf(g_ls.note, sizeof(g_ls.note), "Added to \"%s\"", nm);
+         snprintf(g_ls.note, sizeof(g_ls.note), tr("list.added_to"), nm);
       fe_evt("ui_collection op=add name=\"%s\" rom=%s rc=%d", nm, rel, rc);
    }
 }
@@ -89,11 +89,11 @@ static int ls_screen(unsigned edges)
    {
       int k = fe_coll_create(&g_coll, typed);
       if (k == -2)
-         snprintf(g_ls.note, sizeof(g_ls.note), "A collection needs a name");
+         snprintf(g_ls.note, sizeof(g_ls.note), tr("list.a_collection_needs_a_name"));
       else if (k == -3)
-         snprintf(g_ls.note, sizeof(g_ls.note), "There is one with that name");
+         snprintf(g_ls.note, sizeof(g_ls.note), tr("list.there_is_one_with_that_name"));
       else if (k < 0)
-         snprintf(g_ls.note, sizeof(g_ls.note), "No room for another collection");
+         snprintf(g_ls.note, sizeof(g_ls.note), tr("list.no_room_for_another_collection"));
       else
       {
          fe_evt("ui_collection op=create name=\"%s\"", g_coll.name[k]);
@@ -110,13 +110,13 @@ static int ls_screen(unsigned edges)
       snprintf(old, sizeof(old), "%s", g_coll.name[g_ls.rename]);
       rc = fe_coll_rename(&g_coll, g_ls.rename, typed);
       if (rc == -2)
-         snprintf(g_ls.note, sizeof(g_ls.note), "A collection needs a name");
+         snprintf(g_ls.note, sizeof(g_ls.note), tr("list.a_collection_needs_a_name"));
       else if (rc == -3)
-         snprintf(g_ls.note, sizeof(g_ls.note), "There is one with that name");
+         snprintf(g_ls.note, sizeof(g_ls.note), tr("list.there_is_one_with_that_name"));
       else if (rc == 0 && strcmp(old, g_coll.name[g_ls.rename]) != 0 &&
                ls_save() == 0)
       {
-         snprintf(g_ls.note, sizeof(g_ls.note), "Renamed to \"%s\"",
+         snprintf(g_ls.note, sizeof(g_ls.note), tr("list.renamed_to"),
                   g_coll.name[g_ls.rename]);
          fe_evt("ui_collection op=rename from=\"%s\" to=\"%s\"", old,
                 g_coll.name[g_ls.rename]);
@@ -133,7 +133,7 @@ static int ls_screen(unsigned edges)
          fe_coll_delete(&g_coll, g_ls.ask);
          if (ls_save() == 0)
          {
-            snprintf(g_ls.note, sizeof(g_ls.note), "Deleted \"%s\"", nm);
+            snprintf(g_ls.note, sizeof(g_ls.note), tr("list.deleted"), nm);
             /* the ones after it moved up: the list behind keeps showing the
              * collection it showed, or all games when that one is gone */
             if (g_view_kind == VK_COLL && g_view_which == g_ls.ask)
@@ -180,35 +180,35 @@ static int ls_screen(unsigned edges)
    {
       if (g_ls.cur < (int)g_coll.ncoll)
          ls_toggle(g_ls.cur);
-      else if (ui_text_open(TXT_COLL_NEW, "Collection name", "",
+      else if (ui_text_open(TXT_COLL_NEW, tr("list.collection_name"), "",
                             FE_COLL_NAME_MAX - 1) != 0)
-         snprintf(g_ls.note, sizeof(g_ls.note), "The keyboard is not available");
+         snprintf(g_ls.note, sizeof(g_ls.note), tr("list.the_keyboard_is_not_available"));
    }
    if ((edges & PSP_CTRL_SQUARE) && g_ls.cur < (int)g_coll.ncoll)
    {
       g_ls.rename = g_ls.cur;
-      if (ui_text_open(TXT_COLL_RENAME, "Rename collection",
+      if (ui_text_open(TXT_COLL_RENAME, tr("list.rename_collection"),
                        g_coll.name[g_ls.cur], FE_COLL_NAME_MAX - 1) != 0)
-         snprintf(g_ls.note, sizeof(g_ls.note), "The keyboard is not available");
+         snprintf(g_ls.note, sizeof(g_ls.note), tr("list.the_keyboard_is_not_available"));
    }
    if ((edges & PSP_CTRL_TRIANGLE) && g_ls.cur < (int)g_coll.ncoll)
       g_ls.ask = g_ls.cur;
 
    ov_backdrop(OV_SCRIM_DENSE);
-   vw_head(g_ls.name, "COLLECTIONS");
+   vw_head(g_ls.name, tr("list.collections"));
    y0 = LS_Y0 + (g_coll.ncoll ? 14 : 44);
    if (!g_coll.ncoll)
-      vw_wrap(22, 62, 436, "Collections are lists of your own, across "
-              "every console. Make one to put this game in it.", C_DIM, 2);
+      vw_wrap(22, 62, 436, tr("list.collections_are_lists_of_your_own")
+, C_DIM, 2);
    for (i = g_ls.top; i < total && i < g_ls.top + LS_ROWS; i++)
    {
       int y = y0 + (i - g_ls.top) * VW_PITCH, sel = g_ls.cur == i;
       if (i < (int)g_coll.ncoll)
          vw_row(i, y, 440, sel, 1,
                 vw_clip(tmp, sizeof(tmp), g_coll.name[i], 280),
-                fe_coll_has(&g_coll, i, g_roms[g_ls.rom].name) ? "Added" : NULL);
+                fe_coll_has(&g_coll, i, g_roms[g_ls.rom].name) ? tr("list.added") : NULL);
       else
-         vw_row(i, y, 440, sel, 1, "New collection", NULL);
+         vw_row(i, y, 440, sel, 1, tr("list.new_collection"), NULL);
    }
    if (total > LS_ROWS)
    {
@@ -221,18 +221,18 @@ static int ls_screen(unsigned edges)
    {
       char q[112], nm[40];
       vw_clip(nm, sizeof(nm), g_coll.name[g_ls.ask], 170);
-      snprintf(q, sizeof(q), "Delete \"%s\"?      " VID_GLYPH_X
-               " delete     " VID_GLYPH_O " keep", nm);
+      snprintf(q, sizeof(q), tr("list.delete_x_delete_o_keep")
+, nm);
       tch_modal(PSP_CTRL_CIRCLE);
       ov_plate(q);
    }
    else if (g_ls.note[0])
       vw_plate(g_ls.note);
    else if (g_ls.cur < (int)g_coll.ncoll)
-      footer(VID_GLYPH_X " add/remove   " VID_GLYPH_SQ " rename   " VID_GLYPH_TRI
-             " delete   " VID_GLYPH_O " back");
+      footer(tr("hint.x_add_remove_sq_rename_tri")
+);
    else
-      footer(VID_GLYPH_X " new collection   " VID_GLYPH_O " back");
+      footer(tr("hint.x_new_collection_o_back"));
    return 0;
 }
 

@@ -1,5 +1,6 @@
 /* Fast forward: see pk_ff.h. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE). */
 #include "pk_ff.h"
+#include "pk_i18n.h"
 
 namespace pk {
 
@@ -68,7 +69,7 @@ size_t FastForward::reduce(int16_t *lr, size_t frames)
 std::string FastForward::chip() const
 {
 	if (!on_) return std::string();
-	if (unl_) return unl_ == 2 ? ">> Unlimited Smooth" : ">> Unlimited";
+	if (unl_) return unl_ == 2 ? tr("speed.unlimited_smooth") : tr("speed.unlimited");
 	return factor_ == 3 ? ">> 3x" : ">> 2x";
 }
 

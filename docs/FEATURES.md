@@ -506,9 +506,9 @@ players; one global setting each, stored in `display.ini` beside `config.ini`):
   `1 - 0.03 * strength` (30% less at 10). Cost: one extra textured quad per
   frame plus a tiny texture rebuilt only when strength or size changes (not
   yet measured on a Vita; the twin and tests check the pattern, host only).
-- **Text size: Normal / Large** and **High contrast: Off / On** are the first
-  two rows of **Settings > Interface** in the app and the **Interface** page
-  of each player's Settings. High contrast pushes pale text toward white and
+- **Text size: Normal / Large** and **High contrast: Off / On** are the
+  first two rows of the **Interface** page of each player's Settings, and
+  come just after **Language** in **Settings > Interface** in the app. High contrast pushes pale text toward white and
   dark text toward black (coloured text less) and gives the app a pure black
   or white page. Large is 120%, and it applies where the page was laid out
   for it and checked on the PC test twin:
@@ -820,3 +820,23 @@ Logs are in `ux0:data/GBAdhoc/log/gbadhoc.log`. They may contain game paths
 and network addresses; review before sharing. See [Performance](PERFORMANCE.md),
 [Technical Notes](TECHNICAL.md) and [Known Issues](../KNOWN-ISSUES.md) for
 measurements, implementation details and troubleshooting.
+
+## Interface languages
+
+**Settings > Interface > Language** sets the language of the app's menus:
+Automatic (follows the Vita system language; anything else is English),
+English, Español, Français, Deutsch, Italiano, Português (Brasil),
+日本語 and 简体中文. It is saved as `language=` in `display.ini`
+(`auto`, `en`, `es`, `fr`, `de`, `it`, `pt-BR`, `ja`, `zh-Hans`).
+
+- The texts live in `lang/<code>.txt` (one `key<TAB>text` per line, packed in
+  the VPK). English is also built into the app, so a missing file or key shows
+  English. The files are read when the app starts and when the language is
+  changed, and cost nothing per frame. `lang/TRANSLATING.md` is the guide for
+  translators.
+- Accented letters show in every language; Japanese and Chinese use the
+  built-in CJK font.
+- `language=xx-long` is a test language (English about 35% longer, with
+  accents) used to check that no text overflows. It is not offered in the menu.
+- The app's log lines stay English in every language.
+- Checked on the PC test twin only (host); not yet seen on a Vita.

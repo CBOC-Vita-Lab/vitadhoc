@@ -100,6 +100,14 @@ class ReleasePackageTests(unittest.TestCase):
                     self.assertEqual(package.read(name), (ROOT / source).read_bytes())
             self.assertEqual(package.read("gamedb.txt"), (VITA / "assets/gamedb.txt").read_bytes())
             self.assertEqual(package.read("cheats.db"), (VITA / "assets/cheats.db").read_bytes())
+            # one interface-language catalogue per file in lang/, byte for byte
+            catalogues = sorted((ROOT / "lang").glob("*.txt"))
+            self.assertTrue((ROOT / "lang/en.txt") in catalogues)
+            for path in catalogues:
+                with self.subTest(catalogue=path.name):
+                    self.assertEqual(package.read("lang/" + path.name), path.read_bytes())
+            self.assertFalse([n for n in names if n.startswith("lang/") and n not in
+                              {"lang/" + p.name for p in catalogues}])
 
     def test_title_id_preserves_existing_installs(self):
         if not PINNED and not VPK.is_file():

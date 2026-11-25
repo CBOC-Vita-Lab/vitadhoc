@@ -2,7 +2,7 @@
 NETDRV    := ../gpsp/netdrv
 NET_C     := $(NETDRV)/transport_lan.c $(NETDRV)/nat_hash.c $(NETDRV)/nat_stun.c $(NETDRV)/nat_turn.c
 NET_DEFS  := -DPK_PLAYER -DND_WINDOW=64 -DND_TXQ_CAP=256 -DND_RTO_MAX_US=2500000
-LINK_SRC  := src/pk_link.cpp src/pk_link_net.cpp src/pk_util.cpp
+LINK_SRC  := src/pk_link.cpp src/pk_link_net.cpp src/pk_util.cpp src/pk_i18n.cpp
 LINK_HDR  := $(wildcard src/*.h) tests/link_sim.h $(wildcard $(NETDRV)/*.h)
 
 $(B)/link_tests: tests/link_tests_main.cpp $(LINK_SRC) $(NET_C) $(LINK_HDR)

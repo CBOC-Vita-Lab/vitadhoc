@@ -58,7 +58,7 @@ NP_OBJS   := $(patsubst $(GP)/%.c,$(B)/gp/%.o,$(NETPLAY_GP_SRC))
 WK_SRC    := $(notdir $(basename $(wildcard $(WK)/src/*.cpp)))
 WK_OBJS   := $(addprefix $(B)/wk/,$(addsuffix .o,$(WK_SRC)))
 # playerkit (MIT): the in-game menu, states, input mapping, launch protocol, patches, notices, pacing
-PK_SRC    := pk_util pk_text pk_glyphs pk_font_data pk_icons pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_cores pk_look pk_scale pk_rewind pk_ff pk_speed pk_link pk_link_net pk_ra
+PK_SRC    := pk_util pk_i18n pk_text pk_glyphs pk_font_data pk_icons pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_cores pk_look pk_scale pk_rewind pk_ff pk_speed pk_link pk_link_net pk_ra
 PK_OBJS   := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC))) $(B)/pk/pk_gfx_vita.o $(B)/pk/pk_ra_plat_vita.o $(RA_OBJS)
 # newlib's FILE-slot allocation has no lock on the console (playerkit/vita/pk_stdio_lock.c puts a real
 # one in place with --wrap); `make STDIO_LOCK=0` builds without it, as the main app's Makefile does too

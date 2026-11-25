@@ -34,6 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "i18n.h"
 #include "stb_truetype.h"
 
 #include "video_vita_priv.h"
@@ -500,6 +501,9 @@ void vv_text_cap(int *top, int *h)
 void vv_text_draw(int hd, int nx, int ny, const char *s, uint32_t tint)
 {
    const vv_face *f = FACE(hd);
+   vb_text_mark();
+   if (i18n_audit_on)
+      i18n_audit(s);
    vb_tquad q[TEXT_BATCH], qx[TEXT_BATCH];
    vb_tex *xtex = NULL;
    int n = 0, nxq = 0, pen = nx;

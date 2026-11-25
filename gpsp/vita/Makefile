@@ -129,7 +129,10 @@ MBEDTLS_LIBS := -L$(MBEDTLS)/lib -lmbedtls -lmbedx509 -lmbedcrypto
 else ifneq ($(filter vpk $(VPK),$(MAKECMDGOALS)),)
 $(error make vpk needs MBEDTLS=<prefix>: python3 tools/online/build-mbedtls.py --target vita --work DIR, then MBEDTLS=DIR/mbedtls/vita (or export MBEDTLS_VITA=that prefix); docs/BUILDING.md, Mbed TLS)
 endif
-APP_WARN := -Wall -Wextra -Wno-type-limits -std=gnu11
+# -Wno-format-security: the app's texts come from tr() (i18n.h) and a catalogue text
+# whose printf conversions differ from the English one is dropped at load, so a
+# tr() with no arguments is a safe format.
+APP_WARN := -Wall -Wextra -Wno-format-security -Wno-type-limits -std=gnu11
 APP_OBJS := $(foreach s,$(APP_ALL_VITA),$(call app_obj,$(s)))
 # newlib's FILE-slot allocation (__sfp) has no lock on the console: two threads
 # in fopen() at once can be handed one FILE.  playerkit/vita/pk_stdio_lock.c is
@@ -202,6 +205,9 @@ VPK_EXTRA += $(MD_BIN)=md.bin \
 $(MD_BIN): FORCE
 	+$(MAKE) -C ../../md/vita
 FORCE:
+# The players' language catalogues (playerkit loads app0:lang/pk_<code>.txt; English is compiled in, so a missing one only means English).
+PK_LANG_FILES := $(wildcard ../../lang/pk_*.txt)
+VPK_EXTRA += $(foreach f,$(PK_LANG_FILES),$(f)=lang/$(notdir $(f)))
 VPK_FILES := -a sce_sys/icon0.png=sce_sys/icon0.png \
              -a sce_sys/livearea/contents/bg.png=sce_sys/livearea/contents/bg.png \
              -a sce_sys/livearea/contents/startup.png=sce_sys/livearea/contents/startup.png \

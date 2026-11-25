@@ -266,7 +266,7 @@ another version (the twins' own version is fixed).
     cd gpsp/vita/hostcore
     python3 online_tests.py x86 --hz 20            # all of them (about two hours at 20; --hz 30 is faster)
     python3 online_tests.py x86 --hz 30 --only punch,relay,gb,share
-    python3 online_tests.py armhf --hz 12          # the cheap set: punch, relay, gb, lost_answer, library_join
+    python3 online_tests.py armhf --hz 12          # the cheap set: punch, relay, gb, lost_answer, library_join, library_join_files, library_join_both
     python3 online_tests.py --list                 # every scenario name
 
 | scenario | what it proves |
@@ -293,7 +293,7 @@ another version (the twins' own version is fixed).
 | `rtt_100`, `rtt_150`, `rtt_200` | round trips of 100 / 150 / 200 ms, jitter 20 ms, loss 2 %, made by natsim and again by the transport's own shim (`link_latency` / `link_jitter` / `link_loss`): the delay is measured, at most 12 (the Online cap), `want=` logged, hashes equal; stalls per minute are printed, not judged |
 | `delay_cap` | the same delay on Same Wi-Fi stays capped at 8 |
 | `determinism` | 150 ms round trip, jitter, loss, scripted buttons on both consoles for 90 s: every periodic hash and the final hash agree (linktest.gba always; a private Link Cable game when `GATE_GBA_ROMS` has one) |
-| `different_game`, `library_join` | `different_game`: a cable game with the host's game code but another file, joined from Play together, ends cleanly on both consoles. `library_join`: Join online from the game list opens the matching game and joins; a cable game whose file differs from the host's asks and opens nothing by itself; with the host's file among two it is the one offered |
+| `different_game`, `library_join`, `library_join_files`, `library_join_both` | `different_game`: a cable game with the host's game code but another file, joined from Play together, ends cleanly on both consoles. `library_join`: Join online from the game list opens the matching game and joins; `library_join_files`: a cable game whose file differs from the host's asks and opens nothing by itself; `library_join_both`: with the host's file among two it is the one offered |
 | `two_games` | two different GBA cartridges over Online (Ruby with Sapphire), over the punch and over the relay: the partner's cartridge crosses the link once and is kept in the cache, and a second session of the same two data folders finds it there. Skipped when the second test cartridge (`gpsp/tools/linktest/linktest_b.gba`) is not built |
 | `direct_hidden` | the Connection page has no Direct address unless `link_direct = 1` |
 
@@ -320,7 +320,7 @@ x86 references the way the other ARM mode does:
     python3 app_tests.py aarch64 --only list,session,ff,play,cpufix
     python3 link_tests.py aarch64                    # both twins aarch64 (Same Wi-Fi: cable, Game Boy, adapter, ad hoc ...)
     python3 link_tests.py mixed64                    # an x86 twin and an aarch64 twin
-    python3 online_tests.py aarch64 --hz 12          # punch, relay, gb, lost_answer, library_join
+    python3 online_tests.py aarch64 --hz 12          # punch, relay, gb, lost_answer, library_join, library_join_files, library_join_both
 
 A twin built elsewhere is named with `GBADHOC_HOST_AARCH64=/path/to/gbadhoc_host`. The aarch64
 twin's link "backend" word is `interp` (x86 with the recompiler is `x86`, ARM with it `arm`), so

@@ -1452,55 +1452,11 @@ static void lcd_overlay_draw(unsigned w, const vid_geo *g)
    crt_overlay_draw(w, g);
 }
 
-/* ---- xBRZ on the GPU ------------------------------------------------------
- * The "xBRZ smooth" filter drawn by the GPU (vback.h VB_PROG_XBRZ0..2; the
- * shaders are gpsp/vita/shaders/xbrz_*.inc) instead of the CPU upscalers:
- *
- *   pass 0  every point where four picture pixels meet, into a render
- *           target 1:1 (one pixel larger each way): which of the four it
- *           cuts, and how hard -- xBRZ's own preprocessing
- *   pass 1  per picture pixel, its four corners from those points and
- *           whether each blends as a line, into a second target 1:1
- *   pass 2  the picture at its final size: every output pixel worked out
- *           from the picture and pass 1 -- no 4x picture in between, no
- *           linear squeeze from 4x to 3.4x, every frame
- *
- * The CPU's cores do nothing for it, so there is no factor to drop at a
- * fade and no picture that comes a frame late.  OFF unless vita.ini
- * gpu_xbrz = 1: measured on the console (16 Oct, Emerald at fit), the GPU
- * took 31 ms over a frame with it against 2.6 ms with the CPU's xBRZ
- * textures -- passes 0 and 1 about 7 ms, pass 2's 444,000 pixels the rest
- * -- so it cannot hold 60 frames a second; the guard below turns it off
- * after two samples if it is asked for anyway.  It also needs the
- * system's shader compiler (ur0:data/libshacccg.suprx), which took 26 s
- * the first time (the programs are kept on the card afterwards).  Not for
- * the two pictures of a pair, which keep the CPU's. */
-#define GX_RT_W 384            /* the widest picture: the wide view's 282+ */
-#define GX_RT_H 256
-/* THE GUARD.  Whether the GPU keeps up is measured, not assumed: after the
- * first GX_FIRST pictures, then every GX_EVERY, the next GX_SAMPLE presents
- * wait for the GPU and time it (vb_gpu_time).  Over GX_SLOW_US of GPU time
- * a frame, it is measured again GX_FIRST pictures later; two slow samples
- * in a row and xBRZ goes back to the CPU's cores for the rest of the
- * session (`gpu_xbrz off reason=slow`). */
-#define GX_FIRST   60
-#define GX_EVERY   1800
-#define GX_SAMPLE  8
-#define GX_SLOW_US 10000      /* the drain serialises CPU and GPU: 16.7 ms less
-                                * the frame's ~3-5 ms of CPU, with margin */
-static int     g_gx_on = 0;    /* vid_set_gpu_xbrz                          */
-static int     g_gx_state;     /* 0 untried, 1 ready, -1 not available,
-                                * -2 too slow (the guard)                   */
-static vb_tex *g_gx_rt, *g_gx_rt0;   /* pass 1's target, pass 0's      */
-static unsigned g_gx_frames;   /* pictures drawn this way (vid_gpu_xbrz)   */
+/* ---- GPU timing (vita.ini gpu_time = 1) ---------------------------------
+ * Measuring only: every present waits for the GPU to finish and is timed
+ * (vb_gpu_time); vid_gpu_time_stats reads what was measured. */
 static int      g_gx_always;   /* vid_set_gpu_time: every present timed    */
-static int      g_gx_sampling, g_gx_slow;
-static unsigned g_gx_mark, g_gx_samples, g_gx_avg, g_gx_max;
-
-void vid_set_gpu_xbrz(int on)
-{
-   g_gx_on = on ? 1 : 0;
-}
+static unsigned g_gx_samples, g_gx_avg, g_gx_max;
 
 void vid_set_gpu_time(int on)
 {
@@ -1512,60 +1468,16 @@ void vid_set_gpu_time(int on)
 static void gx_guard(void)
 {
    unsigned n, avg, mx;
-   if (g_gx_always)
-   {
-      vb_gpu_stats(&n, &avg, &mx);
-      if (n)
-      {
-         g_gx_avg = avg;
-         if (mx > g_gx_max)
-            g_gx_max = mx;
-         g_gx_samples++;
-      }
+   if (!g_gx_always)
       return;
-   }
-   if (g_gx_state <= 0)
-      return;
-   if (g_gx_sampling)
+   vb_gpu_stats(&n, &avg, &mx);
+   if (n)
    {
-      if (vb_gpu_timing() > 0)
-         return;
-      vb_gpu_stats(&n, &avg, &mx);
-      g_gx_sampling = 0;
-      g_gx_mark = g_gx_frames;
-      if (!n)
-         return;
-      g_gx_samples++;
       g_gx_avg = avg;
-      g_gx_max = mx;
-      fe_evt("gpu_xbrz_time frames=%u gpu_us=%u/%u", n, avg, mx);
-      g_gx_slow = avg > GX_SLOW_US ? g_gx_slow + 1 : 0;
-      if (g_gx_slow >= 2)
-      {
-         g_gx_state = -2;
-         fe_evt("gpu_xbrz off reason=slow gpu_us=%u", avg);
-      }
-      return;
+      if (mx > g_gx_max)
+         g_gx_max = mx;
+      g_gx_samples++;
    }
-   /* (a slow sample is checked again soon, not in half a minute) */
-   if (g_gx_frames - g_gx_mark >= (g_gx_samples && !g_gx_slow ? GX_EVERY
-                                                               : GX_FIRST))
-   {
-      vb_gpu_time(GX_SAMPLE);
-      g_gx_sampling = 1;
-   }
-}
-
-/* vita.ini gpu_probe: what the shader compiler says to test programs
- * (vback.h vb_prog_probe), one `gpu_probe` line each. */
-void vid_gpu_probe(void)
-{
-   char line[512];
-   int n;
-   if (!g_inited)
-      vid_init();
-   for (n = 0; vb_prog_probe(n, line, sizeof(line)); n++)
-      fe_evt("gpu_probe %s", line);
 }
 
 /* The GPU's time over a frame, last measured (0 = never), and the slowest
@@ -1578,151 +1490,6 @@ void vid_gpu_time_stats(unsigned *samples, unsigned *avg_us, unsigned *max_us)
    g_gx_max = 0;
 }
 
-static int gx_ready(void)
-{
-   if (!g_gx_on || g_filter != VID_FILTER_XBRZ || g_quality != 0)
-      return 0;
-   if (!g_gx_state)
-   {
-      /* (the first time on a console: the compiler runs, a hitch of the
-       * size `us` says, once -- afterwards the programs come from the
-       * card) */
-      const unsigned t0 = pspcompat_time_us();
-      vb_prog *p0 = vb_prog_get(VB_PROG_XBRZ0);
-      vb_prog *p1 = p0 ? vb_prog_get(VB_PROG_XBRZ1) : NULL;
-      vb_prog *p2 = p1 ? vb_prog_get(VB_PROG_XBRZ2) : NULL;
-      if (p0 && p1 && p2)
-      {
-         g_gx_rt0 = vb_tex_create(GX_RT_W, GX_RT_H, VB_FMT_RGBA8, 1);
-         g_gx_rt = vb_tex_create(GX_RT_W, GX_RT_H, VB_FMT_RGBA8, 1);
-      }
-      g_gx_state = p0 && p1 && p2 && g_gx_rt && g_gx_rt0 ? 1 : -1;
-      fe_evt("gpu_xbrz on=%d pass0=%s pass1=%s pass2=%s rt=%d us=%u",
-             g_gx_state > 0, vb_prog_status(VB_PROG_XBRZ0),
-             vb_prog_status(VB_PROG_XBRZ1), vb_prog_status(VB_PROG_XBRZ2),
-             g_gx_rt && g_gx_rt0 ? 1 : 0, pspcompat_time_us() - t0);
-   }
-   return g_gx_state > 0;
-}
-
-/* Is the GPU drawing xBRZ (for the log), and how many pictures so far. */
-int vid_gpu_xbrz(unsigned *frames)
-{
-   if (frames)
-      *frames = g_gx_frames;
-   return g_gx_state > 0 && g_gx_on && g_quality == 0;
-}
-
-/* vita.ini gpu_probe = N >= 2: at the Nth GPU picture, what passes 0 and 1
- * left in their targets
- * (texels not zero, the largest byte of each channel, a row of samples):
- * is the GPU doing them at all. */
-static int g_gx_debug;
-void vid_set_gpu_debug(int on) { g_gx_debug = on; }
-/* vita.ini gpu_xbrz_view = 1: the screen shows pass 1's bytes (red = top
- * left corner, green = top right, blue = the bottom two); 2: pass 0's,
- * 40 times brighter.  A diagnostic: is the GPU working the passes out. */
-static int g_gx_view;
-void vid_set_gpu_view(int v) { g_gx_view = v; }
-
-static void gx_debug_dump(vb_tex *t, unsigned w, unsigned h)
-{
-   static uint32_t px[GX_RT_W * GX_RT_H];
-   vb_tex *rts[3] = { g_gx_rt0, g_gx_rt, g_gx_rt };
-   const unsigned ws[3] = { w + 1, w, w }, hs[3] = { h + 1, h, h };
-   int k;
-   for (k = 0; k < 3; k++)
-   {
-      if (k == 2)
-      {
-         /* (a control: the picture itself, drawn by libvita2d's own
-          * program into the same target -- can it be read back at all) */
-         vb_tquad q;
-         q.x0 = 0; q.y0 = 0; q.x1 = (float)w; q.y1 = (float)h;
-         q.u0 = 0; q.v0 = 0; q.u1 = (float)w; q.v1 = (float)h;
-         vb_rt_begin(g_gx_rt);
-         vb_tquads(t, &q, 1, 0xFFFFFFFFu, VB_NEAREST);
-         vb_rt_end();
-      }
-      unsigned x, y, nz = 0, mx[4] = { 0, 0, 0, 0 };
-      char row[200];
-      int at = 0;
-      if (vb_tex_read(rts[k], px) != 0)
-      {
-         fe_evt("gpu_rt pass=%d read=failed", k);
-         continue;
-      }
-      for (y = 0; y < hs[k]; y++)
-         for (x = 0; x < ws[k]; x++)
-         {
-            uint32_t c = px[y * GX_RT_W + x];
-            int b;
-            if (c & 0x00FFFFFFu)
-               nz++;
-            for (b = 0; b < 4; b++)
-               if (((c >> (8 * b)) & 0xFF) > mx[b])
-                  mx[b] = (c >> (8 * b)) & 0xFF;
-         }
-      /* a few texels of the middle row */
-      for (x = 0; x < 8 && at < (int)sizeof(row) - 12; x++)
-         at += snprintf(row + at, sizeof(row) - (size_t)at, "%s%08x",
-                        x ? "," : "",
-                        (unsigned)px[(hs[k] / 2) * GX_RT_W + ws[k] / 2 + x]);
-      fe_evt("gpu_rt pass=%d w=%u h=%u nonzero=%u max=%u/%u/%u/%u mid=%s", k,
-             ws[k], hs[k], nz, mx[0], mx[1], mx[2], mx[3], row);
-   }
-}
-
-/* The w x h texture `t`, rows sy0 .. sy0+sh of it, onto g's rect.  Passes
- * 0 and 1 open scenes of their own: called before anything else of the
- * frame is drawn (as sharp bilinear's prescale is), they cost no suspended
- * frame. */
-static int gx_draw(vb_tex *t, unsigned w, unsigned h, const vid_geo *g)
-{
-   float u[VB_PROG_UNIFORMS][4];
-   vb_tquad q;
-   vb_prog *p0 = vb_prog_get(VB_PROG_XBRZ0), *p1 = vb_prog_get(VB_PROG_XBRZ1);
-   vb_prog *p2 = vb_prog_get(VB_PROG_XBRZ2);
-   if (!p0 || !p1 || !p2 || !g_gx_rt || !g_gx_rt0 || w + 1 > GX_RT_W ||
-       h + 1 > GX_RT_H || !w || !h || g->sh <= 0)
-      return 0;
-   memset(u, 0, sizeof(u));
-   u[0][0] = (float)w; u[0][1] = (float)h;
-   u[0][2] = 1.0f / (float)w; u[0][3] = 1.0f / (float)h;
-   /* 0: the points, texel (i+1, j+1) for pixel (i, j) */
-   q.x0 = 0; q.y0 = 0; q.x1 = (float)(w + 1); q.y1 = (float)(h + 1);
-   q.u0 = -1; q.v0 = -1; q.u1 = (float)w; q.v1 = (float)h;
-   vb_rt_begin(g_gx_rt0);
-   vb_pquads(p0, t, NULL, &q, 1, u);
-   vb_rt_end();
-   /* 1: each pixel's corners */
-   u[1][0] = 1.0f / (float)GX_RT_W;
-   u[1][1] = 1.0f / (float)GX_RT_H;
-   u[1][2] = g_gx_view == 2 ? 1.0f : 0.0f;
-   q.x0 = 0; q.y0 = 0; q.x1 = (float)w; q.y1 = (float)h;
-   q.u0 = 0; q.v0 = 0; q.u1 = (float)w; q.v1 = (float)h;
-   vb_rt_begin(g_gx_rt);
-   vb_pquads(p1, t, g_gx_rt0, &q, 1, u);
-   vb_rt_end();
-   if (g_gx_debug && g_gx_frames == (unsigned)g_gx_debug)
-      gx_debug_dump(t, w, h);
-   /* 2: the picture at its size */
-   backdrop_draw(geo_covers(g));
-   u[1][0] = (float)w / (float)GX_RT_W;
-   u[1][1] = (float)h / (float)GX_RT_H;
-   u[1][2] = 0.0f;
-   u[2][0] = (float)g->dw / (float)w;
-   u[2][1] = (float)g->dh / (float)g->sh;
-   u[2][2] = g_gx_view ? 1.0f : 0.0f;
-   q.x0 = (float)g->ox; q.y0 = (float)g->oy;
-   q.x1 = (float)(g->ox + g->dw); q.y1 = (float)(g->oy + g->dh);
-   q.u0 = 0; q.v0 = (float)g->sy0;
-   q.u1 = (float)w; q.v1 = (float)(g->sy0 + g->sh);
-   vb_pquads(p2, t, g_gx_rt, &q, 1, u);
-   g_gx_frames++;
-   return 1;
-}
-
 /* A whole frame: the backdrop, then the w-wide source texture `t` at g. */
 static void picture_draw(vb_tex *t, unsigned w, const vid_geo *g)
 {
@@ -1732,11 +1499,6 @@ static void picture_draw(vb_tex *t, unsigned w, const vid_geo *g)
    if (!t)
    {
       backdrop_draw(0);
-      return;
-   }
-   if (gx_ready() && gx_draw(t, w, (unsigned)vb_tex_h(t), g))
-   {
-      lcd_overlay_draw(w, g);
       return;
    }
    mode = picture_mode(w, g, &kx, &ky);
@@ -2402,15 +2164,7 @@ void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,
    t0 = pspcompat_time_us();
    pix = look_frame(0, pix, w, h, &pitch_bytes);
    DP_MAX(VID_DP_LOOK, pspcompat_time_us() - t0);
-   if (gx_ready())
-   {
-      /* xBRZ on the GPU (picture_draw): the CPU upscalers' textures go */
-      if (g_upt[0].t[0] || g_upt[0].t[1])
-         up_drop(0);
-      tu = NULL;
-   }
-   else
-      tu = up_stage(0, pix, w, h, pitch_bytes, g.dw, &f);
+   tu = up_stage(0, pix, w, h, pitch_bytes, g.dw, &f);
    if (tu)
    {
       t1 = pspcompat_time_us();

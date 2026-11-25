@@ -388,7 +388,7 @@ off in Settings > Interface > Game previews.
 | No games listed | Check the console in the top bar (Triangle opens the list, which shows how many games each console found) and the file extension, then restart the app. |
 | A save seems missing | Look next to the game's file, in case it was moved or renamed. A Game Boy save is `Game.gb.sav`, a Color one `Game.gbc.sav`. To bring one from another emulator, see above. |
 | A game fails with the built-in BIOS | Put your own BIOS dump at `ux0:data/GBAdhoc/gba_bios.bin`. |
-| The picture is slow or odd | Settings > Display: Image quality Original, and leave GPU xBRZ off. See the [performance report](docs/PERFORMANCE.md) for measured settings, not a universal speed promise. |
+| The picture is slow or odd | Settings > Display: Image quality Original. See the [performance report](docs/PERFORMANCE.md) for measured settings, not a universal speed promise. |
 | A zip or 7z will not open | The notice says why. Unpack it and try the game directly; check that it has one supported game and is not encrypted, ZIP64 or a solid `.7z` block over 64 MiB. |
 | No cover for a game | Covers are optional. Check Wi-Fi, or set your own: Cover on the home screen, or a picture in `covers/` ([above](#your-own-cover-pictures)). |
 | RetroAchievements won't sign in | Check Wi-Fi and the Vita's date and time. The log's `ra_http` lines say why. |

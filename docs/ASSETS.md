@@ -8,7 +8,6 @@
 | Inter, Outfit and Noto Sans CJK JP (subset) fonts | SIL OFL 1.1; complete notices in `licenses/` |
 | libvita2d/stb and shaders | Their MIT/dual notices and provenance retained |
 | CPU xBRZ | GPL version 2 with original exception/notices retained |
-| Experimental GPU xBRZ reference | MIT/GPL-3.0 upstream notices retained; combined-binary compatibility remains under review |
 | mGBA-derived cheat engine | MPL-2.0; corresponding source and change markers retained |
 | `cheats.db` and cartridge catalogue | Pinned libretro-database, CC BY-SA 4.0; local conversion described in notices |
 | rcheevos (RetroAchievements runtime) | MIT; v12.5.0 subset plus five backported upstream fixes in `gpsp/vita/third_party/rcheevos/` |

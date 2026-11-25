@@ -21,9 +21,50 @@ original project and the clarification. Original notices remain intact.
   under `gpsp/psp/me`. The permission does not settle that code's origin.
 - The Vita build does not link either PSP component above. This is not a
   claim about every PSP build.
-- CPU xBRZ, experimental GPU xBRZ, mGBA-derived files, fonts, databases and
+- CPU xBRZ, mGBA-derived files, fonts, databases and
   SDK/runtime components retain their own notices. See
   [Third-Party Notices](notices/THIRD-PARTY.md).
+
+## Which Licence The Main App Is Under
+
+The main app (the `eboot.bin`: GBA, Game Boy, NES and WonderSwan) is one program,
+so what it may be distributed under is what every part linked into it allows.
+
+- **Today (without Gambatte): GPL-2.0-or-later.** Every part of the main app
+  allows version 2 (or later), so the program can be taken as a whole under
+  GPL-2.0 or GPL-3.0, as the maintainer's permission above describes.
+- **With Gambatte linked in (the Accurate Game Boy core, 2.0): GPL-2.0 only.**
+  Gambatte is GPL-2.0-only. The combined work is then distributed under
+  **GPL-2.0**, and the "including use under GPL-3.0" line above does not extend
+  to a build that contains it.
+- The experimental GPU xBRZ shader (adapted from a shader carrying Zenju's
+  GPL-3.0 notice) was the one GPL-3.0 part and could not sit in a GPL-2.0-only
+  combination. It was **removed from the main app in 2.0** (code, shader text,
+  its notice file and the shader-compiler link), so that conflict no longer
+  exists. The tree and the package contain no GPL-3-only code in the main app.
+
+Every component of the main app and how it fits GPL-2.0 (the combined work):
+
+| Component | Licence | Fits GPL-2.0 |
+| --- | --- | --- |
+| gpSP core, GBAdhoc-derived code (`gpsp/psp`, `frontend-common`, `netdrv`, `gbalink`, `gbcore` glue) | GPL-2.0-or-later (maintainer's permission) | yes |
+| TGB Dual (`gpsp/gbcore`) | GPL-2.0 | yes |
+| Gambatte (2.0) | GPL-2.0 only | yes: it is why the whole is GPL-2.0 |
+| FCEUmm (NES) | GPL-2.0-or-later | yes |
+| Beetle WonderSwan | GPL-2.0-or-later | yes |
+| CPU xBRZ (`third_party/xbrz`) | GPL, no version named in the files; used under version 2 | yes, as version 2 |
+| Mbed TLS | Apache-2.0 OR GPL-2.0-or-later; used under GPL-2.0-or-later | yes, by that choice |
+| mGBA cheat engine | MPL-2.0 | yes (MPL-2.0 allows combining with GPL) |
+| Blip_Buffer (in Beetle) | LGPL-2.1-or-later | yes |
+| libvita2d, stb, rcheevos, libretro-common, SameBoy palette data, xBR | MIT / Expat | yes |
+| Newlib, GCC runtime (libgcc, GPL-3.0-or-later with the Runtime Library Exception) | BSD-style / GPL-3 with exception | yes: the exception covers the runtime linked into a GPL-2.0 program |
+| Fonts (Inter, Outfit: OFL), databases, art | their own licences, shipped as data | not linked code |
+| `gpsp/psp/font_8x16.c`, `gpsp/psp/me` | GPL-2.0-only / unclear | not linked into the Vita build |
+
+`snes.bin` and `md.bin` are separate programs and keep their own licences
+(sections below). This table describes the main app only; the CPU xBRZ row is
+a reading of a header that names no version (its author's later releases name
+version 3), so that reading stays a small, recorded risk.
 
 ## The Two-Player Link of the Players
 
@@ -118,8 +159,8 @@ and `vita/plat.h` (threads, time).
 ## Release Status
 
 Version 1.0's VPK is built from the source in this repository, which sits
-beside it. Still open: the experimental GPU xBRZ shader's exact historical
-upstream revision is unrecorded, and its combined-binary compatibility is
-under review (the feature is off by default; its strings are in the binary).
+beside it. The experimental GPU xBRZ shader, whose historical upstream
+revision was never recorded and whose GPL-3.0 notice could not be combined with
+Gambatte, was removed from the main app (see above).
 Neither the root license nor individual source headers have been replaced with
 a blanket GPL-3.0 declaration.

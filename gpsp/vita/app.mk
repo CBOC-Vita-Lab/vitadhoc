@@ -142,8 +142,7 @@ ND_DEFS     := $(filter -D%,$(NET_VITA_CFLAGS))
 
 APP_ALL_VITA := $(addprefix $(V)/,$(APP_SRCS) $(APP_SRCS_VITA)) \
                 $(UI_SRCS) $(UI_GXM_SRCS) $(NET_SRCS)
-APP_ALL_HOST := $(addprefix $(V)/,$(APP_SRCS) $(APP_SRCS_HOST) vback_soft.c \
-                  vback_soft_prog.cpp) \
+APP_ALL_HOST := $(addprefix $(V)/,$(APP_SRCS) $(APP_SRCS_HOST) vback_soft.c) \
                 $(UI_SRCS)
 
 APP_INC_FLAGS := $(VITA_UI_CFLAGS) $(VITA_UI_ASFLAGS) -I$(V) \

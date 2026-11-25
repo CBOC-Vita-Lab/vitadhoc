@@ -397,8 +397,6 @@ judge without a Vita.
   xBRZ 3x. See the [measurements and settings](docs/PERFORMANCE.md).
 - The heaviest picture settings (xBRZ at full height plus the wide view) are the
   most demanding. If a game slows down, try Image quality: Original.
-- The GPU version of xBRZ (`gpu_xbrz = 1`) is an experiment and too slow for
-  normal play. Leave it off.
 
 ## Gameplay
 

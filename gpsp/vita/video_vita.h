@@ -185,18 +185,10 @@ void vid_upscale_stats(upscale_stats_t *out);
 /* One line for the in-game menu when smoothing has stepped down to keep up
  * (Keep full speed), else NULL. */
 const char *vid_smooth_note(void);
-/* xBRZ drawn by the GPU when it can (video_vita.c, "xBRZ on the GPU"):
- * on = 0 keeps it on the CPU.  vid_gpu_xbrz: is it the GPU's now, and the
- * pictures it has drawn so far. */
-void vid_set_gpu_xbrz(int on);
-int  vid_gpu_xbrz(unsigned *frames);
 /* on = 1: every present waits for the GPU and is timed (measuring only);
  * vid_gpu_time_stats: timed samples so far, the GPU's time over a frame
  * last measured, the slowest since the last call. */
 void vid_set_gpu_time(int on);
-void vid_gpu_probe(void);
-void vid_set_gpu_debug(int on);
-void vid_set_gpu_view(int v);
 void vid_gpu_time_stats(unsigned *samples, unsigned *avg_us, unsigned *max_us);
 
 /* The slowest of each part of vid_draw_frame since the last call (and the

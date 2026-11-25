@@ -258,6 +258,14 @@ STEPS = [
          "mkdir -p {out}/bin && gcc -Wall -Wextra -I vita -I frontend-common "
          "vita/tests/playlog/test_play_log.c vita/play_log.c -o {out}/bin/play-log && {out}/bin/play-log",
          "quick", {"gpsp", "save"}, inputs=["gpsp/"], cwd="gpsp", requires=CC),
+    Step("update-ver", "update check: version compare and the release JSON (test_update_ver.c)",
+         "mkdir -p {out}/bin && gcc -Wall -Wextra -Werror -fsanitize=address,undefined -I vita "
+         "vita/tests/update/test_update_ver.c vita/update_ver.c -o {out}/bin/update-ver && "
+         "ASAN_OPTIONS=detect_leaks=0 {out}/bin/update-ver",
+         "quick", {"gpsp", "online"}, inputs=["gpsp/"], cwd="gpsp", requires=CC),
+    Step("apng", "clip export: the APNG writer, decoded with PIL (test_apng.c, test_apng.py)",
+         "python3 -I gpsp/vita/tests/apng/test_apng.py",
+         "quick", {"gpsp", "clip"}, inputs=["gpsp/"], requires=CC),
     Step("boot-guard", "crash-loop guard: two unfinished starts put a game on safe settings (test_boot_guard.c)",
          "mkdir -p {out}/bin && gcc -Wall -Wextra -Werror -fsanitize=address,undefined -I vita -I frontend-common "
          "vita/tests/guard/test_boot_guard.c vita/boot_guard.c frontend-common/fe_util.c "

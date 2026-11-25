@@ -308,7 +308,7 @@ def t_battery(S):
                   "%d:rstick-left:%d\n%d:shot=after.png\n%d:shot=later.png\n"
                   % (T0 - 5, T0, H, T0 + H + 1, T0 + H + 30))
         script += "%d:start+select:20\n" % (T0 + H + 400)
-        script += "".join("+8:down\n" for _ in range(6)) + "+8:cross\n+8:cross\n"
+        script += "".join("+8:down\n" for _ in range(7)) + "+8:cross\n+8:cross\n"
         r = S.run(name, script, autoboot="gbadhoc-test.gba", args=args)
         S.clean(r)
         ends = rewind_ends(r)
@@ -344,7 +344,7 @@ def t_battery(S):
         script = "200:a:5\n"
         script += "".join("%d:shot=%s\n" % (t + c, n) for n, t in want.items())
         script += "%d:start+select:20\n" % (max(want.values()) + c + 400)
-        script += "".join("+8:down\n" for _ in range(6)) + "+8:cross\n+8:cross\n"
+        script += "".join("+8:down\n" for _ in range(7)) + "+8:cross\n+8:cross\n"
         s = S.run(name + "_straight", script, autoboot="gbadhoc-test.gba",
                   args=args)
         S.clean(s)
@@ -369,7 +369,7 @@ def t_battery_gb(S):
                   "%d:rstick-left:%d\n%d:shot=after.png\n" %
                   (T0 - 5, T0, H, T0 + H + 1))
         script += "%d:start+select:20\n" % (T0 + H + 400)
-        script += "".join("+8:down\n" for _ in range(6)) + "+8:cross\n+8:cross\n"
+        script += "".join("+8:down\n" for _ in range(7)) + "+8:cross\n+8:cross\n"
         r = S.run(name, script, autoboot=cart, extra=extra(cart))
         S.clean(r)
         ends = rewind_ends(r)

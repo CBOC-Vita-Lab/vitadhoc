@@ -186,6 +186,11 @@ int  plat_bg_join(uint32_t timeout_us);
  * with the stack a TLS handshake needs.  Same contract. */
 int  plat_net_start(void (*fn)(void *), void *arg);
 int  plat_net_join(uint32_t timeout_us);
+/* A third one, for a job that takes seconds of CPU and is not a request
+ * (the clip export, clip_export.h): low priority, 128 KiB of stack.  Same
+ * contract again. */
+int  plat_job_start(void (*fn)(void *), void *arg);
+int  plat_job_join(uint32_t timeout_us);
 /* Sleep in REAL time, on a thread other than the frame thread (on the twin
  * plat_sleep_us moves the simulated clock). */
 void plat_thread_sleep_us(uint32_t us);

@@ -174,6 +174,26 @@ and in emulators; none of it has run on a real Vita yet (see
 - **Game Boy and Game Boy Color games are told apart by the cartridge**, not
   the file name.
 
+**Clips and updates**
+
+- **Save clip.** A new card in the in-game menu saves the last ten seconds of
+  the game as an animated PNG in `clips/<game>-<date>-<time>.png`, at the
+  game's own size, every frame exactly as drawn. It reuses the recording the
+  home screen's previews already keep, so it costs no extra memory while you
+  play, and it is encoded on a thread of its own: the game is not held up.
+  A toast says when it is saved. Game Boy, Game Boy Color, Game Boy Advance,
+  NES and WonderSwan (the consoles the app plays itself); the Super NES and
+  Sega players do not keep a recording yet. In the in-game menu the cards are
+  a little narrower to make room.
+- **Check for updates.** Settings > About: Daily (default) or Off. Once a day
+  at most, while the home screen is idle and Wi-Fi is up, the app asks GitHub
+  for the latest release and, if it is newer, says so once on the home screen
+  ("VitAdhoc X.Y is out: get it with the CBOC Vita Installer or from
+  GitHub"). Nothing is downloaded or installed, nothing about you is sent, and
+  a failure is silent. X on the row checks now. The HTTPS client gained four
+  Sectigo root certificates (the ones GitHub's certificates chain to), trusted
+  for `api.github.com` only: online play's connections accept what they did.
+
 **Controls and gameplay**
 
 - **A console picker.** Triangle drops a list of every console under the top

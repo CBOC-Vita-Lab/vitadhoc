@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/entropy.h"
@@ -29,7 +30,9 @@ namespace {
 
 struct Global {
     int state;   // 0 untried, 1 ready, -1 failed
-    mbedtls_x509_crt ca;
+    mbedtls_x509_crt ca;        // the roots of every host...
+    mbedtls_x509_crt ca_only;   // ...but only_host, which trusts these and no others (np_https_roots.h: only_host)
+    const char* only_host;      // null = no root of the list is one host's own
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context drbg;
     mbedtls_ssl_config conf;
@@ -39,6 +42,7 @@ struct Global {
 Global g;
 char* g_testPem;
 size_t g_testLen;
+const char* g_testOnlyHost;   // test hooks only: another name for only_host (SetTestOnlyHost)
 char* g_extraPem;   // test hooks only: anchors added AFTER the bundled roots (tls_chain_test's synthetic roots); never set in the game
 size_t g_extraLen;
 
@@ -52,6 +56,12 @@ bool Failed(const char* fmt, int a) {
     snprintf(g.why, sizeof g.why, fmt, a);
     Log("tls init failed: %s", g.why);
     return false;
+}
+
+// The roots a connection to `host` is verified against: one host's own, or everybody else's. Never both.
+mbedtls_x509_crt* RootsFor(const char* host) {
+    const char* only = g_testOnlyHost ? g_testOnlyHost : g.only_host;
+    return only && host && strcasecmp(host, only) == 0 ? &g.ca_only : &g.ca;
 }
 
 }  // namespace
@@ -133,6 +143,7 @@ void Reset() {
         mbedtls_ctr_drbg_free(&g.drbg);
         mbedtls_entropy_free(&g.entropy);
         mbedtls_x509_crt_free(&g.ca);
+        mbedtls_x509_crt_free(&g.ca_only);
     }
     memset(&g, 0, sizeof g);
 }
@@ -140,6 +151,7 @@ void Reset() {
 bool Init(char* why, size_t why_cap, int* roots_loaded) {
     if (g.state == 0) {
         mbedtls_x509_crt_init(&g.ca);
+        mbedtls_x509_crt_init(&g.ca_only);
         mbedtls_entropy_init(&g.entropy);
         mbedtls_ctr_drbg_init(&g.drbg);
         mbedtls_ssl_config_init(&g.conf);
@@ -154,18 +166,24 @@ bool Init(char* why, size_t why_cap, int* roots_loaded) {
                     const NpHttpsRootEntry& r = np_https_roots[i];
                     unsigned char sum[32];
                     if (mbedtls_sha256(r.der, r.len, sum, 0) != 0 || memcmp(sum, r.sha256, 32) != 0) { Failed("root %d does not match its fingerprint", i); return; }
-                    rc = mbedtls_x509_crt_parse_der(&g.ca, r.der, r.len);
+                    // one host's own roots go to a list of their own; the list knows one such host (two would need two lists)
+                    if (r.only_host && g.only_host && strcmp(r.only_host, g.only_host) != 0) { Failed("root %d: a second only_host", i); return; }
+                    if (r.only_host) g.only_host = r.only_host;
+                    rc = mbedtls_x509_crt_parse_der(r.only_host ? &g.ca_only : &g.ca, r.der, r.len);
                     if (rc != 0) { Failed("root %d did not parse", i); return; }
                 }
             }
-            int n = 0;
+            int n = 0, general = 0;
             for (const mbedtls_x509_crt* c = &g.ca; c && c->raw.p; c = c->next) n++;
-            if (n == 0 || (!g_testPem && n != NP_HTTPS_ROOT_COUNT)) { Failed("%d roots loaded", n); return; }
+            general = n;
+            for (const mbedtls_x509_crt* c = &g.ca_only; c && c->raw.p; c = c->next) n++;
+            if (general == 0 || (!g_testPem && n != NP_HTTPS_ROOT_COUNT)) { Failed("%d roots loaded", n); return; }
             if (g_extraPem) {   // (test hooks only)
                 rc = mbedtls_x509_crt_parse(&g.ca, (const unsigned char*)g_extraPem, g_extraLen);
                 if (rc != 0) { Failed("extra test roots did not parse (%d)", rc); return; }
                 n = 0;
                 for (const mbedtls_x509_crt* c = &g.ca; c && c->raw.p; c = c->next) n++;
+                for (const mbedtls_x509_crt* c = &g.ca_only; c && c->raw.p; c = c->next) n++;
             }
             g.roots = n;
             if (psa_crypto_init() != PSA_SUCCESS) { Failed("psa_crypto_init failed (%d)", 0); return; }
@@ -199,6 +217,9 @@ Conn* Open(const char* host, const Io& io) {
         free(c);
         return nullptr;
     }
+    // A host with roots of its own is verified against those alone, and nobody else against them (this handshake's list instead of
+    // the configuration's: mbedtls_ssl_verify_certificate reads it for a client too, TLS 1.2 and 1.3).
+    if (RootsFor(host) != &g.ca) mbedtls_ssl_set_hs_ca_chain(&c->ssl, RootsFor(host), nullptr);
     mbedtls_ssl_set_bio(&c->ssl, c, BioSend, BioRecv, nullptr);
     mbedtls_ssl_set_verify(&c->ssl, VerifyHook, c);
     return c;
@@ -319,7 +340,7 @@ Result VerifyChain(const char* pem, size_t len, const char* host, uint32_t* raw,
     // Primary check: the call mbedtls_ssl_verify_certificate makes (ssl_tls.c), with what Init / Open give it: our roots, no CRL, the
     // same profile, the host name of mbedtls_ssl_set_hostname, the same per-certificate hook. Dates come from np_https_wallclock.
     uint32_t flags = 0;
-    const int vrc = mbedtls_x509_crt_verify_with_profile(&chain, &g.ca, nullptr, &kCertProfile, host, &flags, VerifyHook, &c);
+    const int vrc = mbedtls_x509_crt_verify_with_profile(&chain, RootsFor(host), nullptr, &kCertProfile, host, &flags, VerifyHook, &c);
     // Secondary checks of the same function, for the suites this profile has (all ECDHE, TLS 1.2 and 1.3): the server certificate must
     // allow digitalSignature (keyUsage) and serverAuth (extKeyUsage). (Its TLS 1.2-only EC curve check needs a connection's group list;
     // with only P-256 / P-384 parsable here it cannot fail for a chain that parsed.)
@@ -347,6 +368,7 @@ void SetTestRoots(const char* pem, size_t len) {
     }
 }
 int RootCount() { return g.roots; }
+void SetTestOnlyHost(const char* host) { g_testOnlyHost = host; }
 #endif
 
 }  // namespace tls

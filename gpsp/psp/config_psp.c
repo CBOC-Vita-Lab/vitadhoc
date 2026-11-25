@@ -285,6 +285,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.stick_rewind = (int)fe_ini_get_int(cfg_path, "stick_rewind", 0) ? 1 : 0;
    g_pcfg.tap_menu = (int)fe_ini_get_int(cfg_path, "tap_menu", 1) ? 1 : 0;
    g_pcfg.rear_touch = (int)fe_ini_get_int(cfg_path, "rear_touch", 0) ? 1 : 0;
+   g_pcfg.update_check = (int)fe_ini_get_int(cfg_path, "update_check", 1) ? 1 : 0;
    g_pcfg.ws_blend = (int)fe_ini_get_int(cfg_path, "ws_blend", 1) ? 1 : 0;
    g_pcfg.nes_wide = (int)fe_ini_get_int(cfg_path, "nes_wide", 0);
    g_pcfg.nes_pal_smooth = (int)fe_ini_get_int(cfg_path, "nes_pal_smooth", 1) ? 1 : 0;
@@ -796,6 +797,8 @@ void pcfg_save(void)
    /* only once chosen: a player who never turns it on keeps the same file */
    if (g_pcfg.rear_touch || fe_ini_get_int(cfg_path, "rear_touch", 0))
       fe_ini_set_int(cfg_path, "rear_touch", g_pcfg.rear_touch);
+   if (!g_pcfg.update_check || fe_ini_get_int(cfg_path, "update_check", 1) == 0)
+      fe_ini_set_int(cfg_path, "update_check", g_pcfg.update_check);
    if (!g_pcfg.steady_pacing || fe_ini_get_int(cfg_path, "steady_pacing", 1) == 0)
       fe_ini_set_int(cfg_path, "steady_pacing", g_pcfg.steady_pacing);
    if (!g_pcfg.smooth_handoff || fe_ini_get_int(cfg_path, "smooth_handoff", 1) == 0)

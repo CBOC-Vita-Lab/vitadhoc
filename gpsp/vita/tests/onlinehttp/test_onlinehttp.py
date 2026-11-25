@@ -214,6 +214,19 @@ class Tls(Base):
         self.tls("ecany", "clock")
         self.assertEqual(len(self.conns(self.stats(), "ecany")), before, "a connection was made although the clock is wrong")
 
+    def test_roots_are_per_host(self):
+        """The four Sectigo roots anchor api.github.com alone; the eight others anchor every host but that one."""
+        r = self.runner("scope", tls=True)
+        self.assertEqual(len([l for l in r.stdout.splitlines() if l.startswith("ok")]), 14, r.stdout)
+
+    def test_a_host_with_its_own_roots_trusts_no_other(self):
+        """A real handshake: the good server, named as the host with roots of its own, is refused although the general list (with
+        the test root) would accept it -- the handshake's list replaces the general one, it does not add to it."""
+        before = len([c for c in self.conns(self.stats(), "ecany") if c.get("failed")])
+        self.tls("ecany", "cert", env={"TEST_ONLY_HOST": "localhost"})
+        self.assertGreater(len([c for c in self.conns(self.stats(), "ecany") if c.get("failed")]), before)
+        self.tls("ecany", "ok", env={"TEST_ONLY_HOST": "elsewhere.example"})
+
     def test_selftest_runs(self):
         r = run([str(self.tls_bin), "selftest"], env={"TEST_ROOT_PEM": str(self.tmp / "pki" / "rootA.pem"),
                 "SMG_NET_SELFTEST": f"https://localhost:{self.ports['tls']['ec13']}/v1/info?v=2.0.0"}, timeout=60)

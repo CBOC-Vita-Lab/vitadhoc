@@ -2512,7 +2512,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
         * (docs/SAVES.md; ui_host_export_save) */
        SET_EXPORT,
        /* 1.4: a one-line About: facts, not settings (read-only rows) */
-       SET_HDR_ABOUT, SET_ABOUT_CORE4,
+       SET_HDR_ABOUT, SET_ABOUT_UPDATE, SET_ABOUT_CORE4,
        /* The three plain choices of the controls come before Button mapping,
         * which stays last (the harness walkers wrap up to it). */
        SET_HDR_CTL, SET_ABSWAP, SET_STICKRW, SET_SHOTCOMBO, SET_TAPMENU,
@@ -2721,6 +2721,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Port 2" },
    { 0, "Export save for other emulators" },
    { 1, "ABOUT" },
+   { 0, "Check for updates" },
    { 0, "Extra CPU core" },
 #endif
 #ifdef REWIND
@@ -3595,6 +3596,13 @@ static void settings_adjust(int id, int dir)
       fe_evt("quick_setting game=%d", g_pgame.quick);
       break;
    }
+   case SET_ABOUT_UPDATE:
+      /* Daily (a request a day, at most, while the home screen idles) or
+       * Off.  X checks now (screen_settings). */
+      g_pcfg.update_check = !g_pcfg.update_check;
+      app_update_options();
+      fe_evt("update_check_setting on=%d", g_pcfg.update_check);
+      break;
    case SET_HANDOFF:
       g_pcfg.smooth_handoff = !g_pcfg.smooth_handoff;
       app_handoff_options();
@@ -4325,6 +4333,10 @@ static const char *set_help(int id)
                                "at full speed."
                              : "Every frame when it can be; busy moments drop "
                                "unevenly.";
+   case SET_ABOUT_UPDATE:
+      return g_pcfg.update_check
+         ? VID_GLYPH_X ": check now. Once a day it asks GitHub if a newer VitAdhoc is out."
+         : VID_GLYPH_X ": check now. Off: no check unless you ask.";
    case SET_ABOUT_CORE4:
       return "Whether the app is using the Vita's fourth CPU core (it needs the CapUnlocker plugin).";
    case SET_CORE4:    return g_pcfg.core4_off
@@ -4681,6 +4693,11 @@ static ui_action screen_settings_page(unsigned edges)
          if (ui_text_open(TXT_FOLDER, "Game folder to add or remove",
                           "ux0:", 63) != 0)
             osd_toast("The keyboard is not available");
+         edges &= ~PSP_CTRL_CROSS;
+      }
+      if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_ABOUT_UPDATE)
+      {
+         ui_host_update_now();
          edges &= ~PSP_CTRL_CROSS;
       }
       if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_RA_ACCOUNT)
@@ -5068,6 +5085,10 @@ static ui_action screen_settings_page(unsigned edges)
       case SET_EXPORT:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   g_export_dest ? "plain .sav" : "for RetroArch");
+         break;
+      case SET_ABOUT_UPDATE:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.update_check ? "Daily" : "Off");
          break;
       case SET_ABOUT_CORE4:
          /* "in use", "not available" or "off" (core4_status, handoff_glue.h) */
@@ -7430,11 +7451,11 @@ static int screen_cheats(unsigned edges, const char *game)
  * rows 0-3 stay valid (it never navigates past Settings).  Save and load are
  * one row and one page since 3.5 (docs/UI-OVERLAY.md section 13). */
 #ifdef VITA
-/* THE VITA'S MENU: "Wireless" is Play together, and Cheats has a row.  Seven
- * rows, 24 px apart from y = 80 (the PSP's six sit 22 apart from 88): the
- * last band ends at 246, clear of the footer. */
-enum { M_RESUME, M_SAVESTATES, M_WIRELESS, M_CHEATS, M_SETTINGS, M_GAMELIST,
-       M_EXIT, M_COUNT };
+/* THE VITA'S MENU: "Wireless" is Play together, Cheats has a row, and so
+ * has Save clip.  Eight cards in a row (ui_vita_menu.h draws them). */
+enum { M_RESUME, M_SAVESTATES, M_WIRELESS, M_CHEATS, M_SETTINGS,
+       M_CLIP,      /* 2.0: Save clip, the last ten seconds as an animated PNG */
+       M_GAMELIST, M_EXIT, M_COUNT };
 #define M_ROW_Y(i) (80 + (i) * 24)
 static char g_menu_note[80];         /* the menu's plate, until the next key */
 
@@ -7461,7 +7482,7 @@ static ui_action screen_menu(unsigned edges, int session_active)
    static const char *labels[M_COUNT] = {
 #ifdef VITA
       "Resume", "Save states", "Play together", "Cheats", "Settings",
-      "Quit to game list", "Exit VitAdhoc"
+      "Save clip", "Quit to game list", "Exit VitAdhoc"
 #else
       "Resume", "Save states", "Wireless", "Settings",
 #ifdef GPSP_CHEATS
@@ -7540,6 +7561,27 @@ static ui_action screen_menu(unsigned edges, int session_active)
 #endif
       case M_SETTINGS:  screen_to(SCR_SETTINGS); break;
 #ifdef VITA
+      case M_CLIP:
+      {
+         /* On the page's plate, like the other notes: the answer of the
+          * save itself is a toast when the file is written. */
+         int rc = ui_host_clip_save();
+         ui_local_state ls;
+         memset(&ls, 0, sizeof(ls));
+         ui_host_local_state(&ls);
+         /* nothing recorded: say which of the three reasons it is (the
+          * recording is the previews', and a link keeps none) */
+         snprintf(g_menu_note, sizeof(g_menu_note), "%s",
+                  rc == 0 ? "Saving the last ten seconds as a clip..."
+                  : rc == 1 && !g_pcfg.previews
+                     ? "Turn on Game previews in Settings to save clips."
+                  : rc == 1 && (session_active || ls.active)
+                     ? "Clips are off while linked."
+                  : rc == 1 ? "No clip yet: play for a few seconds first."
+                  : rc == 2 ? "A clip is still being saved."
+                  : "A clip could not be saved.");
+         break;
+      }
       case M_GAMELIST:
       case M_EXIT:
          g_menu_ask = g_cursor;

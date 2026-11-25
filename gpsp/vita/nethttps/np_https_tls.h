@@ -3,6 +3,7 @@
 // Vita, and OpenSSL 1.0.2 from VitaSDK is known to work there (Monster Hunter Tri's port), so a second backend with these same
 // functions (np_https_tls_openssl.cpp) can replace it without touching anything else. The rules every backend must keep:
 //  - certificate verification is always on, against the roots in np_https_roots.h (or the test roots), and a failed verification is T_CERT;
+//    a root with an only_host there is trusted for that host alone, and that host trusts no other root;
 //  - if Init() cannot load every root or seed the random generator it returns false and the client sends nothing (fail closed);
 //  - the library never touches a socket or a clock of its own: bytes move through Io, certificate dates are checked against nph::WallSeconds();
 //  - nothing blocks: Handshake / Read / Write return T_WANT_* and np_https waits for the socket.
@@ -72,6 +73,8 @@ void Free(Conn*);
 #ifdef NP_HTTPS_TEST_HOOKS
 void SetTestRoots(const char* pem, size_t len);                     // len includes the NUL; NULL = the bundled roots
 int RootCount();
+// Another name for the one host that has roots of its own (np_https_roots.h only_host; NULL = the header's). The pointer is kept.
+void SetTestOnlyHost(const char* host);
 // tls_chain_test (tests/mp): anchors added after the bundled roots (synthetic test roots; NULL = none). Takes effect at the next Init.
 void SetExtraTestRoots(const char* pem, size_t len);
 // Verifies a served chain (PEM text, leaf first, len includes the NUL) offline, as Handshake would for a server presenting it to a client

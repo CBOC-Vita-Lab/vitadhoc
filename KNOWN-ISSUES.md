@@ -87,7 +87,8 @@ sharing).
   working, not a fault; try tomorrow or use Same Wi-Fi, which never needs the
   service.
 - **TLS on the console is new.** The app checks the service's certificate with
-  its own list of eight root certificates. If the service serves a chain that
+  its own list of twelve root certificates (eight for the online service, four
+  Sectigo ones for the update check, each trusted only for its own host). If the service serves a chain that
   needs another root, Online says "The online service could not be reached"
   and the log names the certificate. A Vita whose clock was reset (it shows
   2011) cannot check certificates: set the date and time.
@@ -359,6 +360,17 @@ flicker or missing instruments, which we could not judge without a Vita.
   data has a player count. Limits: 24 collections, 4,096 games in them, 16
   playlists. Tested on the PC build; the Vita's folders (`uma0:` included) and
   the on-screen keyboard have not been used on a console.
+- **Save clip** (the in-game menu's card) and the **update check** are untested on a Vita. The clip's file and the check's
+  parsing were checked on the PC test build, the check against a fake server
+  only: GitHub itself was never asked. Whether GitHub's certificate chain ends
+  in one of the four Sectigo roots the app trusts is read from public
+  certificate records, not tested on a console; if it does not, the check logs
+  `update_check failed err=CERT` and stays silent. Save clip keeps only what the
+  home screen's previews keep (the last twenty seconds, 30 pictures a second;
+  a picture larger than 256 x 224 is not recorded). It works in the app's own
+  consoles; the Super NES and Sega players keep no recording yet. The clip
+  assumes the previews' frame time of 59.7 Hz, so a WonderSwan (75 Hz) or NES
+  (60.1 Hz) clip plays at that speed and not exactly the game's.
 
 ## Performance
 

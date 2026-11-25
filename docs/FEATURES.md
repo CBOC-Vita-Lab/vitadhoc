@@ -492,6 +492,53 @@ are separate rows, each 0 (off, the default) to 10. Screenshots use
 **Settings > Controls > Screenshot button combo** turns it on; the Vita's own
 PS + Start always works.
 
+### Save Clip
+
+**Save clip** is a card in the in-game menu (between Settings and Game list).
+It saves the last ten seconds of the game as an animated PNG, to
+`ux0:data/GBAdhoc/clips/<game>-<date>-<time>.png`, at the game's own size and
+with every frame exactly as the game drew it. Browsers, Discord and most picture
+viewers play it; anything else shows the first picture.
+
+It costs nothing while you play. The clips the home screen plays behind a game
+(**Settings > Interface > Game previews**) are already kept for the last twenty
+seconds, squeezed, in about 6 MB of memory; Save clip copies the last ten of them
+(a moment, usually under 2 MB) and a thread of its own turns them into the
+picture while the game goes on or the menu stays open. A toast says "Clip saved"
+when the file is there. With Game previews off, or in a link session (which keeps
+no recording), there is nothing to save and the menu says which it is. A game started
+less than three seconds ago has too little to save. Where the game went still
+for a while before you opened the menu (a pause screen), the clip ends a second
+after it did, as the previews do.
+
+Game Boy, Game Boy Color, Game Boy Advance, NES and WonderSwan play in the app,
+so they have it; the Super NES and the Sega consoles play in their own programs,
+which keep no recording yet (see [Known Issues](../KNOWN-ISSUES.md)).
+
+## Update Check
+
+**Settings > About > Check for updates** is **Daily** (the default) or **Off**.
+Daily, while the home screen has been idle for a couple of seconds and Wi-Fi is
+up (not the ad hoc radio, not in a link session), VitAdhoc asks GitHub's public
+API, at most once a day, for the latest release of the project
+(`https://api.github.com/repos/CBOC-Vita-Lab/vitadhoc/releases/latest`). If its
+version number is higher than the app's (numbers, not text: 2.10 is newer than
+2.9; drafts and pre-releases never count), a notice appears once on the home
+screen: "VitAdhoc X.Y is out: get it with the CBOC Vita Installer or from
+GitHub". It never downloads or installs anything. **X** on the row checks now
+(also with the setting Off) and says what it found.
+
+What is sent is one request with the app's User-Agent (`VitAdhoc/<version>
+(PlayStation Vita)`, the same on every console) and the client's standard
+headers: no account, no console or device id, nothing about
+your games. A failure (no network, a certificate, a timeout, an answer that is
+not a release) is only logged, and the next try is tomorrow's. A request still
+under way when a game starts is dropped and asked again another time. The day of the
+last try and the newest version seen are in `update.txt`. The request uses the
+app's own HTTPS client (Mbed TLS, the same as online play), not the Vita's
+system library, with four root certificates that are trusted for
+`api.github.com` and for nothing else.
+
 ## Audio
 
 Version 1.1 rebuilt the Vita audio output used by GBA, GB and GBC. Fixed,

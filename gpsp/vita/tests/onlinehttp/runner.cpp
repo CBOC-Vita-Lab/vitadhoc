@@ -20,6 +20,11 @@
 #include "nethttps/np_https.h"
 #include "nethttps/np_https_sys.h"
 #include "nethttps/np_https_tls.h"
+#ifdef NP_HAVE_MBEDTLS
+#include "mbedtls/base64.h"
+#include "mbedtls/x509_crt.h"
+#include "nethttps/np_https_roots.h"   /* (t_scope: this file's own copy of the bundled roots) */
+#endif
 
 // online_http.cpp reports through fe_evt; here the lines are kept so a test can read them
 static char g_evt[64][256];
@@ -565,9 +570,51 @@ static void load_test_root(void)
 #endif
 }
 
+#ifdef NP_HAVE_MBEDTLS
+/* Whose roots are whose (np_https_roots.h only_host): each bundled root, served as a one-certificate chain, is an anchor for
+ * api.github.com or for every other host, never for both.  (A root is no server certificate, so every verdict here is a refusal;
+ * the question is only whether "not trusted" is among the reasons.) */
+static void t_scope(void)
+{
+   char why[80] = "";
+   int n = 0, own = 0;
+   check(nph::tls::Init(why, sizeof why, &n) && n == NP_HTTPS_ROOT_COUNT, "every bundled root loads", "%s, %d roots", why, n);
+   for (int i = 0; i < NP_HTTPS_ROOT_COUNT; i++)
+   {
+      const NpHttpsRootEntry &r = np_https_roots[i];
+      static unsigned char b64[4096];
+      static char pem[4400];
+      size_t bn = 0;
+      uint32_t raw_gh = 0, raw_room = 0, raw_other = 0;
+      nph::tls::Details d;
+      char name[160];
+      if (mbedtls_base64_encode(b64, sizeof b64, &bn, r.der, r.len) != 0)
+         bn = 0;
+      const int m = snprintf(pem, sizeof pem, "-----BEGIN CERTIFICATE-----\n%.*s\n-----END CERTIFICATE-----\n", (int)bn, b64);
+      nph::tls::VerifyChain(pem, (size_t)m + 1, "api.github.com", &raw_gh, &d);
+      nph::tls::VerifyChain(pem, (size_t)m + 1, "vitadhoc.psvita.dev", &raw_room, &d);
+      nph::tls::VerifyChain(pem, (size_t)m + 1, "github.com", &raw_other, &d);
+      const bool gh = bn && !(raw_gh & MBEDTLS_X509_BADCERT_NOT_TRUSTED), room = bn && !(raw_room & MBEDTLS_X509_BADCERT_NOT_TRUSTED),
+                 other = bn && !(raw_other & MBEDTLS_X509_BADCERT_NOT_TRUSTED);
+      const bool mine = r.only_host != NULL;
+      own += mine;
+      snprintf(name, sizeof name, "%s: an anchor for %s", r.name, mine ? "api.github.com and nobody else" : "every host but api.github.com");
+      check(gh == mine && room == !mine && other == !mine && (!mine || !strcmp(r.only_host, "api.github.com")), name,
+            "github %d room %d other %d", gh, room, other);
+   }
+   check(own == 4 && NP_HTTPS_ROOT_COUNT == 12, "four roots are the update check's own, eight are the room service's", "%d of %d", own,
+         NP_HTTPS_ROOT_COUNT);
+}
+#endif
+
 static void t_tls(const char *base, const char *expect)
 {
    load_test_root();
+#ifdef NP_HAVE_MBEDTLS
+   /* TEST_ONLY_HOST: this host is the one with roots of its own (the header's four), so the test root no longer anchors it */
+   if (getenv("TEST_ONLY_HOST"))
+      nph::tls::SetTestOnlyHost(getenv("TEST_ONLY_HOST"));
+#endif
    online_http_config(base, "2.0.0");
    online_desc d = sample_desc();
    online_reply r;
@@ -640,6 +687,10 @@ int main(int argc, char **argv)
       t_dropstuck();
    else if (!strcmp(mode, "tls") && argc > 3)
       t_tls(argv[2], argv[3]);
+#ifdef NP_HAVE_MBEDTLS
+   else if (!strcmp(mode, "scope"))
+      t_scope();
+#endif
    else if (!strcmp(mode, "selftest"))
       t_selftest();
    else

@@ -205,6 +205,10 @@ typedef struct
     * Button mapping can give to any action; 0 (the default) = the panel is
     * not read.  A game's own choice (pcfg_game.rear) comes first. */
    int  rear_touch;
+   /* Settings > About > Check for updates (CONFIG.INI update_check): 1 =
+    * Daily, the default: at most one request a day to GitHub for the latest
+    * release, while the home screen idles (vita/update_check.h); 0 = Off. */
+   int  update_check;
    /* Settings > Display > WonderSwan smoothing (CONFIG.INI ws_blend): 1 =
     * the 75 Hz console's frames blended into each 60 Hz refresh (smooth
     * scrolling, the default); 0 = the newest frame only. */

@@ -49,6 +49,10 @@ UI_WEAK void        app_nes_options(void)       { }
 UI_WEAK void        app_steady_options(void)    { }
 UI_WEAK void        app_handoff_options(void)   { }
 UI_WEAK void        app_core4_options(void)     { }
+UI_WEAK void        app_update_options(void)    { }
+UI_WEAK void        ui_host_update_now(void)    { }
+UI_WEAK void        ui_host_home_idle(int idle) { (void)idle; }
+UI_WEAK int         ui_host_clip_save(void)     { return 1; }
 UI_WEAK void        app_quick_options(void)     { }
 UI_WEAK int         app_quick_supported(int c)  { (void)c; return 0; }
 UI_WEAK const char *ui_host_core4_status(void)  { return "not available"; }

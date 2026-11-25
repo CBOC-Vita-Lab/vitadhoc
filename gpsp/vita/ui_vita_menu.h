@@ -3,7 +3,7 @@
  * Included by psp/ui_psp.c under -DVITA just before screen_menu, which
  * keeps its input rules (the cursor, X, O, the questions before leaving)
  * and hands the drawing to cc_draw().  The game stays on screen, frozen and
- * dimmed; a sheet rises from the bottom edge with the seven things the menu
+ * dimmed; a sheet rises from the bottom edge with the eight things the menu
  * does as cards in a row.  LEFT / RIGHT (or UP / DOWN) move along them, a
  * tap on one does it.  Above the sheet, one line says what the focused card
  * will do -- and, for the ones with a state, what that state is (how many
@@ -14,7 +14,7 @@
 
 #include "ui_vita_style.h"
 
-#define CC_CARD_W   120
+#define CC_CARD_W   104
 #define CC_CARD_H   124
 #define CC_GAP      8
 #define CC_SHEET_H  262
@@ -25,6 +25,7 @@ static const struct { int icon; const char *label; } CC_CARD[M_COUNT] = {
    { VS_I_PEOPLE, "Play together" },
    { VS_I_SPARK,  "Cheats" },
    { VS_I_GEAR,   "Settings" },
+   { VS_I_CAMERA, "Save clip" },
    { VS_I_GRID,   "Game list" },
    { VS_I_POWER,  "Exit" },
 };
@@ -71,6 +72,9 @@ static void cc_says(int i, int session_active, char *out, size_t cap)
       break;
    case M_SETTINGS:
       snprintf(out, cap, "Picture, controls and more");
+      break;
+   case M_CLIP:
+      snprintf(out, cap, "Save the last ten seconds as an animated picture");
       break;
    case M_GAMELIST:
       snprintf(out, cap, "Leave this game for the game list");

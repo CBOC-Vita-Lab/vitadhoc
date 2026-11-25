@@ -44,7 +44,8 @@
  *    8   u32 frames
  *   12   u32 microseconds per tick              (a tick is one core frame)
  *   16   u32 bytes of frame data
- *   20   12 bytes, zero
+ *   20   u32 skip (0 in a file; clip_snapshot images: see clip_open_image)
+ *   24   8 bytes, zero
  *   32   u32 offsets[frames + 1]                (into the data; [0] = 0)
  *        the data: each frame is
  *          u8 kind ('K' or 'D'), u8 ticks it stands for, s8 dx, s8 dy,
@@ -76,6 +77,7 @@ extern "C" {
 #define CLIP_KEY_EVERY 60      /* a key every 60 kept frames: 2 s          */
 #define CLIP_RING_MB   6       /* the ring: the 20 s of most games easily  */
 #define CLIP_FILE_MAX  (12u * 1024u * 1024u)
+#define CLIP_SNAP_SPARE_MB 8   /* the heap a snapshot leaves free          */
 
 /* ---- recording (the frame thread, but clip_worker) ------------------------- */
 
@@ -109,6 +111,15 @@ void clip_worker(void);
  * -1 = it could not be written.  `us_per_tick`: the core's frame time. */
 int  clip_save(const char *path, unsigned us_per_tick);
 
+/* The same ten seconds as a clip image in memory, for "Save clip"
+ * (clip_export.h): the squeezed frames from the key the first one needs, a
+ * plain copy -- the frame thread pays for a memcpy of a few hundred KiB, not
+ * for a decode.  0 = *img (malloc'd; hand it to clip_open_image, which takes
+ * it) and *len; 1 = too little is recorded; -1 = no memory to spare.  The
+ * image has the file's layout, with "skip" (below) in the header's first
+ * reserved word. */
+int  clip_snapshot(unsigned us_per_tick, uint8_t **img, size_t *len);
+
 /* What the recorder holds (tests and the log). */
 typedef struct clip_stats
 {
@@ -131,6 +142,12 @@ typedef struct clip_player clip_player;
  * frames by clip_load as the screen has time.  NULL = no clip there, or
  * not one this reads. */
 clip_player *clip_open(const char *path);
+/* Opens a clip_snapshot image; takes it (it is freed with the player, and
+ * at once on NULL).  Everything is "loaded". clip_next starts at the key
+ * the clip needs: its first clip_skip() frames are only there to be decoded
+ * through and are not part of the clip. */
+clip_player *clip_open_image(uint8_t *img, size_t len);
+unsigned clip_skip(const clip_player *p);
 void clip_close(clip_player *p);
 
 /* Reads up to `budget` more bytes of the file.  1 = all of it is in,

@@ -129,6 +129,9 @@
 #include "menu_diag.h"
 #include "gamedb.h"
 #include "artfetch.h"
+#include "update_check.h"
+#include "clip_export.h"
+#include "online_vita.h"    /* ONLINE_APP_VERSION: the app's version */
 #include "ra_vita.h"
 #include "net_vita.h"
 #include "../wide.h"
@@ -294,9 +297,13 @@ static struct
                                * tests; "" = retroachievements.org)    */
    int snes_two;              /* snes_two = host | join (1 | 2): a SNES game picked from the list starts a Two players
                                * link first (the test switch; players use Join online) */
+   char     update_url[160];  /* update_url = http://host[:port]/path: the
+                               * update check's answer, on the twin only
+                               * (it asks nobody without it) */
+   int      update_timeout;   /* update_timeout = ms: the twin's tests */
 } g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, -1, 1, 1,
            "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 1, 1, 1, -1, 1, 0x60,
-           "", "", 0 };
+           "", "", 0, "", 0 };
 
 /* The A/B keys of 1.4's layers, so the owner can run a "1.3 baseline"
  * profile (docs/TECHNICAL.md, "A/B keys"): vita.ini
@@ -2472,6 +2479,9 @@ static void read_switches(void)
    if (!fe_ini_get(ini, "art_url", g_sw.art_url, sizeof(g_sw.art_url)))
       g_sw.art_url[0] = '\0';
    g_sw.art_titles      = (int)fe_ini_get_int(ini, "art_titles", 1) ? 1 : 0;
+   if (!fe_ini_get(ini, "update_url", g_sw.update_url, sizeof(g_sw.update_url)))
+      g_sw.update_url[0] = '\0';
+   g_sw.update_timeout  = (int)fe_ini_get_int(ini, "update_timeout", 0);
    g_sw.overlays = (int)fe_ini_get_int(ini, "overlays", 1) ? 1 : 0;
    g_sync_ra = (int)fe_ini_get_int(ini, "sync_ra_saves", 1) ? 1 : 0;
    save_sync_init(g_app_root);
@@ -3389,6 +3399,160 @@ static void art_start(void)
                           );
    fe_evt("art_fetch start=%d rc=%d url=%s", want, rc,
           g_sw.art_url[0] ? g_sw.art_url : "libretro");
+}
+
+/* ---- the update check (update_check.h) -------------------------------------
+ * Settings > About > Check for updates: Daily or Off.  The check runs while
+ * the home screen idles (ui_host_home_idle) and the network may be used --
+ * the same rule as the box art's.  The twin asks only the local server of
+ * vita.ini update_url, never GitHub. */
+#ifdef __vita__
+static int update_online(void)
+{
+   return ra_online();
+}
+#endif
+
+static void update_begin(void)
+{
+#ifdef __vita__
+   const char *url = NULL;                 /* GitHub's, always */
+#else
+   const char *url = g_sw.update_url[0] ? g_sw.update_url : NULL;
+#endif
+   upd_start(g_app_root, url, ONLINE_APP_VERSION,
+#ifdef __vita__
+             update_online,
+#else
+             NULL,
+#endif
+             (unsigned)(g_sw.update_timeout > 0 ? g_sw.update_timeout : 0),
+#ifdef __vita__
+             g_pcfg.update_check
+#else
+             g_pcfg.update_check && url   /* the twin: only with a test server */
+#endif
+             );
+   fe_evt("update_check begin daily=%d url=%s", g_pcfg.update_check,
+          url ? url : "github");
+}
+
+/* What an answer says, as a toast.  `home`: the home screen is up, where the
+ * newer version is announced (once a run). */
+static void update_say(int home)
+{
+   int kind, hand;
+   char text[160];
+   while (upd_take_result(&kind, &hand))
+   {
+      if (!hand)
+         continue;               /* a background try is silent, but for news */
+      if (kind == UPD_NEWER && upd_take_notice(text, sizeof(text), 1))
+         ;                       /* the notice below */
+      else if (kind == UPD_CURRENT)
+         snprintf(text, sizeof(text), "VitAdhoc is up to date");
+      else if (kind == UPD_NEWER)
+         snprintf(text, sizeof(text), "A newer VitAdhoc is out");
+      else
+         snprintf(text, sizeof(text), "Could not check for updates");
+      fe_evt("update_toast by_hand=1 text=\"%s\"", text);
+      osd_toast("%s", text);
+   }
+   if (home && upd_take_notice(text, sizeof(text), 0))
+   {
+      fe_evt("update_toast by_hand=0 text=\"%s\"", text);
+      osd_toast("%s", text);
+   }
+}
+
+void app_update_options(void)
+{
+   upd_set_daily(g_pcfg.update_check);
+   fe_evt("update_check daily=%d", g_pcfg.update_check);
+}
+
+void ui_host_update_now(void)
+{
+   if (upd_busy())
+      osd_toast("Already checking for updates");
+   else if (upd_check_now((time_t)plat_wallclock()) != 0)
+      osd_toast(upd_busy() ? "Already checking for updates"
+                           : "No network to check with");
+   else
+      osd_toast("Checking for updates...");
+}
+
+/* The home screen, once a frame (ui_vita_home.h): the day's check starts here
+ * once it has been idle a while. */
+void ui_host_home_idle(int idle)
+{
+   upd_poll(idle, (time_t)plat_wallclock());
+   update_say(1);
+}
+
+/* ---- "Save clip" (clip_export.h) ---------------------------------------------
+ * The last ten seconds of the game, from the previews' own recording, as an
+ * animated PNG in clips/<game>-<date>.png: copied in a moment here, encoded
+ * on a thread of its own, announced by a toast when the file is there. */
+static int clip_save_now(void)
+{
+   char stem[96], path[APP_PATH_CAP], dir[APP_PATH_CAP];
+   time_t now = plat_wallclock();
+   struct tm tm;
+   unsigned n;
+   char *dot;
+   int rc = CLIPX_FAIL;
+
+   if (!g_game_loaded)
+      return CLIPX_NONE;
+   snprintf(stem, sizeof(stem), "%s", base_name(g_game.rom_path));
+   dot = strrchr(stem, '.');
+   if (dot && dot != stem)
+      *dot = '\0';
+   memset(&tm, 0, sizeof(tm));
+   gmtime_r(&now, &tm);            /* plat_wallclock is local time already */
+   if (path_fmt(dir, sizeof(dir), "%s/clips", g_app_root) != 0)
+      return CLIPX_FAIL;
+   mkdir(dir, 0777);
+   for (n = 1; n < 100; n++)
+   {
+      char tail[16] = "";
+      if (n > 1)
+         snprintf(tail, sizeof(tail), "-%u", n);
+      if (path_fmt(path, sizeof(path), "%s/%s-%04d%02d%02d-%02d%02d%02d%s.png",
+                   dir, stem, tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                   tm.tm_hour, tm.tm_min, tm.tm_sec, tail) != 0)
+         return CLIPX_FAIL;
+      if (file_size(path, NULL) != 0)
+      {
+         /* the core's frame time, as clip_save_game says it */
+         rc = clip_export_start(path, 16743, ui_active());
+         break;
+      }
+   }
+   fe_evt("clip_export start rc=%d file=%s", rc, path);
+   return rc;
+}
+
+int ui_host_clip_save(void)
+{
+   return clip_save_now();
+}
+
+/* The end of an export, from the game loop and from every menu's tick. */
+static void clip_export_service(void)
+{
+   char path[APP_PATH_CAP];
+   unsigned frames = 0, bytes = 0;
+   int ok = 0;
+   if (!clip_export_take(&ok, path, sizeof(path), &frames, &bytes))
+      return;
+   fe_evt("clip_export done ok=%d frames=%u bytes=%u file=%s", ok, frames,
+          bytes, path);
+   if (ok)
+      osd_toast("Clip saved");
+   else
+      osd_toast("The clip could not be saved");
 }
 
 /* keys_script (g_sw): the buttons of keys.txt, frame by frame. */
@@ -4328,6 +4492,9 @@ static void modal_tick(void)
          boot_guard_app_ready();
    }
    ra_pump();                   /* the server's answers, in the menus too */
+   upd_poll(0, (time_t)plat_wallclock());   /* collects; starts nothing here */
+   update_say(0);
+   clip_export_service();
    if (plat_quit_requested())
       g_running = 0;
 }
@@ -7317,6 +7484,7 @@ static void game_loop(void)
          g_shot_pending = 0;
          screenshot_write();
       }
+      clip_export_service();     /* a clip saved while the game ran */
 
       window_note((uint32_t)(plat_time_us() - g_app_frame_t0));
       {
@@ -7588,6 +7756,7 @@ int main(int argc, char **argv)
       fe_evt("vita_ini link bound=%d hits=%u", bound, fe_ini_doc_hits() - hits0);
    }
    art_start();
+   update_begin();
 
    while (g_running)
    {
@@ -7648,6 +7817,7 @@ int main(int argc, char **argv)
          break;
 
       /* ---- load ---- */
+      upd_stop();                /* no request of ours while a game runs */
       if (!menu_log_stop())
       {
          app_notice("Storage is still busy", "Please try again in a moment.",
@@ -7912,6 +8082,8 @@ int main(int argc, char **argv)
    if (!clip_preview_shutdown(250000))
       fe_evt("home_clip shutdown_timeout_us=250000");
    artfetch_stop();
+   upd_stop();
+   clip_export_stop(3000000);
    ra_shutdown();
    link_shutdown();
    pcfg_save();

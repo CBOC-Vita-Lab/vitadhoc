@@ -316,7 +316,7 @@ STEPS = [
          "default", {"md"}, inputs=["md/", "playerkit/src/pk_ahead.h"], deps=["build-md-twin"], parse="pass_fail", env_req="GATE_MD_ROMS", timeout=7200),
 
     Step("md-fm", "Sega YM2612 on its own thread: sound, picture, state and RAM bit-identical to the single thread (timer shadow checked against the chip, fallback and queue-full paths, states, run-ahead, chip options, Sega CD with FM + PCM + CD audio; fm_check.sh; GATE_MD_ROMS)",
-         "FMC_FRAMES=400 MD_TEST_ROMS=\"$GATE_MD_ROMS\" sh md/twin/fm_check.sh",
+         "FMC_FRAMES=400 MD_TEST_ROMS=\"$GATE_MD_ROMS\" bash md/twin/fm_check.sh",
          "default", {"md"}, inputs=["md/"], deps=["build-md-twin"], parse="pass_fail", timeout=7200),
 
     # the Sega player's own code (md/vita/player.cpp) on the twin: launch protocol, menu walk, slots, saves, rewind, run-ahead, RetroAchievements. The

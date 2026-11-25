@@ -324,6 +324,7 @@ private:
 	void sync_menu_values();
 	void srm_watch(uint64_t now_us);
 	bool srm_post();
+	void adopt_first_disc();              /* an .m3u game with no save or states yet takes over the first disc's (copies; Game (Disc 1).cue was listed before) */
 	void srm_result(int r, const char *how, uint64_t now_us);
 	void resume_post(bool sync);
 	void quick_save();

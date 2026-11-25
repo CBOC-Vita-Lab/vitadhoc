@@ -52,6 +52,20 @@ static void ui_path(char *out, size_t n)
    snprintf(out + len, n - len, "display.ini");
 }
 
+/* The value of `key` in lower case (the players read display.ini that way,
+ * playerkit/src/pk_uiprefs.h: "Large" and "ON" mean the same as "large" and
+ * "on"); 0 when it is not there. */
+static int ui_get_lower(const char *path, const char *key, char *v, size_t n)
+{
+   size_t i;
+   if (!fe_ini_get(path, key, v, n))
+      return 0;
+   for (i = 0; v[i]; i++)
+      if (v[i] >= 'A' && v[i] <= 'Z')
+         v[i] = (char)(v[i] + 'a' - 'A');
+   return 1;
+}
+
 static void ui_prefs_load(void)
 {
    char path[300], v[24];
@@ -60,13 +74,13 @@ static void ui_prefs_load(void)
    g_pcfg.screen = 0;
    g_pcfg.text_large = 0;
    g_pcfg.contrast = 0;
-   if (fe_ini_get(path, "screen", v, sizeof(v)))
+   if (ui_get_lower(path, "screen", v, sizeof(v)))
       for (i = 0; i < 4; i++)
          if (!strcmp(v, ui_screen_tag[i]))
             g_pcfg.screen = i;
-   if (fe_ini_get(path, "text_size", v, sizeof(v)))
+   if (ui_get_lower(path, "text_size", v, sizeof(v)))
       g_pcfg.text_large = !strcmp(v, "large") ? 1 : 0;
-   if (fe_ini_get(path, "contrast", v, sizeof(v)))
+   if (ui_get_lower(path, "contrast", v, sizeof(v)))
       g_pcfg.contrast = !strcmp(v, "on") || !strcmp(v, "1") ? 1 : 0;
    g_ui_saved[0] = g_pcfg.screen;
    g_ui_saved[1] = g_pcfg.text_large;

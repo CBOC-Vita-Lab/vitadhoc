@@ -63,7 +63,7 @@ test: scale-check $(B)/unit_tests $(B)/menu_walk $(B)/vita_gxm $(B)/handoff_tsan
 # harness) and xBR against xbr_reference_int. arm-check: armhf under qemu-arm, the real NEON code. See tests/scale_neon_check.cpp.
 ARM_CXX    ?= arm-linux-gnueabihf-g++
 ARM_QEMU   ?= qemu-arm -L /usr/arm-linux-gnueabihf
-ARM_FLAGS  ?= -std=c++11 -O3 -Wall -Wextra -mfpu=neon -mfloat-abi=hard
+ARM_FLAGS  ?= -std=c++11 -O3 -Wall -Wextra -marm -mcpu=cortex-a9 -mfpu=neon -mfloat-abi=hard
 $(B)/scale_neon_check: tests/scale_neon_check.cpp src/pk_scale.cpp src/pk_scale.h
 	@mkdir -p $(B)
 	$(CXX) $(CXXFLAGS) -Isrc tests/scale_neon_check.cpp src/pk_scale.cpp -o $@

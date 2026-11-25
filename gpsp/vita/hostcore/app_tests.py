@@ -7028,6 +7028,9 @@ def t_screen_crt_text(S):
     n2 = menu("txt_hc", "contrast=on\n")
     S.check(n0.tobytes() != n1.tobytes(), "Text size Large changes the menu")
     S.check(n0.tobytes() != n2.tobytes(), "High contrast changes the menu")
+    # the values are read in any case, as the players read them
+    n3, n4 = menu("txt_both", "text_size=large\ncontrast=on\n"), menu("txt_both_caps", "text_size=Large\ncontrast=ON\n")
+    S.check(n3.tobytes() == n4.tobytes() and n3.tobytes() != n1.tobytes(), "display.ini values in capitals mean the same (Large, ON)")
     a, b = ink(n0), ink(n1)
     S.check(b[1][1] <= n1.size[0] - 4 and b[1][0] >= 0, "Large text stays inside the screen (ink x %s of %d)" % (b[1], n1.size[0]))
     # display.ini that is not text at all, or holds words nobody wrote: the defaults, and the picture as it was

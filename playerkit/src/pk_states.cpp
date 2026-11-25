@@ -52,6 +52,41 @@ int migrate_to_bucket(const StateLayout &l, int *failed)
 	return moved;
 }
 
+int adopt_states(const StateLayout &from, const StateLayout &to, int *failed)
+{
+	static const char *const tail[] = { "", ".thumb", ".shot", ".meta", ".p2", ".old" };
+	static const char *const rtail[] = { "", ".pt", ".meta", ".thumb", ".shot", ".old" };
+	std::vector<std::string> suffix;
+	for (int s = 0; s < 10; s++)
+		for (size_t t = 0; t < sizeof(tail) / sizeof(tail[0]); t++)
+			suffix.push_back(strf(".st%d", s) + tail[t]);
+	for (size_t t = 0; t < sizeof(rtail) / sizeof(rtail[0]); t++)
+		suffix.push_back(std::string(".rsm") + rtail[t]);
+	suffix.push_back(".undo");
+	if (failed) *failed = 0;
+	const std::string fb = from.name + from.ext_tag, tb = to.name + to.ext_tag;
+	const std::string fdir = from.states_dir(), tdir = to.states_dir();
+	if (fdir == tdir && fb == tb) return 0;
+	std::vector<std::string> fnames, tnames;
+	const bool flisted = list_dir(fdir, fnames), tlisted = list_dir(tdir, tnames);
+	for (size_t i = 0; i < suffix.size(); i++) {
+		const std::string n = tb + suffix[i];
+		if (tlisted ? std::find(tnames.begin(), tnames.end(), n) != tnames.end() : file_exists(path_join(tdir, n))) return 0;
+	}
+	int copied = 0, bad = 0;
+	bool made = false;
+	for (size_t i = 0; i < suffix.size(); i++) {
+		const std::string src = path_join(fdir, fb + suffix[i]);
+		if (flisted ? std::find(fnames.begin(), fnames.end(), fb + suffix[i]) == fnames.end() : !file_exists(src)) continue;
+		std::vector<uint8_t> bytes;
+		if (!made) { make_dirs(tdir); made = true; }
+		if (!file_read(src, bytes) || atomic_write(path_join(tdir, tb + suffix[i]), bytes.data(), bytes.size(), EXISTS_NO) != W_OK) { bad++; continue; }
+		copied++;
+	}
+	if (failed) *failed = bad;
+	return copied;
+}
+
 std::string StateLayout::slot_path(int slot) const
 {
 	return path_join(states_dir(), name + ext_tag + strf(".st%d", slot - 1));

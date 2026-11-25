@@ -575,7 +575,7 @@ STEPS = [
          "make -C widekit arm-check", "full", {"widekit"}, inputs=["widekit/"],
          requires=[("exe", "arm-linux-gnueabihf-g++"), ("exe", "qemu-arm")], timeout=3600),
     Step("playerkit-scale-arm", "playerkit scalers: the NEON xBR / MMPX loops equal the C loops byte for byte under qemu (make arm-check)",
-         "make -C playerkit arm-check", "full", {"playerkit", "snes", "md"}, inputs=["playerkit/src/pk_scale.cpp", "playerkit/src/pk_scale.h", "playerkit/tests/scale_neon_check.cpp"],
+         "make -C playerkit arm-check", "full", {"playerkit", "snes", "md"}, inputs=["playerkit/Makefile", "playerkit/src/pk_scale.cpp", "playerkit/src/pk_scale.h", "playerkit/tests/scale_neon_check.cpp"],
          requires=[("exe", "arm-linux-gnueabihf-g++"), ("exe", "qemu-arm")], timeout=3600),
     Step("widekit-vita", "widekit: compiles for the Vita, warning free (compile only)",
          "make -C widekit vita", "full", {"widekit", "vita"}, inputs=["widekit/"],

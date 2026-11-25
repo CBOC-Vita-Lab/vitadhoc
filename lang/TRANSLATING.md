@@ -76,7 +76,10 @@ which loses meaning, so aim for the English length or less. To test, set `langua
 | `cheats.*`, `share.*`, `online.*`, `link.*` | the English length, 1.2x at most |
 
 Chinese and Japanese are about half as wide per character as the limits above count;
-that is fine.
+that is fine. Lines may break between any two Chinese or Japanese characters, so do not
+put spaces between them; use the full-width punctuation of the language. The fonts cover
+Japanese kana and kanji and the 6763 simplified hanzi of GB 2312 (plus Hangul); a rarer
+character shows as `?`, so check each one on the screen.
 
 ## Plurals
 

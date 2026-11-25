@@ -6,13 +6,19 @@
                      symbols, CJK punctuation, fullwidth and halfwidth forms,
                      the 2350 Hangul syllables of KS X 1001, and the Latin /
                      Greek / Cyrillic letters the font draws.
+  cjkfont-sc.otf     Noto Sans CJK SC Regular, cut down to: the 6763 hanzi of
+                     GB 2312 (their Chinese forms: the interface drawn in
+                     Simplified Chinese tries this file first and falls back
+                     to cjkfont.otf), the kana, symbols, punctuation,
+                     fullwidth forms, Bopomofo and the same Latin / Greek /
+                     Cyrillic.
   latinfont.ttf      Inter Regular   cut to Latin-1, Latin Extended A/B, Greek,
   latinfont-sb.ttf   Inter SemiBold  Cyrillic, general punctuation (the players
                      draw their accented letters from these; the main app has
                      Inter inside it already).
 
-The three files are packed into the VPK as app0:cjkfont.otf, app0:latinfont.ttf
-and app0:latinfont-sb.ttf. Needs fontTools (pip install fonttools) and, for the
+The four files are packed into the VPK as app0:cjkfont.otf, app0:cjkfont-sc.otf,
+app0:latinfont.ttf and app0:latinfont-sb.ttf. Needs fontTools (pip install fonttools) and, for the
 CJK one, the Noto Sans CJK Regular collection (NotoSansCJK-Regular.ttc, the
 JP face is member 0) from https://github.com/notofonts/noto-cjk.
 
@@ -47,6 +53,19 @@ def ksx1001_hangul():
         for lo in range(0xA1, 0xFF):
             try:
                 ch = bytes([hi, lo]).decode('euc_kr')
+            except Exception:
+                continue
+            if len(ch) == 1:
+                s.add(ord(ch))
+    return s
+
+
+def gb2312():
+    s = set()
+    for hi in range(0xA1, 0xF8):
+        for lo in range(0xA1, 0xFF):
+            try:
+                ch = bytes([hi, lo]).decode('gb2312')
             except Exception:
                 continue
             if len(ch) == 1:
@@ -96,6 +115,9 @@ def main():
         f = coll.fonts[0]
         assert 'JP' in f['name'].getDebugName(1), f['name'].getDebugName(1)
         cut(f, jis0208() | ksx1001_hangul() | CJK_EXTRA | COMMON, os.path.join(a.out, 'cjkfont.otf'))
+        sc = TTCollection(a.noto).fonts[2]
+        assert 'SC' in sc['name'].getDebugName(1) and 'Mono' not in sc['name'].getDebugName(1), sc['name'].getDebugName(1)
+        cut(sc, gb2312() | CJK_EXTRA | COMMON | rng((0x3100, 0x312F)), os.path.join(a.out, 'cjkfont-sc.otf'))
     for src, dst in (('Inter-Regular.ttf', 'latinfont.ttf'), ('Inter-SemiBold.ttf', 'latinfont-sb.ttf')):
         cut(TTFont(os.path.join(a.inter, src)), COMMON, os.path.join(a.out, dst))
 

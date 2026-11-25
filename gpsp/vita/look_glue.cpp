@@ -12,6 +12,7 @@
 #include "fe_util.h"          /* fe_ini_get_int: vita.ini look_bitmap */
 
 #include <new>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

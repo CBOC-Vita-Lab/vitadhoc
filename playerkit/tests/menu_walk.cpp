@@ -367,6 +367,36 @@ int main(int argc, char **argv)
 		EXPECT(i18n_current() == LANG_EN);
 	}
 
+	/* Japanese and Simplified Chinese from the test catalogues (machine translated; tests/testlang): the pages again, to look at
+	 * (test_uilook.cpp's menu_every_page_fits_in_japanese_and_chinese is the check) */
+	{
+		static const struct { const char *file; int lang; const char *tag; } cj[] = {
+			{ "tests/testlang/pk_ja.txt", LANG_JA, "ja" }, { "tests/testlang/pk_zh-Hans.txt", LANG_ZHS, "zh" } };
+		for (int li = 0; li < 2; li++) {
+			FILE *f = fopen(cj[li].file, "rb");
+			if (!f) continue;
+			std::string cat;
+			char buf[4096];
+			size_t n;
+			while ((n = fread(buf, 1, sizeof buf, f)) > 0) cat.append(buf, n);
+			fclose(f);
+			i18n_use_text(cat.data(), cat.size(), cj[li].lang);
+			cfg.game_name = "Super Example World (USA)";
+			cfg.console_label = "Super Nintendo";
+			menu.configure(cfg, &host, &states);
+			menu.notices().clear();
+			static const struct { Menu::PageId page; const char *name; } pg[] = {
+				{ Menu::PAGE_TOP, "control_centre" }, { Menu::PAGE_SETTINGS, "settings" }, { Menu::PAGE_PICTURE, "picture" },
+				{ Menu::PAGE_INTERFACE, "interface" }, { Menu::PAGE_CHEATS, "cheats" }, { Menu::PAGE_CHEAT_SEARCH, "search_memory" } };
+			for (size_t i = 0; i < sizeof pg / sizeof pg[0]; i++) {
+				menu.goto_page(pg[i].page);
+				advance(menu, 400);
+				w.snap(menu, (std::string(cj[li].tag) + "_" + pg[i].name).c_str());
+			}
+			i18n_use(LANG_EN, 1);
+		}
+	}
+
 	w.sheet("contact_1", 0, 4);
 	w.sheet("contact_2", 4, 4);
 	w.sheet("contact_3", 8, 4);

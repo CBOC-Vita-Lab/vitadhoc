@@ -4107,7 +4107,7 @@ static const char *set_cap(const char *s)
    static char buf[4][64];
    static int n;
    char *o = buf[n++ & 3];
-   snprintf(o, 64, "%s", s);
+   pk_u8_copy(o, 64, s);
    if (o[0] >= 'a' && o[0] <= 'z' && strncmp(o, "xBRZ", 4))      /* xBRZ is a name */
       o[0] = (char)(o[0] - 'a' + 'A');
    return o;
@@ -4131,14 +4131,14 @@ static void set_item_raw(int y, int sel, int enabled, const char *label,
          int keep = wv < span * 2 / 5 ? wv : span * 2 / 5;
          if (wl > span - keep)
          {
-            snprintf(lb, sizeof(lb), "%s", label);
+            pk_u8_copy(lb, sizeof(lb), label);
             clip_title(lb, span - keep);
             label = lb;
             wl = vid_text_w(label);
          }
          if (wl + wv > span)
          {
-            snprintf(vb, sizeof(vb), "%s", value);
+            pk_u8_copy(vb, sizeof(vb), value);
             clip_title(vb, span - wl);
             value = vb;
          }
@@ -4536,10 +4536,18 @@ static void set_help_draw(const char *h)
    }
    len = strlen(h);
    if (len >= sizeof(l1))
-      len = sizeof(l1) - 1;
-   for (n = 1; n <= len; n++)
+      len = pk_u8_floor(h, sizeof(l1) - 1);       /* (never half a character) */
+   /* the first line ends at the last place that fits where a line may break:
+    * before a blank, or between two characters written without spaces */
+   for (n = 0; n < len;)
    {
-      if (h[n] != ' ' && h[n] != '\0')
+      int k;
+      uint32_t cp = pk_u8_next(h + n, &k);
+      n += (size_t)k;
+      if (n > len)
+         break;
+      if (h[n] != ' ' && h[n] != '\0' &&
+          !(h[n] && pk_u8_can_break(cp, pk_u8_next(h + n, &k))))
          continue;
       memcpy(l1, h, n);
       l1[n] = '\0';
@@ -4551,10 +4559,19 @@ static void set_help_draw(const char *h)
       cut = len;
    memcpy(l1, h, cut);
    l1[cut] = '\0';
-   snprintf(l2, sizeof(l2), "%s", h + cut + (h[cut] == ' ' ? 1 : 0));
+   pk_u8_copy(l2, sizeof(l2), h + cut + (h[cut] == ' ' ? 1 : 0));
    while (l2[0] && vid_text_w(l2) > HELP_W)
    {
       size_t e = strlen(l2);
+      int wide = 0;
+      for (n = 0; l2[n]; n++)
+         if ((unsigned char)l2[n] >= 0x80)
+            wide = 1;
+      if (wide)
+      {
+         clip_title(l2, HELP_W);                  /* whole characters, then "..." */
+         break;
+      }
       while (e > 0 && l2[e - 1] != ' ')
          e--;
       if (e < 2)

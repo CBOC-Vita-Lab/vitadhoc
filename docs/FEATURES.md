@@ -36,8 +36,9 @@ See [Performance](PERFORMANCE.md) for Vita measurements and display settings.
 The home screen shows the console in use in the top bar, with a drop-down list of every console and its game count (Triangle), All/Starred/Recent views, sorting and
 play time, collections, and views by play time (below). Find matches words in any order and ignores accents and
 punctuation. Names in Japanese, Korean, Greek, Cyrillic and accented Latin
-show as written, in the menus of the app and of both players; only
-Chinese-only hanzi show as `?`.
+show as written, in the menus of the app and of both players, and so do
+simplified Chinese hanzi (GB 2312, drawn with Chinese forms when the language
+is Chinese); only traditional-only hanzi show as `?`.
 
 **Collections and views.** Select steps through Games, Starred, Recent, Most
 played, Not played yet, and then every collection and playlist that has a game

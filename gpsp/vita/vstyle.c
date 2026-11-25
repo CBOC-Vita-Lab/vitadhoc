@@ -214,6 +214,8 @@ static float char_adv(vs_face *f, uint32_t c)
       return f->g[c - VS_FIRST].adv;
    if (vglyph_adv(f->xs, c, &a))
       return a;
+   if (i18n_audit_on)
+      i18n_audit_glyph(c, 0);
    return f->g['?' - VS_FIRST].adv;
 }
 
@@ -329,6 +331,8 @@ float vs_text(int fi, float x, float y, const char *s, uint32_t rgba)
          else
          {
             /* no font has it, or no cell is free this frame: a '?' */
+            if (i18n_audit_on && vglyph_adv(f->xs, c, &xg.adv))
+               i18n_audit_glyph(c, 1);
             const vs_glyph *g = &f->g['?' - VS_FIRST];
             if (g->w)
             {
@@ -460,26 +464,21 @@ void vs_text_fit(int fi, char *s, float max_w)
 }
 
 /* The end of the "word" that starts at p[from]: up to the next space, or
- * after one wide character (with the marks that cling to it). */
+ * where pk_u8_can_break allows a break (between two characters one of which
+ * is written without spaces: never before a closing mark, never after an
+ * opening one, never inside a word of Latin letters). */
 static size_t word_end(const char *p, size_t from, size_t len)
 {
    size_t next = from;
+   uint32_t prev = 0;
    while (next < len && p[next] != ' ')
    {
       int n;
       uint32_t cp = pk_u8_next(p + next, &n);
-      next += (size_t)n;
-      if (pk_u8_wide(cp))
-      {
-         while (next < len && p[next] != ' ')
-         {
-            uint32_t c2 = pk_u8_next(p + next, &n);
-            if (!pk_u8_no_line_start(c2))
-               break;
-            next += (size_t)n;
-         }
+      if (prev && pk_u8_can_break(prev, cp))
          break;
-      }
+      next += (size_t)n;
+      prev = cp;
    }
    return next;
 }

@@ -22,6 +22,11 @@ void vglyph_dir(const char *dir)
    pk_glyphs_set_dir(dir);
 }
 
+void vglyph_region(int chinese)
+{
+   pk_glyphs_set_region(chinese ? PK_REGION_SC : PK_REGION_JP);
+}
+
 void vglyph_tick(void)
 {
    pk_gc_tick();
@@ -74,13 +79,7 @@ static int vg_ready(vglyph_set *s)
    sp.chain[0] = s->primary ? (const pk_gfont *)pk_gfont_mem(s->primary) : NULL;
    if (s->latin)
       sp.chain[sp.chain[0] ? 1 : 0] = (const pk_gfont *)pk_gfont_mem(s->latin);
-   {
-      int i = 0;
-      while (i < 3 && sp.chain[i])
-         i++;
-      if (i < 3)
-         sp.chain[i] = (const pk_gfont *)pk_gfont_file(PK_FONT_FILE_CJK);
-   }
+   sp.cjk_fallback = 1;          /* then the CJK files of the region (vglyph_region) */
    sp.budget_bytes = VG_BUDGET;
    sp.min_slots = 48;
    s->gc = pk_gc_new(&sp, vg_upload, s);

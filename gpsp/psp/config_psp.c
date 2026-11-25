@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include "pspcompat.h"        /* pspcompat_user_name: the default nick */
 #include "i18n.h"
+#include "vglyph.h"            /* the Chinese forms of the Han characters */
 #include "plat.h"
 #include "ui_host_hooks.h"   /* ui_host_link_direct */
 #endif
@@ -75,6 +76,7 @@ void pcfg_language_apply(void)
 {
    i18n_dir(plat_app_dir());
    i18n_use(g_pcfg.language, pspcompat_system_lang());
+   vglyph_region(i18n_current() == I18N_ZHS);      /* Chinese forms of the Han characters */
 }
 
 static void ui_prefs_load(void)

@@ -72,6 +72,12 @@ const char *tr_en(const char *key);
  * text layers call i18n_audit() only when i18n_audit_on is set. */
 extern int i18n_audit_on;
 void i18n_audit(const char *drawn);
+/* ... and a drawn text with half a character or a byte that is no UTF-8 in it
+ * is reported as "EVT i18n: cut character drawn ..." / "bad UTF-8 drawn ...";
+ * a code point no font has, as "EVT i18n: glyph missing U+XXXX", one that found no
+ * free cell in its face's atlas as "no free glyph cell for U+XXXX" (the layers
+ * call i18n_audit_glyph on the way to their '?'). */
+void i18n_audit_glyph(unsigned cp, int why);   /* why 0: no font has it, 1: no free cell */
 
 /* The English text of a text tr() gave (by pointer; any other text comes back
  * as it is): for the lines the tests read, which stay English. */

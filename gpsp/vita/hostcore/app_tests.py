@@ -7517,6 +7517,77 @@ def t_language(S):
         shutil.rmtree(app, ignore_errors=True)
 
 
+def t_cjk_text(S):
+    """Japanese and Simplified Chinese in every text path of the app (the twin's soft backend runs the very
+    layers the Vita does): a test catalogue (hostcore/testlang/, machine translated, never shipped) is put in a
+    scratch app folder and the language chosen in display.ini.  Settings (every row), the in-game menu, Save
+    states, Play together, Cheats, the home and the Play together pages are walked; against English: nothing more
+    off the screen or over other text (the text-box recorder), no character cut in half and no stray byte (the
+    twin's audit), no glyph missing (no '?' for a character the CJK font has), no text key shown."""
+    import tempfile
+    langs = {"ja": ("ja", "language=ja\n"), "zh": ("zh-Hans", "language=zh-Hans\n")}
+    app = tempfile.mkdtemp(prefix="vad-cjk-")
+    try:
+        assets = os.path.join(HERE, "..", "assets")
+        for n in os.listdir(assets):
+            if n != "lang":
+                os.symlink(os.path.abspath(os.path.join(assets, n)), os.path.join(app, n))
+        os.makedirs(os.path.join(app, "lang"))
+        for code in ("ja", "zh-Hans"):
+            shutil.copy(os.path.join(HERE, "testlang", code + ".txt"), os.path.join(app, "lang", code + ".txt"))
+
+        def walk(tag, ini, script, **kw):
+            bx = os.path.join(S.outdir, tag + ".boxes")
+            if os.path.exists(bx):
+                os.remove(bx)
+            extra = dict(kw.pop("extra", None) or {})
+            extra["display.ini"] = ini
+            env = {"GBADHOC_TEXT_BOXES": bx, "GBADHOC_TR_AUDIT": "1"}
+            r = S.run(tag, script, extra=extra, env=env, args=("--app", app), **kw)
+            S.clean(r)
+            return r, text_boxes(bx)
+
+        rows = 64
+        pages = [("settings", "60:start\n+30:shot=r000.png\n" + "".join("+8:down\n+14:shot=r%03d.png\n" % i for i in range(1, rows)) + "+10:quit\n",
+                  ["r%03d.png" % i for i in range(rows)], {})]
+        menu = "100:shot=game.png\n+20:start+select:20\n+30:shot=m0.png\n" + "".join("+8:right\n+10:shot=m%d.png\n" % i for i in range(1, 8)) + "+10:quit\n"
+        pages.append(("menu", menu, ["m%d.png" % i for i in range(8)], {"autoboot": "gbadhoc-test.gba"}))
+        shots = lambda n: "".join("+8:down\n+14:shot=%s%d.png\n" % (n, i) for i in range(1, 5))
+        pages.append(("states", "100:shot=game.png\n" + menu_pick(1, wait=20) + "+40:shot=s0.png\n" + shots("s") + "+10:circle\n+10:circle\n+30:quit\n",
+                      ["s%d.png" % i for i in range(5)], {"autoboot": "gbadhoc-test.gba"}))
+        pages.append(("play", "100:shot=game.png\n" + menu_pick(2, wait=20) + "+30:shot=p0.png\n" + shots("p") + "+10:quit\n",
+                      ["p%d.png" % i for i in range(5)], {"autoboot": "gbadhoc-test.gba"}))
+        pages.append(("home", "90:shot=home.png\n+10:quit\n", ["home.png"], {"config": {"ui_home": 1}}))
+        pages.append(("together", "100:shot=game.png\n" + menu_pick(2, wait=20) + "+30:cross\n+30:shot=h0.png\n+10:circle\n+30:down\n+8:cross\n+30:shot=j0.png\n"
+                      "+10:circle\n+30:down\n+8:down\n+8:down\n+8:cross\n+30:shot=n0.png\n+10:circle\n+10:quit\n",
+                      ["h0.png", "j0.png", "n0.png"], {"autoboot": "gbadhoc-test.gba"}))
+        if os.path.exists(CHEAT_GBA):
+            cht = 'cheats = 1\ncheat0_desc = "Infinite lives"\ncheat0_code = "02000008 0000"\ncheat0_enable = true\n'
+            pages.append(("cheats", "100:shot=game.png\n" + menu_pick(3, wait=20) + "+30:shot=c0.png\n+8:triangle\n+14:shot=c1.png\n"
+                          "+10:circle\n+20:start\n+14:shot=c2.png\n+10:quit\n", ["c0.png", "c1.png", "c2.png"],
+                          {"autoboot": "cheatrom.gba", "extra": {"roms/cheatrom.gba": open(CHEAT_GBA, "rb").read(), "cheats/cheatrom.cht": cht}}))
+        only = os.environ.get("LANG_PAGES")
+        for tag, script, shot_names, kw in pages:
+            if only and tag not in only.split(","):
+                continue
+            re_, be = walk("cjk_%s_en" % tag, "language=en\n", script, **kw)
+            for key, (code, ini) in langs.items():
+                rl, bl = walk("cjk_%s_%s" % (tag, key), ini, script, **kw)
+                bad = {}
+                for shot in shot_names:
+                    off, over = text_misfits(bl.get(shot, []))
+                    offe, overe = text_misfits(be.get(shot, []))
+                    if not bl.get(shot) or len(off) > len(offe) or len(over) > len(overe):
+                        bad[shot] = (off[:2], over[:2])
+                S.check(not bad, "%s in %s: nothing more off the screen or overlapping than in English (%s)" % (tag, code, dict(list(bad.items())[:3]) or "all fit"))
+                evt = sorted(set(l for l in rl.err.splitlines() if l.startswith("EVT i18n:")))
+                S.check(not evt, "%s in %s: no character cut or missing, no stray byte, no key shown (%s)" % (tag, code, evt[:4]))
+                first = shot_names[min(1, len(shot_names) - 1)]
+                S.check(re_.shot(first).tobytes() != rl.shot(first).tobytes(), "%s in %s: the picture differs from English" % (tag, code))
+    finally:
+        shutil.rmtree(app, ignore_errors=True)
+
+
 def t_cpu_speed(S):
     """Settings > CPU speed (cpuclock.c): 500 MHz by default, 444 as the
     other value; the system's refusal falls back to 444; with PSVshellPlus
@@ -10489,7 +10560,7 @@ TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicato
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("biossound", t_biossound), ("chain", t_chain), ("objprio", t_objprio), ("objrand", t_objrand), ("smc", t_smc),
          ("realtime", t_realtime),
          ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_heal", t_save_heal), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("gb_type", t_gb_type), ("gb_core", t_gb_core), ("launch_param", t_launch_param),
-         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("archives", t_archives), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("screen_crt_text", t_screen_crt_text), ("text_large", t_text_large), ("language", t_language), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("hand_set_rows", t_hand_set_rows), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
+         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("archives", t_archives), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("screen_crt_text", t_screen_crt_text), ("text_large", t_text_large), ("language", t_language), ("cjk_text", t_cjk_text), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("hand_set_rows", t_hand_set_rows), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
          ("controls_defaults", t_controls_defaults),
          ("names_cjk", t_names_cjk),
          ("names_filename", t_names_filename), ("names_duplicate_subtitle", t_names_duplicate_subtitle),

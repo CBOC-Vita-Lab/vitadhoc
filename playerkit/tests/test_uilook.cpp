@@ -6,6 +6,7 @@
 #include "pk_i18n.h"
 #include "pk_gfx_soft.h"
 #include "pk_glyphs.h"
+#include "pk_utf8.h"
 #include "pk_uilook.h"
 #include "pk_uiprefs.h"
 #include "pk_crt.h"
@@ -367,10 +368,13 @@ TEST(menu_every_page_fits_at_large)
  * size. Each page is drawn in English and in xx-long, at Normal and at Large; xx-long may not have more overlaps than
  * English did and nothing may leave the screen that did not already (a list row clipped at the bottom of its view counts in both, and that page is not judged on it). */
 namespace {
+int g_catalogue_lang = LANG_ES;
+const std::string *g_catalogue = 0;           /* a catalogue read from a file, put in force after the language */
 std::vector<Audit> audit_pages(int lang, int large)
 {
 	std::vector<Audit> out;
 	i18n_use(lang, 1);
+	if (g_catalogue) i18n_use_text(g_catalogue->data(), g_catalogue->size(), g_catalogue_lang);
 	pkh::TempDir td;
 	pkh::MockHost host;
 	host.cheat_list.resize(3);
@@ -441,4 +445,55 @@ TEST(menu_every_page_fits_in_xx_long)
 		CHECK_EQ(off, 0);
 		CHECK_EQ(worse, 0);
 	}
+}
+
+/* ---- Japanese and Simplified Chinese: the same audit with a (machine translated, test-only) catalogue each -----------
+ * Characters have no spaces to break at, are wider per character and come from the CJK fonts: nothing may leave the
+ * screen or lie over other text more than in English, and every character of the catalogue must have a glyph in the
+ * fonts of its language (no '?'). */
+TEST(menu_every_page_fits_in_japanese_and_chinese)
+{
+	pk_glyphs_set_dir("../gpsp/vita/assets");
+	static const struct { const char *file; int region; } langs[] = { { "tests/testlang/pk_ja.txt", PK_REGION_JP }, { "tests/testlang/pk_zh-Hans.txt", PK_REGION_SC } };
+	for (int li = 0; li < 2; li++) {
+		FILE *f = fopen(langs[li].file, "rb");
+		CHECK(f != 0);
+		if (!f) continue;
+		std::string cat;
+		char buf[4096];
+		size_t n;
+		while ((n = fread(buf, 1, sizeof buf, f)) > 0) cat.append(buf, n);
+		fclose(f);
+		/* every character has a glyph in the CJK files of the language (Latin letters come from Inter) */
+		pk_gfont *first = pk_gfont_file(langs[li].region == PK_REGION_SC ? PK_FONT_FILE_CJK_SC : PK_FONT_FILE_CJK);
+		pk_gfont *second = pk_gfont_file(PK_FONT_FILE_CJK);
+		int missing = 0;
+		for (const char *p = cat.c_str(); *p;) {
+			int k;
+			uint32_t cp = pk_u8_next(p, &k);
+			p += k;
+			if (cp < 0x80 || pk_glyph_invisible(cp)) continue;
+			if (!pk_gfont_has(first, cp) && !pk_gfont_has(second, cp)) { missing++; fprintf(stderr, "    no glyph for U+%04X\n", (unsigned) cp); }
+		}
+		CHECK_EQ(missing, 0);
+		g_catalogue_lang = langs[li].region == PK_REGION_SC ? LANG_ZHS : LANG_JA;
+		for (int large = 0; large < 2; large++) {
+			g_catalogue = 0;
+			const std::vector<Audit> en = audit_pages(LANG_EN, large);
+			g_catalogue = &cat;
+			const std::vector<Audit> cj = audit_pages(LANG_EN, large);
+			g_catalogue = 0;
+			CHECK_EQ((int) en.size(), (int) cj.size());
+			int worse = 0, off = 0;
+			for (size_t i = 0; i < en.size() && i < cj.size(); i++) {
+				if (en[i].off_screen == 0 && cj[i].off_screen > 0) { off++; fprintf(stderr, "    %s large=%d shot %d: %d glyphs off screen\n", langs[li].file, large, (int) i, cj[i].off_screen); }
+				if (cj[i].overlaps > en[i].overlaps) { worse++; fprintf(stderr, "    %s large=%d shot %d: %d overlaps (English %d)\n", langs[li].file, large, (int) i, cj[i].overlaps, en[i].overlaps); }
+				CHECK(cj[i].glyphs > 0);
+			}
+			CHECK_EQ(off, 0);
+			CHECK_EQ(worse, 0);
+		}
+		g_catalogue = 0;
+	}
+	pk_glyphs_set_region(PK_REGION_JP);
 }

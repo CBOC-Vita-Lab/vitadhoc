@@ -1556,31 +1556,31 @@ ra.of_achievements	%u of %u achievements%s
 ra.pts	%u / %u   %u / %u pts
 # context: snprintf in ra_vita.c, on_event
 ra.rank_of	Rank %u of %u
-# context: on-screen text
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
 search.1_byte	1 byte
-# context: on-screen text
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
 search.2_bytes	2 bytes
-# context: on-screen text
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
 search.2_bytes_any_address	2 bytes, any address
-# context: on-screen text
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
 search.4_bytes	4 bytes
-# context: on-screen text
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
 search.4_bytes_any_address	4 bytes, any address
-# context: on-screen text
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
 search.changed	Changed
-# context: on-screen text
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
 search.decreased	Decreased
-# context: on-screen text
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
 search.equal_to	Equal to
-# context: on-screen text
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
 search.greater_than	Greater than
-# context: on-screen text
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
 search.increased	Increased
-# context: on-screen text
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
 search.less_than	Less than
-# context: on-screen text
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
 search.not_equal_to	Not equal to
-# context: on-screen text
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
 search.unchanged	Unchanged
 # context: ui_psp.c, ff_step_now
 settings.a_and_b_buttons	A and B buttons

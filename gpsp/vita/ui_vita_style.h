@@ -225,6 +225,8 @@ static void hm_sentence(char *out, size_t cap, const char *s)
       out[i] = c;
    }
    out[i] = '\0';
+   if (i + 1 >= cap)
+      pk_u8_clip(out, i);          /* (a cap that fell inside a character) */
 }
 
 #endif /* UI_VITA_STYLE_H */

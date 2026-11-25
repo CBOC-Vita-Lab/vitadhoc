@@ -13,6 +13,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string>
+#include <vector>
+#include <utility>
 
 namespace pk {
 
@@ -121,6 +123,11 @@ public:
 	std::string fit(int face, const std::string &s, float max_w);
 	/* words wrapped to max_w, at most max_lines; returns the lines drawn */
 	int wrap(int face, float x, float y, float max_w, int max_lines, float line_gap, const std::string &s, uint32_t rgba);
+	/* where s breaks into lines of at most max_w (greedy): each line as a byte range of s, spaces at the ends left
+	 * out. A line breaks at a space, or between two characters written without spaces (pk_u8_can_break: never
+	 * before a closing mark such as the full stop of Japanese and Chinese, never after an opening bracket, never
+	 * inside a word of Latin letters), always between whole characters. A piece wider than max_w stays whole. */
+	std::vector<std::pair<size_t, size_t> > break_lines(int face, float max_w, const std::string &s);
 	struct Impl;
 private:
 	Impl *p_;

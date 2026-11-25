@@ -215,3 +215,119 @@ TEST(text_without_the_font_files_degrades_to_question_marks)
 	CHECK(valid_utf8(r));
 	fonts_dir();
 }
+
+/* ---- Japanese and Chinese in every text path ---------------------------------------------------------------- */
+
+TEST(cjk_line_break_rules)
+{
+	CHECK(!pk_u8_can_break('a', 'b'));                         /* never inside a Latin word */
+	CHECK(pk_u8_can_break(0x65E5, 0x672C));                    /* 日|本 */
+	CHECK(pk_u8_can_break('i', 0x672C));                       /* Latin|CJK */
+	CHECK(pk_u8_can_break(0x672C, 'W'));                       /* CJK|Latin */
+	CHECK(!pk_u8_can_break(0x672C, 0x3002));                   /* no line starts with 。 */
+	CHECK(!pk_u8_can_break(0x672C, 0x3001));
+	CHECK(!pk_u8_can_break(0x672C, 0xFF01));                   /* ！ */
+	CHECK(!pk_u8_can_break(0x672C, 0x300D));                   /* 」 */
+	CHECK(!pk_u8_can_break(0x672C, 0x201D));                   /* ” */
+	CHECK(!pk_u8_can_break(0x30A2, 0x30FC));                   /* ー */
+	CHECK(!pk_u8_can_break(0x3042, 0x3083));                   /* small kana */
+	CHECK(!pk_u8_can_break(0x300C, 0x672C));                   /* no line ends with 「 */
+	CHECK(!pk_u8_can_break(0x201C, 0x672C));                   /* “ */
+	CHECK(!pk_u8_can_break(0xFF08, 0x672C));                   /* （ */
+	CHECK(!pk_u8_can_break(0x672C, ')'));                      /* ASCII closers stay with the character before */
+	CHECK(!pk_u8_can_break(0x672C, ','));
+	CHECK(pk_u8_can_break(0x672C, 'A'));
+}
+
+TEST(cjk_wrap_never_starts_with_a_closing_mark_or_splits_a_character)
+{
+	fonts_dir();
+	SoftGfx gfx;
+	Text t(&gfx);
+	const char *zh = "\xE5\xA4\x9A\xE6\x95\xB0\xE8\xAE\xA1\xE6\x95\xB0\xE5\x99\xA8\xE4\xB8\xBA""1\xE5\xAD\x97\xE8\x8A\x82\xE3\x80\x82\xE2\x80\x9C\xE4\xBB\xBB\xE6\x84\x8F\xE5\x9C\xB0\xE5\x9D\x80\xE2\x80\x9D\xE4\xB9\x9F\xE4\xBC\x9A\xE6\x9F\xA5\xE7\x9C\x8B\xE5\xA5\x87\xE6\x95\xB0\xE4\xBD\x8D\xE7\xBD\xAE\xE3\x80\x82 Wi-Fi\xE8\xBF\x9E\xE6\x8E\xA5\xEF\xBC\x88\xE5\xB7\xB2\xE5\xBC\x80\xEF\xBC\x89";
+	for (int f = 0; f < F_COUNT; f++)
+		for (int mw = 110; mw <= 300; mw += 3) {
+			std::vector<std::pair<size_t, size_t> > L = t.break_lines(f, (float) mw, zh);
+			std::string all;
+			for (size_t i = 0; i < L.size(); i++) {
+				std::string line = std::string(zh).substr(L[i].first, L[i].second - L[i].first);
+				CHECK(valid_utf8(line));
+				CHECK(!line.empty());
+				int n;
+				uint32_t first = pk_u8_next(line.c_str(), &n);
+				CHECK(i == 0 || !pk_u8_no_line_start(first));
+				const char *q = line.c_str(), *last = q;
+				while (*q) { last = q; q += pk_u8_len(q); }
+				CHECK(i + 1 == L.size() || !pk_u8_no_line_end(pk_u8_next(last, &n)));
+				CHECK(i + 1 == L.size() || t.width(f, line.c_str()) <= (float) mw || pk_u8_count(line.c_str()) <= 2);
+				CHECK(line.find("Wi-") == std::string::npos || line.find("Wi-Fi") != std::string::npos);   /* a Latin word is whole */
+			}
+		}
+}
+
+/* the ink of one glyph in a cache, the sum of its coverage */
+static long glyph_ink(pk_gcache *c, std::vector<uint8_t> *cap, uint32_t cp)
+{
+	pk_gglyph g;
+	cap->clear();
+	if (!pk_gc_get(c, cp, &g) || g.w == 0) return 0;
+	long s = 0;
+	for (size_t i = 0; i < cap->size(); i++) s += (*cap)[i];
+	return s;
+}
+
+TEST(cjk_fonts_cover_japanese_and_simplified_chinese_with_real_glyphs)
+{
+	fonts_dir();
+	pk_gfont *jp = pk_gfont_file(PK_FONT_FILE_CJK), *sc = pk_gfont_file(PK_FONT_FILE_CJK_SC);
+	CHECK(jp != 0 && sc != 0);
+	const uint32_t zh[] = { 0x4E3A, 0x4F60, 0x5173, 0x52A8, 0x95E8, 0x8FDE, 0x6863, 0x8BBE, 0x7F6E, 0x6A21, 0x5F0F, 0x4FDD, 0x5B58, 0x72B6, 0x6001 };
+	for (size_t i = 0; i < sizeof zh / sizeof zh[0]; i++) CHECK(pk_gfont_has(sc, zh[i]));
+	const uint32_t ja[] = { 0x3042, 0x30A2, 0x30FC, 0x4E16, 0x754C, 0x9B3C, 0x6F22, 0xFF21 };
+	for (size_t i = 0; i < sizeof ja / sizeof ja[0]; i++) CHECK(pk_gfont_has(jp, ja[i]));
+	CHECK(!pk_gfont_has(jp, 0x95E8));                          /* 门 is simplified-only: why the Chinese file exists */
+	/* a cache with the CJK fallback draws real ink for all of them, in either region */
+	for (int region = 0; region < 2; region++) {
+		pk_glyphs_set_region(region);
+		std::vector<uint8_t> cap;
+		struct Up { static void f(void *u, int, int, int w, int h, const uint8_t *p, int pitch) { std::vector<uint8_t> *c = (std::vector<uint8_t> *) u; c->clear(); for (int y = 0; y < h; y++) c->insert(c->end(), p + y * pitch, p + y * pitch + w); } };
+		pk_gc_spec sp;
+		memset(&sp, 0, sizeof sp);
+		sp.px = 24; sp.ascent = 24; sp.cjk_fallback = 1;
+		sp.budget_bytes = 64 * 1024; sp.min_slots = 16;
+		pk_gcache *c = pk_gc_new(&sp, Up::f, &cap);
+		if (region == 1) for (size_t i = 0; i < sizeof zh / sizeof zh[0]; i++) CHECK(glyph_ink(c, &cap, zh[i]) > 800);      /* (the Japanese file lacks some: the Chinese one is tried first) */
+		for (size_t i = 0; i < sizeof ja / sizeof ja[0]; i++) CHECK(glyph_ink(c, &cap, ja[i]) > 300);
+		pk_gc_free(c);
+	}
+	pk_glyphs_set_region(PK_REGION_JP);
+}
+
+TEST(cjk_region_switch_redraws_the_chinese_forms)
+{
+	fonts_dir();
+	std::vector<uint8_t> cap;
+	struct Up { static void f(void *u, int, int, int w, int h, const uint8_t *p, int pitch) { std::vector<uint8_t> *c = (std::vector<uint8_t> *) u; c->clear(); for (int y = 0; y < h; y++) c->insert(c->end(), p + y * pitch, p + y * pitch + w); } };
+	pk_gc_spec sp;
+	memset(&sp, 0, sizeof sp);
+	sp.px = 24; sp.ascent = 24; sp.cjk_fallback = 1;
+	sp.budget_bytes = 64 * 1024; sp.min_slots = 16;
+	pk_gcache *c = pk_gc_new(&sp, Up::f, &cap);
+	/* characters whose Japanese and Chinese forms differ */
+	const uint32_t shared[] = { 0x76F4, 0x9AA8, 0x4EE4, 0x5237, 0x6D77, 0x8FD4, 0x8FC7, 0x9910, 0x7D20, 0x9023 };
+	std::vector<std::vector<uint8_t> > jpv, scv;
+	pk_glyphs_set_region(PK_REGION_JP);
+	for (size_t i = 0; i < 10; i++) { glyph_ink(c, &cap, shared[i]); jpv.push_back(cap); }
+	for (int k = 0; k < 6; k++) pk_gc_tick();
+	pk_glyphs_set_region(PK_REGION_SC);
+	for (size_t i = 0; i < 10; i++) { glyph_ink(c, &cap, shared[i]); scv.push_back(cap); }
+	int differ = 0;
+	for (size_t i = 0; i < 10; i++) differ += jpv[i] != scv[i];
+	CHECK(differ >= 3);                                        /* the cache followed the region */
+	for (int k = 0; k < 6; k++) pk_gc_tick();
+	pk_glyphs_set_region(PK_REGION_JP);
+	int same = 0;
+	for (size_t i = 0; i < 10; i++) { glyph_ink(c, &cap, shared[i]); same += cap == jpv[i]; }
+	CHECK_EQ(same, 10);                                        /* and back */
+	pk_gc_free(c);
+}

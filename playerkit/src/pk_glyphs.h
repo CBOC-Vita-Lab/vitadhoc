@@ -44,8 +44,19 @@ void pk_glyphs_set_dir(const char *dir);
 
 /* The files of the package (data/ in the repository: gpsp/vita/assets). */
 #define PK_FONT_FILE_CJK     "cjkfont.otf"        /* Japanese kana + kanji, fullwidth, Hangul, Latin/Greek/Cyrillic */
+#define PK_FONT_FILE_CJK_SC  "cjkfont-sc.otf"     /* Simplified Chinese: GB 2312 hanzi in their Chinese forms, kana, fullwidth, Latin */
 #define PK_FONT_FILE_LATIN   "latinfont.ttf"      /* Inter Regular, Latin-1 / Extended / punctuation (the players) */
 #define PK_FONT_FILE_LATIN_B "latinfont-sb.ttf"   /* Inter SemiBold of the same */
+
+/* Which forms of the shared Han characters come first: PK_REGION_JP (the
+ * default: cjkfont.otf, Japanese forms and Hangul too) or PK_REGION_SC
+ * (cjkfont-sc.otf first, then cjkfont.otf for what it has not: kanji outside
+ * GB 2312, Hangul).  Set by whoever knows the interface language (Chinese
+ * text drawn with Japanese forms reads wrong); a cache made with cjk_fallback
+ * follows it at once (its cells are re-rasterised as they are drawn). */
+enum { PK_REGION_JP = 0, PK_REGION_SC = 1 };
+void pk_glyphs_set_region(int region);
+int  pk_glyphs_region(void);
 
 /* A font file read on first use (NULL name: none). The same handle comes back
  * for the same name. */
@@ -70,7 +81,10 @@ typedef struct
    int embolden;            /* 0, or the pixels x 100 the outline is smeared
                              * to the right: the synthetic semibold given to
                              * glyphs of the CJK file (one weight only)    */
-   const pk_gfont *chain[3];/* tried in order; NULL ends the list          */
+   const pk_gfont *chain[4];/* tried in order; NULL ends the list          */
+   int cjk_fallback;        /* nonzero: after the chain the CJK files of the
+                             * region (pk_glyphs_set_region) are tried: the
+                             * way text in any script gets its glyphs      */
    int budget_bytes;        /* the atlas's size, about                     */
    int min_slots;           /* at least this many cells whatever the budget */
 } pk_gc_spec;

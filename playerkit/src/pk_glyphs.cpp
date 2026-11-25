@@ -40,7 +40,7 @@ struct pk_gfont
    stbtt_fontinfo       info;
 };
 
-#define MAX_FONTS 8
+#define MAX_FONTS 12
 static pk_gfont g_fonts[MAX_FONTS];
 static int      g_nfonts;
 #ifdef __vita__
@@ -62,6 +62,24 @@ void pk_glyphs_set_dir(const char *dir)
    memcpy(g_dir, dir, n + 1);
 }
 
+static int      g_region;                    /* PK_REGION_*                             */
+static unsigned g_region_gen = 1;            /* bumped when it changes: caches follow   */
+
+void pk_glyphs_set_region(int region)
+{
+   region = region == PK_REGION_SC ? PK_REGION_SC : PK_REGION_JP;
+   if (region != g_region)
+   {
+      g_region = region;
+      g_region_gen++;
+   }
+}
+
+int pk_glyphs_region(void)
+{
+   return g_region;
+}
+
 pk_gfont *pk_gfont_file(const char *name)
 {
    int i;
@@ -74,7 +92,7 @@ pk_gfont *pk_gfont_file(const char *name)
       return NULL;
    memset(&g_fonts[g_nfonts], 0, sizeof(g_fonts[0]));
    strcpy(g_fonts[g_nfonts].name, name);
-   g_fonts[g_nfonts].cjk = !strcmp(name, PK_FONT_FILE_CJK);
+   g_fonts[g_nfonts].cjk = !strcmp(name, PK_FONT_FILE_CJK) || !strcmp(name, PK_FONT_FILE_CJK_SC);
    return &g_fonts[g_nfonts++];
 }
 
@@ -198,6 +216,7 @@ typedef struct
    uint8_t  w, h;
    int8_t   ox, oy;
    int16_t  advq;
+   uint8_t  stale;                 /* made under another region: not found, reused when idle */
 } cslot;
 
 struct pk_gcache
@@ -212,6 +231,7 @@ struct pk_gcache
    unsigned char *cell, *cell2;    /* scratch: one cell, and the bold pass    */
    unsigned st_raster, st_evict, st_miss;
    unsigned nused;
+   unsigned gen;                   /* g_region_gen the cells were made under   */
 };
 
 static uint32_t g_frame = 8;
@@ -231,6 +251,7 @@ pk_gcache *pk_gc_new(const pk_gc_spec *spec, pk_gc_upload_fn up, void *user)
    if (!c)
       return NULL;
    c->spec = *spec;
+   c->gen = g_region_gen;
    c->up = up;
    c->user = user;
    c->cw = c->ch = spec->px + 4;           /* a glyph's box plus overshoot */
@@ -316,7 +337,7 @@ static void rebuild(pk_gcache *c)
    memset(c->tab, 0, sizeof(c->tab));
    c->nent = 0;
    for (i = 0; i < c->nslots; i++)
-      if (c->slot[i].cp)
+      if (c->slot[i].cp && !c->slot[i].stale)
       {
          hentry *e = insert(c, c->slot[i].cp);
          e->slot = (int16_t)i;
@@ -340,17 +361,27 @@ static hentry *insert(pk_gcache *c, uint32_t cp)
    return &c->tab[h];
 }
 
-/* The first font of the chain that has the character; *adv in pixels. */
+/* The font that has the character: the chain in order, then (cjk_fallback)
+ * the CJK files of the region. */
 static pk_gfont *pick(pk_gcache *c, uint32_t cp, int *gi, float *scale)
 {
-   int i;
+   pk_gfont *list[7];
+   int i, n = 0;
    if (cp >= 0x110000)
       return NULL;
-   for (i = 0; i < 3 && c->spec.chain[i]; i++)
+   for (i = 0; i < 4 && c->spec.chain[i]; i++)
+      list[n++] = (pk_gfont *)c->spec.chain[i];
+   if (c->spec.cjk_fallback)
    {
-      pk_gfont *f = (pk_gfont *)c->spec.chain[i];
+      if (g_region == PK_REGION_SC)
+         list[n++] = pk_gfont_file(PK_FONT_FILE_CJK_SC);
+      list[n++] = pk_gfont_file(PK_FONT_FILE_CJK);
+   }
+   for (i = 0; i < n; i++)
+   {
+      pk_gfont *f = list[i];
       int g;
-      if (!font_load(f))
+      if (!f || !font_load(f))
          continue;
       g = stbtt_FindGlyphIndex(&f->info, (int)cp);
       if (g)
@@ -361,6 +392,25 @@ static pk_gfont *pick(pk_gcache *c, uint32_t cp, int *gi, float *scale)
       }
    }
    return NULL;
+}
+
+/* The region changed since the cells were made: nothing in the cache is found
+ * any more.  A cell may still be read by a frame in flight, so each one stays
+ * as it is (stale) and is only reused after the idle frames, like any other. */
+static void follow_region(pk_gcache *c)
+{
+   int i;
+   if (c->gen == g_region_gen)
+      return;
+   c->gen = g_region_gen;
+   if (!c->spec.cjk_fallback)
+      return;
+   memset(c->tab, 0, sizeof(c->tab));
+   c->nent = 0;
+   for (i = 0; i < c->nslots; i++)
+      if (c->slot[i].cp)
+         c->slot[i].stale = 1;
+   c->nused = 0;
 }
 
 static int advq_of(pk_gfont *f, int gi, float scale)
@@ -382,6 +432,7 @@ int pk_gc_adv(pk_gcache *c, uint32_t cp, float *adv)
    float sc;
    if (!c)
       return 0;
+   follow_region(c);
    if (pk_glyph_invisible(cp))
    {
       *adv = 0.0f;
@@ -493,12 +544,16 @@ static int take_slot(pk_gcache *c)
    }
    if (best >= 0)
    {
-      hentry *e = find(c, c->slot[best].cp);
-      if (e)
-         e->slot = -1;
+      if (!c->slot[best].stale)
+      {
+         hentry *e = find(c, c->slot[best].cp);
+         if (e)
+            e->slot = -1;
+         c->nused--;
+      }
       c->slot[best].cp = 0;
+      c->slot[best].stale = 0;
       c->st_evict++;
-      c->nused--;
    }
    return best;
 }
@@ -512,6 +567,7 @@ int pk_gc_get(pk_gcache *c, uint32_t cp, pk_gglyph *g)
    float sc;
    if (!c || !g)
       return 0;
+   follow_region(c);
    memset(g, 0, sizeof(*g));
    if (pk_glyph_invisible(cp))
       return 1;
@@ -550,6 +606,7 @@ int pk_gc_get(pk_gcache *c, uint32_t cp, pk_gglyph *g)
       e = insert(c, cp);
    s = &c->slot[si];
    s->cp = cp;
+   s->stale = 0;
    s->last = g_frame;
    s->w = (uint8_t)w; s->h = (uint8_t)h;
    s->ox = (int8_t)ox;

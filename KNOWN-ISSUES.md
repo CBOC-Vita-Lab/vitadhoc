@@ -461,10 +461,16 @@ Game Boy), and the oam_bug sprite-memory corruption tests are not emulated (3 of
   time on a Vita is not measured.
 - **Starting from a launcher** works when VitAdhoc is closed; close it first.
 - **Sharing states between two Vitas** covers slots 1 to 5.
-- **Chinese-only characters** (simplified or traditional hanzi that Japanese
-  does not use) show as `?`: the menu font covers Japanese kana and kanji,
-  Korean, fullwidth forms, and Latin, Greek and Cyrillic letters. The games
-  still play.
+- **Traditional-only hanzi** (the ones GB 2312 and Japanese do not have, such
+  as most Taiwanese and Hong Kong forms) show as `?`: the fonts cover
+  Japanese kana and kanji, the 6763 simplified hanzi of GB 2312, Korean,
+  fullwidth forms, and Latin, Greek and Cyrillic letters. The games still
+  play. Text in the Chinese language is drawn with Chinese forms of the shared
+  characters; names of games in Japanese show in those forms too while the
+  language is Chinese. Checked on the PC test twin only; the glyph cache holds
+  a fixed number of characters per text size (about 50 to 280), so a page
+  with far more different Chinese characters than that would show `?` for the
+  surplus until idle cells are free.
 
 ## Install
 

@@ -17,6 +17,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -211,7 +212,8 @@ static inline int pk_u8_wide(uint32_t cp)
 }
 
 /* 1 for a character that may not start a line (closing marks, the
- * prolonged sound mark, small kana): it stays with the one before. */
+ * prolonged sound mark, small kana, iteration marks, the closing quotes and
+ * the ellipsis of Chinese text): it stays with the one before. */
 static inline int pk_u8_no_line_start(uint32_t cp)
 {
    switch (cp)
@@ -219,12 +221,51 @@ static inline int pk_u8_no_line_start(uint32_t cp)
    case 0x3001: case 0x3002: case 0xFF0C: case 0xFF0E: case 0x300D: case 0x300F:
    case 0xFF09: case 0x3011: case 0x3015: case 0xFF01: case 0xFF1F: case 0x30FC:
    case 0x3099: case 0x309A: case 0x30FB: case 0xFF1A: case 0xFF1B:
+   case 0x3009: case 0x300B: case 0x3017: case 0x3019: case 0x301B: case 0xFF3D:
+   case 0xFF5D: case 0xFF05: case 0xFF61: case 0xFF63: case 0xFF64: case 0xFF65:
+   case 0x309B: case 0x309C: case 0x309D: case 0x309E: case 0x30FD: case 0x30FE:
+   case 0x301C: case 0x30A0: case 0x2019: case 0x201D: case 0x2025: case 0x2026:
    case 0x3041: case 0x3043: case 0x3045: case 0x3047: case 0x3049: case 0x3063:
-   case 0x3083: case 0x3085: case 0x3087: case 0x30A1: case 0x30A3: case 0x30A5:
-   case 0x30A7: case 0x30A9: case 0x30C3: case 0x30E3: case 0x30E5: case 0x30E7:
+   case 0x3083: case 0x3085: case 0x3087: case 0x308E: case 0x3095: case 0x3096:
+   case 0x30A1: case 0x30A3: case 0x30A5: case 0x30A7: case 0x30A9: case 0x30C3:
+   case 0x30E3: case 0x30E5: case 0x30E7: case 0x30EE: case 0x30F5: case 0x30F6:
+      return 1;
+   }
+   return cp >= 0x31F0 && cp <= 0x31FF;      /* the small katakana extensions */
+}
+
+/* 1 for a character that may not END a line (opening brackets and quotes):
+ * it stays with the one after. */
+static inline int pk_u8_no_line_end(uint32_t cp)
+{
+   switch (cp)
+   {
+   case 0x3008: case 0x300A: case 0x300C: case 0x300E: case 0x3010: case 0x3014:
+   case 0x3016: case 0x3018: case 0x301A: case 0xFF08: case 0xFF3B: case 0xFF5B:
+   case 0xFF62: case 0x2018: case 0x201C: case 0xFFE1: case 0xFFE5: case 0xFF04:
       return 1;
    }
    return 0;
+}
+
+/* Where a line may break WITHOUT a space: between two characters, `before`
+ * then `after` (code points; a space is the caller's own business).  Words
+ * of Latin letters are never broken; a character written without spaces
+ * (pk_u8_wide) may be broken from either neighbour, except that a line
+ * never starts with a closing mark or ends with an opening one, and the
+ * ASCII punctuation that closes a phrase (, . ! ? : ; ) ] } %) stays with
+ * the CJK character before it. */
+static inline int pk_u8_can_break(uint32_t before, uint32_t after)
+{
+   if (!pk_u8_wide(before) && !pk_u8_wide(after))
+      return 0;
+   if (pk_u8_no_line_start(after) || pk_u8_no_line_end(before))
+      return 0;
+   if (after < 0x80 && after && strchr(",.!?:;)]}%'\"", (int)after))
+      return 0;
+   if (before < 0x80 && before && strchr("([{$", (int)before))
+      return 0;
+   return 1;
 }
 
 /* How many characters s holds. */

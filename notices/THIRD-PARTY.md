@@ -143,8 +143,11 @@ clarification and the remaining package review.
   `licenses/Inter-OFL.txt`. Regular and SemiBold TTFs are embedded.
 - **Noto Sans CJK JP:** The Noto Project Authors, SIL Open Font License 1.1.
   `licenses/NotoSansCJK-OFL.txt`. A subset (kana, JIS kanji, fullwidth forms,
-  Hangul, Latin, Greek, Cyrillic) is packaged as `cjkfont.otf`; drawn with
-  stb_truetype (public domain).
+  Hangul, Latin, Greek, Cyrillic) is packaged as `cjkfont.otf`; the Noto Sans
+  CJK SC face cut to the GB 2312 hanzi (Chinese forms), kana, fullwidth forms
+  and Latin is packaged as `cjkfont-sc.otf` and tried first when the interface
+  is Simplified Chinese; both drawn with stb_truetype (public domain). Made by
+  `tools/font/make_fonts.py` from the Noto Sans CJK Regular collection.
 - **Outfit:** The Outfit Project Authors, SIL Open Font License 1.1.
   `licenses/Outfit-OFL.txt`. Medium and SemiBold TTFs are embedded; Bold is
   used in generated LiveArea artwork. Font names and notices are unchanged.

@@ -255,7 +255,7 @@ void i18n_pseudo(const char *en, char *out, size_t n)
 			if (*a) for (; *a; a++) out[k++] = *a;
 			else out[k++] = (char) c;
 			en++;
-			if (++run % 3 == 0) {
+			if (++run % 2 == 0) {
 				const char *p = pad[pi++ & 3];
 				out[k++] = p[0]; out[k++] = p[1];
 			}

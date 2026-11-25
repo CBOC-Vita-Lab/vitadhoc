@@ -99,6 +99,9 @@ public:
 	virtual void on_change(int row_id, int value) { (void) row_id; (void) value; }
 	/* "Reset game" was confirmed; the menu closes after it */
 	virtual void on_reset() {}
+	/* Language was changed in the menu (Menu has already switched the texts): the host re-adds the rows whose texts it made itself
+	 * (add_host_row with a text that is not a catalogue key) and may store the choice (on_change(ROW_UI_LANGUAGE, v) came first) */
+	virtual void on_language_changed() {}
 	/* the machine's state as bytes, for Save here and for the undo copy; false if it cannot */
 	virtual bool capture_state(std::vector<uint8_t> &out) { (void) out; return false; }
 	/* put a state back; false if the core refused it */
@@ -375,6 +378,7 @@ private:
 	std::string bt_actions(uint32_t bit) const;
 	std::string exit_label() const;
 	unsigned lang_serial_;           /* the language the rows were built in (i18n_serial) */
+	float hints_left_;               /* where the hints of the top line end on the left (set by draw_hints) */
 	/* capture */
 	int cap_action_, cap_ms_, cap_window_ms_;
 	uint32_t cap_bits_;

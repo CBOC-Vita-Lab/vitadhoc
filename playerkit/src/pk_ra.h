@@ -43,7 +43,7 @@ namespace pk {
 /* what a refused action says (the same words on every console) */
 #define PK_RA_NO_STATE   (::pk::tr("ra.hardcore_no_states"))
 #define PK_RA_NO_CHEATS  (::pk::tr("ra.hardcore_no_cheats"))
-#define PK_RA_NO_REWIND  (::pk::tr("ra.hardcore_no_rewind"))
+#define PK_RA_NO_REWIND  "ra.hardcore_no_rewind"      /* a catalogue key: Speed::set_rewind_locked() keeps it and the notice says tr() of it */
 
 /* rc_consoles.h ids */
 enum { RA_MEGA_DRIVE = 1, RA_SNES = 3, RA_MASTER_SYSTEM = 11, RA_GAME_GEAR = 15, RA_SG1000 = 33 };

@@ -10,6 +10,7 @@
 #include "harness.h"
 #include "pk_gfx_soft.h"
 #include "pk_glyphs.h"
+#include "pk_i18n.h"
 #include <stdio.h>
 #include <time.h>
 
@@ -132,8 +133,7 @@ int main(int argc, char **argv)
 	cfg.console_label = "Super Nintendo";
 	cfg.caps = CAP_ALL_BASIC | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_CHEATS;      /* no Wide view, no Rewind, no Play together */
 	cfg.accent = 0x7B6CFF;
-	cfg.exit_label = "Exit";
-	cfg.play_together_reason = "Not available for Super NES: the player is a separate program and has no link";
+		cfg.play_together_reason = "Not available for Super NES: the player is a separate program and has no link";
 	cfg.unsupported_reason = "Not available for Super NES";
 	Menu menu;
 	menu.configure(cfg, &host, &states);
@@ -326,6 +326,45 @@ int main(int argc, char **argv)
 		advance(menu, 300);
 		w.snap(menu, "23_japanese_toast");
 		(void) jp_first;
+	}
+
+	/* the pseudo-locale xx-long (about 35% longer, accented): the same pages again, to look at; the text-fit audit (test_uilook.cpp) is the check */
+	{
+		i18n_use(LANG_PSEUDO, 1);
+		EXPECT(i18n_current() == LANG_PSEUDO);
+		cfg.game_name = "Super Example World (USA)";
+		cfg.console_label = "Super Nintendo";
+		host.cheat_list.resize(3);
+		host.cheat_list[0].name = "Infinite lives"; host.cheat_list[0].on = true;
+		host.cheat_list[1].name = "Start with 99 coins";
+		host.cheat_list[2].name = "Walk through walls"; host.cheat_list[2].available = false;
+		menu.configure(cfg, &host, &states);
+		menu.notices().clear();
+		static const struct { Menu::PageId page; const char *name; } pages[] = {
+			{ Menu::PAGE_TOP, "xx_control_centre" }, { Menu::PAGE_STATES, "xx_save_states" }, { Menu::PAGE_SETTINGS, "xx_settings" },
+			{ Menu::PAGE_PICTURE, "xx_picture" }, { Menu::PAGE_CONTROLS, "xx_controls" }, { Menu::PAGE_MAPPING, "xx_button_mapping" },
+			{ Menu::PAGE_SPEED, "xx_speed" }, { Menu::PAGE_INTERFACE, "xx_interface" }, { Menu::PAGE_CHEATS, "xx_cheats" }, { Menu::PAGE_CHEAT_SEARCH, "xx_search_memory" } };
+		size_t xx_first = w.shots.size();
+		for (size_t i = 0; i < sizeof pages / sizeof pages[0]; i++) {
+			menu.goto_page(pages[i].page);
+			advance(menu, 400);
+			w.snap(menu, pages[i].name);
+		}
+		menu.goto_page(Menu::PAGE_TOP);
+		for (int i = 0; i < 6; i++) pkh::press(menu, PH_RIGHT);
+		EXPECT(menu.cursor() == 7);
+		pkh::press(menu, PH_CROSS);
+		EXPECT(menu.modal_open());
+		w.snap(menu, "xx_exit_question");
+		pkh::press(menu, PH_CIRCLE);
+		menu.notices().push(tr("states.the_state_file_is_too_large"), NOTICE_ERROR);
+		advance(menu, 400);
+		w.snap(menu, "xx_error_toast");
+		w.sheet("contact_xx_1", xx_first, 4);
+		w.sheet("contact_xx_2", xx_first + 4, 4);
+		w.sheet("contact_xx_3", xx_first + 8, 4);
+		i18n_use(LANG_EN, 1);
+		EXPECT(i18n_current() == LANG_EN);
 	}
 
 	w.sheet("contact_1", 0, 4);

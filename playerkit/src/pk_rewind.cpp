@@ -374,7 +374,7 @@ RewindAct Rewind::refresh(bool want, bool locked, const char *lock_notice)
 	if (locked && active_) end_session("locked");
 	if (!active_) {
 		if (!pressed) return RW_PLAY;
-		if (locked) { notice_ = lock_notice ? lock_notice : tr("rewind.rewind_is_off_while_games_are"); return RW_PLAY; }
+		if (locked) { notice_ = lock_notice ? tr(lock_notice) : tr("rewind.rewind_is_off_while_games_are"); return RW_PLAY; }
 		wait_idle();
 		if (!have_cur_) { notice_ = tr("rewind.this_is_as_far_back_as"); return RW_PLAY; }
 		active_ = first_land_ = true;

@@ -7100,7 +7100,7 @@ def t_screen_crt_text(S):
     # display.ini that is not text at all, or holds words nobody wrote: the defaults, and the picture as it was
     _, junk = shot("scr_junk", ini=b"\x00\xff\xfe=\n=\nscreen\nscreen=plasma\ntext_size=huge\ncontrast=maybe\n" + bytes(range(256)))
     S.check(junk.tobytes() == plain.tobytes(), "a damaged display.ini means the defaults: the picture is as it was")
-    # Settings > Interface > Text size is the row two above Theme (where the list's Settings opens): RIGHT makes it
+    # Settings > Interface > Text size is the row two above Theme (Language is above it) (where the list's Settings opens): RIGHT makes it
     # Large and display.ini keeps it beside a key it does not know; the other two keys are written with it
     r = S.run("txt_row", "60:start\n+30:up\n+8:up\n+10:right\n+20:shot=row.png\n+10:circle\n+30:quit\n", extra={"display.ini": "future = 7\n"})
     S.clean(r)

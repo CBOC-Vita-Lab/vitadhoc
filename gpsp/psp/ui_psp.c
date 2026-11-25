@@ -2511,7 +2511,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_SCREEN,   /* 2.0: Screen Auto / OLED / LCD / PS TV: one setting for every console (pk_screen.h) */
        SET_HDR_UI,
        /* 2.0: Text size Normal / Large and High contrast Off / On, every menu
-        * (the app and both players).  First of INTERFACE, above Theme where
+        * (the app and both players).  Language, Text size and Contrast head INTERFACE, above Theme where
         * the list's Settings opens: both are on the page as it opens, and no
         * row below Theme moved. */
        SET_LANGUAGE, SET_TEXTSIZE, SET_CONTRAST,

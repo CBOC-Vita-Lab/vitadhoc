@@ -315,6 +315,15 @@ and in emulators; none of it has run on a real Vita yet (see
   games draw a line differently when more than ten sprites share it, as on a
   real Game Boy. Host results; see docs/COMPATIBILITY.md.
 
+**Interface languages**
+
+- **The app speaks eight languages**: English, Spanish, French, German,
+  Italian, Brazilian Portuguese, Japanese and Simplified Chinese. Pick one in
+  Settings > Interface > Language, or leave it on Automatic to follow the Vita
+  system language. The texts are plain files in `lang/` in the package, so a
+  fix or a new translation needs no new build. (The first release carries the
+  English text and the machinery; translations follow.)
+
 **Names in every alphabet**
 
 - Japanese (kana and kanji), Korean, fullwidth forms, accented Latin, Greek and

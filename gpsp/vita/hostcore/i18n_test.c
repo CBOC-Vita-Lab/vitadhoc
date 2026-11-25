@@ -47,25 +47,25 @@ int main(int argc, char **argv)
    CHECK(i18n_use(I18N_EN, 1) == I18N_EN);
    CHECK(!strcmp(tr("settings.language"), "Language"));
    CHECK(!strcmp(tr("no.such.key"), "no.such.key"));       /* the key itself, never NULL or blank */
-   CHECK(!strcmp(tr_en("settings.language.auto"), "Automatic"));
+   CHECK(!strcmp(tr_en("settings.about"), "ABOUT"));
 
    /* a good file with a BOM and CRLF line ends, a comment, a blank line and an escape */
-   PUT("es", "\xef\xbb\xbf# context: the row\r\nsettings.language\tIdioma\r\n\r\nsettings.language.auto\tAutom\xc3\xa1tico\\n2\r\n");
+   PUT("es", "\xef\xbb\xbf# context: the row\r\nsettings.language\tIdioma\r\n\r\nsettings.about\tAutom\xc3\xa1tico\\n2\r\n");
    CHECK(i18n_use(I18N_ES, 1) == I18N_ES);
    CHECK(!strcmp(tr("settings.language"), "Idioma"));
-   CHECK(!strcmp(tr("settings.language.auto"), "Autom\xc3\xa1tico\n2"));
+   CHECK(!strcmp(tr("settings.about"), "Autom\xc3\xa1tico\n2"));
    CHECK(i18n_loaded_count() == 2 && i18n_refused_count() == 0);
    CHECK(!strcmp(tr_en("settings.language"), "Language"));  /* logs and tests keep English */
 
    /* malformed lines are refused one by one; the good ones stay; a missing key shows English */
-   PUT("fr", "no tab here\n\tno key\nbad key\twith space\nsettings.language.auto\t\nsettings.language\tLangue\\q\n"
+   PUT("fr", "no tab here\n\tno key\nbad key\twith space\nsettings.about\t\nsettings.language\tLangue\\q\n"
              "settings.language\tLangue\n"            /* good */
              "unknown.key\tinconnu\n"                 /* not a key of this build: dropped */
-             "settings.language.auto\tbad \xff utf8\n"
-             "settings.language.auto\tctl \x01 char\n");
+             "settings.about\tbad \xff utf8\n"
+             "settings.about\tctl \x01 char\n");
    CHECK(i18n_use(I18N_FR, 1) == I18N_FR);
    CHECK(!strcmp(tr("settings.language"), "Langue"));
-   CHECK(!strcmp(tr("settings.language.auto"), "Automatic"));          /* its only lines were bad: English */
+   CHECK(!strcmp(tr("settings.about"), "ABOUT"));          /* its only lines were bad: English */
    CHECK(i18n_loaded_count() == 1 && i18n_refused_count() >= 6);
 
    /* a file with no usable line, a missing file, a binary file, a huge one: English, no crash */
@@ -83,10 +83,10 @@ int main(int argc, char **argv)
    /* a very long line, no end of line at the end of the file */
    memset(h, 'b', 5000);
    memcpy(h, "settings.language\t", 18);
-   memcpy(h + 5000, "\nsettings.language.auto\tAuto", 28);
-   put("zh-Hans", h, 5028);
+   memcpy(h + 5000, "\nsettings.about\tAuto", 20);
+   put("zh-Hans", h, 5020);
    CHECK(i18n_use(I18N_ZHS, 1) == I18N_ZHS && !strcmp(tr("settings.language"), "Language") &&
-         !strcmp(tr("settings.language.auto"), "Auto") && i18n_refused_count() == 1);
+         !strcmp(tr("settings.about"), "Auto") && i18n_refused_count() == 1);
    free(h);
 
    /* Automatic follows the system's language; a language with no catalogue is English */

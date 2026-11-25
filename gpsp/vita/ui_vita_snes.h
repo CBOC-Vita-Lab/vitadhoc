@@ -224,6 +224,7 @@ static int s2_frame(unsigned edges)
                g_s2.nroom = 0;
                g_s2.frames = 0;
                s2_scan_begin();
+               edges = 0;      /* the press that opened the list is spent: it does not also join a room found at once */
             }
          }
       }

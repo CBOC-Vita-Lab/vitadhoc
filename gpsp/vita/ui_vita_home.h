@@ -937,10 +937,12 @@ static float hm_cap(float x, float y, const char *t)
    vs_text(VS_CAPTION, x + 7, y, t, HC_TEXT2);
    return x + w + 6;
 }
+/* the space after a hint's word: 26, less when the line would leave the screen (Text size Large) */
+static float g_hm_hint_gap = 26;
 static float hm_hint_word(float x, float y, const char *t)
 {
    vs_text(VS_CAPTION, x, y, t, HC_TEXT2);
-   return x + vs_text_w(VS_CAPTION, t) + 26;
+   return x + vs_text_w(VS_CAPTION, t) + g_hm_hint_gap;
 }
 static void hm_home_hints(void)
 {
@@ -948,6 +950,7 @@ static void hm_home_hints(void)
    if (g_pick_on)
    {
       /* the open list's own buttons (hm_pick_pad): the console moves live as the highlight does */
+      g_hm_hint_gap = 26;
       x = hm_cap(x, y, "UP");
       x = hm_cap(x, y, "DOWN");
       x = hm_hint_word(x, y, "Step");
@@ -958,6 +961,17 @@ static void hm_home_hints(void)
       vs_icon(VS_I_BTN_O, x + 10, y + 12, 22, HC_TEXT2);
       hm_hint_word(x + 26, y, "Cancel");
       return;
+   }
+   /* Text size Large: the line is wider than the screen at the usual spaces, so the five spaces after
+    * its words shrink to what fits (at Normal it fits and nothing moves) */
+   {
+      const char *find = g_find[0] ? "Clear" : "Find";
+      float w = 4 * 26 + 36 + vs_text_w(VS_CAPTION, "Play") + vs_text_w(VS_CAPTION, "Star") +
+                vs_text_w(VS_CAPTION, find) + vs_text_w(VS_CAPTION, "Views") + vs_text_w(VS_CAPTION, "Lists") +
+                vs_text_w(VS_CAPTION, "Settings") + vs_text_w(VS_CAPTION, "SELECT") +
+                vs_text_w(VS_CAPTION, "SELECT +") + vs_text_w(VS_CAPTION, "START") + 3 * (14 + 6);
+      float gap = (VS_W - 2 * HM_X - w) / 5;
+      g_hm_hint_gap = gap >= 26 ? 26 : gap < 8 ? 8 : gap;
    }
    vs_icon(VS_I_BTN_X, x + 10, y + 12, 22, HC_TEXT2);
    x = hm_hint_word(x + 26, y, "Play");

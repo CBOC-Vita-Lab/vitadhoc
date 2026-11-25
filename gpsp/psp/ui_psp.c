@@ -10054,6 +10054,7 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
 {
 #ifdef VITA
    const int hide_base = g_m3u_hide_n;
+   int m3u_read = 0;            /* this folder's .m3u files read (m3u_hide_dir) */
 #endif
    char dir[PSP_FILE_PATH_CAP];
    SceUID d;
@@ -10082,8 +10083,6 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
    }
    memset(&ent, 0, sizeof(ent));
 #ifdef VITA
-   if (console == FE_CONSOLE_SCD || g_side[FE_CONSOLE_SCD].on)
-      m3u_hide_dir(dir);
    if (g_dirset_n < sizeof(g_dirset) / sizeof(g_dirset[0]))
       g_dirset[g_dirset_n++] = savset_hash(dir, strlen(dir), NULL);
    else
@@ -10157,12 +10156,29 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
                       ent.d_name);
             }
             else
+            {
+#ifdef VITA
+               /* (an .m3u here may name discs in the folder below) */
+               if (!m3u_read && (console == FE_CONSOLE_SCD || g_side[FE_CONSOLE_SCD].on))
+               {
+                  m3u_hide_dir(dir);
+                  m3u_read = 1;
+               }
+#endif
                rom_scan_dir(sub, depth - 1, n, console);
+            }
          }
       }
 #ifdef VITA
-      /* (a disc an .m3u names: the .m3u is the game) */
-      else if (g_m3u_hide_n && m3u_hidden(dir, ent.d_name))
+      /* (a disc an .m3u names: the .m3u is the game).  The folder's .m3u
+       * files are read when its first disc or subfolder is met, not before
+       * every folder: a folder of cartridges is read once, as it always was
+       * (a second read of a large folder on a slow card took as long again,
+       * with no frame drawn and CIRCLE unheard) */
+      else if ((console == FE_CONSOLE_SCD || g_side[FE_CONSOLE_SCD].on) &&
+               pk_m3u_is_disc(ent.d_name) &&
+               (m3u_read || (m3u_hide_dir(dir), m3u_read = 1)) &&
+               g_m3u_hide_n && m3u_hidden(dir, ent.d_name))
       {
       }
       /* (another console's game: into its own list, rom_side_add) */

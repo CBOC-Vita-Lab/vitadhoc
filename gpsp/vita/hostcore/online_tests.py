@@ -1099,11 +1099,15 @@ def lib_b_script(code, tail, shots=("card.png",), press=True):
     return s + tail
 
 
-def t_library_join(T):
-    """Join online from the game list: the matching game opens and joins; a cable game with another file asks"""
+def t_library_join(T, files=0):
+    """Join online from the game list: the matching game opens and joins (this part); a cable game with another file
+    asks (library_join_files) and with both files the host's opens (library_join_both): scenarios of their own, so
+    each fits a ten-minute run"""
     src = open(L.LINKTEST, "rb").read()
     other = bytearray(src)
     other[len(other) // 2] ^= 0x5A
+    if files:
+        return library_join_files(T, other, files)
     # 1. B has the host's file: the card offers it directly, X opens it and joins
     def b_open(code):
         return lib_b_script(code, L.keys("cross", first=L.AFTER_SHOT) + "+%d:shot=linking.png\n" % L.dur(6) +
@@ -1125,6 +1129,21 @@ def t_library_join(T):
     T.linktest_verdict(rb, "B", 2, loops=0)
     T.same_machines(rig.ra, rb)
     T.picture(rb, "B", "card.png")
+
+
+def t_library_join_files(T):
+    """Join online from the game list: a cable game with another file asks and opens nothing by itself"""
+    t_library_join(T, files=2)
+
+
+def t_library_join_both(T):
+    """Join online from the game list: with the host's file and another one, the host's opens"""
+    t_library_join(T, files=3)
+
+
+def library_join_files(T, other, part):
+    if part == 3:
+        return library_join_both(T, other)
     # 2. B has only a different file with the host's game code: it asks, shows the file, never opens by itself
     def b_ask(code):
         return lib_b_script(code, "+%d:shot=asked.png\n" % L.dur(6) + L.keys("circle", "circle", first=L.AFTER_SHOT) +
@@ -1140,6 +1159,9 @@ def t_library_join(T):
             "B: one file with the game's code was found and the page asks (pick=ASK) (%s)" % (done[-1]["_"] if done else "none"))
     T.check(not rb.has(r"online_open_join") and not rb.has(r"link_running"), "B: nothing was opened by itself")
     T.picture(rb, "B", "asked.png")
+
+
+def library_join_both(T, other):
     # 3. B has the other file AND the host's: the host's is offered directly (the other is ignored)
     def b_both(code):
         return lib_b_script(code, "+%d:shot=search.png\n" % L.dur(5) + L.keys("cross", first=L.AFTER_SHOT) +
@@ -1152,7 +1174,6 @@ def t_library_join(T):
     T.clean(rig.rb, "B")
     T.clean(rig.ra, "A")
     T.check(rb.has(r"online_open_join rom_match=1"), "B: with the host's file among two, it is the one that opens")
-
 
 
 # ---- Two players Online: a NES game here, a SNES game handed to snes.bin -----------------------------
@@ -1613,7 +1634,7 @@ TESTS = [
     ("punch_opens_host", t_punch_opens_host),
     ("gb", t_gb_punch), ("gb_relay", t_gb_relay), ("gbc", t_gbc_punch), ("gbc_relay", t_gbc_relay), ("adapter", t_adapter), ("share", t_share),
     ("wrong_code", t_wrong_code), ("expired", t_expired), ("update_required", t_update_required),
-    ("version", t_version), ("different_game", t_different_game), ("library_join", t_library_join),
+    ("version", t_version), ("different_game", t_different_game), ("library_join", t_library_join), ("library_join_files", t_library_join_files), ("library_join_both", t_library_join_both),
     ("busy", t_busy), ("slow_down", t_slow_down), ("service_down", t_service_down),
     ("lost_answer", t_lost_answer), ("cancel_after_failure", t_cancel_after_failure), ("drop", t_drop_midlink),
     ("rtt_100", t_rtt_100), ("rtt_150", t_rtt_150), ("rtt_200", t_rtt_200), ("delay_cap", t_delay_cap),
@@ -1629,8 +1650,8 @@ for _fam in CORE_FAMS + TP_FAMS:
 # armhf (under qemu, several times the wall time): the sessions
 RUNS = {
     "x86": [n for n, _ in TESTS],
-    "armhf": ["punch", "relay", "gb", "lost_answer", "library_join"],
-    "aarch64": ["punch", "relay", "gb", "lost_answer", "library_join"],
+    "armhf": ["punch", "relay", "gb", "lost_answer", "library_join", "library_join_files", "library_join_both"],
+    "aarch64": ["punch", "relay", "gb", "lost_answer", "library_join", "library_join_files", "library_join_both"],
     "mixed64": ["punch", "gb"],
 }
 

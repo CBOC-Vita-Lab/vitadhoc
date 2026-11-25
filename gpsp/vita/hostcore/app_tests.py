@@ -374,6 +374,25 @@ def set_up(n):
     return "+20:up\n" + "+8:up\n" * (n - 1)
 
 
+def _set_enum():
+    """The Vita's Settings rows in enum order (psp/ui_psp.c): the numbers the
+    app logs as "settings_row row=N" when the highlight moves."""
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "psp", "ui_psp.c")).read()
+    i = src.index("enum { SET_HDR_WL, SET_NAME")
+    body = re.sub(r"/\*.*?\*/", "", src[i:src.index("SET_COUNT };", i)], flags=re.S)
+    return re.findall(r"SET_[A-Z0-9_]+", body)
+
+
+SET_ENUM = _set_enum()
+
+
+def walked_to(r):
+    """The row a Settings walk ended on, by the app's own row lines (SET_...):
+    shown in a failure, so a walk whose count went stale says where it went."""
+    rows = [d["row"] for d in r.evt("settings_row") if d.get("row", "").isdigit()]
+    return SET_ENUM[int(rows[-1])] if rows and int(rows[-1]) < len(SET_ENUM) else None
+
+
 QUIT_TO_LIST = menu_pick(6)
 EXIT_APP = menu_pick(7)
 
@@ -2240,9 +2259,9 @@ def t_touch(S):
 230:touch=480/272:40
 290:drag=300/200/600/300:10
 330:shot=still_game.png
-# the Cheats card by touch, and back with the footer's hint
+# the Cheats card by touch (the fourth of eight since Save clip: x 372..476), and back with the footer's hint
 +2:touch=480/272
-+20:touch=480/420
++20:touch=424/420
 +20:shot=cheats.png
 +10:quit
 """
@@ -7441,10 +7460,10 @@ def t_controls_defaults(S):
     S.check(not r.has(r"^EVT session game="),
             "with Circle as A, Cross does not play")
 
-    # -- the three rows, at the end of Settings (UP from the top wraps to
-    # Button mapping, then Button test, Rear touch panel, Tap screen for menu,
+    # -- the three rows, at the end of Settings (UP from Theme passes High
+    # contrast, Text size and the Library rows to Button mapping, then Button test, Rear touch panel, Tap screen for menu,
     # Screenshot button combo, Rewind with right stick, A and B buttons)
-    walk = ("60:start\n" + "+8:up\n" * 12 + "+10:shot=ab.png\n+4:right\n"
+    walk = ("60:start\n" + "+8:up\n" * 14 + "+10:shot=ab.png\n+4:right\n"
             "+10:shot=ab2.png\n+8:down\n+4:right\n+10:shot=stick.png\n"
             "+8:down\n+4:right\n+10:shot=combo.png\n"
             "+8:down\n+4:right\n+10:shot=tap.png\n+20:quit\n")
@@ -7454,7 +7473,7 @@ def t_controls_defaults(S):
             r.has(r"^EVT stick_rewind_setting on=1") and
             r.has(r"^EVT screenshot_combo_setting on=1") and
             r.has(r"^EVT tap_menu_setting on=0"),
-            "each row changes its setting (Tap screen for menu: On, then Off)")
+            "each row changes its setting (Tap screen for menu: On, then Off; walk ended on %s)" % walked_to(r))
     ini = open(os.path.join(r.root, "config.ini")).read()
     S.check(re.search(r"^ab_buttons = 1$", ini, re.M) and
             re.search(r"^stick_rewind = 1$", ini, re.M) and
@@ -7464,7 +7483,7 @@ def t_controls_defaults(S):
     for n in ("ab.png", "ab2.png", "stick.png", "combo.png", "tap.png"):
         S.picture(r, n)
     # ...and the screenshot row switches it off again
-    r = S.run("controls_rows", "60:start\n" + "+8:up\n" * 10 +
+    r = S.run("controls_rows", "60:start\n" + "+8:up\n" * 12 +
               "+4:right\n+10:shot=off.png\n+20:quit\n", prepared=True)
     S.clean(r)
     S.check(r.has(r"^EVT screenshot_combo_setting on=0") and
@@ -8222,14 +8241,14 @@ def t_rear_touch(S):
     S.clean(r)
     S.check(len(r.evt("state_save")) >= 1, "a rear corner bound to Quick save saves the game")
     # the setting is kept by config.ini, only once chosen
-    r = S.run("rear_row", "60:start\n" + "+8:up\n" * 8 + "+10:right\n+10:shot=row.png\n+20:quit\n")
+    r = S.run("rear_row", "60:start\n" + "+8:up\n" * 10 + "+10:right\n+10:shot=row.png\n+20:quit\n")
     S.clean(r)
     ini = open(os.path.join(r.root, "config.ini")).read()
     S.check(r.has(r"^EVT rear_touch_setting on=1") and re.search(r"^rear_touch = 1$", ini, re.M),
-            "Settings > Controls > Rear touch panel turns it on and config.ini keeps it")
+            "Settings > Controls > Rear touch panel turns it on and config.ini keeps it (walk ended on %s)" % walked_to(r))
     S.picture(r, "row.png")
     # Button mapping (here from the game list) takes a corner as it takes a button, and names it
-    r = S.run("rear_capture", "60:start\n" + "+8:up\n" * 6 + "+10:cross\n+30:cross\n+20:rear=200/200:10\n+40:shot=bound.png\n"
+    r = S.run("rear_capture", "60:start\n" + "+8:up\n" * 8 + "+10:cross\n+30:cross\n+20:rear=200/200:10\n+40:shot=bound.png\n"
               "+10:circle\n+20:quit\n", config={"rear_touch": 1, "bind_quicksave": "REAR_BR+L"})
     S.clean(r)
     S.check(r.has(r"^EVT ctl_bind key=bind_a mask=0x10000 err=0 .*via=capture"),
@@ -8237,7 +8256,7 @@ def t_rear_touch(S):
     S.picture(r, "bound.png")
     # ...and with the row Off a finger resting on the back is not part of what is captured
     # (in a game: Settings, up to Button mapping)
-    r = S.run("rear_capture_off", menu_pick(4, wait=100) + set_up(13) + "+10:cross\n+30:cross\n+10:rear=200/200:120\n"
+    r = S.run("rear_capture_off", menu_pick(4, wait=100) + set_up(16) + "+10:cross\n+30:cross\n+10:rear=200/200:120\n"
               "+30:triangle\n+60:circle\n+20:quit\n", autoboot="gbadhoc-test.gba")
     S.clean(r)
     S.check(r.has(r"^EVT ctl_bind key=bind_a mask=0x1000 err=0 .*via=capture"),
@@ -8252,7 +8271,7 @@ def t_rear_touch(S):
 def t_button_test(S):
     """Settings > Controls > Button test (2.0): a page that shows every input; Start +
     Select held leaves it, no single button does."""
-    script = ("60:start\n" + "+8:up\n" * 7 + "+10:cross\n+20:shot=open.png\n"
+    script = ("60:start\n" + "+8:up\n" * 9 + "+10:cross\n+20:shot=open.png\n"
               "+4:cross:20\n+0:circle:20\n+0:l+r:20\n+0:triangle:20\n+0:start:40\n+0:select:40\n"
               "+30:touch=480/272:20\n+0:rear=200/200:20\n+0:shot=lit.png\n"
               "+40:shot=still.png\n"
@@ -8262,7 +8281,7 @@ def t_button_test(S):
     S.clean(r)
     scr = [d["name"] for d in r.evt("ui_screen")]
     S.check(scr[-2:] == ["button_test", "settings"] and scr.count("button_test") == 1,
-            "the row opens the page, and only Start + Select held leaves it (screens: %s)" % scr)
+            "the row opens the page, and only Start + Select held leaves it (screens: %s, walk ended on %s)" % (scr, walked_to(r)))
     for n in ("open.png", "lit.png", "still.png", "short.png", "left.png"):
         S.picture(r, n)
     a, b = r.shot("open.png"), r.shot("lit.png")
@@ -8272,7 +8291,7 @@ def t_button_test(S):
     S.check(not r.evt("menu_open"), "no touch or button on the page opens the menu")
     # a console whose Start or Select is the worn button is not kept on the page: a finger held on the footer's
     # line for a second leaves too (a shorter touch there, or a long one anywhere else, does not)
-    r = S.run("button_test_touch", "60:start\n" + "+8:up\n" * 7 + "+10:cross\n+30:touch=480/272:90\n+100:touch=480/530:30\n"
+    r = S.run("button_test_touch", "60:start\n" + "+8:up\n" * 9 + "+10:cross\n+30:touch=480/272:90\n+100:touch=480/530:30\n"
               "+40:shot=stays.png\n+10:touch=480/530:90\n+30:shot=holding.png\n+80:shot=left.png\n+30:quit\n")
     S.clean(r)
     scr = [d["name"] for d in r.evt("ui_screen")]
@@ -8282,12 +8301,12 @@ def t_button_test(S):
     S.check(ImageChops.difference(a, b).getbbox() is not None, "...a short touch there and a long one elsewhere did not")
     S.picture(r, "holding.png")
     # in a game: the same page, and the chord that leaves it leaves the menu open behind it
-    r = S.run("button_test_game", menu_pick(4, wait=100) + set_up(14) + "+10:cross\n+30:shot=page.png\n"
+    r = S.run("button_test_game", menu_pick(4, wait=100) + set_up(17) + "+10:cross\n+30:shot=page.png\n"
               "+10:start+select:50\n+40:shot=back.png\n+10:quit\n", autoboot="gbadhoc-test.gba")
     S.clean(r)
     scr = [d["name"] for d in r.evt("ui_screen")]
     S.check(scr[-2:] == ["button_test", "settings"] and len(r.evt("menu_open")) == 1 and not r.evt("menu_closed"),
-            "in a game Start + Select leaves the page for Settings, the menu stays open (screens: %s)" % scr)
+            "in a game Start + Select leaves the page for Settings, the menu stays open (screens: %s, walk ended on %s)" % (scr, walked_to(r)))
     S.picture(r, "page.png")
 
 
@@ -10079,13 +10098,13 @@ def t_gbcam(S):
     r = S.run("gbcam_plain", "30:quit\n", autoboot="plain.gb", extra={"roms/plain.gb": plain})
     S.clean(r)
     S.check(not r.has(r"^EVT camera_game"), "an ordinary cartridge starts no camera")
-    # 6. Settings > THIS GAME > Camera (18 rows up from Screen size, in a Camera game): Front, Back,
+    # 6. Settings > THIS GAME > Camera (24 rows up from Screen size, in a Camera game): Front, Back,
     # Picture file in turn, the game's file keeps it, and the picture follows at once
-    script = "1:camera=ramp\n" + menu_pick(4, wait=60) + set_up(18) + "+10:cross\n+10:cross\n+30:quit\n"
+    script = "1:camera=ramp\n" + menu_pick(4, wait=60) + set_up(24) + "+10:cross\n+10:cross\n+30:quit\n"
     r = S.run("gbcam_row", script, autoboot="cam.gb", extra={"roms/cam.gb": rom})
     S.clean(r)
     S.check([e["mode"] for e in r.evt("camera_setting")] == ["1", "2"],
-            "the Camera row goes Front, Back, Picture file (%s)" % [e["mode"] for e in r.evt("camera_setting")])
+            "the Camera row goes Front, Back, Picture file (%s, walk ended on %s)" % ([e["mode"] for e in r.evt("camera_setting")], walked_to(r)))
     S.check(re.search(r"^camera = 2$", open(os.path.join(r.root, "games", "cam.gb.ini")).read(), re.M) is not None,
             "the game's file keeps Picture file")
     S.check(r.has(r"^EVT camera_source mode=2 "), "and the game follows at once")
@@ -10156,12 +10175,12 @@ def t_gbprinter(S):
                   rom=_gb_rom(prog, 0x00, 1, 0, {0x4000: open_stream}, title=b"PRINTTEST"))
     S.check(r.has(r"^EVT quick_response mode=on") and r.has(r"^EVT gb_printer strip=1 w=160 h=24") and
             len(files) == 1, "Quick response On: the open strip (160x24) is closed and saved (%d files)" % len(files))
-    r = S.run("gbprinter_row", menu_pick(4, wait=60) + set_up(17) + "+10:cross\n+30:quit\n",
+    r = S.run("gbprinter_row", menu_pick(4, wait=60) + set_up(23) + "+10:cross\n+30:quit\n",
               autoboot="prn.gb", extra={"roms/prn.gb": rom})
     S.clean(r)
     S.check([e["on"] for e in r.evt("printer_setting")] == ["0"] and
             re.search(r"^gb_printer = 0$", open(os.path.join(r.root, "config.ini")).read(), re.M) is not None,
-            "the Game Boy Printer row turns Off and config.ini keeps it")
+            "the Game Boy Printer row turns Off and config.ini keeps it (walk ended on %s)" % walked_to(r))
     # Off: the game finds no printer, nothing is saved
     r, files = go("gbprinter_off", config={"gb_printer": 0})
     S.check(not files and not r.has(r"^EVT gb_printer "), "Game Boy Printer Off: nothing printed")

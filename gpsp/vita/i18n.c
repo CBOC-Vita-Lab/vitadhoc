@@ -78,7 +78,7 @@ static int conv_sig(const char *s, char *out, size_t n)
       if (*s != '%')
          continue;
       s++;
-      if (*s == '%')
+      if (*s == '%' || *s == ' ')   /* "%%"; "20 % fast" is a percent sign and a space, not the space flag */
          continue;
       for (; *s && strchr("-+ #0123456789.*hlLzjtq", *s); s++)
       {
@@ -474,6 +474,20 @@ const char *tr_english_of(const char *text)
       if (i18n_en[i].val == text)
          return text;
    return text;
+}
+
+void i18n_date(char *out, size_t n, int year, int mon, int day)
+{
+   static const char *const mk[12] = { "ui.jan", "ui.feb", "ui.mar", "ui.apr", "ui.may", "ui.jun",
+                                       "ui.jul", "ui.aug", "ui.sep", "ui.oct", "ui.nov", "ui.dec" };
+   const char *m = tr(mk[(mon < 1 || mon > 12 ? 1 : mon) - 1]);
+   const char *o = tr("ui.date_order");
+   if (!strcmp(o, "mdy"))
+      snprintf(out, n, "%s %d, %d", m, day, year);
+   else if (!strcmp(o, "ymd"))
+      snprintf(out, n, "%d %s %d", year, m, day);
+   else
+      snprintf(out, n, "%d %s %d", day, m, year);
 }
 
 const char *tr(const char *key)

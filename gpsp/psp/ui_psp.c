@@ -7911,16 +7911,15 @@ static int state_thumb_read(const char *state_path, uint16_t *dst)
  * the fields are not a date. */
 static void ov_stamp(char *out, size_t n, const ScePspDateTime *t)
 {
-   const char *mon[12] = { tr("ui.jan"), tr("ui.feb"), tr("ui.mar"), tr("ui.apr"), tr("ui.may"), tr("ui.jun"),
-                                  tr("ui.jul"), tr("ui.aug"), tr("ui.sep"), tr("ui.oct"), tr("ui.nov"), tr("ui.dec") };
+   char date[40];
    if (!t || t->month < 1 || t->month > 12 || t->day < 1 || t->day > 31 ||
        t->hour > 23 || t->minute > 59)
    {
       out[0] = '\0';
       return;
    }
-   snprintf(out, n, "%d %s %d, %02d:%02d", t->day, mon[t->month - 1],
-            t->year, t->hour, t->minute);
+   i18n_date(date, sizeof(date), t->year, t->month, t->day);
+   snprintf(out, n, "%s, %02d:%02d", date, t->hour, t->minute);
 }
 
 /* Which slots hold a state, and when each was saved: five stats.  Once per

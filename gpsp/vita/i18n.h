@@ -60,6 +60,9 @@ int  i18n_refused_count(void);
  * key itself for a key nobody knows.  Never NULL, never empty for a key the
  * English table holds. */
 const char *tr(const char *key);
+/* "3 Oct 2026" (year, month 1..12, day): the order is the language's own
+ * (key ui.date_order: dmy, mdy or ymd), the month name is ui.jan..ui.dec. */
+void i18n_date(char *out, size_t n, int year, int mon, int day);
 /* The English text of a key (logs and tests read English whatever the
  * setting). */
 const char *tr_en(const char *key);

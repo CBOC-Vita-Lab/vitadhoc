@@ -524,6 +524,7 @@ static const struct { const char *key, *val; } kEn[] = {
 	{ "states.apr", "Apr" },
 	{ "states.aug", "Aug" },
 	{ "states.could_not_save_the_state", "Could not save the state: %s" },
+	{ "states.date_order", "dmy" },
 	{ "states.dec", "Dec" },
 	{ "states.feb", "Feb" },
 	{ "states.jan", "Jan" },

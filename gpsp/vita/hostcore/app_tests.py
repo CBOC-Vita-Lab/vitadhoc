@@ -1204,7 +1204,7 @@ def t_recent(S):
     # Settings > LIBRARY > Game order, from the game list: the browser's
     # Settings, wrapping upwards from the top: Button mapping, then Game
     # order (LIBRARY, between GAMEPLAY and CONTROLS).
-    r = S.run("recent_setting", "60:start\n+30:up\n+8:up\n+8:up\n+10:shot=row.png\n"
+    r = S.run("recent_setting", "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n"
               "+4:right\n+10:shot=row_last.png\n+4:circle\n+60:left\n+30:cross\n"
               "+30:quit\n", config=base, extra=extra)
     S.clean(r)
@@ -3678,7 +3678,8 @@ def t_collections(S):
     S.check(r.has(r"^EVT collections_load n=1 games=1 rc=0 lossy=0"),
             "a collections.txt that starts with a byte order mark is read whole")
     src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ui_vita_lists.h")).read()
-    S.check("cannot be changed safely" in src and "too big to change" not in src,
+    cat = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lang", "en.txt"), encoding="utf-8").read()
+    S.check("cannot be changed safely" in cat and "too big to change" not in cat + src,
             "a list that was read lossy says it cannot be changed safely, not that it is too big")
 
     # The automatic views rest on the play log: Most played (longest first),
@@ -6393,7 +6394,7 @@ def t_save_sync(S):
     S.check(not r.has(r"^EVT save_sync_out "), "...and nothing was written back")
     S.check(ours(r)[64:32768] == src[64:], "the save was still imported")
     # 7. the Settings row (Library, above Game folders): default on, toggles, persists
-    walk = "60:start\n+30:up\n" + "+8:up\n" * 4 + "+10:shot=row.png\n"
+    walk = "60:start\n+30:up\n" + "+8:up\n" * 5 + "+10:shot=row.png\n"
     r = S.run("save_sync_row", walk + "+4:right\n+20:circle\n+30:quit\n")
     S.clean(r)
     S.check(r.has(r"^EVT sync_ra_saves on=0 saved=1"), "the row turns it off and saves it")
@@ -6861,7 +6862,7 @@ def t_folders_ui(S):
     os.symlink(os.path.join(root, "mine"), A)
     # START: Settings; UP wraps to Button mapping, then Game order, then
     # Game folders
-    walk = "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n+4:cross\n"
+    walk = "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n+4:cross\n"
     r = S.run("folders_ui", walk + "+4:type=%s\n+40:circle\n+90:quit\n" % A,
               prepared=True)
     S.clean(r)
@@ -7739,7 +7740,7 @@ def t_controls_defaults(S):
     # -- the three rows, at the end of Settings (UP from Theme passes High
     # contrast, Text size and the Library rows to Button mapping, then Button test, Rear touch panel, Tap screen for menu,
     # Screenshot button combo, Rewind with right stick, A and B buttons)
-    walk = ("60:start\n" + "+8:up\n" * 14 + "+10:shot=ab.png\n+4:right\n"
+    walk = ("60:start\n" + "+8:up\n" * 15 + "+10:shot=ab.png\n+4:right\n"
             "+10:shot=ab2.png\n+8:down\n+4:right\n+10:shot=stick.png\n"
             "+8:down\n+4:right\n+10:shot=combo.png\n"
             "+8:down\n+4:right\n+10:shot=tap.png\n+20:quit\n")
@@ -7759,7 +7760,7 @@ def t_controls_defaults(S):
     for n in ("ab.png", "ab2.png", "stick.png", "combo.png", "tap.png"):
         S.picture(r, n)
     # ...and the screenshot row switches it off again
-    r = S.run("controls_rows", "60:start\n" + "+8:up\n" * 12 +
+    r = S.run("controls_rows", "60:start\n" + "+8:up\n" * 13 +
               "+4:right\n+10:shot=off.png\n+20:quit\n", prepared=True)
     S.clean(r)
     S.check(r.has(r"^EVT screenshot_combo_setting on=0") and
@@ -7971,7 +7972,7 @@ def t_snes_library(S):
 
 
 # Settings > LIBRARY > Game names: one above Cover picture (GitHub #16).
-NAMES_ROW = "60:start\n+30:up\n" + "+8:up\n" * 6
+NAMES_ROW = "60:start\n+30:up\n" + "+8:up\n" * 7
 
 
 def names_library(S):
@@ -8517,14 +8518,14 @@ def t_rear_touch(S):
     S.clean(r)
     S.check(len(r.evt("state_save")) >= 1, "a rear corner bound to Quick save saves the game")
     # the setting is kept by config.ini, only once chosen
-    r = S.run("rear_row", "60:start\n" + "+8:up\n" * 10 + "+10:right\n+10:shot=row.png\n+20:quit\n")
+    r = S.run("rear_row", "60:start\n" + "+8:up\n" * 11 + "+10:right\n+10:shot=row.png\n+20:quit\n")
     S.clean(r)
     ini = open(os.path.join(r.root, "config.ini")).read()
     S.check(r.has(r"^EVT rear_touch_setting on=1") and re.search(r"^rear_touch = 1$", ini, re.M),
             "Settings > Controls > Rear touch panel turns it on and config.ini keeps it (walk ended on %s)" % walked_to(r))
     S.picture(r, "row.png")
     # Button mapping (here from the game list) takes a corner as it takes a button, and names it
-    r = S.run("rear_capture", "60:start\n" + "+8:up\n" * 8 + "+10:cross\n+30:cross\n+20:rear=200/200:10\n+40:shot=bound.png\n"
+    r = S.run("rear_capture", "60:start\n" + "+8:up\n" * 9 + "+10:cross\n+30:cross\n+20:rear=200/200:10\n+40:shot=bound.png\n"
               "+10:circle\n+20:quit\n", config={"rear_touch": 1, "bind_quicksave": "REAR_BR+L"})
     S.clean(r)
     S.check(r.has(r"^EVT ctl_bind key=bind_a mask=0x10000 err=0 .*via=capture"),
@@ -8532,7 +8533,7 @@ def t_rear_touch(S):
     S.picture(r, "bound.png")
     # ...and with the row Off a finger resting on the back is not part of what is captured
     # (in a game: Settings, up to Button mapping)
-    r = S.run("rear_capture_off", menu_pick(4, wait=100) + set_up(16) + "+10:cross\n+30:cross\n+10:rear=200/200:120\n"
+    r = S.run("rear_capture_off", menu_pick(4, wait=100) + set_up(17) + "+10:cross\n+30:cross\n+10:rear=200/200:120\n"
               "+30:triangle\n+60:circle\n+20:quit\n", autoboot="gbadhoc-test.gba")
     S.clean(r)
     S.check(r.has(r"^EVT ctl_bind key=bind_a mask=0x1000 err=0 .*via=capture"),
@@ -8547,7 +8548,7 @@ def t_rear_touch(S):
 def t_button_test(S):
     """Settings > Controls > Button test (2.0): a page that shows every input; Start +
     Select held leaves it, no single button does."""
-    script = ("60:start\n" + "+8:up\n" * 9 + "+10:cross\n+20:shot=open.png\n"
+    script = ("60:start\n" + "+8:up\n" * 10 + "+10:cross\n+20:shot=open.png\n"
               "+4:cross:20\n+0:circle:20\n+0:l+r:20\n+0:triangle:20\n+0:start:40\n+0:select:40\n"
               "+30:touch=480/272:20\n+0:rear=200/200:20\n+0:shot=lit.png\n"
               "+40:shot=still.png\n"
@@ -8567,7 +8568,7 @@ def t_button_test(S):
     S.check(not r.evt("menu_open"), "no touch or button on the page opens the menu")
     # a console whose Start or Select is the worn button is not kept on the page: a finger held on the footer's
     # line for a second leaves too (a shorter touch there, or a long one anywhere else, does not)
-    r = S.run("button_test_touch", "60:start\n" + "+8:up\n" * 9 + "+10:cross\n+30:touch=480/272:90\n+100:touch=480/530:30\n"
+    r = S.run("button_test_touch", "60:start\n" + "+8:up\n" * 10 + "+10:cross\n+30:touch=480/272:90\n+100:touch=480/530:30\n"
               "+40:shot=stays.png\n+10:touch=480/530:90\n+30:shot=holding.png\n+80:shot=left.png\n+30:quit\n")
     S.clean(r)
     scr = [d["name"] for d in r.evt("ui_screen")]
@@ -8577,7 +8578,7 @@ def t_button_test(S):
     S.check(ImageChops.difference(a, b).getbbox() is not None, "...a short touch there and a long one elsewhere did not")
     S.picture(r, "holding.png")
     # in a game: the same page, and the chord that leaves it leaves the menu open behind it
-    r = S.run("button_test_game", menu_pick(4, wait=100) + set_up(17) + "+10:cross\n+30:shot=page.png\n"
+    r = S.run("button_test_game", menu_pick(4, wait=100) + set_up(18) + "+10:cross\n+30:shot=page.png\n"
               "+10:start+select:50\n+40:shot=back.png\n+10:quit\n", autoboot="gbadhoc-test.gba")
     S.clean(r)
     scr = [d["name"] for d in r.evt("ui_screen")]
@@ -10376,7 +10377,7 @@ def t_gbcam(S):
     S.check(not r.has(r"^EVT camera_game"), "an ordinary cartridge starts no camera")
     # 6. Settings > THIS GAME > Camera (24 rows up from Screen size, in a Camera game): Front, Back,
     # Picture file in turn, the game's file keeps it, and the picture follows at once
-    script = "1:camera=ramp\n" + menu_pick(4, wait=60) + set_up(24) + "+10:cross\n+10:cross\n+30:quit\n"
+    script = "1:camera=ramp\n" + menu_pick(4, wait=60) + set_up(25) + "+10:cross\n+10:cross\n+30:quit\n"
     r = S.run("gbcam_row", script, autoboot="cam.gb", extra={"roms/cam.gb": rom})
     S.clean(r)
     S.check([e["mode"] for e in r.evt("camera_setting")] == ["1", "2"],
@@ -10451,7 +10452,7 @@ def t_gbprinter(S):
                   rom=_gb_rom(prog, 0x00, 1, 0, {0x4000: open_stream}, title=b"PRINTTEST"))
     S.check(r.has(r"^EVT quick_response mode=on") and r.has(r"^EVT gb_printer strip=1 w=160 h=24") and
             len(files) == 1, "Quick response On: the open strip (160x24) is closed and saved (%d files)" % len(files))
-    r = S.run("gbprinter_row", menu_pick(4, wait=60) + set_up(23) + "+10:cross\n+30:quit\n",
+    r = S.run("gbprinter_row", menu_pick(4, wait=60) + set_up(24) + "+10:cross\n+30:quit\n",
               autoboot="prn.gb", extra={"roms/prn.gb": rom})
     S.clean(r)
     S.check([e["on"] for e in r.evt("printer_setting")] == ["0"] and

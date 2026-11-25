@@ -160,6 +160,13 @@ $(B)/gen/gpu_shaders.h: $(GPU_SHADERS)
 	     echo ";"; done; } > $@.tmp && mv $@.tmp $@
 $(B)/app/vita/vback_vita2d.o: $(B)/gen/gpu_shaders.h
 $(B)/app/vita/vback_vita2d.o: APP_FILE_FLAGS := -I$(B)/gen
+# The HTTPS client's own objects use Mbed TLS structs, so they take the library's enum size (-fno-short-enums,
+# gpsp/vita/deps/Makefile.mbedtls; arm-vita-eabi-gcc defaults to 1-byte enums, and mbedtls_ssl_config is then 4
+# bytes shorter than the library's). Their public header (np_https.h) keeps every enum 4 bytes wide, so the rest of
+# the app, built with the default, sees the same layout.
+NET_ENUM_FLAGS := -fno-short-enums
+$(B)/app/nethttps/np_https.o $(B)/app/nethttps/np_https_sys.o $(B)/app/nethttps/np_https_tls_mbedtls.o: \
+  APP_FILE_FLAGS := $(NET_ENUM_FLAGS)
 # The upscaler's per-pixel loops (Scale2x/3x, the picture's preparation):
 # -O3 for this object only (a third fewer instructions in epx_rows on the
 # host twin); the rest of the app stays -O2.

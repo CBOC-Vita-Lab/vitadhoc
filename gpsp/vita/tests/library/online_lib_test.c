@@ -14,6 +14,7 @@
 
 #include "../../online_lib.h"
 #include "../../ui_host_hooks.h"
+#include "../../disc_id.h"
 
 char g_app_rom_dir[APP_PATH_CAP];
 static char g_extra[2][APP_PATH_CAP];
@@ -25,12 +26,28 @@ const char *ui_host_extra_root(int i) { return g_extra[i]; }
 unsigned long fe_crc32(unsigned long c, const void *d, unsigned long n) { (void)d; (void)n; return c; }
 int stbi_zlib_decode_noheader_buffer(char *o, int ol, const char *i, int il) { (void)o; (void)ol; (void)i; (void)il; return -1; }
 
+static uint32_t test_crc(uint32_t crc, const uint8_t *p, size_t n)
+{
+   crc = ~crc;
+   while (n--)
+   {
+      int k;
+      crc ^= *p++;
+      for (k = 0; k < 8; k++)
+         crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+   }
+   return ~crc;
+}
+
 /* ---- counting what the walk reads ---------------------------------------- */
-static int g_opens, g_rom_ids;
+static int g_opens, g_rom_ids, g_m3u_reads;
 FILE *__real_fopen(const char *p, const char *m);
 FILE *__wrap_fopen(const char *p, const char *m)
 {
+   size_t n = strlen(p);
    g_opens++;
+   if (n > 4 && !strcmp(p + n - 4, ".m3u"))
+      g_m3u_reads++;
    return __real_fopen(p, m);
 }
 
@@ -403,6 +420,61 @@ int main(void)
       n = search("gba", "BPEE", "", h, 8);
       CHECK(n >= 3, "GBA search unchanged (%d)", n);
       (void)c;
+   }
+
+   /* Sega CD: an .m3u is the game and the discs it names are not offered on
+    * their own, whichever folder holds the .m3u (the folder of the discs or
+    * the one above) and whichever the walk reaches first; a list that names
+    * no disc is not a game; the folder is read for lists once, not for every
+    * file */
+   {
+      static const unsigned char sec[2048] = { 0 };
+      char want1[9], want2[9], wantA[9], bin[APP_PATH_CAP];
+      unsigned char b[4096];
+      unsigned fill;
+      FILE *f;
+      static const struct { const char *rel, *bin; unsigned fill; } disc[] = {
+         { "roms/Game/Game (Disc 1).cue", "roms/Game/Game (Disc 1).bin", 0x5A },
+         { "roms/Game/Game (Disc 2).cue", "roms/Game/Game (Disc 2).bin", 0x6B },
+         { "roms/Alone.cue", "roms/Alone.bin", 0x7C },
+         { "roms/z/Zed (Disc 1).cue", "roms/z/Zed (Disc 1).bin", 0x1D },
+         { "roms/z/Zed (Disc 2).cue", "roms/z/Zed (Disc 2).bin", 0x2E },
+      };
+      char id_of[5][9];
+      (void)sec;
+      mk("roms/Game"); mk("roms/z");
+      for (i = 0; i < 5; i++)
+      {
+         const char *nm = strrchr(disc[i].bin, '/') + 1;
+         fill = disc[i].fill;
+         memset(b, (int)fill, sizeof(b));
+         snprintf(bin, sizeof(bin), "%s/%s", root, disc[i].bin);
+         f = fopen(bin, "wb"); fwrite(b, 1, sizeof(b), f); fclose(f);
+         snprintf(bin, sizeof(bin), "FILE \"%s\" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n", nm);
+         put_text(disc[i].rel, bin);
+         snprintf(bin, sizeof(bin), "%s/%s", root, disc[i].rel);
+         CHECK(disc_game_id(bin, id_of[i], test_crc) == 1, "disc %d has an id", i);
+      }
+      snprintf(want1, sizeof(want1), "%s", id_of[0]);
+      snprintf(want2, sizeof(want2), "%s", id_of[1]);
+      snprintf(wantA, sizeof(wantA), "%s", id_of[2]);
+      /* the list is in the folder above its discs (the walk reads the .m3u
+       * after Game/ may have been seen); a second list sits beside its discs */
+      put_text("roms/Game.m3u", "Game/Game (Disc 1).cue\r\nGame/Game (Disc 2).cue\r\n");
+      put_text("roms/z/Zed.m3u", "Zed (Disc 1).cue\nZed (Disc 2).cue\n");
+      put_text("roms/Music.m3u", "#EXTM3U\nsong.mp3\nother/track.flac\n");
+      g_m3u_reads = 0;
+      n = search("scd", want1, "", h, 8);
+      CHECK(n == 1 && !strcmp(base(h[0].path), "Game.m3u"), "Sega CD: the .m3u is the game, not its first disc (%d, %s)", n, n > 0 ? base(h[0].path) : "-");
+      /* 3 lists read when their folders are opened, 3 to see that each names discs, 2 for the ids of the games: not once per disc file */
+      CHECK(g_m3u_reads <= 8, "the lists are read once per folder and list, not once per file (%d reads)", g_m3u_reads);
+      n = search("scd", want2, "", h, 8);
+      CHECK(n == 0, "the second disc is not a game of its own (%d)", n);
+      n = search("scd", wantA, "", h, 8);
+      CHECK(n == 1 && !strcmp(base(h[0].path), "Alone.cue"), "a disc no list names is offered (%d)", n);
+      n = search("scd", id_of[3], "", h, 8);
+      CHECK(n == 1 && !strcmp(base(h[0].path), "Zed.m3u"), "a list beside its discs hides them too (%d)", n);
+      online_lib_end();
    }
 
    /* unsupported consoles and bad input */

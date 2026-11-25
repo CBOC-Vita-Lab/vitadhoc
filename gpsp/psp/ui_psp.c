@@ -9913,6 +9913,14 @@ static int rom_gb_match(const char *dir, const char *nm, fe_console_t c)
 {
    char full[PSP_FILE_PATH_CAP];
    int fl;
+   if (c == FE_CONSOLE_SCD && pk_m3u_is_list(nm))
+   {
+      /* an .m3u is a Sega CD game only when its lines name discs (not a
+       * music playlist or another system's list) */
+      fl = snprintf(full, sizeof(full), "%s/%s", dir, nm);
+      return ui_rom_matches_console(nm, c) && fl > 0 &&
+             fl < (int)sizeof(full) && pk_m3u_names_discs(full);
+   }
    if ((c != FE_CONSOLE_GB && c != FE_CONSOLE_GBC) ||
        gbk_ext_kind(nm) == GBK_NONE)
       return ui_rom_matches_console(nm, c);

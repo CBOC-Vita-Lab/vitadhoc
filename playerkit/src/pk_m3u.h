@@ -6,7 +6,7 @@
  * use \ as well as /. A relative path is read from the folder of the .m3u; "./" and "name/../" are folded away. A line that is not an image
  * the list can use is skipped. Discs that are not there are reported by pk_m3u_load, not dropped silently: the caller says so.
  *
- * Used by the game list (the discs an .m3u names are not listed on their own), the Sega CD player (the discs of the game) and the game id of
+ * Used by the game list (only a list that names discs is a game; the discs it names are not listed on their own), the Sega CD player (the discs of the game) and the game id of
  * Two players. No allocation.
  *
  * Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE).
@@ -193,6 +193,14 @@ static inline int pk_m3u_load(const char *m3u_path, char (*out)[PK_M3U_PATH], in
          (*missing)++;
    }
    return count;
+}
+
+/* 1 when the file is an .m3u with at least one line that names a disc image (.cue, .chd, .iso): a Sega CD game's list.  A music playlist, another
+ * system's list (.bin, .pbp, .gba) or an unreadable or empty file is not one; discs that are missing still count (the player says so). */
+static inline int pk_m3u_names_discs(const char *m3u_path)
+{
+   static char one[1][PK_M3U_PATH];
+   return pk_m3u_load(m3u_path, one, 1, NULL, NULL) >= 1;
 }
 
 #ifdef __cplusplus

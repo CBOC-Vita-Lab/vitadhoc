@@ -40,6 +40,7 @@ enum { OL_GBA = 0, OL_GB = 1,         /* the family of files that can match: fou
 #define OL_IS_PAD(f) ((f) >= OL_NES)
 
 #define OL_DEPTH 2                    /* the folder, then one level in      */
+#define OL_M3U_MAX 1024               /* discs named by .m3u files; a full table stops hiding */
 
 static struct
 {
@@ -56,6 +57,12 @@ static struct
    online_lib_hit hit[ONLINE_LIB_MAX];
    int  skipped;                      /* compressed zips that were not read */
    int  done;
+   /* Sega CD: the discs the .m3u files of the folders being walked name
+    * (hashes), read once when a folder is opened and kept for the folders
+    * below it, as the game list does (ui_psp.c m3u_hide_dir) */
+   unsigned m3u_hide[OL_M3U_MAX];
+   int  m3u_n;
+   int  m3u_base[OL_DEPTH];           /* m3u_n when each open folder was entered */
 } G;
 
 extern char g_app_rom_dir[APP_PATH_CAP];   /* main_vita.c */
@@ -63,7 +70,10 @@ extern char g_app_rom_dir[APP_PATH_CAP];   /* main_vita.c */
 static void close_dirs(void)
 {
    while (G.depth > 0)
+   {
       closedir(G.dir[--G.depth]);
+      G.m3u_n = G.m3u_base[G.depth];
+   }
 }
 
 static const char *root_path(int i)
@@ -216,37 +226,57 @@ static int pad_ext_ok(const char *path)
 
 #include <dirent.h>
 
-/* 1 when an .m3u in the folder of the disc `path` names it: the .m3u is the game, the disc is not offered on its own (as the game list does) */
-static int disc_listed_by_m3u(const char *path)
+/* A disc's identity for the list of hidden discs: its folded path in lower case (FAT does not tell Disc.CUE from disc.cue). */
+static unsigned m3u_path_hash(const char *path)
+{
+   unsigned h = 2166136261u;
+   for (; *path; path++)
+   {
+      unsigned char c = (unsigned char)*path;
+      if (c >= 'A' && c <= 'Z')
+         c = (unsigned char)(c + 'a' - 'A');
+      h = (h ^ c) * 16777619u;
+   }
+   return h | 1u;
+}
+
+/* Reads the .m3u files of the folder `dir` once and keeps the discs they name (the folder is not read again for every file). */
+static void m3u_hide_dir(const char *dir)
 {
    static char list[PK_M3U_MAX_DISCS][PK_M3U_PATH];
-   char dir[PK_M3U_PATH], me[PK_M3U_PATH];
-   const char *sl = strrchr(path, '/');
-   size_t dl = sl ? (size_t)(sl - path) : 0;
    struct dirent *e;
-   DIR *d;
-   int hit = 0;
-   if (dl == 0 || dl >= sizeof(dir) || strlen(path) >= sizeof(me))
-      return 0;
-   memcpy(dir, path, dl);
-   dir[dl] = '\0';
-   strcpy(me, path);
-   pk_m3u_fold(me);
-   d = opendir(dir);
+   DIR *d = opendir(dir);
    if (!d)
-      return 0;
-   while (!hit && (e = readdir(d)) != NULL)
+      return;
+   while ((e = readdir(d)) != NULL)
    {
       char full[PK_M3U_PATH];
       int nd, i;
       if (e->d_name[0] == '.' || !pk_m3u_is_list(e->d_name) || snprintf(full, sizeof(full), "%s/%s", dir, e->d_name) >= (int)sizeof(full))
          continue;
       nd = pk_m3u_load(full, list, PK_M3U_MAX_DISCS, NULL, NULL);
-      for (i = 0; i < nd && !hit; i++)
-         hit = strcasecmp(list[i], me) == 0;
+      for (i = 0; i < nd && G.m3u_n < OL_M3U_MAX; i++)
+         G.m3u_hide[G.m3u_n++] = m3u_path_hash(list[i]);
    }
    closedir(d);
-   return hit;
+}
+
+/* 1 when an .m3u in the folder of the disc `path`, or in a folder above it that the walk came through, names it: the .m3u is the game, the disc
+ * is not offered on its own (as the game list does) */
+static int disc_listed_by_m3u(const char *path)
+{
+   char me[PK_M3U_PATH];
+   unsigned h;
+   int i;
+   if (!G.m3u_n || !pk_m3u_is_disc(path) || strlen(path) >= sizeof(me))
+      return 0;
+   strcpy(me, path);
+   pk_m3u_fold(me);
+   h = m3u_path_hash(me);
+   for (i = 0; i < G.m3u_n; i++)
+      if (G.m3u_hide[i] == h)
+         return 1;
+   return 0;
 }
 
 /* The id of the file at `path` as 8 upper-case hex digits; 1 = read, 0 = not a game of this family. */
@@ -362,6 +392,9 @@ static int open_dir(int d)
    if (!G.dir[d])
       return 0;
    G.depth = d + 1;
+   G.m3u_base[d] = G.m3u_n;
+   if (G.family == OL_SEGA && !strcmp(G.sega, "scd"))
+      m3u_hide_dir(G.path[d]);
    return 1;
 }
 
@@ -389,6 +422,7 @@ static int next_entry(char *path, size_t cap, int *is_dir)
       if (!e)
       {
          closedir(G.dir[--G.depth]);
+         G.m3u_n = G.m3u_base[G.depth];
          continue;
       }
       if (e->d_name[0] == '.')
@@ -438,7 +472,7 @@ int online_lib_step(int files)
                G.skipped++;
                continue;
             }
-            if (!pad_ext_ok(path) || (G.family == OL_SEGA && !strcmp(G.sega, "scd") && !pk_m3u_is_list(path) && disc_listed_by_m3u(path)) ||
+            if (!pad_ext_ok(path) || (G.family == OL_SEGA && !strcmp(G.sega, "scd") && (pk_m3u_is_list(path) ? !pk_m3u_names_discs(path) : disc_listed_by_m3u(path))) ||
                 !pad_id_of(path, id) || strcasecmp(id, G.game) != 0)
                continue;
             add_hit(path);

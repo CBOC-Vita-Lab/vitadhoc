@@ -90,8 +90,10 @@ browse.also_looked_in_and_more	Also looked in %s and %d more
 browse.copy_your_files_into_this_folder	Copy your .%s files into this folder on the memory card:
 # context: snprintf in ui_vita_browser.h, vita_browser_empty
 browse.no_games_yet	No %s games yet
-# context: snprintf in ui_vita_browser.h, vita_browser_empty
-browse.tri_shows_your_other_game	{tri} shows your %d other game%s
+# context: plural of the line above
+browse.other_game_many	{tri} shows your %d other games
+# context: shown in the game list; %d is how many
+browse.other_game_one	{tri} shows your %d other game
 # context: vw_head in ui_vita_btntest.h, screen_btntest
 btntest.button_test	BUTTON TEST
 # context: vid_text in ui_vita_btntest.h, screen_btntest
@@ -192,8 +194,10 @@ cheats.incomplete_replace_xx_with_the_value	Incomplete: replace ?? / XX with the
 cheats.keeps_the_places_that_match_the	Keeps the places that match the number you type.
 # context: ui_vita_cheats.h, screen_cheats_page
 cheats.line	Line
-# context: snprintf in ui_vita_cheats.h, screen_cheat_add_page
-cheats.line_2	%s, %d line%s
+# context: plural of the line above
+cheats.line_many	%s, %d lines
+# context: a cheat code: its kind, then its number of lines
+cheats.line_one	%s, %d line
 # context: snprintf in ui_vita_cheats.h, screen_cheat_search_page
 cheats.look_at_the_game_s_memory	Look at the game's memory now
 # context: ui_vita_cheats.h, screen_cheat_search_page
@@ -361,11 +365,7 @@ ctl.at_most_4_buttons	at most 4 buttons
 # context: ctl_map.c
 ctl.crash_self_test	Crash self-test
 # context: ctl_map.c
-ctl.down	Down
-# context: ctl_map.c
 ctl.fast_forward	Fast-forward
-# context: ctl_map.c
-ctl.left	Left
 # context: ctl_map.c
 ctl.mystery_gift	Mystery Gift
 # context: ctl_map.c, ctl_error_text
@@ -379,13 +379,7 @@ ctl.quick_save	Quick save
 # context: ctl_map.c
 ctl.rewind	Rewind
 # context: ctl_map.c
-ctl.right	Right
-# context: ctl_map.c
 ctl.screenshot	Screenshot
-# context: ctl_map.c
-ctl.select	Select
-# context: ctl_map.c
-ctl.start	Start
 # context: ctl_map.c, ctl_error_text
 ctl.start_select_is_reserved_for_the	START+SELECT is reserved for the menu
 # context: ctl_map.c, ctl_error_text
@@ -400,8 +394,6 @@ ctl.turbo_a_2	Turbo A (2)
 ctl.turbo_b	Turbo B
 # context: ctl_map.c
 ctl.turbo_b_2	Turbo B (2)
-# context: ctl_map.c
-ctl.up	Up
 # context: ctl_map.c
 ctl.video_preset	Video preset
 # context: footer in ui_psp.c, screen_wireless
@@ -2192,6 +2184,8 @@ share.could_not_join_the_room	Could not join the room.
 share.could_not_read_the_game_folder	Could not read the game folder.
 # context: snprintf in ui_share.inc, shj_xf_fail
 share.could_not_write_it_here_is	Could not write it here. Is the Memory Stick full?
+# context: what a Vita shares: saves, states, then games per console
+share.counts_per_console	%s  -  %s  -  GBA %u / GB %u / GBC %u
 # context: snprintf in ui_share.inc, shj_draw_modal
 share.fetching_their_save_file	Fetching their save file
 # context: snprintf in ui_share.inc, shj_draw_modal
@@ -2226,6 +2220,14 @@ share.looking_for_the_vita_sharing_on	Looking for the Vita sharing on %s...
 share.lost_the_other	Lost the other Vita
 # context: sh_plate in ui_share.inc, shj_draw_modal
 share.move_the_vitas_closer_or_ask	Move the Vitas closer, or ask them to share again.
+# context: plural
+share.n_saves_many	%u saves
+# context: a count of save files, singular (the number is first)
+share.n_saves_one	%u save
+# context: plural
+share.n_states_many	%u states
+# context: a count of save states, singular
+share.n_states_one	%u state
 # context: ui_share.inc, shj_panel_their
 share.needs_the_same_build	needs the same build
 # context: ui_share.inc, shj_panel_their
@@ -2286,12 +2288,10 @@ share.save_file_3	Save file
 share.save_file_replaced_yours	Save file replaced yours
 # context: snprintf in ui_share.inc, shj_xf_commit
 share.save_file_saved	Save file saved
-# context: snprintf in ui_share.inc, shj_holds
-share.save_state	SAVE  -  %d state%s%s
-# context: snprintf in ui_share.inc, shj_took
-share.save_state_2	save, %d state%s
-# context: snprintf in ui_share.inc, share_host_run
-share.save_state_gba_gb_gbc	%u save%s  -  %u state%s  -  GBA %u / GB %u / GBC %u
+# context: plural of the line above
+share.save_state_many	SAVE  -  %d states%s
+# context: one save file and one state; the last %s is a short note or nothing
+share.save_state_one	SAVE  -  %d state%s
 # context: snprintf in ui_share.inc, shj_xf_commit
 share.saved_to_your_slot	Saved to your Slot %d
 # context: snprintf in ui_share.inc, share_host_run
@@ -2318,10 +2318,10 @@ share.slot_state	%s %s  -  Slot %u state  -  %s
 share.some_games_did_not_fit_in	Some games did not fit in the list.
 # context: snprintf in ui_share.inc, share_host_run
 share.starting	Starting %s...
-# context: snprintf in ui_share.inc, shj_holds
-share.state	%d state%s%s
-# context: snprintf in ui_share.inc, shj_took
-share.state_2	%d state%s
+# context: plural
+share.state_many	%d states%s
+# context: one state; the last %s is a short note or nothing
+share.state_one	%d state%s
 # context: vid_text in ui_share.inc, shj_draw_their
 share.states_need_the_same_build	States need the same build.
 # context: vid_text in ui_share.inc, shj_draw_their
@@ -2372,6 +2372,14 @@ share.theirs_yours	Theirs %s   Yours %s
 share.there_are_no_saves_or_states	There are no saves or states to share yet.
 # context: vid_text_center in ui_share.inc, shj_draw_list
 share.they_share_some_for_the_other	They share some for the other consoles.
+# context: plural
+share.took_save_state_many	save, %d states
+# context: you took the save and one state
+share.took_save_state_one	save, %d state
+# context: plural
+share.took_state_many	%d states
+# context: you took one state
+share.took_state_one	%d state
 # context: vid_text_center in ui_share.inc, shj_draw_list
 share.tri_change_console	{tri} change console
 # context: ui_share.inc, shj_draw_list

@@ -890,10 +890,13 @@ static void share_host_run(const char *rom_dir)
 
       sh_backdrop(-1, 0);
       sh_header(tr("share.share_game_data"), NULL, h->group, 0, 0);
-      snprintf(l2, sizeof(l2), tr("share.save_state_gba_gb_gbc")
-, s->n_saves, s->n_saves == 1 ? "" : "s",
-               s->n_states, s->n_states == 1 ? "" : "s", h->per_con[0],
-               h->per_con[1], h->per_con[2]);
+      {
+         char sv[40], st[40];
+         snprintf(sv, sizeof(sv), s->n_saves == 1 ? tr("share.n_saves_one") : tr("share.n_saves_many"), (unsigned)s->n_saves);
+         snprintf(st, sizeof(st), s->n_states == 1 ? tr("share.n_states_one") : tr("share.n_states_many"), (unsigned)s->n_states);
+         snprintf(l2, sizeof(l2), tr("share.counts_per_console"), sv, st, h->per_con[0],
+                  h->per_con[1], h->per_con[2]);
+      }
       l3[0] = '\0';
       if (s->state == FE_SHARE_SRV_CONNECTED)
       {
@@ -1742,12 +1745,12 @@ static void shj_holds(const fe_share_entry *x, int states_ok, char *out,
    for (k = 0; k < FE_SHARE_SLOTS; k++)
       st += x->st[k].size != 0;
    if (x->save_size && st)
-      snprintf(out, n, tr("share.save_state"), st, st == 1 ? "" : "s",
+      snprintf(out, n, st == 1 ? tr("share.save_state_one") : tr("share.save_state_many"), st,
                states_ok ? "" : tr("share.not_for_this_build"));
    else if (x->save_size)
       snprintf(out, n, "SAVE");
    else
-      snprintf(out, n, tr("share.state"), st, st == 1 ? "" : "s",
+      snprintf(out, n, st == 1 ? tr("share.state_one") : tr("share.state_many"), st,
                states_ok ? "" : tr("share.not_for_this_build"));
 }
 
@@ -1757,11 +1760,11 @@ static void shj_took(unsigned mark, char *out, size_t n)
    for (k = 1; k <= FE_SHARE_SLOTS; k++)
       st += (mark >> k) & 1;
    if ((mark & MARK_SAVE) && st)
-      snprintf(out, n, tr("share.save_state_2"), st, st == 1 ? "" : "s");
+      snprintf(out, n, st == 1 ? tr("share.took_save_state_one") : tr("share.took_save_state_many"), st);
    else if (mark & MARK_SAVE)
       snprintf(out, n, "save");
    else if (st)
-      snprintf(out, n, tr("share.state_2"), st, st == 1 ? "" : "s");
+      snprintf(out, n, st == 1 ? tr("share.took_state_one") : tr("share.took_state_many"), st);
    else
       out[0] = '\0';
 }

@@ -63,6 +63,13 @@ const char *tr(const char *key);
 /* The English text of a key (logs and tests read English whatever the
  * setting). */
 const char *tr_en(const char *key);
+/* The twin's audit (GBADHOC_TR_AUDIT=1 in the environment): a text drawn that
+ * is a key of the English table (a table that kept TR_KEY() and was drawn
+ * without tr()) is reported on stderr as "EVT i18n: key shown <key>".  The
+ * text layers call i18n_audit() only when i18n_audit_on is set. */
+extern int i18n_audit_on;
+void i18n_audit(const char *drawn);
+
 /* The English text of a text tr() gave (by pointer; any other text comes back
  * as it is): for the lines the tests read, which stay English. */
 const char *tr_english_of(const char *text);

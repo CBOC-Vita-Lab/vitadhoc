@@ -62,6 +62,8 @@ int i18n_from_system(int sce)
 
 void i18n_dir(const char *dir)
 {
+   const char *a = getenv("GBADHOC_TR_AUDIT");
+   i18n_audit_on = a && *a == '1';
    snprintf(g_dir, sizeof(g_dir), "%s", dir ? dir : "");
 }
 
@@ -438,6 +440,15 @@ int i18n_use(int lang, int system)
          g_lang = lang;
    }
    return g_lang;
+}
+
+int i18n_audit_on;
+
+void i18n_audit(const char *drawn)
+{
+   if (drawn && drawn[0] >= 'a' && drawn[0] <= 'z' && strchr(drawn, '.') && !strchr(drawn, ' ') &&
+       en_find(drawn))
+      fprintf(stderr, "EVT i18n: key shown %s\n", drawn);
 }
 
 int i18n_current(void) { return g_lang; }

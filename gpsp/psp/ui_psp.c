@@ -4099,34 +4099,38 @@ static const char *set_cap(const char *s)
 static void set_item_raw(int y, int sel, int enabled, const char *label,
                          const char *value)
 {
+   char lb[96], vb[96];
+#ifdef VITA
+   /* A label and its value that do not fit the row together (a long
+    * translation, Text size Large, a long name): the value keeps at least two
+    * fifths of the row, or all of it if it is shorter; the label gives way
+    * first, then the value, each ending in "..." at a whole character. */
+   if (value)
+   {
+      const int span = 440 - 30 - 10;
+      int wl = vid_text_w(label), wv = vid_text_w(value);
+      if (wl + wv > span)
+      {
+         int keep = wv < span * 2 / 5 ? wv : span * 2 / 5;
+         if (wl > span - keep)
+         {
+            snprintf(lb, sizeof(lb), "%s", label);
+            clip_title(lb, span - keep);
+            label = lb;
+            wl = vid_text_w(label);
+         }
+         if (wl + wv > span)
+         {
+            snprintf(vb, sizeof(vb), "%s", value);
+            clip_title(vb, span - wl);
+            value = vb;
+         }
+      }
+   }
+#endif
    if (sel)
       ov_band(y, SET_BAND_W, SET_BAND_H);
    vid_text(30, y, label, enabled ? (sel ? C_SEL : C_ITEM) : C_DIM);
-#ifdef VITA
-   /* Text size Large: a value that would reach its label is shortened ("...")
-    * rather than drawn over it (whole UTF-8 characters) */
-   if (value && vid_text_scope_large() &&
-       30 + vid_text_w(label) + 10 + vid_text_w(value) > 440)
-   {
-      char v[96];
-      size_t n;
-      const int room = 440 - (30 + vid_text_w(label) + 10) - vid_text_w("...");
-      snprintf(v, sizeof(v) - 4, "%s", value);
-      n = strlen(v);
-      while (n > 0 && vid_text_w(v) > room)
-      {
-         n--;
-         while (n > 0 && ((unsigned char)v[n] & 0xC0) == 0x80)
-            n--;
-         v[n] = '\0';
-      }
-      while (n > 0 && v[n - 1] == ' ')
-         v[--n] = '\0';
-      strcat(v, "...");
-      ov_text_right(440, y, v, enabled ? (sel ? C_VALUE : C_ACCENT_DK) : C_DIM);
-      return;
-   }
-#endif
    if (value)
       ov_text_right(440, y, value,
                     enabled ? (sel ? C_VALUE : C_ACCENT_DK) : C_DIM);

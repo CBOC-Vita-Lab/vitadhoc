@@ -360,6 +360,8 @@ void vb_tex_update(vb_tex *t, int x, int y, int w, int h,
 
 /* ---- scenes ------------------------------------------------------------ */
 
+void vb_text_mark(void) { }
+
 void vb_frame_begin(int clear)
 {
    if (g_open || g_rt)

@@ -825,8 +825,8 @@ static ui_action screen_cheat_add_page(unsigned edges)
       if (g_ca.verdict > 0)
       {
          char v[64];
-         snprintf(v, sizeof(v), tr("cheats.line_2"), cheats_kind_name(g_ca.verdict),
-                  nl + 1, nl ? "s" : "");
+         snprintf(v, sizeof(v), nl ? tr("cheats.line_many") : tr("cheats.line_one"),
+                  cheats_kind_name(g_ca.verdict), nl + 1);
          vid_text(x, by + bh + 6, vw_clip(nm, sizeof(nm), v, 176), C_VALUE);
          vid_text(x, by + bh + 6 + FE_FONT_H, tr("cheats.ready_to_save"), C_DIM);
       }

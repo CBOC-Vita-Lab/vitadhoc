@@ -174,8 +174,8 @@ static void vita_browser_empty(const char *rom_dir, const ui_skin *s,
    vid_text_center(170, dir, sel);
    if (others > 0)
    {
-      snprintf(msg, sizeof(msg), tr("browse.tri_shows_your_other_game"),
-               others, others == 1 ? "" : "s");
+      snprintf(msg, sizeof(msg), others == 1 ? tr("browse.other_game_one")
+                                              : tr("browse.other_game_many"), others);
       vid_text_center(200, msg, dim);
       UI_TCH_BTN(PSP_CTRL_TRIANGLE, (480 - vid_text_w(msg)) / 2 - 10, 192,
                  vid_text_w(msg) + 20, 32);

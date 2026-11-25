@@ -12,12 +12,29 @@
 #include "fe_util.h"          /* fe_ini_get_int: vita.ini look_bitmap */
 
 #include <new>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
 template class std::basic_string<char>;
+
+/* pk_look.cpp's two catalogue texts (the players' pk::trf): the app has its
+ * own catalogue (i18n.c), so they come from there. */
+extern "C" const char *tr(const char *key);
+namespace pk {
+std::string trf(const char *key, ...)
+{
+   char b[160];
+   va_list ap;
+   const char *fmt = !strcmp(key, "look.auto_eased") ? ::tr("app.auto_eased") : "Auto (%s)";
+   va_start(ap, key);
+   vsnprintf(b, sizeof(b), fmt, ap);
+   va_end(ap);
+   return std::string(b);
+}
+}  // namespace pk
 
 namespace std {
 void __throw_bad_alloc() { abort(); }

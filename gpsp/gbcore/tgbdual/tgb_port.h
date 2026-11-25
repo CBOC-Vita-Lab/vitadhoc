@@ -61,6 +61,7 @@ void apu_rebase(int cpu_base);
 void apu_restore_clock(void);
 void apu_discard_audio(void);
 void apu_save_cpu_timing(byte *out); /* 36 bytes */
+void apu_save_wave_timing(byte *out); /* 12 bytes: the CPU-side channel 3 clock */
 void apu_save_timing(byte *out);     /* 256 reserved bytes */
 void apu_load_timing(const byte *in);
 void cpu_save_timer_timing(byte *out); /* 8 bytes, reserved native state 80..87 */

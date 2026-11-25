@@ -227,6 +227,11 @@ void apu_save_cpu_timing(byte *out)
 	apu_put32(&p, cpu_timing.sweep_timer); apu_put32(&p, cpu_timing.sweep_shadow);
 	apu_put32(&p, cpu_timing.sweep_enabled); apu_put32(&p, cpu_timing.sweep_negated);
 }
+void apu_save_wave_timing(byte *out)
+{
+	byte *p = out;
+	apu_put32(&p, wave_cd); apu_put32(&p, wave_pos); apu_put32(&p, wave_since);
+}
 void apu_save_timing(byte *out)
 {
 	byte *p = out + 40;
@@ -238,8 +243,8 @@ void apu_save_timing(byte *out)
 	apu_put32(&p, wav_index); apu_put32(&p, wav_sample);
 	apu_put32(&p, (dword)noi_sample); apu_put32(&p, noise_index);
 	/* CPU-side wave channel (added after APU1; old states lack the tag) */
-	memcpy(out + 96, "WAV1", 4); p = out + 100;
-	apu_put32(&p, wave_cd); apu_put32(&p, wave_pos); apu_put32(&p, wave_since);
+	memcpy(out + 96, "WAV1", 4);
+	apu_save_wave_timing(out + 100);
 }
 void apu_load_timing(const byte *in)
 {

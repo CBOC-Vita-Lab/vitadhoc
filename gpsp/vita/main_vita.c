@@ -1639,6 +1639,19 @@ static void gbcam_game_end(void)
    g_cam_mode = -1;
 }
 
+/* The console slept: the camera does not come back by itself.  Let go of it
+ * and let the next frame start the chosen source again (gbcam_frame). */
+static void gbcam_resume(void)
+{
+   if (!g_cam_game)
+      return;
+   if (g_cam_dev)
+      plat_camera_close();
+   g_cam_dev = 0;
+   g_cam_mode = -1;
+   fe_evt("camera_resume");
+}
+
 static void gbcam_game_begin(void)
 {
    gbcam_game_end();
@@ -4150,6 +4163,7 @@ static void power_service(void)
       link_local_power(1);
       if (g_game_loaded)
       {
+         gbcam_resume();
          audio_flush();
          app_pace_reset();
          /* Back into the frozen frame with a plate over it, not straight

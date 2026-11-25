@@ -1417,7 +1417,8 @@ static void gb_prn_done(void *user, const uint8_t *shades, int w, int h)
 
 static int gb_prn_serial(uint8_t outgoing, int internal_clock, uint8_t *received)
 {
-   if (!gb_prn_on || !internal_clock || ahead_quiet ||
+   /* (a link session whose partner is away for a moment stays a link) */
+   if (!gb_prn_on || !internal_clock || ahead_quiet || fe_np_session_active() ||
        (host.console != FE_CONSOLE_GB && host.console != FE_CONSOLE_GBC))
       return 0;
    /* A game probing for a link partner sends something other than a packet
@@ -8279,6 +8280,7 @@ static void run_frame(void)
           * dual (link) path above; a no-op with nothing switched on. */
          fe_cheats_gb_frame(gb_cheat_poke, gb_core);
 #endif
+         gb_prn_frame();              /* once a real frame, run-ahead or not */
          if (ahead_req && !ahead_latched_off && !gb_skip_frame && !gbl_hold && !gb_local_on &&
              gb_ahead_frame(pad) == 0)
             ;
@@ -8286,7 +8288,6 @@ static void run_frame(void)
          {
          if (host_sensor_on)
             gbcore_set_tilt(gb_core, host_sensor);
-         gb_prn_frame();
          if (gbcore_run_frame(gb_core, gb_buttons_from_retro(pad)) != 0)
             fe_evt("gb_run_frame FAILED frame=%u", frame_count);
          }

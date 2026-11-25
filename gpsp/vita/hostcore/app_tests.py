@@ -8869,6 +8869,12 @@ def t_gbcam(S):
     if len(sav) >= 0x20000:
         sh = _cam_shades(sav)
         S.check(sh[40][0] == 3 and sh[40][127] == 0, "the back camera is not mirrored")
+    # 2b. After a sleep the camera is started again
+    r, sav = go("gbcam_sleep", "1:camera=ramp\n60:suspend\n+60:cross\n+120:quit\n")
+    S.check(r.has(r"^EVT camera_resume") and len(r.evt("camera_source")) == 2 and
+            all(e["device"] == "1" for e in r.evt("camera_source")),
+            "the console slept: the camera is let go and started again (%s)" %
+            [e["device"] for e in r.evt("camera_source")])
     # 3. Picture file
     step = _png_write(None, 320, 240, [[40] * 160 + [200] * 160 for _ in range(240)])
     r, sav = go("gbcam_file", "240:quit\n", ini="camera = 2\n", extra={"camera.png": step})
@@ -8926,7 +8932,7 @@ def t_gbprinter(S):
                   0xF0, 0x01, 0x12, 0x13, 0x0B, 0x78, 0xB1, 0x20, 0xEA,
                   0x18, 0xFE])
     rom = _gb_rom(prog, 0x00, 1, 0, {0x4000: stream}, title=b"PRINTTEST")
-    def go(name, ini=None, config=None):
+    def go(name, ini=None, config=None, rom=rom):
         r = S.run(name, "400:quit\n", autoboot="prn.gb", extra={"roms/prn.gb": rom},
                   vita_ini=ini, config=config)
         S.clean(r)
@@ -8957,7 +8963,14 @@ def t_gbprinter(S):
         S.check(bad == 0, "every pixel has the shade the tiles and the palette E4 give (%d off)" % bad)
         S.check(all(px(x, 0) == pal[0] for x in range(160)) and all(px(x, 47) == pal[0] for x in range(160)),
                 "the margins are paper")
-    # Settings > THIS GAME > Game Boy Printer (17 rows up from Screen size): Off, kept in config.ini
+    # Quick response On (a look-ahead frame every frame): the printer hears each byte once and its
+    # clock still runs -- a strip left open (no bottom margin) is closed after the pause
+    open_stream = (packet(0x0F, 0) + packet(1, 0) + packet(4, 0, tiles) + packet(4, 0) +
+                   packet(2, 0, bytes([1, 0x10, 0xE4, 0x40])) + packet(0x0F, 0))
+    r, files = go("gbprinter_quick", ini={"quick_response": 2},
+                  rom=_gb_rom(prog, 0x00, 1, 0, {0x4000: open_stream}, title=b"PRINTTEST"))
+    S.check(r.has(r"^EVT quick_response mode=on") and r.has(r"^EVT gb_printer strip=1 w=160 h=24") and
+            len(files) == 1, "Quick response On: the open strip (160x24) is closed and saved (%d files)" % len(files))
     r = S.run("gbprinter_row", menu_pick(4, wait=60) + set_up(17) + "+10:cross\n+30:quit\n",
               autoboot="prn.gb", extra={"roms/prn.gb": rom})
     S.clean(r)

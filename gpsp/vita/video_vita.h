@@ -152,6 +152,14 @@ void vid_set_screen(int profile);
  * The faces bake again at the start of the next frame. */
 void vid_set_text_look(int large, int contrast);
 int  vid_text_pct(void);
+/* The PSP-layout text (vid_text and its family) is Large only between
+ * vid_text_scope(1) and vid_text_scope(0): a page asks for it once its
+ * fixed rows hold the larger lines (Settings does); everywhere else that
+ * text stays at Normal, so it cannot outgrow a row.  The newer faces
+ * (vstyle.h: the home screen, the console list, toasts) follow Text size
+ * everywhere.  Both return 1 while the Large faces are the ones in use. */
+int  vid_text_scope(int large_ok);
+int  vid_text_scope_large(void);
 int  vid_screen_profile(void);
 /* AMBIENT GLOW strength 0..10: how bright the colours beside the picture are
  * (0 black bars, 5 the look the bars have always had).  vid_ambient_mode

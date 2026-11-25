@@ -38,8 +38,9 @@
  *
  * Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE).
  */
-#ifndef PK_SCREEN_H
-#define PK_SCREEN_H
+/* (not PK_SCREEN_H: that is the screen's height in pk_gfx.h, and a guard of that name erased it) */
+#ifndef PK_SCREEN_PROFILE_H
+#define PK_SCREEN_PROFILE_H
 
 #include <math.h>
 #include <stdint.h>

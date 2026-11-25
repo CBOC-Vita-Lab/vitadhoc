@@ -150,7 +150,7 @@ void vita2d_free_texture(vita2d_texture *t)
 }
 void vita2d_wait_rendering_done() {}
 static int g_mul_calls;
-void vita2d_set_blend_mode_mul(int enable) { g_mul_calls += enable ? 1 : 0; }      /* the CRT mask's multiply draw: not modelled by this rasteriser */
+int vita2d_set_blend_mode_mul(int enable) { g_mul_calls += enable ? 1 : 0; return 1; }      /* the CRT mask's multiply draw: not modelled by this rasteriser */
 void *vita2d_texture_get_datap(const vita2d_texture *t) { Tex *x = get(t); if (!x) { g_bad++; return 0; } if (x->owner != std::this_thread::get_id()) x->owner = std::thread::id(); return &x->data[0]; }
 unsigned int vita2d_texture_get_stride(const vita2d_texture *t) { Tex *x = get(t); return x ? x->stride : 0; }
 void vita2d_texture_set_filters(vita2d_texture *t, SceGxmTextureFilter a, SceGxmTextureFilter b) { Tex *x = get(t); if (x) { x->minf = a; x->magf = b; } }

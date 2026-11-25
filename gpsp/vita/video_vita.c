@@ -2790,6 +2790,9 @@ void vid_term(void)
    vb_tex_destroy(g_amb_tex);   g_amb_tex = NULL;
    vb_tex_destroy(g_lcd_tex);   g_lcd_tex = NULL;
    g_lcd_fail = 0;
+   vb_tex_destroy(g_crt_tex);   g_crt_tex = NULL;
+   g_crt_fail = 0;
+   g_crt_built = -1;
    vb_tex_destroy(g_sharp_rt);  g_sharp_rt = NULL;
    g_sharp_tried = 0;
    g_amb_src = AMB_SRC_NONE;

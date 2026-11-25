@@ -176,7 +176,7 @@ void VitaGfx::tex_draw_mul(Texture *t, float sx, float sy, float sw, float sh, f
 {
 	if (!t || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
 	vita2d_texture_set_filters(t->tex, SCE_GXM_TEXTURE_FILTER_POINT, SCE_GXM_TEXTURE_FILTER_POINT);
-	vita2d_set_blend_mode_mul(1);
+	if (!vita2d_set_blend_mode_mul(1)) return;      /* no multiply programs: no mask */
 	vita2d_draw_texture_tint_part_scale(t->tex, dx, dy, sx, sy, sw, sh, dw / sw, dh / sh, 0xFFFFFFFFu);
 	vita2d_set_blend_mode_mul(0);
 }

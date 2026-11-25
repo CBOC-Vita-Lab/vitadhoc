@@ -1177,11 +1177,19 @@ void plat_present_hook(void)
                      opt.shot[i].path);
          else
             snprintf(path, sizeof(path), "%s", opt.shot[i].path);
-         if (vid_dump_ge(path) == 0)
-            fe_evt("host_shot frame=%u emu=%u file=%s", f, frames_ran,
-                   opt.shot[i].path);
-         else
-            fprintf(stderr, "host: cannot write %s\n", path);
+         {
+            /* vback_soft.c: the text-fit audit's boxes are kept by this name */
+            extern const char *vb_soft_shot_tag;
+            int rc;
+            vb_soft_shot_tag = opt.shot[i].path;
+            rc = vid_dump_ge(path);
+            vb_soft_shot_tag = NULL;
+            if (rc == 0)
+               fe_evt("host_shot frame=%u emu=%u file=%s", f, frames_ran,
+                      opt.shot[i].path);
+            else
+               fprintf(stderr, "host: cannot write %s\n", path);
+         }
       }
    }
 }

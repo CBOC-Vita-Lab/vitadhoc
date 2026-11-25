@@ -1415,14 +1415,21 @@ void vita2d_pool_reset()
 	pool_index = 0;
 }
 
-void vita2d_set_blend_mode_mul(int enable)
+/* GBAdhoc: 1 when the multiply set is now in use (or was left, enable 0); 0
+ * when the shader patcher could not make it at start-up: the normal set
+ * stays and the caller must not draw (a mask laid over the picture with
+ * the normal blend would replace it). */
+int vita2d_set_blend_mode_mul(int enable)
 {
 	vita2d_fragment_programs *in = enable ? &_vita2d_fragmentPrograms.blend_mode_mul
 	    : &_vita2d_fragmentPrograms.blend_mode_normal;
 
+	if (enable && (!in->color || !in->texture || !in->textureTint))
+		return 0;
 	_vita2d_colorFragmentProgram = in->color;
 	_vita2d_textureFragmentProgram = in->texture;
 	_vita2d_textureTintFragmentProgram = in->textureTint;
+	return 1;
 }
 
 void vita2d_set_blend_mode_add(int enable)

@@ -1581,16 +1581,20 @@ static void footer(const char *hint)
       /* no bar: the hints sit on a ramp out of the bottom edge */
       vs_grad_v(0, VS_H - 2 * FTR_H - 24, VS_W, 2 * FTR_H + 24,
                 VS_HEX(0x070B18, 0), VS_HEX(0x070B18, 235));
-      vid_text_center(VID_SCR_H - FTR_H + 2, hint, 0xADB9);
-      tch_hints_center(VID_SCR_H - FTR_H + 2, hint);
+      /* Text size Large (a page inside vid_text_scope): two rows higher, so
+       * the taller line's descenders stay on the screen */
+      vid_text_center(VID_SCR_H - FTR_H + 2 - (vid_text_scope_large() ? 2 : 0), hint, 0xADB9);
+      tch_hints_center(VID_SCR_H - FTR_H + 2 - (vid_text_scope_large() ? 2 : 0), hint);
       return;
    }
 #endif
    vid_rect(0, VID_SCR_H - FTR_H, VID_SCR_W, 1, C_ACCENT_DK, 180);
    vid_rect(0, VID_SCR_H - FTR_H + 1, VID_SCR_W, FTR_H - 1, C_HDR_BOT, 220);
-   vid_text_center(VID_SCR_H - FTR_H + 2, hint, C_DIM);
 #ifdef VITA
-   tch_hints_center(VID_SCR_H - FTR_H + 2, hint);   /* every hint a button */
+   vid_text_center(VID_SCR_H - FTR_H + 2 - (vid_text_scope_large() ? 2 : 0), hint, C_DIM);
+   tch_hints_center(VID_SCR_H - FTR_H + 2 - (vid_text_scope_large() ? 2 : 0), hint);   /* every hint a button */
+#else
+   vid_text_center(VID_SCR_H - FTR_H + 2, hint, C_DIM);
 #endif
 }
 
@@ -2454,10 +2458,14 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_NESWIDE,  /* 1.4: NES profile only */
        SET_NESPAL,   /* 2.0: NES profile only: PAL games speed (Smooth 50 Hz / True 50 Hz) */
        SET_SCREEN,   /* 2.0: Screen Auto / OLED / LCD / PS TV: one setting for every console (pk_screen.h) */
-       SET_HDR_UI, SET_THEME, SET_SHELL, SET_PREVIEW, SET_COVERS, SET_REFRESH,
+       SET_HDR_UI,
+       /* 2.0: Text size Normal / Large and High contrast Off / On, every menu
+        * (the app and both players).  First of INTERFACE, above Theme where
+        * the list's Settings opens: both are on the page as it opens, and no
+        * row below Theme moved. */
+       SET_TEXTSIZE, SET_CONTRAST,
+       SET_THEME, SET_SHELL, SET_PREVIEW, SET_COVERS, SET_REFRESH,
        SET_SHOTDIR,
-       SET_TEXTSIZE, /* 2.0: Text size Normal / Large, every menu (the app and both players) */
-       SET_CONTRAST, /* 2.0: High contrast Off / On */
        SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_REWIND, SET_FPS,
        SET_SPEED,
        SET_CPU,      /* 1.3: CPU speed (cpuclock.h), after Keep full speed */
@@ -2607,6 +2615,10 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Screen" },             /* every console, whatever profile is open */
 #endif
    { 1, "INTERFACE" },
+#ifdef VITA
+   { 0, "Text size" },
+   { 0, "High contrast" },
+#endif
    { 0, "Theme" },
 #ifdef VITA
    { 0, "Game list" },
@@ -2616,8 +2628,6 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Covers" },
    { 0, "Refresh library" },
    { 0, "Screenshot folder" },
-   { 0, "Text size" },
-   { 0, "High contrast" },
 #else
    { 0, "Menu style" },
 #endif
@@ -2858,8 +2868,14 @@ static int set_row_enabled(int idx)
 #ifdef VITA
 /* One row shorter: the line under the list says what the highlighted
  * setting does (set_help). */
-#define SET_VIEW_BOT  224
+/* Text size Large (Settings draws inside vid_text_scope): the two help
+ * lines and the footer are each a taller line, so the list gives them 18
+ * rows and the help's lines sit 18 apart instead of 15. */
+#define SET_VIEW_BOT  (vid_text_scope_large() ? 206 : 224)
 #define SET_HELP_Y    233
+#define SET_HELP_1    (vid_text_scope_large() ? 223 : SET_HELP_Y)
+#define SET_HELP_2A   (vid_text_scope_large() ? 213 : SET_HELP_Y - 8)
+#define SET_HELP_2B   (vid_text_scope_large() ? 231 : SET_HELP_Y + 7)
 #else
 #define SET_VIEW_BOT  244
 #endif
@@ -3969,6 +3985,31 @@ static void set_item_raw(int y, int sel, int enabled, const char *label,
    if (sel)
       ov_band(y, SET_BAND_W, SET_BAND_H);
    vid_text(30, y, label, enabled ? (sel ? C_SEL : C_ITEM) : C_DIM);
+#ifdef VITA
+   /* Text size Large: a value that would reach its label is shortened ("...")
+    * rather than drawn over it (whole UTF-8 characters) */
+   if (value && vid_text_scope_large() &&
+       30 + vid_text_w(label) + 10 + vid_text_w(value) > 440)
+   {
+      char v[96];
+      size_t n;
+      const int room = 440 - (30 + vid_text_w(label) + 10) - vid_text_w("...");
+      snprintf(v, sizeof(v) - 4, "%s", value);
+      n = strlen(v);
+      while (n > 0 && vid_text_w(v) > room)
+      {
+         n--;
+         while (n > 0 && ((unsigned char)v[n] & 0xC0) == 0x80)
+            n--;
+         v[n] = '\0';
+      }
+      while (n > 0 && v[n - 1] == ' ')
+         v[--n] = '\0';
+      strcat(v, "...");
+      ov_text_right(440, y, v, enabled ? (sel ? C_VALUE : C_ACCENT_DK) : C_DIM);
+      return;
+   }
+#endif
    if (value)
       ov_text_right(440, y, value,
                     enabled ? (sel ? C_VALUE : C_ACCENT_DK) : C_DIM);
@@ -4308,9 +4349,20 @@ static void set_help_draw(const char *h)
    enum { HELP_W = 444 };
    char l1[160], l2[160];
    size_t n, cut = 0, len;
+#ifdef VITA
+   /* Text size Large: a help too long for two of the larger lines keeps the
+    * Normal size (and its two lines) rather than lose its end */
+   if (h && vid_text_scope_large() && vid_text_w(h) > 2 * HELP_W - 70)
+   {
+      vid_text_scope(0);
+      set_help_draw(h);
+      vid_text_scope(1);
+      return;
+   }
+#endif
    if (!h || vid_text_w(h) <= HELP_W)
    {
-      vid_text(22, SET_HELP_Y, h, C_DIM);
+      vid_text(22, SET_HELP_1, h, C_DIM);
       return;
    }
    len = strlen(h);
@@ -4345,8 +4397,8 @@ static void set_help_draw(const char *h)
          break;
       }
    }
-   vid_text(22, SET_HELP_Y - 8, l1, C_DIM);
-   vid_text(22, SET_HELP_Y + 7, l2, C_DIM);
+   vid_text(22, SET_HELP_2A, l1, C_DIM);
+   vid_text(22, SET_HELP_2B, l2, C_DIM);
 }
 
 /* The finger's scroll of the list: while it is in charge the list does not
@@ -4429,7 +4481,26 @@ static int ra_settings_typed(void)
 }
 #endif
 
+static ui_action screen_settings_page(unsigned edges);
+
+/* Settings is the page of the PSP-layout text whose rows hold Text size
+ * Large (the list's 32 px pitch, the help's two lines and the footer moved
+ * for it, a long value shortened): it draws inside the scope, and what any
+ * other page draws with that text stays at Normal (video_vita.h). */
 static ui_action screen_settings(unsigned edges)
+{
+#ifdef VITA
+   ui_action a;
+   vid_text_scope(1);
+   a = screen_settings_page(edges);
+   vid_text_scope(0);
+   return a;
+#else
+   return screen_settings_page(edges);
+#endif
+}
+
+static ui_action screen_settings_page(unsigned edges)
 {
    int i;
 

@@ -50,7 +50,9 @@ declares their functions; nothing here calls them.  Text is drawn by
 6. `vita2d_set_blend_mode_mul()` (declared in `include/vita2d.h`): a third
    set of the fragment programs, made from the same precompiled shaders with
    a multiply blend state (`out = src * dst`), beside `normal` and `add`.
-   The CRT mask (playerkit/vita/pk_crt_vita.h) uses it.  Identical to the
+   The CRT mask (playerkit/src/pk_crt.h through playerkit/vita/pk_gfx_vita.cpp
+   `tex_draw_mul`) uses it; the call returns 0 when the set could not be made
+   and nothing is drawn then.  Identical to the
    change in gpsp/vita/third_party/vita2d.  Compile-checked only.
 
 To take a newer upstream: retain these local changes and the R7 actual-native

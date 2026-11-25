@@ -67,7 +67,15 @@ typedef struct
    int      worst_ch;
 } vv_face;
 
-static vv_face g_face[2];     /* 0 = ui, 1 = hd                            */
+/* [set][face]: face 0 = ui, 1 = hd.  Set 0 is the Normal size, always baked;
+ * set 1 is Text size Large, baked only while that is chosen.  g_set is the
+ * one in use: Large only inside vid_text_scope(1), which a page calls once
+ * its fixed rows have been made to hold the larger lines (Settings has);
+ * every other page of this PSP-layout text keeps the Normal faces, so no
+ * line of it can outgrow its row. */
+static vv_face g_face[2][2];
+static int     g_set;
+#define FACE(hd) (&g_face[g_set][(hd) ? 1 : 0])
 static int     g_ready;
 int vv_text_pct = 100, vv_text_hc;      /* Text size, High contrast (priv.h) */
 static int g_baked_pct = 100;           /* the size the faces were baked at  */
@@ -224,14 +232,20 @@ static void bake_extra(packer *pk, vv_glyph *g, int kind, float size,
 static int bake_face(vv_face *f, const unsigned char *ttf, float px_logical,
                      int asc_logical, const fu_glyph *psp, float extra_size,
                      float extra_star, float extra_stroke, float extra_mid,
-                     int semibold)
+                     int semibold, float ts)
 {
    stbtt_fontinfo font;
    packer pk;
    float scale, sum = 0.0f;
    int c, used_h, n = 0;
-   /* Large: the face, its advances and its vertical metrics all grow by ts */
-   const float ts = (float)vv_text_pct / 100.0f;
+   /* Large (ts 1.2): the face, its advances and its vertical metrics all grow by ts.
+    * The layouts are the PSP's fixed rows, so a line grows about the middle
+    * of its capitals, not down from its top: `lift` (native px) keeps the
+    * cap height's centre where Normal has it, and every band, pill and row
+    * a line sits in still has it in the middle (vv_text_cap says the same). */
+   const fu_glyph *cap = &psp['H' - FU_FIRST];
+   const int lift = (int)floorf((float)VV_S * (ts - 1.0f) *
+                                ((float)cap->yoff + (float)cap->h * 0.5f) + 0.5f);
 
    memset(f, 0, sizeof(*f));
    if (!stbtt_InitFont(&font, ttf, stbtt_GetFontOffsetForIndex(ttf, 0)))
@@ -279,7 +293,7 @@ static int bake_face(vv_face *f, const unsigned char *ttf, float px_logical,
       g->ax = (unsigned short)ax; g->ay = (unsigned short)ay;
       g->w = (unsigned char)w; g->h = (unsigned char)h;
       g->ox = (signed char)((int)floorf(e) + x0);
-      g->oy = (signed char)((int)floorf((float)(VV_S * asc_logical) * ts + 0.5f) + y0);
+      g->oy = (signed char)((int)floorf((float)(VV_S * asc_logical) * ts + 0.5f) + y0 - lift);
    }
    f->mean = n ? sum / (float)n : 0.0f;
 
@@ -289,7 +303,7 @@ static int bake_face(vv_face *f, const unsigned char *ttf, float px_logical,
       bake_extra(&pk, &f->g[idx], c, (c >= 4 ? extra_star : extra_size) * ts,
                  extra_stroke * ts,
                  (int)floorf((float)(VV_S * psp[idx].xadv) * ts + 0.5f),
-                 extra_mid * ts);
+                 extra_mid * ts - (float)lift);
    }
 
    used_h = (pk.pen_y + pk.row_h + 8) & ~7;
@@ -301,9 +315,21 @@ static int bake_face(vv_face *f, const unsigned char *ttf, float px_logical,
    free(pk.px);
    /* the characters beyond ASCII: nothing is read or allocated until one is drawn */
    f->xs = vglyph_new(ttf, NULL, (int)(px_logical * VV_S * ts),
-                      (int)floorf((float)(VV_S * asc_logical) * ts + 0.5f),
+                      (int)floorf((float)(VV_S * asc_logical) * ts + 0.5f) - lift,
                       semibold);
    return (f->tex && !pk.overflow) ? 0 : -1;
+}
+
+static void face_set_free(int set)
+{
+   int i;
+   for (i = 0; i < 2; i++)
+   {
+      vb_tex_destroy(g_face[set][i].tex);
+      g_face[set][i].tex = NULL;
+      vglyph_free(g_face[set][i].xs);
+      g_face[set][i].xs = NULL;
+   }
 }
 
 int vv_text_init(void)
@@ -315,31 +341,40 @@ int vv_text_init(void)
     * The shapes are a little larger than Inter's reduced geometric glyphs
     * were (10 px in a 12 px advance): 10.5 logical px across, the star
     * 11.5 -- about the cap height, the size the system's own prompts use. */
-   rc |= bake_face(&g_face[0], vv_font_regular, 15.0f, FU_UI_ASC, fu_ui_g,
-                   21.0f, 23.0f, 2.3f, 9.5f * VV_S, 0);
-   rc |= bake_face(&g_face[1], vv_font_semibold, 19.0f, FU_HD_ASC, fu_hd_g,
-                   27.0f, 29.0f, 3.0f, 12.0f * VV_S, 1);
+   rc |= bake_face(&g_face[0][0], vv_font_regular, 15.0f, FU_UI_ASC, fu_ui_g,
+                   21.0f, 23.0f, 2.3f, 9.5f * VV_S, 0, 1.0f);
+   rc |= bake_face(&g_face[0][1], vv_font_semibold, 19.0f, FU_HD_ASC, fu_hd_g,
+                   27.0f, 29.0f, 3.0f, 12.0f * VV_S, 1, 1.0f);
+   /* Text size Large: the second set (two more atlases, about 150 KB of
+    * coverage).  If either face cannot be made the set is not used and
+    * every page stays at Normal. */
+   if (vv_text_pct != 100)
+   {
+      const float ts = (float)vv_text_pct / 100.0f;
+      int lr = bake_face(&g_face[1][0], vv_font_regular, 15.0f, FU_UI_ASC,
+                         fu_ui_g, 21.0f, 23.0f, 2.3f, 9.5f * VV_S, 0, ts);
+      lr |= bake_face(&g_face[1][1], vv_font_semibold, 19.0f, FU_HD_ASC,
+                      fu_hd_g, 27.0f, 29.0f, 3.0f, 12.0f * VV_S, 1, ts);
+      if (lr)
+         face_set_free(1);
+   }
    g_ready = 1;
    g_baked_pct = vv_text_pct;
+   g_set = 0;
    return rc;
 }
 
 void vv_text_term(void)
 {
-   int i;
-   for (i = 0; i < 2; i++)
-   {
-      vb_tex_destroy(g_face[i].tex);
-      g_face[i].tex = NULL;
-      vglyph_free(g_face[i].xs);
-      g_face[i].xs = NULL;
-   }
+   face_set_free(0);
+   face_set_free(1);
+   g_set = 0;
    g_ready = 0;
 }
 
 float vv_text_worst_dev(int hd, int *ch, float *mean_abs)
 {
-   const vv_face *f = &g_face[hd ? 1 : 0];
+   const vv_face *f = &g_face[0][hd ? 1 : 0];
    if (ch) *ch = f->worst_ch;
    if (mean_abs) *mean_abs = f->mean;
    return f->worst;
@@ -408,9 +443,9 @@ static int vv_xadv(const vv_face *f, uint32_t cp)
 int vv_text_width(int hd, const char *s)
 {
    const fu_glyph *g = hd ? fu_hd_g : fu_ui_g;
-   const vv_face *f = &g_face[hd ? 1 : 0];
+   const vv_face *f = FACE(hd);
    int w = 0;
-   if (g_baked_pct != 100 && f->tex)
+   if (g_set && f->tex)
    {
       int nat = 0;
       while (*s)
@@ -455,15 +490,16 @@ int vv_text_width(int hd, const char *s)
 void vv_text_cap(int *top, int *h)
 {
    const fu_glyph *g = &fu_ui_g['H' - FU_FIRST];
-   *top = (g->yoff * g_baked_pct + 50) / 100;
-   *h   = (g->h * g_baked_pct + 50) / 100;
+   /* Large: taller about the same centre (bake_face's lift) */
+   *h   = (g->h * (g_set ? g_baked_pct : 100) + 50) / 100;
+   *top = g->yoff + (g->h - *h) / 2;
 }
 
 #define TEXT_BATCH 128
 
 void vv_text_draw(int hd, int nx, int ny, const char *s, uint32_t tint)
 {
-   const vv_face *f = &g_face[hd ? 1 : 0];
+   const vv_face *f = FACE(hd);
    vb_tquad q[TEXT_BATCH], qx[TEXT_BATCH];
    vb_tex *xtex = NULL;
    int n = 0, nxq = 0, pen = nx;
@@ -557,6 +593,17 @@ void vid_set_text_look(int large, int contrast)
 }
 
 int vid_text_pct(void) { return vv_text_pct; }
+
+/* A page whose rows hold the larger lines says so around its drawing:
+ * vid_text_scope(1) ... vid_text_scope(0).  Returns what is now in use: 1
+ * only when Text size is Large and its faces are baked. */
+int vid_text_scope(int large_ok)
+{
+   g_set = (large_ok && g_ready && g_baked_pct != 100 &&
+            g_face[1][0].tex && g_face[1][1].tex) ? 1 : 0;
+   return g_set;
+}
+int vid_text_scope_large(void) { return g_set; }
 
 /* At the start of a frame: bake the faces again when the size changed (the
  * atlases are not in use by a draw that has not been presented yet). */

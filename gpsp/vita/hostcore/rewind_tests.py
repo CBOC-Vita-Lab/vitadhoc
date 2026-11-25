@@ -425,7 +425,7 @@ def t_guards(S):
     # Rewind), stepped once to the
     # left of "1 min" is "30 s"; the game loop hears of it when the menu
     # closes
-    r = S.run("rw_setting", menu_pick(4, wait=120) + set_down(12) +  # Rewind: twelve rows down (the page has gained a row since this was eleven)
+    r = S.run("rw_setting", menu_pick(4, wait=120) + set_down(14) +  # Rewind: fourteen rows down (2.0: CRT mask and Screen joined Display above it)
               "+10:shot=row.png\n+4:left\n+10:shot=row30.png\n"
               "+4:circle\n+10:circle\n+60:rstick-left:30\n+40:quit\n",
               autoboot="gbadhoc-test.gba")

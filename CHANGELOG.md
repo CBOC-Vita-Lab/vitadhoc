@@ -360,6 +360,16 @@ and in emulators; none of it has run on a real Vita yet (see
   the log stays English. Long translations wrap or end in an ellipsis rather
   than shrink; every screen was checked with a test language 35% longer than
   English. No translation ships yet: the catalogues are for translators.
+- **Japanese and Chinese text works everywhere**: every text path (menus,
+  toasts, help lines, paragraphs, the in-game menu, both players) draws kana,
+  kanji and hanzi from the bundled fonts, and a Simplified Chinese interface
+  draws the shared characters in their Chinese forms (new `cjkfont-sc.otf`,
+  the 6763 GB 2312 hanzi, SIL OFL). Lines break between any two such
+  characters, never inside a Latin word, never start with a closing mark such
+  as the full stop and never end with an opening bracket; nothing is cut in
+  half. The Settings help line and the Play together paragraphs, which broke
+  only at spaces, now break on whole characters. Checked on the PC test twin
+  with machine-translated test catalogues.
 
 **Under the hood**
 

@@ -1,0 +1,42 @@
+# Test catalogue (machine translated, for the text engine tests only; NOT a shipped translation).
+lang.auto	自动
+md.lcd_ghosting	液晶残影
+md.the_console_drew_only_4_sprites	主机每行只能画4个精灵，所以游戏会让其余的闪烁。开启后全部画出；游戏本身的运行完全相同。
+menu.a_soft_glow_beside_the_picture	在黑边的位置显示画面旁柔和的光。
+menu.auto	自动
+menu.bilinear	双线性
+menu.buttons	按钮
+menu.confirm	确认
+menu.customised	自定义
+menu.delete_this_cheat	要删除这个金手指吗？
+menu.exit	退出
+menu.find_where_the_game_keeps_lives	查找游戏把生命、金钱或体力存在哪里：记下数字，随着它变化逐步缩小范围，再把结果做成金手指。
+menu.hold_the_rewind_button_to_run	按住倒带键，游戏会倒着运行。
+menu.how_the_game_is_run_and	游戏的运行和显示方式。
+menu.keep_sound	保留声音
+menu.large	大
+menu.map.press_ok_for	按下确定，然后按要作为%s的Vita按键。
+menu.modal.cheat_delete_body_named	将从列表中移除“%s”。此操作无法撤销。
+menu.not_used	未使用
+menu.on	开
+menu.picture	画面
+menu.player_buttons_reset	玩家%d的按钮已重置
+menu.reset_to_defaults	恢复默认设置
+menu.select	选择
+menu.sharp_bilinear	锐利双线性
+menu.slot	栏位 %d
+menu.sped_up	加速
+menu.state_saved_to_slot	已保存到栏位 %d
+menu.the_game_s_own_pixels_evenly	游戏自己的像素，在任何屏幕大小下都等大显示。
+menu.the_state_could_not_be_loaded	无法读取存档：此游戏或版本无法读取它
+menu.turbo_a_speed	A 键连发速度
+menu.undo_last_load	撤销上次读取
+menu.what_the_right_stick_does_nothing	右摇杆的作用：无、方向键，或可映射的专用按钮。
+player.cheat_off	金手指已关闭：%s
+player.not_enough_memory	内存不足。
+player.the_cheat_list_is_full	金手指列表已满
+player.true_50_hz	真实50Hz
+ra.achievement	成就：%s (%u)
+rewind.chip	<< 倒带 %u 秒
+search.decreased	减少
+search.unchanged	未变化

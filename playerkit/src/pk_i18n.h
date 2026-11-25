@@ -84,7 +84,7 @@ void i18n_pseudo(const char *en, char *out, size_t n);
 bool i18n_same_formats(const char *a, const char *b);
 /* Loads a catalogue from memory (a copy is parsed), as i18n_use does a file; for the tests. Returns the
  * number of texts kept (0: not loaded, English stays). */
-int i18n_use_text(const char *data, size_t len);
+int i18n_use_text(const char *data, size_t len, int lang = LANG_ES);
 
 }  // namespace pk
 

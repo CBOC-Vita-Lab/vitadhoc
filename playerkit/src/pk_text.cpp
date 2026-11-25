@@ -8,6 +8,7 @@
  * or measures inside a character. */
 #include "pk_gfx.h"
 #include "pk_glyphs.h"
+#include "pk_i18n.h"
 #include "pk_utf8.h"
 #include "pk_uilook.h"
 #include <math.h>
@@ -76,7 +77,12 @@ Text::~Text()
 	delete p_;
 }
 
-void Text::frame() { pk_gc_tick(); }
+void Text::frame()
+{
+	pk_gc_tick();
+	/* the Chinese forms of the shared Han characters for a Chinese interface */
+	pk_glyphs_set_region(i18n_current() == LANG_ZHS ? PK_REGION_SC : PK_REGION_JP);
+}
 
 void Text::set_look(int pct, bool contrast) { p_->pct = pct < 50 ? 50 : pct > 200 ? 200 : pct; p_->contrast = contrast; }
 int Text::pct() const { return p_->pct; }
@@ -115,7 +121,7 @@ static pk_gcache *gcache(Text::Impl *p, int face)
 	sp.ascent = p->fd[face]->ascent;
 	sp.embolden = kFace[face].embolden;
 	sp.chain[0] = pk_gfont_file(kFace[face].semibold ? PK_FONT_FILE_LATIN_B : PK_FONT_FILE_LATIN);
-	sp.chain[1] = pk_gfont_file(PK_FONT_FILE_CJK);
+	sp.cjk_fallback = 1;                       /* then the region's CJK files (pk_glyphs_set_region) */
 	sp.budget_bytes = kCacheBudget;
 	sp.min_slots = 64;
 	pk_gcache *c = pk_gc_new(&sp, glyph_upload, &p->side[face]);
@@ -246,43 +252,49 @@ std::string Text::fit(int face, const std::string &s, float max_w)
 	return s.substr(0, keep) + "...";
 }
 
-/* the text as pieces a line can be broken between: each holds whether a
- * space stood before it */
-struct Piece { std::string text; bool space; };
+/* the text as pieces a line can be broken between: byte ranges of s, the spaces between them left out */
+typedef std::pair<size_t, size_t> Span;
 
-static void pieces(const std::string &s, std::vector<Piece> &out)
+static void pieces(const std::string &s, std::vector<Span> &out)
 {
-	const char *p = s.c_str();
-	bool space = false;
-	Piece cur; cur.space = false;
+	const char *b = s.c_str(), *p = b;
+	size_t from = 0;
 	bool have = false;
+	uint32_t prev = 0;                              /* the character before, 0 after a space */
 	while (*p) {
 		int n;
 		uint32_t cp = pk_u8_next(p, &n);
 		if (cp == ' ') {
-			if (have) { out.push_back(cur); have = false; }
-			space = true;
+			if (have) { out.push_back(Span(from, (size_t) (p - b))); have = false; }
+			prev = 0;
 			p += n;
 			continue;
 		}
-		if (pk_u8_wide(cp)) {
-			if (pk_u8_no_line_start(cp) && !space && (have || !out.empty())) {
-				(have ? cur.text : out.back().text).append(p, (size_t) n);      /* sticks to the character before it */
-			} else {
-				if (have) { out.push_back(cur); have = false; }
-				Piece w; w.text.assign(p, (size_t) n); w.space = space;
-				out.push_back(w);
-			}
-			space = false;
-			p += n;
-			continue;
-		}
-		if (!have) { cur.text.clear(); cur.space = space; have = true; }
-		cur.text.append(p, (size_t) n);
-		space = false;
+		if (have && prev && pk_u8_can_break(prev, cp)) { out.push_back(Span(from, (size_t) (p - b))); have = false; }
+		if (!have) { from = (size_t) (p - b); have = true; }
+		prev = cp;
 		p += n;
 	}
-	if (have) out.push_back(cur);
+	if (have) out.push_back(Span(from, (size_t) (p - b)));
+}
+
+std::vector<Span> Text::break_lines(int face, float max_w, const std::string &s)
+{
+	std::vector<Span> pc, lines;
+	pieces(s, pc);
+	bool open = false;
+	Span cur(0, 0);
+	for (size_t i = 0; i < pc.size(); i++) {
+		if (!open) { cur = pc[i]; open = true; continue; }
+		if (width(face, s.substr(cur.first, pc[i].second - cur.first).c_str()) > max_w) {
+			lines.push_back(cur);
+			cur = pc[i];
+		} else {
+			cur.second = pc[i].second;
+		}
+	}
+	if (open) lines.push_back(cur);
+	return lines;
 }
 
 int Text::wrap(int face, float x, float y, float max_w, int max_lines, float line_gap, const std::string &s, uint32_t rgba)
@@ -293,26 +305,15 @@ int Text::wrap(int face, float x, float y, float max_w, int max_lines, float lin
 	int lines = 0;
 	float lh = (float) line_h(face) + line_gap;
 	if (!ascii) {
-		std::vector<Piece> pc;
-		pieces(s, pc);
-		for (size_t i = 0; i < pc.size() && lines < max_lines; i++) {
-			std::string cand = line.empty() ? pc[i].text : line + (pc[i].space ? " " : "") + pc[i].text;
-			if (!line.empty() && width(face, cand.c_str()) > max_w) {
-				if (lines == max_lines - 1) {          /* the last line takes the rest, cut to fit */
-					std::string rest = line;
-					for (size_t j = i; j < pc.size(); j++) rest += (pc[j].space ? " " : "") + pc[j].text;
-					draw(face, x, y + lines * lh, fit(face, rest, max_w).c_str(), rgba);
-					return lines + 1;
-				}
-				draw(face, x, y + lines * lh, line.c_str(), rgba);
-				lines++;
-				line = pc[i].text;
-			} else {
-				line = cand;
+		std::vector<Span> L = break_lines(face, max_w, s);
+		for (size_t i = 0; i < L.size() && (int) i < max_lines; i++) {
+			if ((int) i == max_lines - 1 && L.size() > i) {                        /* the last line takes the rest, cut to fit */
+				std::string rest = s.substr(L[i].first);
+				while (!rest.empty() && rest[rest.size() - 1] == ' ') rest.erase(rest.size() - 1);
+				draw(face, x, y + lines * lh, fit(face, rest, max_w).c_str(), rgba);
+				return lines + 1;
 			}
-		}
-		if (!line.empty() && lines < max_lines) {
-			draw(face, x, y + lines * lh, fit(face, line, max_w).c_str(), rgba);
+			draw(face, x, y + lines * lh, s.substr(L[i].first, L[i].second - L[i].first).c_str(), rgba);
 			lines++;
 		}
 		return lines;

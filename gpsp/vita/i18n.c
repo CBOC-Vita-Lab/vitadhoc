@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../../playerkit/src/pk_utf8.h"   /* the audit reads UTF-8 */
 #include "lang_en.h"      /* i18n_en[]: the English table, sorted by key */
 
 const char *const i18n_code[I18N_LANGS] = {
@@ -444,8 +445,61 @@ int i18n_use(int lang, int system)
 
 int i18n_audit_on;
 
+/* A drawn text with half a character in it (a cut at a byte count) or a byte
+ * that is no UTF-8: reported once per text, the way the shipped text layers
+ * would show a '?' or nothing for it.  The button glyphs 0x80..0x84 are the
+ * app's own and are fine. */
+static void audit_utf8(const char *s)
+{
+   const char *p = s;
+   static char seen[16][40];
+   static int nseen;
+   int i;
+   while (*p)
+   {
+      int n;
+      uint32_t cp = pk_u8_next(p, &n);
+      if (cp >= PK_U8_RAW && !(cp - PK_U8_RAW >= 0x80 && cp - PK_U8_RAW <= 0x84))
+      {
+         for (i = 0; i < nseen; i++)
+            if (!strncmp(seen[i], s, sizeof(seen[i]) - 1))
+               return;
+         if (nseen < 16)
+            snprintf(seen[nseen++], sizeof(seen[0]), "%s", s);
+         /* (the bytes in hex: the text itself is the very thing that is not valid) */
+         const char *from = p - s >= 3 ? p - 3 : s;
+         char hex[40];
+         int h = 0;
+         for (i = 0; i < 8 && from[i] && h + 3 < (int)sizeof(hex); i++)
+            h += snprintf(hex + h, sizeof(hex) - (size_t)h, "%02X", (unsigned char)from[i]);
+         fprintf(stderr, "EVT i18n: %s drawn at byte %d (bytes from %d: %s)\n",
+                 pk_u8_cut_tail(p) ? "cut character" : "bad UTF-8", (int)(p - s), (int)(from - s), hex);
+         return;
+      }
+      p += n;
+   }
+}
+
+/* The code points no font has (why 0) or that found no free cell in the face's
+ * atlas (why 1), drawn as '?': once each. */
+void i18n_audit_glyph(unsigned cp, int why)
+{
+   static unsigned seen[64];
+   static int nseen;
+   int i;
+   cp |= (unsigned)why << 24;
+   for (i = 0; i < nseen; i++)
+      if (seen[i] == cp)
+         return;
+   if (nseen < 64)
+      seen[nseen++] = cp;
+   fprintf(stderr, "EVT i18n: %s U+%04X\n", why ? "no free glyph cell for" : "glyph missing", cp & 0xFFFFFFu);
+}
+
 void i18n_audit(const char *drawn)
 {
+   if (drawn)
+      audit_utf8(drawn);
    if (drawn && drawn[0] >= 'a' && drawn[0] <= 'z' && strchr(drawn, '.') && !strchr(drawn, ' ') &&
        en_find(drawn))
       fprintf(stderr, "EVT i18n: key shown %s\n", drawn);

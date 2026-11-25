@@ -13,6 +13,12 @@ Latin / Greek / Cyrillic letters; hinting and layout tables dropped. The glyph
 outlines are untouched and the font keeps its name, which does not contain the
 Reserved Font Name. It is made by tools/font/make_fonts.py.
 
+It also ships a MODIFIED VERSION of the Noto Sans CJK SC Regular face
+(app0:cjkfont-sc.otf): every glyph removed except the 6763 hanzi of GB 2312,
+the kana, the symbols and fullwidth forms, Bopomofo and the Latin / Greek /
+Cyrillic letters; hinting and layout tables dropped; outlines untouched, name
+kept. Made by the same tool.
+
 -----------------------------------------------------------
 SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
 -----------------------------------------------------------

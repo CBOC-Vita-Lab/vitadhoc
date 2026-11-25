@@ -1,0 +1,42 @@
+# Test catalogue (machine translated, for the text engine tests only; NOT a shipped translation).
+lang.auto	自動
+md.lcd_ghosting	液晶の残像
+md.the_console_drew_only_4_sprites	本体は1ラインに4つのスプライトしか描けず、ゲームは残りを点滅させていました。オンにすると全部描きます。ゲーム自体の動きは変わりません。
+menu.a_soft_glow_beside_the_picture	黒い帯の代わりに、画面の横にやわらかい光を表示します。
+menu.auto	自動
+menu.bilinear	バイリニア
+menu.buttons	ボタン
+menu.confirm	決定
+menu.customised	カスタム
+menu.delete_this_cheat	このチートを削除しますか？
+menu.exit	終了
+menu.find_where_the_game_keeps_lives	ゲームが残機やお金、体力をどこに保存しているかを探します。数値を控えて、変化に合わせて絞り込み、結果をチートにできます。
+menu.hold_the_rewind_button_to_run	巻き戻しボタンを押し続けると、ゲームが逆再生されます。
+menu.how_the_game_is_run_and	ゲームの動かし方と表示のしかたです。
+menu.keep_sound	音を残す
+menu.large	大
+menu.map.press_ok_for	OKを押してから、%sにするVitaのボタンを押してください。
+menu.modal.cheat_delete_body_named	「%s」をリストから削除します。この操作は元に戻せません。
+menu.not_used	未使用
+menu.on	オン
+menu.picture	画面
+menu.player_buttons_reset	プレイヤー%dのボタンを初期化しました
+menu.reset_to_defaults	初期設定に戻す
+menu.select	選択
+menu.sharp_bilinear	シャープバイリニア
+menu.slot	スロット %d
+menu.sped_up	高速
+menu.state_saved_to_slot	スロット %d にセーブしました
+menu.the_game_s_own_pixels_evenly	ゲーム本来のピクセルを、どの画面サイズでも均等な大きさで表示します。
+menu.the_state_could_not_be_loaded	ステートを読み込めませんでした。このゲームまたはバージョンでは読めません
+menu.turbo_a_speed	Aボタンの連射速度
+menu.undo_last_load	直前のロードを取り消す
+menu.what_the_right_stick_does_nothing	右スティックの動作：なし、十字キー、または割り当てできる専用ボタン。
+player.cheat_off	チートをオフ: %s
+player.not_enough_memory	メモリが足りません。
+player.the_cheat_list_is_full	チートリストがいっぱいです
+player.true_50_hz	本来の50Hz
+ra.achievement	実績: %s (%u)
+rewind.chip	<< 巻き戻し %u 秒
+search.decreased	減少
+search.unchanged	変化なし

@@ -310,13 +310,13 @@ int i18n_use(int lang, int system)
 	return g_lang;
 }
 
-int i18n_use_text(const char *data, size_t len)
+int i18n_use_text(const char *data, size_t len, int lang)
 {
 	drop();
 	g_serial++;
 	g_lang = LANG_EN;
 	const int n = data ? load_mem(data, len) : 0;
-	if (n) g_lang = LANG_ES;      /* "some other language": the tests only look at the texts */
+	if (n) g_lang = lang;         /* by default "some other language": the tests only look at the texts */
 	return n;
 }
 

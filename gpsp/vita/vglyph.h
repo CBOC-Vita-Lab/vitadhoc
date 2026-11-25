@@ -26,6 +26,10 @@ typedef struct vglyph_set vglyph_set;
 /* Where the font files are (plat_app_dir(); PK_FONT_DIR in the environment
  * when this was never called, for the host tools). */
 void vglyph_dir(const char *dir);
+/* The interface language is Chinese (1) or not (0): the shared Han characters
+ * are then drawn in their Chinese forms (cjkfont-sc.otf first).  The sets
+ * follow at once. */
+void vglyph_region(int chinese);
 /* One frame has been presented. */
 void vglyph_tick(void);
 

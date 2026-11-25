@@ -460,6 +460,8 @@ int vv_text_width(int hd, const char *s)
                nat += a * VV_S;
                continue;
             }
+            if (i18n_audit_on)
+               i18n_audit_glyph(c, 0);
             c = '?';
          }
          else if (c < FU_FIRST)
@@ -479,6 +481,8 @@ int vv_text_width(int hd, const char *s)
             w += a;
             continue;
          }
+         if (i18n_audit_on)
+            i18n_audit_glyph(c, 0);
          c = '?';
       }
       else if (c < FU_FIRST)
@@ -544,6 +548,8 @@ void vv_text_draw(int hd, int nx, int ny, const char *s, uint32_t tint)
             pen += (a < 0 ? 0 : a) * VV_S;
             continue;
          }
+         if (i18n_audit_on)
+            i18n_audit_glyph(c, vv_xadv(f, c) < 0 ? 0 : 1);
          c = '?';
       }
       if (g_face_swap && (c == 0x80 || c == 0x81))

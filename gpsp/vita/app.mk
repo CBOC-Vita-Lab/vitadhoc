@@ -117,7 +117,7 @@ VPK_EXTRA     += assets/gamedb.txt=gamedb.txt
 # one catalogue per interface language (lang/<code>.txt; lang/TRANSLATING.md is
 # for the translators and stays out of the package)
 VPK_EXTRA     += $(foreach f,$(filter-out %/TRANSLATING.md %/pk_%.txt,$(wildcard $(V)/../../lang/*.txt)),$(f)=lang/$(notdir $(f)))
-VPK_EXTRA     += assets/cjkfont.otf=cjkfont.otf assets/latinfont.ttf=latinfont.ttf \
+VPK_EXTRA     += assets/cjkfont.otf=cjkfont.otf assets/cjkfont-sc.otf=cjkfont-sc.otf assets/latinfont.ttf=latinfont.ttf \
                  assets/latinfont-sb.ttf=latinfont-sb.ttf
 
 -include $(V)/cheats.mk

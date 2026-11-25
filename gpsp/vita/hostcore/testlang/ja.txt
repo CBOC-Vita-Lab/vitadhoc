@@ -1,0 +1,90 @@
+# Test catalogue (machine translated, for the text engine tests only; NOT a shipped translation).
+app.a_newer_vitadhoc_is_out	新しいVitAdhocが公開されています
+app.end_the_network_game_first	先にネットワークゲームを終了してください。
+app.was_not_found	%.180s が見つかりません。
+cheats.most_counters_are_1_byte_money	カウンターの多くは1バイトで、お金やスコアは2バイトのことが多いです。「どのアドレスでも」は奇数の位置も調べます。
+cover.a_cover_you_pick_always_wins	自分で選んだカバーは、ダウンロードした画像より優先されます。covers/にゲームと同じ名前のPNGまたはJPGを置いても使えます。
+hint.dpad_change_o_back	DPAD 変更   {o} 戻る
+hint.x_add_remove_sq_rename_tri	{x} 追加/削除   {sq} 名前変更   {tri} 削除   {o} 戻る
+hint.x_export_dpad_move_choose_o	{x} 書き出し   DPAD 移動/選択   {o} 戻る
+hint.x_on_off_sq_all_off	{x} オン/オフ   {sq} すべてオフ   {o} 戻る
+hint.x_select_dpad_change_o_resume	{x} 選択   DPAD 変更   {o} 再開
+hint.x_type_sq_delete_tri_join	{x} 入力   {sq} 削除   {tri} 結合   {o} 戻る
+home.1_game_matches_in_all_games	「すべてのゲーム」に1件のゲームが一致
+home.clear	クリア
+home.no_games_played_yet	%s のゲームはまだ遊んでいません
+home.play	遊ぶ
+home.save_states_of	セーブステート   %d-%d / %d
+home.the_games_you_play_show_up	遊んだゲームが新しい順にここに表示されます。
+link.connecting_through_the_relay	中継サーバー経由で接続しています。
+link.link_ended_game_saved	通信が終了しました。ゲームを保存しました。
+link.this_vita_went_to_sleep_so	このVitaがスリープしたため、通信が終了しました。
+menu.back_to_the_game	ゲームに戻る
+menu.leave_this_game_for_the_game	このゲームをやめてゲーム一覧へ
+menu.resume	再開
+menu.this_ends_the_link_for_both	両方のプレイヤーの通信が終了します。
+notice.please_try_again_in_a_moment	しばらくしてからもう一度お試しください。
+play.is_the_address_right_and_is	アドレスは正しいですか？相手のプレイヤーは接続を「インターネット」にしてホストしていますか？相手のルーターがUDPポート19019を通す必要があります。
+play.join_a_game	ゲームに参加
+play.nick_room	%s  -  ルーム %d
+play.save_states_cheats_rewind_and_fast	リンク中はセーブステート、チート、巻き戻し、早送りが使えません。プレイヤー2はプレイヤー1のゲームを遊びます。通信が終わると、プレイヤー2自身のゲームが元の状態で戻り、プレイヤー1のゲームは続きます。
+play.swap_controlled_game	操作するゲームを交換
+play.the_four_steps	4つのステップ
+play.waiting	待機中
+play.you_are_player_in	あなたはプレイヤー%d%s（%s、%s）です。
+play.your_router_did_not_open_the	ルーターが自動で入口を開きませんでした。ルーターの設定でUDPポート%sをこのVita（%s）に転送してください。相手のプレイヤーはあなたのグローバルアドレス%s%sを入力します。
+settings.a_and_b_buttons	A・Bボタン
+settings.about	このアプリについて
+settings.check_for_updates	アップデートを確認
+settings.display	画面
+settings.export_save_for_other_emulators	他のエミュレータ用にセーブを書き出す
+settings.game_boy_colours	Game Boyの色
+settings.hardcore	ハードコア
+settings.help.a_faint_pixel_grid_like_a	携帯機の画面のような薄いピクセルの格子。1は薄く、10は強くなります。
+settings.help.a_tap_on_the_game_opens	ゲームをタップするとメニューが開きます。Start + Selectでもいつでも開きます。
+settings.help.also_widens_rotating_3d_tracks_sprites	回転する3Dコースも広げます。スプライトがはみ出すことがあります。
+settings.help.european_games_run_at_50_hz	ヨーロッパのゲームは50Hzで動きます。なめらか50Hzなら本来の速度を保ったまま映像が整い、6回に1回のリフレッシュで2フレームが混ざります。
+settings.help.rest_on_a_game_in_the	ホーム画面でゲームに合わせたままにすると、最後に遊んだ10秒間が背景で再生されます。
+settings.help.shows_what_you_press_one_frame	次のフレームを先に計算して、押したボタンが1フレーム早く画面に出ます。ゲームの動きは変わりません。「自動」は余裕がある間だけ使います。
+settings.help.the_language_of_the_menus_automatic	メニューの言語です。「自動」はVitaの設定に従います。
+settings.high_contrast	ハイコントラスト
+settings.interface	インターフェース
+settings.language	言語
+settings.lcd_colours	液晶の色
+settings.motion_strength	動きの強さ
+settings.rewind	巻き戻し
+settings.screen_overlay	画面オーバーレイ
+settings.steady_pacing	安定したペース
+settings.text_size	文字サイズ
+settings.theme	テーマ
+settings.value.500_mhz_fast	500 MHz（高速）
+settings.value.classic_lcd_tint	クラシック液晶の色合い
+settings.value.frames	%dフレーム
+settings.value.just_this_game	このゲームだけ
+settings.value.normal_pitch	、通常の音程
+settings.value.on_2	オン - %.48s
+settings.value.smooth_50_hz	なめらか50Hz
+share.l_r_page	L/R ページ
+share.n_states_one	%u件のステート
+share.nothing_of_yours_was_changed	あなたのデータは変更されていません。
+share.share_game_data	ゲームデータを共有
+share.their_build_yours	%s  -  相手のビルド %.20s、あなたのビルド %.20s
+share.update_vitadhoc_on_both_vitas_theirs	両方のVitaでVitAdhocを更新してください（相手: %.24s）。
+share.waiting_for_your_friend	友だちを待っています...  %d:%02d
+toast.could_not_load_state	ステート%dを読み込めませんでした
+toast.exported_as	%.48s として書き出しました
+toast.link_lost_the_other_vita_is_2	通信が切れました。相手のVitaがいません。ゲームはそのまま続きます。
+toast.menu_hold_start_select	メニュー: START + SELECT を長押し
+toast.no_saved_state_in_this_slot	このスロットにセーブステートはありません
+toast.slow_connection_the_game_may_feel	通信が遅いため、ゲームの反応が遅れることがあります。
+toast.waiting_for_the_other_vita	相手のVitaを待っています...
+ui.a_clip_is_still_being_saved	クリップを保存中です。
+ui.every_control_is_back_to_its	すべての操作が初期設定に戻りました
+ui.no_games_match	一致するゲームはありません
+ui.nothing_saved_here	ここには何も保存されていません
+ui.of_on	%u / %d オン
+ui.pick_a_game	ゲームを選んでください
+ui.press_sq_on_a_game_to	ゲームで {sq} を押すとお気に入りにできます
+ui.quit	終了
+ui.resume	再開
+ui.settings	設定

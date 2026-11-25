@@ -385,6 +385,11 @@ STEPS = [
          "python3 app_tests.py x86 --only names_cjk", "quick", APP_TAGS | {"app"}, cwd="gpsp/vita/hostcore",
          inputs=["gpsp/", "playerkit/src/pk_glyphs.cpp", "playerkit/src/pk_utf8.h"], deps=["build-hostcore-x86", "build-testrom"],
          requires=PIL, group=GROUP_HOST, parse="app", timeout=1800),
+    # Japanese and Simplified Chinese in every text path (test catalogues in hostcore/testlang)
+    Step("app-cjk-text", "Japanese and Chinese text in the app (app_tests.py --only cjk_text)",
+         "python3 app_tests.py x86 --only cjk_text", "default", APP_TAGS | {"app"}, cwd="gpsp/vita/hostcore",
+         inputs=["gpsp/", "playerkit/src/pk_glyphs.cpp", "playerkit/src/pk_utf8.h"], deps=["build-hostcore-x86", "build-testrom"],
+         requires=PIL, group=GROUP_HOST, parse="app", timeout=3600),
     Step("app-x86", "the whole app on x86: game list, menus, states, fast forward (app_tests.py)",
          "python3 app_tests.py x86", "default", APP_TAGS | {"app"}, cwd="gpsp/vita/hostcore",
          inputs=["gpsp/", "nes/"], deps=["build-hostcore-x86", "build-testrom", "build-cheatrom"],

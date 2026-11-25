@@ -747,7 +747,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	cfg.exit_label = "Exit";
 	cfg.exit_help = "Close VitAdhoc";
 	cfg.caps = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_WIDE | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_GLOW |
-	           CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_REWIND | extra_caps_;
+	           CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT | CAP_CHEAT_SEARCH | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_REWIND | extra_caps_;
 	cfg.enter_is_cross = req_.enter_is_cross;
 	cfg.players = model->players;
 	cfg.play_together_reason = system_ == MD_SYS_GG ? "A Game Gear game has one controller" : "Start it from the game list: Settings > Two players";
@@ -1302,6 +1302,31 @@ void MdPlayer::set_cheat(int index, bool on)
 }
 
 void MdPlayer::add_cheat() { pf_->ask_cheat_text(); }
+
+bool MdPlayer::search_setup(pk_cs *cs)
+{
+	/* the work RAM, as a typed code reaches it: the Mega Drive's (and the Sega CD's) $FF0000-$FFFFFF as the core holds it, the 8 bit systems' $C000-$DFFF */
+	static const pk_cs_region md_reg[1] = { { 0, 0x10000 } };
+	static const pk_cs_region z80_reg[1] = { { 0, 0x2000 } };
+	if (system_ == MD_SYS_MD) pk_cs_init(cs, &MdPlayer::ra_read, this, PK_CS_MDW, PK_CS_MD, md_reg, 1);
+	else pk_cs_init(cs, &MdPlayer::ra_read, this, PK_CS_Z80, PK_CS_LE, z80_reg, 1);
+	return true;
+}
+
+const char *MdPlayer::search_refused()
+{
+	return linked() ? "Cheats are off while linked to another console." : cheats_refused();
+}
+
+void MdPlayer::add_cheat_code(const std::string &code, const std::string &name) { cheat_entered(true, code, name); }
+
+void MdPlayer::ask_search_value(const std::string &title)
+{
+	search_ask_ = true;
+	search_title_ = title;
+	pf_->ask_cheat_text();
+}
+
 
 void MdPlayer::cheat_entered(bool ok, const std::string &code_in, const std::string &name)
 {

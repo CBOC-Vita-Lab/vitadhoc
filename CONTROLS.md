@@ -41,6 +41,7 @@ and is A, and Cross is back and B. Settings > Controls > A and B buttons
 | PS + Start | The Vita's own screenshot |
 | Select + Down | Mystery Gift: listen for a phone (GBA) |
 | Right stick down | Cheat button, for button-activated codes |
+| Start (on the Cheats page) | Search memory: find the address of lives, money or health (the Super NES and Sega players have a Search memory row instead) |
 
 SNES and Sega games (the separate players) open their menu the same way: hold
 Start + Select (L + R + Start also works there). Settings > Controls > **Tap

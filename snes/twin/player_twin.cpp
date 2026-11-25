@@ -53,6 +53,7 @@ struct TwinPlatform : snesp::Platform {
 	int fw = 256, fh = 224;
 	std::vector<std::string> ime_answers;      /* code, name, code, name, ... */
 	bool ime_asked = false;
+	std::vector<std::string> search_titles;    /* what the keyboard was asked for, in Search memory */
 	std::string log_path, log_text;
 	int pic_changes = 0;
 	/* the writer thread (threaded mode) */
@@ -177,6 +178,16 @@ struct Rig {
 		if (pl->menu_open()) { draw(); pl->menu_drawn(); }
 		if (pf.ime_asked) {
 			pf.ime_asked = false;
+			std::string stitle;
+			if (pl->search_value_wanted(&stitle)) {
+				/* Search memory: the keyboard is for a number */
+				pf.search_titles.push_back(stitle);
+				if (!pf.ime_answers.empty()) {
+					std::string v = pf.ime_answers[0];
+					pf.ime_answers.erase(pf.ime_answers.begin());
+					pl->search_value_entered(true, v);
+				} else pl->search_value_entered(false, "");
+			} else
 			if (pf.ime_answers.size() >= 2) {
 				std::string c = pf.ime_answers[0], n = pf.ime_answers[1];
 				pf.ime_answers.erase(pf.ime_answers.begin(), pf.ime_answers.begin() + 2);
@@ -560,6 +571,7 @@ static int run_test(const char *rom, const std::string &shots, const std::string
 	pl->menu().goto_page(Menu::PAGE_CHEATS);
 	rig.settle(2);
 	rig.press(PH_DOWN);
+	rig.press(PH_DOWN);                                    /* past Add a cheat and Search memory */
 	rig.press(PH_LEFT);                                    /* off */
 	EXPECT(pl->menu().notices().text().find("Cheat off") == 0);
 	EXPECT(pl->menu().notices().kind() != NOTICE_OK);
@@ -573,6 +585,7 @@ static int run_test(const char *rom, const std::string &shots, const std::string
 	pl->menu().goto_page(Menu::PAGE_CHEATS);
 	rig.settle(2);
 	rig.press(PH_DOWN);
+	rig.press(PH_DOWN);
 	rig.press(PH_TRIANGLE);
 	EXPECT(pl->menu().modal_open());
 	rig.snap("cheats_delete_ask");
@@ -580,6 +593,68 @@ static int run_test(const char *rom, const std::string &shots, const std::string
 	EXPECT(snes_host_cheat_count() == 0);
 	rig.settle(3);
 	rig.snap("cheats_deleted");
+
+	/* ---- Search memory: find a byte by how it changes, make it a cheat ---- */
+	{
+		auto to_row = [&](const char *label) {
+			for (int k = 0; k < 80 && !(pl->menu().cursor() < pl->menu().row_count() && pl->menu().row_label(pl->menu().cursor()) == label); k++) rig.press(PH_DOWN);
+			return pl->menu().cursor() < pl->menu().row_count() && pl->menu().row_label(pl->menu().cursor()) == label;
+		};
+		pl->menu().goto_page(Menu::PAGE_CHEATS);
+		rig.settle(2);
+		EXPECT(to_row("Search memory"));
+		rig.press(PH_CIRCLE);
+		EXPECT(pl->menu().page() == Menu::PAGE_CHEAT_SEARCH);
+		EXPECT(!pl->menu().search_active());
+		rig.settle(2);
+		rig.snap("search_start");
+		snes_host_poke_wram(0x1234, 0xA7);
+		EXPECT(to_row("New search"));
+		rig.press(PH_CIRCLE);                              /* 1 byte, the work RAM now */
+		EXPECT(pl->menu().search_active() && pl->menu().search_count() == 0x20000);
+		rig.settle(2);
+		/* a number that does not fit one byte is refused and the search stays as it was */
+		rig.pf.ime_answers.push_back("999");
+		EXPECT(to_row("Equal to"));
+		rig.press(PH_CIRCLE);
+		EXPECT(pl->menu().notices().kind() == NOTICE_ERROR && pl->menu().search_count() == 0x20000);
+		EXPECT(!rig.pf.search_titles.empty() && rig.pf.search_titles.back() == "Equal to (a number)");
+		rig.pf.ime_answers.push_back("167");
+		rig.press(PH_CIRCLE);
+		const int eq = pl->menu().search_count();
+		EXPECT(eq >= 1 && eq < 0x20000);
+		rig.settle(2);
+		rig.snap("search_equal");
+		snes_host_poke_wram(0x1234, 0xA8);
+		EXPECT(to_row("Increased"));
+		rig.press(PH_CIRCLE);
+		EXPECT(pl->menu().search_count() == 1);
+		rig.settle(2);
+		rig.snap("search_result");
+		EXPECT(to_row("7E1234"));
+		EXPECT(pl->menu().row_value_text(pl->menu().cursor()) == "168 (0xA8)");
+		rig.press(PH_CIRCLE);                              /* make it a cheat */
+		EXPECT(snes_host_cheat_count() == 1);
+		{
+			snes_cheat_info ci;
+			EXPECT(snes_host_cheat_get(0, &ci) == 0 && std::string(ci.label) == "Found at 7E1234" && ci.enabled);
+		}
+		EXPECT(pl->menu().notices().text().find("Cheat added and on") == 0);
+		rig.press(PH_CROSS);                               /* back to the Cheats page */
+		EXPECT(pl->menu().page() == Menu::PAGE_CHEATS);
+		EXPECT(rig.press(PH_CROSS) == MENU_NONE);
+		EXPECT(rig.press(PH_CROSS) == MENU_RESUME);
+		snes_host_poke_wram(0x1234, 0);
+		rig.run(3);
+		EXPECT(snes_host_peek_wram(0x1234) == 0xA8);       /* the cheat keeps the value */
+		/* the search survives the menu closing: reopen and the count is still there */
+		pl->open_menu(0);
+		rig.settle(4);
+		pl->menu().goto_page(Menu::PAGE_CHEAT_SEARCH);
+		rig.settle(2);
+		EXPECT(pl->menu().search_active() && pl->menu().search_count() == 1);
+		EXPECT(snes_host_cheat_remove(0) == 0);
+	}
 
 	/* ---- Reset and Game list need confirmation ---- */
 	pl->menu().goto_page(Menu::PAGE_TOP);

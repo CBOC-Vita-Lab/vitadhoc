@@ -19,6 +19,7 @@
  *   SQUARE    delete, after a question -- the player's own entries only;
  *             the database's cannot be deleted, only left off
  *   SELECT    find / clear the filter
+ *   START     search memory      (SCR_CHEAT_SEARCH, below)
  *
  * While a NETWORK link is up the engine is suspended (both consoles must
  * run identical machines): the page says so, greys everything and changes
@@ -30,6 +31,9 @@
 /* cheats_note(i) and cheats_db_match() are vita/cheats_vita.h's (psp/ui_psp.c
  * includes it before this file). */
 #define CH_MATCH_TITLE CHEATS_MATCH_TITLE
+
+#include <stdarg.h>
+#include "../../playerkit/src/pk_csearch.h"
 
 /* Five rows of 29 px (6.7 mm of the Vita's glass) where six of 24 would
  * fit: this is a list people work with a finger -- one tap a switch --
@@ -153,6 +157,8 @@ static void ch_code_line(char *out, size_t cap, const char *code)
 
 static void ca_open(void);
 static ui_action screen_cheat_add(unsigned edges);
+static void cs_open(void);
+static ui_action screen_cheat_search(unsigned edges, unsigned pad);
 
 static ui_action screen_cheats(unsigned edges, unsigned pad)
 {
@@ -235,7 +241,16 @@ static ui_action screen_cheats(unsigned edges, unsigned pad)
       g_cursor = M_CHEATS;
       return UI_ACT_NONE;
    }
-   if (suspended && (edges & (PSP_CTRL_CROSS | PSP_CTRL_TRIANGLE |
+   if (suspended && (edges & PSP_CTRL_START))
+      snprintf(g_ch.note, sizeof(g_ch.note), "%s", suspended == 2
+               ? "Cheats are off in Hardcore mode (RetroAchievements)."
+               : "Cheats are off while linked to another console.");
+   else if (edges & PSP_CTRL_START)
+   {
+      cs_open();
+      return screen_cheat_search(0, 0);
+   }
+   else if (suspended && (edges & (PSP_CTRL_CROSS | PSP_CTRL_TRIANGLE |
                               PSP_CTRL_SQUARE)))
       snprintf(g_ch.note, sizeof(g_ch.note), "Cheats are off while linked "
                "to another console.");
@@ -478,16 +493,16 @@ static ui_action screen_cheats(unsigned edges, unsigned pad)
    else if (g_ch.note[0])
       vw_plate(g_ch.note);
    else if (suspended)
-      footer("L/R page   " VID_GLYPH_O " back");
+      footer("L/R page   START search   " VID_GLYPH_O " back");
    else if (sel && !sel->builtin)
       footer(VID_GLYPH_X " on/off   " VID_GLYPH_TRI " add   " VID_GLYPH_SQ
-             " delete   SELECT find   " VID_GLYPH_O " back");
+             " delete   SELECT find   START search");
    else if (sel)
-      footer(VID_GLYPH_X " on/off   " VID_GLYPH_TRI " add   L/R page   "
-             "SELECT find   " VID_GLYPH_O " back");
+      footer(VID_GLYPH_X " on/off   " VID_GLYPH_TRI " add   SELECT find   "
+             "START search   " VID_GLYPH_O " back");
    else
-      footer(VID_GLYPH_TRI " add a code   " "SELECT find   " VID_GLYPH_O
-             " back");
+      footer(VID_GLYPH_TRI " add a code   " "SELECT find   START search   "
+             VID_GLYPH_O " back");
    return UI_ACT_NONE;
 }
 
@@ -834,6 +849,369 @@ static ui_action screen_cheat_add(unsigned edges)
                VID_GLYPH_O " back"
              : VID_GLYPH_X " type   " VID_GLYPH_SQ " delete   L keyboard   "
                "SELECT name   " VID_GLYPH_TRI " save   " VID_GLYPH_O " back");
+   return UI_ACT_NONE;
+}
+
+/* ---- search memory ---------------------------------------------------------
+ * RetroArch's and mGBA's cheat search, the same words on every console
+ * (playerkit/src/pk_csearch.h is the engine, shared with the two players):
+ *
+ *   Size of the number  1 / 2 / 4 bytes
+ *   New search          remember the memory now
+ *   then, to narrow the list:  Equal to / Not equal to / Greater than / Less
+ *   than a number you type, or Changed / Unchanged / Increased / Decreased
+ *   since the last step.  With 50 results or fewer they are listed with
+ *   their value; X on one makes it a cheat that keeps that value.
+ *
+ * The game is paused while this page is up, so a step costs no frame; the
+ * search is kept when the menu closes (play, lose a life, come back and
+ * choose Decreased) and freed when the game ends or a new search starts.
+ * It searches the work RAM (what a typed code can reach), through the
+ * RetroAchievements memory map (fe_host_ra_read). */
+
+static struct
+{
+   pk_cs cs;
+   int  ready;                   /* the machine was set up for this game    */
+   int  size;                    /* 0, 1, 2 = 1, 2, 4 bytes                 */
+   int  cur, scroll;
+   tch_scroll_t ts;
+   int  free_scroll;
+   int  op;                      /* the step waiting for its number, -1     */
+   int  nres;                    /* results listed (<= PK_CS_LIST_MAX)      */
+   uint32_t addr[PK_CS_LIST_MAX], val[PK_CS_LIST_MAX];
+   char note[112];
+} g_cs;
+
+#define CS_ROW_H    26
+#define CS_VIEW_TOP 66
+#define CS_ROWS     6
+#define CS_VIEW_H   (CS_ROWS * CS_ROW_H)
+enum { CSR_SIZE, CSR_NEW, CSR_RESULTS, CSR_OP, CSR_HIT };
+
+static uint32_t cs_read(void *ud, uint32_t addr, uint8_t *buf, uint32_t n)
+{
+   (void)ud;
+   return fe_host_ra_read(addr, buf, n);
+}
+
+/* The work RAM of the console running, as a typed code reaches it.  0 = this
+ * console has nothing to search here. */
+static int cs_setup(void)
+{
+   static const pk_cs_region gba[] = { { 0, 0x48000 } };      /* IWRAM, EWRAM  */
+   static const pk_cs_region gb[] = { { 0xC000, 0x2000 }, { 0xFF80, 0x7F } };
+   static const pk_cs_region nes[] = { { 0, 0x800 } };
+   static const pk_cs_region ws[] = { { 0, 0x10000 } };
+   pk_cs_free(&g_cs.cs);
+   switch (g_pcfg.console)
+   {
+   case FE_CONSOLE_GBA:
+      pk_cs_init(&g_cs.cs, cs_read, NULL, PK_CS_GBA, PK_CS_LE, gba, 1);
+      break;
+   case FE_CONSOLE_GB:
+   case FE_CONSOLE_GBC:
+      pk_cs_init(&g_cs.cs, cs_read, NULL, PK_CS_GB, PK_CS_LE, gb, 2);
+      break;
+   case FE_CONSOLE_NES:
+      pk_cs_init(&g_cs.cs, cs_read, NULL, PK_CS_NES, PK_CS_LE, nes, 1);
+      break;
+   case FE_CONSOLE_WSWAN:
+      pk_cs_init(&g_cs.cs, cs_read, NULL, PK_CS_WS, PK_CS_LE, ws, 1);
+      break;
+   default:
+      return 0;
+   }
+   g_cs.ready = 1;
+   return 1;
+}
+
+/* The game ended: the snapshot and the list go (main_vita.c). */
+void ui_cheat_search_free(void)
+{
+   pk_cs_free(&g_cs.cs);
+   memset(&g_cs, 0, sizeof(g_cs));
+   g_cs.op = -1;
+}
+
+static int cs_width(void) { return g_cs.size == 0 ? 1 : g_cs.size == 1 ? 2 : 4; }
+
+static void cs_note(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void cs_note(const char *fmt, ...)
+{
+   va_list ap;
+   va_start(ap, fmt);
+   vsnprintf(g_cs.note, sizeof(g_cs.note), fmt, ap);
+   va_end(ap);
+}
+
+static void cs_open(void)
+{
+   screen_to(SCR_CHEAT_SEARCH);
+   g_cs.cur = g_cs.scroll = g_cs.free_scroll = 0;
+   g_cs.op = g_cs.op == -2 ? -1 : g_cs.op;
+   g_cs.note[0] = '\0';
+   if (!g_cs.ready && !cs_setup())
+      cs_note("There is no memory to search in this game");
+}
+
+/* The rows now: size, new search, then (a search is on) results, the steps,
+ * and the listed results. */
+static int cs_rows(int *kind, int *arg)
+{
+   int n = 0, i;
+   kind[n] = CSR_SIZE; arg[n++] = 0;
+   kind[n] = CSR_NEW; arg[n++] = 0;
+   if (pk_cs_active(&g_cs.cs))
+   {
+      kind[n] = CSR_RESULTS; arg[n++] = 0;
+      if (g_cs.cs.count > 0)
+         for (i = 0; i < PK_CS_OPS; i++)
+         {
+            kind[n] = CSR_OP; arg[n++] = i;
+         }
+      for (i = 0; i < g_cs.nres; i++)
+      {
+         kind[n] = CSR_HIT; arg[n++] = i;
+      }
+   }
+   return n;
+}
+
+static void cs_step(int op, uint32_t v)
+{
+   int32_t n = pk_cs_step(&g_cs.cs, op, v);
+   g_cs.nres = 0;
+   if (n >= 0 && n <= PK_CS_LIST_MAX)
+      g_cs.nres = pk_cs_list(&g_cs.cs, PK_CS_LIST_MAX, g_cs.addr, g_cs.val);
+   fe_evt("cheat_search results=%d op=%s size=%d", (int)n, pk_cs_op_name(op),
+          g_cs.cs.width);
+   if (n < 0)
+      cs_note("There is no search to narrow down");
+   else if (n == 0)
+      cs_note("No results. Start a new search");
+   else
+      cs_note("%d %s", (int)n, n == 1 ? "result" : "results");
+}
+
+static void cs_add(int i)
+{
+   char code[160], at[24], name[CHEATS_NAME_CAP];
+   int rc;
+   if (i < 0 || i >= g_cs.nres)
+      return;
+   if (!pk_cs_code(&g_cs.cs, g_cs.addr[i], g_cs.val[i], code, sizeof(code)))
+   {
+      cs_note("This place cannot be made into a cheat here");
+      return;
+   }
+   pk_cs_addr_text(&g_cs.cs, g_cs.addr[i], at, sizeof(at));
+   snprintf(name, sizeof(name), "Found at %s", at);
+   rc = cheats_count() >= CHEATS_MAX ? CHEATS_E_FULL : cheats_add(name, code);
+   fe_evt("cheat_search add rc=%d code=\"%s\"", rc, code);
+   if (rc >= 0)
+      cs_note("Cheat added and on: %s", name);
+   else
+      cs_note("%s", cheats_error_text(rc));
+}
+
+static ui_action screen_cheat_search(unsigned edges, unsigned pad)
+{
+   int kind[2 + 1 + PK_CS_OPS + PK_CS_LIST_MAX], arg[2 + 1 + PK_CS_OPS + PK_CS_LIST_MAX];
+   int n, max, i, r;
+   const char *typed;
+   (void)pad;
+
+   r = ui_text_take(TXT_SEARCH_VALUE, &typed);
+   if (r > 0 && g_cs.op >= 0 && pk_cs_active(&g_cs.cs))
+   {
+      uint32_t v = 0;
+      if (pk_cs_parse(typed, g_cs.cs.width, &v))
+         cs_step(g_cs.op, v);
+      else
+         cs_note("Type a whole number from 0 to %u (or 0x and hex)",
+                 (unsigned)pk_cs_max_value(g_cs.cs.width));
+   }
+   if (r != 0)
+      g_cs.op = -1;
+   n = cs_rows(kind, arg);
+   if (g_cs.cur >= n) g_cs.cur = n - 1;
+   if (g_cs.cur < 0) g_cs.cur = 0;
+   if (edges)
+      g_cs.note[0] = '\0';
+   if (tch_rows(&g_cs.cur, &edges) || g_tch.hover_row != TCH_NONE)
+      g_cs.free_scroll = 1;
+   if (edges & PSP_CTRL_UP)
+      g_cs.cur = (g_cs.cur + n - 1) % n;
+   else if (edges & PSP_CTRL_DOWN)
+      g_cs.cur = (g_cs.cur + 1) % n;
+   else if (edges & PSP_CTRL_LTRIGGER)
+      g_cs.cur = g_cs.cur - CS_ROWS < 0 ? 0 : g_cs.cur - CS_ROWS;
+   else if (edges & PSP_CTRL_RTRIGGER)
+      g_cs.cur = g_cs.cur + CS_ROWS >= n ? n - 1 : g_cs.cur + CS_ROWS;
+   if (edges & (PSP_CTRL_UP | PSP_CTRL_DOWN | PSP_CTRL_LTRIGGER |
+                PSP_CTRL_RTRIGGER))
+   {
+      g_cs.free_scroll = 0;
+      tch_scroll_stop(&g_cs.ts);
+   }
+   if (g_cs.cur >= n) g_cs.cur = n - 1;
+   if (g_cs.cur < 0) g_cs.cur = 0;
+
+   if (edges & PSP_CTRL_CIRCLE)
+   {
+      ch_open();
+      return screen_cheats(0, 0);
+   }
+   if (g_cs.ready && (edges & (PSP_CTRL_CROSS | PSP_CTRL_LEFT |
+                               PSP_CTRL_RIGHT)))
+   {
+      const int k = kind[g_cs.cur], a = arg[g_cs.cur];
+      const int susp = cheats_suspended();
+      if (susp && (edges & PSP_CTRL_CROSS) && k != CSR_SIZE)
+         cs_note("%s", susp == 2
+                 ? "Cheats are off in Hardcore mode (RetroAchievements)."
+                 : "Cheats are off while linked to another console.");
+      else if (k == CSR_SIZE)
+         g_cs.size = (g_cs.size + ((edges & PSP_CTRL_LEFT) ? 2 : 1)) % 3;
+      else if (!(edges & PSP_CTRL_CROSS))
+         ;
+      else if (k == CSR_NEW)
+      {
+         int32_t c = pk_cs_start(&g_cs.cs, cs_width());
+         g_cs.nres = 0;
+         fe_evt("cheat_search new size=%d results=%d", cs_width(), (int)c);
+         if (c < 0)
+            cs_note("The search could not start: not enough memory");
+         else
+            cs_note("Search started: %d places. Play on, then narrow it down",
+                    (int)c);
+         g_cs.cur = 1;
+      }
+      else if (k == CSR_OP)
+      {
+         if (!pk_cs_op_needs_value(a))
+            cs_step(a, 0);
+         else
+         {
+            char title[48];
+            snprintf(title, sizeof(title), "%s (a number)", pk_cs_op_name(a));
+            g_cs.op = a;
+            if (ui_text_open(TXT_SEARCH_VALUE, title, "", 11) != 0)
+            {
+               g_cs.op = -1;
+               cs_note("The keyboard is not available.");
+            }
+         }
+      }
+      else if (k == CSR_HIT)
+         cs_add(a);
+   }
+
+   max = n * CS_ROW_H - CS_VIEW_H;
+   if (max < 0)
+      max = 0;
+   if (tch_scroll(&g_cs.ts, &g_cs.scroll, max, 0, CS_VIEW_TOP, 456,
+                  CS_VIEW_H))
+      g_cs.free_scroll = 1;
+   else if (!g_cs.free_scroll)
+   {
+      if (g_cs.cur * CS_ROW_H < g_cs.scroll)
+         g_cs.scroll = g_cs.cur * CS_ROW_H;
+      if ((g_cs.cur + 1) * CS_ROW_H > g_cs.scroll + CS_VIEW_H)
+         g_cs.scroll = (g_cs.cur + 1) * CS_ROW_H - CS_VIEW_H;
+   }
+   if (g_cs.scroll > max) g_cs.scroll = max;
+   if (g_cs.scroll < 0) g_cs.scroll = 0;
+   if (g_cs.free_scroll)
+   {
+      int first = (g_cs.scroll + CS_ROW_H - 1) / CS_ROW_H;
+      int last = (g_cs.scroll + CS_VIEW_H) / CS_ROW_H - 1;
+      if (last >= n) last = n - 1;
+      if (g_cs.cur < first) g_cs.cur = first;
+      if (g_cs.cur > last) g_cs.cur = last;
+   }
+
+   ov_backdrop(OV_SCRIM_DENSE);
+   {
+      const char *dbn = cheats_db_game();
+      char sub[100];
+      snprintf(sub, sizeof(sub), "%s", dbn && dbn[0] ? dbn : g_ov_title);
+      clip_title(sub, 300);
+      vw_head(sub, "SEARCH MEMORY");
+      if (pk_cs_active(&g_cs.cs))
+      {
+         char c[40];
+         snprintf(c, sizeof(c), "%u %s", (unsigned)g_cs.cs.count,
+                  g_cs.cs.count == 1 ? "result" : "results");
+         ov_text_right(460, 48, c, C_VALUE);
+      }
+   }
+   vid_clip(0, CS_VIEW_TOP - 1, VID_SCR_W, CS_VIEW_H + 2);
+   for (i = g_cs.scroll / CS_ROW_H; i < n; i++)
+   {
+      int y = CS_VIEW_TOP + i * CS_ROW_H - g_cs.scroll;
+      char label[40], value[48];
+      int sel = i == g_cs.cur;
+      if (y >= CS_VIEW_TOP + CS_VIEW_H)
+         break;
+      value[0] = '\0';
+      switch (kind[i])
+      {
+      case CSR_SIZE:
+         snprintf(label, sizeof(label), "Size of the number");
+         snprintf(value, sizeof(value), "%s", pk_cs_size_name(cs_width()));
+         break;
+      case CSR_NEW:
+         snprintf(label, sizeof(label), "New search");
+         snprintf(value, sizeof(value), "%s", pk_cs_active(&g_cs.cs)
+                  ? "Start again" : "Look at the memory now");
+         break;
+      case CSR_RESULTS:
+         snprintf(label, sizeof(label), "Results");
+         snprintf(value, sizeof(value), "%u", (unsigned)g_cs.cs.count);
+         break;
+      case CSR_OP:
+         snprintf(label, sizeof(label), "%s", pk_cs_op_name(arg[i]));
+         snprintf(value, sizeof(value), "%s", pk_cs_op_needs_value(arg[i])
+                  ? "a number you type" : "since the last step");
+         break;
+      default:
+         pk_cs_addr_text(&g_cs.cs, g_cs.addr[arg[i]], label, sizeof(label));
+         snprintf(value, sizeof(value), "%u (0x%X)",
+                  (unsigned)g_cs.val[arg[i]], (unsigned)g_cs.val[arg[i]]);
+         break;
+      }
+      vw_row(i, y + (CS_ROW_H - VW_BAND_H) / 2, 456, sel,
+             g_cs.ready && kind[i] != CSR_RESULTS, label, value);
+   }
+   vid_clip_off();
+   ov_scrollbar(470, CS_VIEW_TOP, CS_VIEW_H, g_cs.scroll, CS_VIEW_H,
+                n * CS_ROW_H);
+   /* what the highlighted row does */
+   {
+      const char *h = "";
+      switch (kind[g_cs.cur])
+      {
+      case CSR_SIZE: h = "Most counters are 1 byte; money and scores often 2."; break;
+      case CSR_NEW: h = "Remember the memory, play on, then narrow it down."; break;
+      case CSR_RESULTS:
+         h = g_cs.cs.count == 0 ? "Nothing matched: start a new search."
+           : g_cs.cs.count <= PK_CS_LIST_MAX
+             ? "Choose a result to make it a cheat."
+             : "Narrow it down to 50 or fewer to see them."; break;
+      case CSR_OP: h = pk_cs_op_needs_value(arg[g_cs.cur])
+                       ? "Keeps the places that match the number you type."
+                       : "Compared with the memory at the last step."; break;
+      default: h = "Makes a cheat that keeps this value."; break;
+      }
+      vid_rect(20, CS_VIEW_TOP + CS_VIEW_H + 3, 440, 1, C_ACCENT_DK, 120);
+      vw_line(22, CS_VIEW_TOP + CS_VIEW_H + 8, 436, h, C_DIM);
+   }
+   if (g_cs.note[0])
+      vw_plate(g_cs.note);
+   else
+      footer(VID_GLYPH_X " choose   L/R page   " VID_GLYPH_O " back");
    return UI_ACT_NONE;
 }
 

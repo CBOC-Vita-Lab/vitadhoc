@@ -338,6 +338,11 @@ flicker or missing instruments, which we could not judge without a Vita.
   never stretched.
 - Some cheats need their "Enable Code (Must Be On)" entry first; a few code
   types are marked unsupported. Cheats switch off while linked and in Hardcore.
+- Search memory looks at work RAM only (not cartridge save RAM or banked Game
+  Boy Color RAM), at unsigned whole numbers of 1, 2 or 4 bytes on aligned
+  addresses; a value kept in two places or stored as a decimal-coded number
+  needs more than one search. A Genesis byte result becomes the word it lies
+  in. Tested on the PC only.
 - Three- and four-player links and single-cartridge multiboot are not
   supported.
 - Two games with the same file name share box art, cheats and previews. Give

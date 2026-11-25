@@ -57,6 +57,7 @@ struct TwinPlatform : mdp::Platform {
 	int fw = 320, fh = 224;
 	std::vector<std::string> ime_answers;      /* code, name, code, name, ... */
 	bool ime_asked = false;
+	std::vector<std::string> search_titles;    /* what the keyboard was asked for, in Search memory */
 	std::string log_path, log_text;
 	int pic_changes = 0;
 	std::thread th;
@@ -185,6 +186,16 @@ struct Rig {
 		if (pl->menu_open()) { draw(); pl->menu_drawn(); }
 		if (pf.ime_asked) {
 			pf.ime_asked = false;
+			std::string stitle;
+			if (pl->search_value_wanted(&stitle)) {
+				/* Search memory: the keyboard is for a number */
+				pf.search_titles.push_back(stitle);
+				if (!pf.ime_answers.empty()) {
+					std::string v = pf.ime_answers[0];
+					pf.ime_answers.erase(pf.ime_answers.begin());
+					pl->search_value_entered(true, v);
+				} else pl->search_value_entered(false, "");
+			} else
 			if (pf.ime_answers.size() >= 2) {
 				std::string c = pf.ime_answers[0], n = pf.ime_answers[1];
 				pf.ime_answers.erase(pf.ime_answers.begin(), pf.ime_answers.begin() + 2);
@@ -705,6 +716,68 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 	pl->menu().goto_page(Menu::PAGE_CHEATS);
 	rig.settle(2);
 	rig.snap("cheats_deleted");
+
+	/* ---- Search memory: a word (a byte on the 8 bit systems) the game does not change, found by a cheat that moves it ---- */
+	{
+		auto to_row = [&](const char *label) {
+			for (int k = 0; k < 80 && !(pl->menu().cursor() < pl->menu().row_count() && pl->menu().row_label(pl->menu().cursor()) == label); k++) rig.press(PH_DOWN);
+			return pl->menu().cursor() < pl->menu().row_count() && pl->menu().row_label(pl->menu().cursor()) == label;
+		};
+		auto close_menu = [&]() {
+			while (pl->menu().page() != Menu::PAGE_TOP) rig.press(PH_CROSS);
+			EXPECT(rig.press(PH_CROSS) == MENU_RESUME);
+		};
+		const unsigned at = ram_addr + 0x100;                 /* FFF100 / C300 */
+		const char *probe_a = md ? "FFF100:ABCD" : "C300:AB", *probe_b = md ? "FFF100:ABCE" : "C300:AC";
+		const char *label = md ? "FFF100" : "C300";
+		(void) at;
+		const int n0 = (int) pl->cheats().size();
+		pl->cheat_entered(true, probe_a, "probe");
+		close_menu();
+		rig.run(3);
+		pl->open_menu(0);
+		rig.settle(4);
+		pl->menu().goto_page(Menu::PAGE_CHEATS);
+		rig.settle(2);
+		EXPECT(to_row("Search memory"));
+		rig.press(PH_CIRCLE);
+		EXPECT(pl->menu().page() == Menu::PAGE_CHEAT_SEARCH);
+		rig.settle(2);
+		rig.snap("search_start");
+		if (md) { EXPECT(to_row("Size of the number")); rig.press(PH_RIGHT); }   /* 2 bytes: a word */
+		EXPECT(to_row("New search"));
+		rig.press(PH_CIRCLE);
+		EXPECT(pl->menu().search_active() && (md ? pl->menu().search_count() == 0x8000 : (pl->menu().search_count() > 0x300 && pl->menu().search_count() <= 0x2000)));   /* the SG-1000 has less RAM than the other 8 bit systems */
+		rig.pf.ime_answers.push_back(md ? "43981" : "171");
+		EXPECT(to_row("Equal to"));
+		rig.press(PH_CIRCLE);
+		EXPECT(pl->menu().search_count() >= 1 && pl->menu().search_count() <= 50);
+		rig.settle(2);
+		rig.snap("search_equal");
+		EXPECT(pl->delete_cheat(n0));                            /* the probe goes, a second one moves the value */
+		pl->cheat_entered(true, probe_b, "probe two");
+		close_menu();
+		rig.run(3);
+		pl->open_menu(0);
+		rig.settle(4);
+		pl->menu().goto_page(Menu::PAGE_CHEAT_SEARCH);
+		rig.settle(2);
+		EXPECT(pl->menu().search_active());
+		EXPECT(to_row("Increased"));
+		rig.press(PH_CIRCLE);
+		EXPECT(pl->menu().search_count() >= 1 && pl->menu().search_count() <= 50);
+		rig.settle(2);
+		rig.snap("search_result");
+		EXPECT(pl->delete_cheat(n0));
+		EXPECT(to_row(label));
+		rig.press(PH_CIRCLE);                                    /* make it a cheat */
+		EXPECT((int) pl->cheats().size() == n0 + 1);
+		EXPECT(pl->cheats().at((size_t) n0).label == std::string("Found at ") + label);
+		EXPECT(pl->cheats().at((size_t) n0).code == probe_b);
+		EXPECT(pl->menu().notices().text().find("Cheat added and on") == 0);
+		EXPECT(pl->delete_cheat(n0));
+		EXPECT((int) pl->cheats().size() == n0);
+	}
 
 	/* ---- Reset and Game list need confirmation ---- */
 	pl->menu().goto_page(Menu::PAGE_TOP);

@@ -84,6 +84,16 @@ the save untouched), `local-save-fail` (a second game's save is never lost),
 **Libraries** (`--quick`): `playerkit` (unit tests and menu walk under ASan and
 UBSan), `widekit` (tests under ASan and UBSan), `gamedb` (title database).
 
+Search memory (the cheat search) is tested in three places: the engine and its
+menu pages in `playerkit/tests/test_csearch.cpp` (steps, widths, byte orders, the
+code each console takes, the 50-result list, refusal in Hardcore and link); the
+Super NES and Sega players' twin selftests (`snes/twin/player_twin.cpp`,
+`md/twin/player_twin.cpp`, run by `snes-selftest` and the Sega player selftest)
+walk the real menu: new search, a typed number, Increased, the result made a
+cheat; and the app scenario `cheat_search` (`app_tests.py --only cheat_search`)
+does the same on the Cheats page of the app's GBA cartridge and checks the
+`cheat_search` log lines and the `.cht`.
+
 **Twin selftests** (`--quick`): `snes-selftest`, `nes-selftest`,
 `wswan-selftest`: determinism, save states, battery RAM, copier headers,
 pad mapping, audio pacing, and each core's own picture and blend tests. Each

@@ -684,7 +684,7 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	cfg.exit_label = "Exit";
 	cfg.exit_help = "Close VitAdhoc";
 	cfg.caps = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_GLOW |
-	           CAP_WIDE | CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_REWIND;
+	           CAP_WIDE | CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT | CAP_CHEAT_SEARCH | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_REWIND;
 	cfg.enter_is_cross = req_.enter_is_cross;
 	cfg.players = 4;
 	cfg.play_together_reason = "Start it from the game list: Settings > Two players";
@@ -1244,6 +1244,29 @@ void SnesPlayer::set_cheat(int index, bool on)
 }
 
 void SnesPlayer::add_cheat() { pf_->ask_cheat_text(); }
+
+bool SnesPlayer::search_setup(pk_cs *cs)
+{
+	/* the work RAM (RetroAchievements' 0-1FFFF = $7E0000-$7FFFFF): what a typed 7E.... code reaches */
+	static const pk_cs_region reg[1] = { { 0, 0x20000 } };
+	pk_cs_init(cs, &SnesPlayer::ra_read, this, PK_CS_SNES, PK_CS_LE, reg, 1);
+	return true;
+}
+
+const char *SnesPlayer::search_refused()
+{
+	return linked() ? "Cheats are off while linked to another console." : cheats_refused();
+}
+
+void SnesPlayer::add_cheat_code(const std::string &code, const std::string &name) { cheat_entered(true, code, name); }
+
+void SnesPlayer::ask_search_value(const std::string &title)
+{
+	search_ask_ = true;
+	search_title_ = title;
+	pf_->ask_cheat_text();
+}
+
 
 void SnesPlayer::cheat_entered(bool ok, const std::string &code_in, const std::string &name)
 {

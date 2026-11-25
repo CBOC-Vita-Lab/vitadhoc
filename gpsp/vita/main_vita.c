@@ -5854,6 +5854,7 @@ static void game_unload(int hold)
    fe_host_shutdown();
    g_game_loaded = 0;
    cheats_unload();
+   ui_cheat_search_free();
    if (hold) ui_return_tick();
 
    /* A fresh boot's per-game state. */

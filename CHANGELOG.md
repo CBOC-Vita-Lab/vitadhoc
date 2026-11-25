@@ -47,6 +47,20 @@ and in emulators; none of it has run on a real Vita yet (see
   fast forward and in rewind. Not offered for Game Boy Advance or for the
   Super NES (its player does not have it yet): see Known Issues.
 
+**Cheat search**
+
+- **Search memory on every console's Cheats page**, as RetroArch and mGBA have
+  it: choose the size of the number, start a new search, then narrow it with
+  Equal to, Not equal to, Greater than or Less than a number you type, or
+  Changed, Unchanged, Increased or Decreased since the last step. With 50
+  results or fewer they are listed with their value, and one choice makes a
+  cheat that keeps it, in each console's usual code and saved like a typed
+  one. Game Boy Advance, Game Boy, Game Boy Color, NES, WonderSwan, Super NES,
+  Genesis, Sega CD, Master System, Game Gear and SG-1000, in the app and in
+  both players, with the same words. It searches work RAM, only while the menu
+  is open, and is off while linked and in Hardcore like the other cheats.
+  Tested on the PC only.
+
 **Smoother play**
 
 - **Faster Super NES Mode 7 and wide view.** Games with a rotating or

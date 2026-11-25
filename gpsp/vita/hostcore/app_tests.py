@@ -2326,6 +2326,84 @@ def t_typing(S):
             "and is in the game's .cht, by name, switched on")
 
 
+def t_cheat_search(S):
+    """Search memory on the Cheats page: a 2 byte search for the cheat
+    cartridge's trigger word (0x1234 while no button is held, 0 while A is),
+    narrowed by Equal to a typed number, then Changed after the menu was
+    closed and opened with A up; the one result becomes a cheat."""
+    if not os.path.exists(CHEAT_GBA):
+        S.note("no cheat cartridge: skipped")
+        return
+    # the first time the chord is held with A (Cross or Circle: whichever
+    # the GBA's A is on, one of them is) so the trigger reads 0x1234 at the
+    # pause; the second time A is up and it reads 0
+    first = menu_pick(3).replace("start+select:20", "start+select+cross+circle:20", 1)
+    second = menu_pick(3)
+    script = "100:shot=before.png\n" + first + """
++20:start
++20:shot=search.png
++4:right
++6:down
++4:cross
++20:shot=started.png
++6:down
++6:down
++4:cross
++4:type=4660
++20:shot=equal.png
++4:circle
++10:circle
++10:circle
++30:shot=game.png
+""" + second + """
++20:start
++6:down
++6:down
++6:down
++6:down
++6:down
++6:down
++6:down
++4:cross
++20:shot=changed.png
++6:down
++6:down
++6:down
++6:down
++4:cross
++20:shot=added.png
++4:circle
++10:circle
++10:circle
++40:shot=after.png
++10:quit
+"""
+    r = S.run("cheat_search", script, autoboot="cheatrom.gba",
+              extra={"roms/cheatrom.gba": open(CHEAT_GBA, "rb").read()})
+    S.clean(r)
+    S.check(r.has(r"ui_screen name=cheat_search"), "START on the Cheats page opens Search memory")
+    ev = r.evt("cheat_search")
+    new = [e for e in ev if "new" in e["_"].split()]
+    steps = [e for e in ev if "op" in e]
+    adds = [e for e in ev if "rc" in e]
+    S.check(new and new[0]["size"] == "2" and int(new[0]["results"]) > 100000,
+            "a new 2 byte search starts with every aligned word of the work RAM: %s" % (new[0]["_"] if new else "-"))
+    S.check(r.has(r'host_ime title="Equal to \(a number\)"'), "the keyboard asks for the number")
+    S.check(len(steps) >= 2 and steps[0]["op"].startswith('Equal') and 1 <= int(steps[0]["results"]) <= 50,
+            "Equal to 4660 leaves a few: %s" % (steps[0]["_"] if steps else "-"))
+    S.check(len(steps) >= 2 and steps[1]["op"] == "Changed" and steps[1]["results"] == "1",
+            "Changed after the trigger moved leaves the trigger: %s" % (steps[1]["_"] if len(steps) > 1 else "-"))
+    S.check(adds and int(adds[0]["rc"]) >= 0 and adds[0]["code"] == '"02000008 0000"',
+            "the result is added as the code the console takes: %s" % (adds[0]["_"] if adds else "-"))
+    for n in ("search.png", "started.png", "equal.png", "changed.png", "added.png"):
+        S.picture(r, n)
+    chts = glob.glob(os.path.join(r.root, "cheats", "*.cht"))
+    cht = open(chts[0]).read() if chts else ""
+    S.check('"Found at 02000008"' in cht and re.search(r'02000008[ +]0000', cht) and
+            re.search(r'_enable\s*=\s*true', cht),
+            "and it is in the game's .cht by name, switched on")
+
+
 def gba_screen(rgb, dark):
     """What video_vita.c's colour table makes of one pixel (cc_build: gpSP's
     channel mix in linear light), in double precision."""
@@ -8751,7 +8829,7 @@ TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicato
          ("ff", t_ff),
          ("suspend", t_suspend), ("controls", t_controls), ("turbo", t_turbo),
          ("cheats", t_cheats), ("play", t_play), ("touch", t_touch), ("touch_feedback", t_touch_feedback),
-         ("typing", t_typing), ("look", t_look), ("wide", t_wide),
+         ("typing", t_typing), ("cheat_search", t_cheat_search), ("look", t_look), ("wide", t_wide),
          ("wide_auto", t_wide_auto), ("wide_top", t_wide_top),
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("biossound", t_biossound), ("chain", t_chain), ("objprio", t_objprio), ("smc", t_smc),
          ("realtime", t_realtime),

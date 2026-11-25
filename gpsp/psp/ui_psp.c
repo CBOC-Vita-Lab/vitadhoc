@@ -8823,11 +8823,11 @@ static int favs_save(const char *rom_dir)
  * nothing, 1024 strcmp per row per frame would not be. */
 static void favs_build_view(int n_scan)
 {
-   int i;
 #ifdef VITA
    lib_view_build(n_scan);          /* Starred, or the other view shown */
    browser_find_build(n_scan);
 #else
+   int i;
    g_view_n = 0;
    for (i = 0; i < n_scan; i++)
       if (g_roms[i].is_fav)

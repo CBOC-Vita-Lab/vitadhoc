@@ -415,8 +415,8 @@ flicker or missing instruments, which we could not judge without a Vita.
 - **Zipped games:** the first game in the zip with a known extension is the one
   played. Patches, and two-player play with a different game for each player,
   need the game unzipped. Encrypted and ZIP64 archives are not read.
-- **`.7z` games:** read with the LZMA SDK (LZMA, LZMA2, BCJ, Delta; no
-  passwords, PPMd or BCJ2). The archive's block that holds the game is
+- **`.7z` games:** read with the LZMA SDK (LZMA, LZMA2, BCJ, BCJ2, Delta; no
+  passwords or PPMd). The archive's block that holds the game is
   unpacked in memory at once, so a game over 32 MB or a solid block over 64 MB
   is refused (the notice says which); pack big games without "solid" or on
   their own. A Genesis `.bin` in a `.7z` is unpacked once to check its header

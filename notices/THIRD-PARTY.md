@@ -211,7 +211,8 @@ clarification and the remaining package review.
   <https://github.com/ip7z/7zip> (commit
   `d3296e39e1f1f92c7b41c0c3848e65640428d42d`, 2026-11-07): the 7z reader
   (`7zArcIn.c`, `7zDec.c`, `7zStream.c`, `7zBuf.c`, `7zAlloc.c`),
-  the LZMA and LZMA2 decoders, the BCJ, BCJ2, ARM, PPC, SPARC, IA64 and Delta
+  the LZMA and LZMA2 decoders, the BCJ, BCJ2 (the four-coder layout of
+  7-Zip's own archives, which the app reads), ARM, PPC, SPARC, IA64 and Delta
   filters, CRC-32 and the headers they need, copied unchanged into
   `gpsp/vita/third_party/lzma/` (`PROVENANCE` there). Linked into the main
   app only (the players receive an unpacked file). The 7-Zip package as a whole

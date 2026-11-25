@@ -6,7 +6,7 @@ into `eboot.bin`.
 | Directory | What | Licence |
 |---|---|---|
 | `core/` | Genesis Plus GX at a pinned commit, a few local edits (`core/PROVENANCE.md`), build of one relocatable object | Genesis Plus GX licence (`core/LICENSE.txt`): non-commercial, source must accompany binaries |
-| `frontend/host.{h,c}` | the `md_host_*` API: load, run frame, pads, picture and its geometry, 48 kHz sound, saves, states, achievements memory, cheats, options | MIT, Copyright CBOC-Vita (linked only into `md.bin`) |
+| `frontend/host.{h,c}` | the `md_host_*` API: load, run frame, pads, picture and its geometry, 48 kHz sound, saves, states, achievements memory, cheats, options | MIT, Copyright CBOC-Vita, except the parts derived from libretro's Genesis Plus GX frontend (option names and defaults, picture geometry, empty backup RAM, disc tray), which stay under the Genesis Plus GX licence: the header of `host.c` lists them (linked only into `md.bin`) |
 | `twin/` | headless runner (x86 and armhf under qemu), self test, ARM check, baseline numbers | MIT |
 
 Integration: `md/INTEGRATION.md`. What was measured, what passes and what does not: `md/twin/baseline_results.md`.

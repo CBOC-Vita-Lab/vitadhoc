@@ -12,7 +12,7 @@
 - **Licence:** `LICENSE.txt` here is the project's licence file, verbatim. It is a non-commercial licence: the code may not be
   sold or used in a commercial product or activity, and a modified redistribution must include the complete source of
   everything a binary is built from. This directory, with the changes listed below, is that source. The same text is in
-  `licenses/GenesisPlusGX-LICENSE.txt`. The file also carries the notices for Nuked OPN2 (LGPL-2.1, `sound/ym3438.c`) and for the
+  `licenses/GenesisPlusGX-LICENSE.txt`, which has a list of the other copyright holders named in the source headers (Musashi, the Z80 core, the FM chips and others) added at its end; the text above that list is verbatim. The file also carries the notices for Nuked OPN2 (LGPL-2.1, `sound/ym3438.c`) and for the
   parts that are NOT vendored here (tremor, minimp3).
 - Because of that licence the Genesis player is a program of its own (`md.bin`), not part of the GPL main program, and it links
   none of the GBAdhoc-derived GPL files (`gpsp/netdrv/netdrv.c`, `fe_gblink.c`, `fe_evt.c`, `fe_util.c`).

@@ -116,6 +116,9 @@ class Twin:
         # what they test.  A test can still hand its own quality.
         cfg = {"nick": nick, "quality_gba": 1, "quality_gb": 1,
                "quality_gbc": 1}
+        # LINK_TEST_GB_CORE=1: every Game Boy console has Settings > Game Boy core on Accurate (Link play must still run Standard)
+        if os.environ.get("LINK_TEST_GB_CORE"):
+            cfg["gb_core"] = int(os.environ["LINK_TEST_GB_CORE"])
         cfg.update(config or {})
         with open(os.path.join(self.root, "config.ini"), "w") as f:
             for k, v in cfg.items():

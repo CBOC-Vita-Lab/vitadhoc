@@ -4596,6 +4596,7 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
    {
       gb_core_notice = 2;
       fe_evt("gb_core link=standard");
+      fe_evt("gb_core link=standard");
    }
    else if (host.gblink_live)
    {
@@ -4810,6 +4811,13 @@ int fe_host_gblink_close(void)
       if (host.gb_bulk_enable)
          host.gb_bulk_enable(0);
       rc = gb_single_boot();
+      if (rc == 0 && state && gbmux_is_gambatte(gb_core))
+      {
+         /* the session's machine was TGB Dual's: the Accurate core goes on from the battery image (its states are another format) */
+         free(state);
+         state = NULL;
+         how = "from_save";
+      }
       if (rc == 0 && state)
       {
          rc = gbcore_state_load(gb_core, state, sn);
@@ -8642,6 +8650,7 @@ int fe_host_gb_local_start(const fe_host_gb_local *cfg)
       /* the pair is Standard (TGB Dual): the game starts from its save, not from the Accurate core's state */
       st = NULL;
       gb_core_notice = 2;
+      fe_evt("gb_core link=standard");
       fe_evt("gb_core local=standard");
    }
    else

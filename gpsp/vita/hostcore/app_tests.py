@@ -8907,7 +8907,7 @@ def t_export_row(S):
     rom = "gbadhoc-test"
     ra = "retroarch/savefiles/%s.srm" % rom
     mine = bytes((i * 7 + 21) & 0xFF for i in range(32768))
-    row = menu_pick(4, wait=60) + set_down(24) + "+10:shot=row.png\n"
+    row = menu_pick(4, wait=60) + set_down(25) + "+10:shot=row.png\n"
     r = S.run("export_row_ra", "30:left:2\n" + row + "+10:cross\n+20:shot=toast.png\n+6:circle\n+10:circle\n+30:quit\n",
               autoboot=rom + ".gba", extra={"roms/%s.sav" % rom: mine,
                                             "retroarch/savefiles/Other Game.srm": b"\x01" * 64},

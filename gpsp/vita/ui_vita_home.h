@@ -2270,9 +2270,9 @@ static void home_empty(const char *rom_dir, int n_scan)
          vs_text_c(VS_CAPTION, VS_W * 0.5f, y + 174, msg, HC_TEXT2);
          x = VS_W * 0.5f - (w1 + 14 + w2) * 0.5f;
          x = hm_button(x, y + 216, VS_I_BACK, "Clear", 0, PSP_CTRL_CIRCLE);
+         /* (not SELECT: with more views than two, it is not the way back) */
          hm_button(x, y + 216, VS_I_GRID, "All games", 1,
-                   g_browser_recent || g_view_kind > VK_STAR
-                   ? BROWSER_TAB_BUTTON(0) : PSP_CTRL_SELECT);
+                   BROWSER_TAB_BUTTON(0));
       }
       else
       {
@@ -2325,7 +2325,7 @@ static void home_empty(const char *rom_dir, int n_scan)
       vs_text_c(VS_BODY, VS_W * 0.5f, y + 156,
                 "Press square on a game to star it.", HC_TEXT2);
       hm_button(VS_W * 0.5f - 110, y + 216, VS_I_GRID, "All games", 1,
-                PSP_CTRL_SELECT);
+                BROWSER_TAB_BUTTON(0));
       return;
    }
    {

@@ -1,5 +1,6 @@
 /* See pk_input.h. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE). */
 #include "pk_input.h"
+#include "pk_i18n.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -16,10 +17,10 @@ static const char *const kPhysNames[PH_COUNT] = {
 };
 
 static const char *const kPhysLabels[PH_COUNT] = {
-	"D-pad up", "D-pad down", "D-pad left", "D-pad right", "Cross", "Circle", "Square", "Triangle", "L", "R", "Start", "Select",
-	"Left stick up", "Left stick down", "Left stick left", "Left stick right",
-	"Right stick up", "Right stick down", "Right stick left", "Right stick right",
-	"Rear touch: top left", "Rear touch: top right", "Rear touch: bottom left", "Rear touch: bottom right"
+	"input.d_pad_up", "input.d_pad_down", "input.d_pad_left", "input.d_pad_right", "input.cross", "input.circle", "input.square", "input.triangle", "L", "R", "input.start", "input.select",
+	"input.left_stick_up", "input.left_stick_down", "input.left_stick_left", "input.left_stick_right",
+	"input.right_stick_up", "input.right_stick_down", "input.right_stick_left", "input.right_stick_right",
+	"input.rear_touch_top_left", "input.rear_touch_top_right", "input.rear_touch_bottom_left", "input.rear_touch_bottom_right"
 };
 
 const char *phys_name(int bit) { return (bit >= 0 && bit < PH_COUNT) ? kPhysNames[bit] : "?"; }
@@ -36,8 +37,8 @@ std::string phys_label(uint32_t mask, bool)
 {
 	std::string s;
 	for (int i = 0; i < PH_COUNT; i++)
-		if (mask & (1u << i)) s += (s.empty() ? "" : " + ") + std::string(kPhysLabels[i]);
-	return s.empty() ? "Not set" : s;
+		if (mask & (1u << i)) s += (s.empty() ? "" : " + ") + std::string(tr(kPhysLabels[i]));
+	return s.empty() ? tr("input.not_set") : s;
 }
 
 bool phys_parse(const std::string &text, uint32_t *out)
@@ -83,12 +84,12 @@ const PadModel &model_snes()
 			{ "x", "X", 1u << 9, PH_TRIANGLE, PH_TRIANGLE },
 			{ "l", "L", 1u << 10, PH_L, PH_L },
 			{ "r", "R", 1u << 11, PH_R, PH_R },
-			{ "start", "Start", 1u << 3, PH_START, PH_START },
-			{ "select", "Select", 1u << 2, PH_SELECT, PH_SELECT },
-			{ "up", "Up", 1u << 4, PH_UP, PH_UP },
-			{ "down", "Down", 1u << 5, PH_DOWN, PH_DOWN },
-			{ "left", "Left", 1u << 6, PH_LEFT, PH_LEFT },
-			{ "right", "Right", 1u << 7, PH_RIGHT, PH_RIGHT }
+			{ "start", "input.start", 1u << 3, PH_START, PH_START },
+			{ "select", "input.select", 1u << 2, PH_SELECT, PH_SELECT },
+			{ "up", "input.up", 1u << 4, PH_UP, PH_UP },
+			{ "down", "input.down", 1u << 5, PH_DOWN, PH_DOWN },
+			{ "left", "input.left", 1u << 6, PH_LEFT, PH_LEFT },
+			{ "right", "input.right", 1u << 7, PH_RIGHT, PH_RIGHT }
 		},
 		1, 0, 0, 0, true
 	};
@@ -102,12 +103,12 @@ const PadModel &model_nes()
 		{
 			{ "a", "A", 1u << 0, PH_CROSS, PH_CIRCLE },
 			{ "b", "B", 1u << 1, PH_CIRCLE, PH_CROSS },
-			{ "select", "Select", 1u << 2, PH_SELECT, PH_SELECT },
-			{ "start", "Start", 1u << 3, PH_START, PH_START },
-			{ "up", "Up", 1u << 4, PH_UP, PH_UP },
-			{ "down", "Down", 1u << 5, PH_DOWN, PH_DOWN },
-			{ "left", "Left", 1u << 6, PH_LEFT, PH_LEFT },
-			{ "right", "Right", 1u << 7, PH_RIGHT, PH_RIGHT },
+			{ "select", "input.select", 1u << 2, PH_SELECT, PH_SELECT },
+			{ "start", "input.start", 1u << 3, PH_START, PH_START },
+			{ "up", "input.up", 1u << 4, PH_UP, PH_UP },
+			{ "down", "input.down", 1u << 5, PH_DOWN, PH_DOWN },
+			{ "left", "input.left", 1u << 6, PH_LEFT, PH_LEFT },
+			{ "right", "input.right", 1u << 7, PH_RIGHT, PH_RIGHT },
 			{ 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }
 		},
 		0, 1, PH_TRIANGLE, PH_SQUARE, false
@@ -140,12 +141,12 @@ const PadModel &model_md()
 			{ "x", "X", MDB_X, PH_L, PH_L },
 			{ "y", "Y", MDB_Y, PH_TRIANGLE, PH_TRIANGLE },
 			{ "z", "Z", MDB_Z, PH_R, PH_R },
-			{ "start", "Start", MDB_START, PH_START, PH_START },
-			{ "mode", "Mode", MDB_MODE, PH_SELECT, PH_SELECT },
-			{ "up", "Up", MDB_UP, PH_UP, PH_UP },
-			{ "down", "Down", MDB_DOWN, PH_DOWN, PH_DOWN },
-			{ "left", "Left", MDB_LEFT, PH_LEFT, PH_LEFT },
-			{ "right", "Right", MDB_RIGHT, PH_RIGHT, PH_RIGHT }
+			{ "start", "input.start", MDB_START, PH_START, PH_START },
+			{ "mode", "input.mode", MDB_MODE, PH_SELECT, PH_SELECT },
+			{ "up", "input.up", MDB_UP, PH_UP, PH_UP },
+			{ "down", "input.down", MDB_DOWN, PH_DOWN, PH_DOWN },
+			{ "left", "input.left", MDB_LEFT, PH_LEFT, PH_LEFT },
+			{ "right", "input.right", MDB_RIGHT, PH_RIGHT, PH_RIGHT }
 		},
 		0, 1, 0, 0, true
 	};
@@ -157,13 +158,13 @@ const PadModel &model_sms()
 	static const PadModel m = {
 		"sms", 2, 7,
 		{
-			{ "b1", "Button 1", MDB_B, PH_CROSS, PH_CROSS },
-			{ "b2", "Button 2", MDB_C, PH_CIRCLE, PH_CIRCLE },
-			{ "start", "Pause", MDB_START, PH_START, PH_START },
-			{ "up", "Up", MDB_UP, PH_UP, PH_UP },
-			{ "down", "Down", MDB_DOWN, PH_DOWN, PH_DOWN },
-			{ "left", "Left", MDB_LEFT, PH_LEFT, PH_LEFT },
-			{ "right", "Right", MDB_RIGHT, PH_RIGHT, PH_RIGHT },
+			{ "b1", "input.button_1", MDB_B, PH_CROSS, PH_CROSS },
+			{ "b2", "input.button_2", MDB_C, PH_CIRCLE, PH_CIRCLE },
+			{ "start", "input.pause", MDB_START, PH_START, PH_START },
+			{ "up", "input.up", MDB_UP, PH_UP, PH_UP },
+			{ "down", "input.down", MDB_DOWN, PH_DOWN, PH_DOWN },
+			{ "left", "input.left", MDB_LEFT, PH_LEFT, PH_LEFT },
+			{ "right", "input.right", MDB_RIGHT, PH_RIGHT, PH_RIGHT },
 			{ 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }
 		},
 		0, 1, PH_SQUARE, PH_TRIANGLE, true
@@ -176,13 +177,13 @@ const PadModel &model_gg()
 	static const PadModel m = {
 		"gg", 1, 7,
 		{
-			{ "b1", "Button 1", MDB_B, PH_CROSS, PH_CROSS },
-			{ "b2", "Button 2", MDB_C, PH_CIRCLE, PH_CIRCLE },
-			{ "start", "Start", MDB_START, PH_START, PH_START },
-			{ "up", "Up", MDB_UP, PH_UP, PH_UP },
-			{ "down", "Down", MDB_DOWN, PH_DOWN, PH_DOWN },
-			{ "left", "Left", MDB_LEFT, PH_LEFT, PH_LEFT },
-			{ "right", "Right", MDB_RIGHT, PH_RIGHT, PH_RIGHT },
+			{ "b1", "input.button_1", MDB_B, PH_CROSS, PH_CROSS },
+			{ "b2", "input.button_2", MDB_C, PH_CIRCLE, PH_CIRCLE },
+			{ "start", "input.start", MDB_START, PH_START, PH_START },
+			{ "up", "input.up", MDB_UP, PH_UP, PH_UP },
+			{ "down", "input.down", MDB_DOWN, PH_DOWN, PH_DOWN },
+			{ "left", "input.left", MDB_LEFT, PH_LEFT, PH_LEFT },
+			{ "right", "input.right", MDB_RIGHT, PH_RIGHT, PH_RIGHT },
 			{ 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }
 		},
 		0, 1, PH_SQUARE, PH_TRIANGLE, true
@@ -195,13 +196,13 @@ const PadModel &model_sg()
 	static const PadModel m = {
 		"sg", 2, 7,
 		{
-			{ "b1", "Button 1", MDB_B, PH_CROSS, PH_CROSS },
-			{ "b2", "Button 2", MDB_C, PH_CIRCLE, PH_CIRCLE },
-			{ "start", "Pause", MDB_START, PH_START, PH_START },
-			{ "up", "Up", MDB_UP, PH_UP, PH_UP },
-			{ "down", "Down", MDB_DOWN, PH_DOWN, PH_DOWN },
-			{ "left", "Left", MDB_LEFT, PH_LEFT, PH_LEFT },
-			{ "right", "Right", MDB_RIGHT, PH_RIGHT, PH_RIGHT },
+			{ "b1", "input.button_1", MDB_B, PH_CROSS, PH_CROSS },
+			{ "b2", "input.button_2", MDB_C, PH_CIRCLE, PH_CIRCLE },
+			{ "start", "input.pause", MDB_START, PH_START, PH_START },
+			{ "up", "input.up", MDB_UP, PH_UP, PH_UP },
+			{ "down", "input.down", MDB_DOWN, PH_DOWN, PH_DOWN },
+			{ "left", "input.left", MDB_LEFT, PH_LEFT, PH_LEFT },
+			{ "right", "input.right", MDB_RIGHT, PH_RIGHT, PH_RIGHT },
 			{ 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }
 		},
 		0, 1, PH_SQUARE, PH_TRIANGLE, true
@@ -226,7 +227,7 @@ static const char *const kSpecialKeys[ACT_COUNT - ACT_TURBO_A] = {
 	"bind_turbo_a", "bind_turbo_b", "bind_ff", "bind_quicksave", "bind_quickload", "bind_screenshot", "bind_rewind"
 };
 static const char *const kSpecialLabels[ACT_COUNT - ACT_TURBO_A] = {
-	"Turbo A", "Turbo B", "Fast-forward", "Quick save", "Quick load", "Screenshot", "Rewind"
+	"input.turbo_a", "input.turbo_b", "input.fast_forward", "input.quick_save", "input.quick_load", "input.screenshot", "input.rewind"
 };
 
 const char *action_key(const PadModel &m, int a)
@@ -239,8 +240,8 @@ const char *action_key(const PadModel &m, int a)
 
 const char *action_label(const PadModel &m, int a)
 {
-	if (a >= 0 && a < m.n) return m.btn[a].label;
-	if (a >= ACT_TURBO_A && a < ACT_COUNT) return kSpecialLabels[a - ACT_TURBO_A];
+	if (a >= 0 && a < m.n) return tr(m.btn[a].label);
+	if (a >= ACT_TURBO_A && a < ACT_COUNT) return tr(kSpecialLabels[a - ACT_TURBO_A]);
 	return "";
 }
 
@@ -285,11 +286,11 @@ const char *assign_result_text(AssignResult r)
 {
 	switch (r) {
 	case ASSIGN_OK: return "";
-	case ASSIGN_BAD_ACTION: return "No such button";
-	case ASSIGN_SINGLE_ONLY: return "A game button takes one button";
-	case ASSIGN_RESERVED: return "Start + Select opens the menu; pick other buttons";
-	case ASSIGN_TOO_MANY: return "A shortcut takes at most four buttons";
-	default: return "Only player 1 has shortcuts";
+	case ASSIGN_BAD_ACTION: return tr("input.no_such_button");
+	case ASSIGN_SINGLE_ONLY: return tr("input.a_game_button_takes_one_button");
+	case ASSIGN_RESERVED: return tr("input.start_select_opens_the_menu_pick");
+	case ASSIGN_TOO_MANY: return tr("input.a_shortcut_takes_at_most_four");
+	default: return tr("input.only_player_1_has_shortcuts");
 	}
 }
 

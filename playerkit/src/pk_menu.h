@@ -66,6 +66,7 @@ enum RowId {
 	ROW_PIC_SCREEN,               /* Screen: 0 Auto, 1 OLED (PCH-1000), 2 LCD (PCH-2000), 3 PS TV: one setting for every console and the app (pk_screen.h) */
 	ROW_UI_TEXT,                  /* Text size: 0 Normal, 1 Large (the Interface page) */
 	ROW_UI_CONTRAST,              /* High contrast: 0 Off, 1 On */
+	ROW_UI_LANGUAGE,              /* Language: 0 Automatic, then English, Espanol, Francais, Deutsch, Italiano, Portugues (Brasil), Japanese, Simplified Chinese (pk_i18n.h LANG_*); one setting for the app and the players (display.ini language=) */
 	ROW_COUNT,
 	ROW_HOST_BASE = 1000          /* rows the host adds itself (add_host_row) have ids from here */
 };
@@ -78,10 +79,10 @@ enum RowId {
 enum { IMGQ_AUTO = 0, IMGQ_ORIGINAL, IMGQ_ENHANCED_2X, IMGQ_ENHANCED_3X, IMGQ_ENHANCED_4X, IMGQ_MMPX_2X, IMGQ_COUNT };
 enum { FFSPD_2X = 0, FFSPD_3X, FFSPD_UNLIMITED, FFSPD_SMOOTH, FFSPD_COUNT };
 /* the host rows every player shares, one wording (the main app's): "Rewind length" 0 Short, 1 Medium; "Video filter" 0 sharp bilinear, 1 bilinear */
-static const char *const kRewindLengthNames[2] = { "Short", "Medium" };
-static const char *const kVideoFilterNames[2] = { "Sharp bilinear", "Bilinear" };
-#define PK_REWIND_LENGTH_HELP "How far back rewind reaches: Short about 30 seconds, Medium about a minute. A busy game keeps a little less: the memory it may use is fixed."
-#define PK_VIDEO_FILTER_HELP "How the picture is fitted to the screen. Sharp bilinear: exact pixels with softened edges, at any size. Bilinear: soft, every pixel blends into the next."
+static const char *const kRewindLengthNames[2] = { "menu.short", "menu.medium" };
+static const char *const kVideoFilterNames[2] = { "menu.sharp_bilinear", "menu.bilinear" };
+#define PK_REWIND_LENGTH_HELP "menu.rewind_length_help"
+#define PK_VIDEO_FILTER_HELP "menu.video_filter_help"
 /* the filter row the way the app has it: under Original it shows sharp bilinear, and choosing bilinear there switches Image quality to Auto */
 
 struct CheatItem {
@@ -140,14 +141,15 @@ public:
 struct MenuConfig {
 	std::string game_name;          /* title at the top */
 	std::string console_label;      /* "Super Nintendo" */
-	std::string exit_label = "Exit";
-	std::string exit_help = "Close VitAdhoc";
-	std::string play_together_reason = "Not available for this console: the player has no link";
-	std::string unsupported_reason = "Not available in this player";
+	std::string exit_label;         /* "" = the default ("Exit"); else a text or a catalogue key */
+	std::string exit_help;          /* "" = the default ("Close VitAdhoc"); else a text or a catalogue key */
+	std::string play_together_reason = "menu.reason.no_link";     /* texts or catalogue keys (tr() hands back a text that is not a key) */
+	std::string unsupported_reason = "menu.reason.unsupported";
 	uint32_t caps = CAP_ALL_BASIC;
 	uint32_t accent = 0x7B6CFF;     /* 0xRRGGBB */
 	bool enter_is_cross = true;
 	int players = 4;                /* pads the mapping page offers */
+	int system_lang = 1;            /* the Vita's system language (SCE_SYSTEM_PARAM_ID_LANG), for Language: Automatic */
 };
 
 enum MenuEvent { MENU_NONE = 0, MENU_RESUME, MENU_GAME_LIST, MENU_EXIT, MENU_RESET_DONE };
@@ -371,6 +373,8 @@ private:
 	void bt_update(const MenuInput &in);
 	void draw_btntest(Gfx *g, Text *t);
 	std::string bt_actions(uint32_t bit) const;
+	std::string exit_label() const;
+	unsigned lang_serial_;           /* the language the rows were built in (i18n_serial) */
 	/* capture */
 	int cap_action_, cap_ms_, cap_window_ms_;
 	uint32_t cap_bits_;

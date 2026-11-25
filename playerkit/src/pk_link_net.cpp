@@ -1,6 +1,7 @@
 /* See pk_link_net.h. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE). */
 #include "pk_link_net.h"
 #include "pk_util.h"
+#include "pk_i18n.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -423,18 +424,18 @@ void NetLink::status(std::string *l1, std::string *l2, int *p1, int *p2)
 	std::string a, b;
 	int q1 = -1, q2 = -1;
 	switch (phase_) {
-	case NP_NET: a = p->host ? "Waiting for player 2" : "Reaching player 1"; break;
-	case NP_PUNCH: a = "Connecting over the Internet"; b = "Opening a path to the other console"; break;
-	case NP_RELAY: a = "Connecting through the relay"; break;
+	case NP_NET: a = p->host ? tr("link.waiting_for_player_2") : tr("link.reaching_player_1"); break;
+	case NP_PUNCH: a = tr("link.connecting_over_the_internet"); b = tr("link.opening_a_path_to_the_other"); break;
+	case NP_RELAY: a = tr("link.connecting_through_the_relay"); break;
 	case NP_SESSION:
 		if (p->core.phase() == LP_STATE) {
-			a = p->host ? "Sending the game to player 2" : "Receiving the game from player 1";
+			a = p->host ? tr("link.sending_the_game_to_player_2") : tr("link.receiving_the_game_from_player_1");
 			q1 = p->core.progress();
-		} else a = "Starting the game together";
+		} else a = tr("link.starting_the_game_together");
 		break;
-	case NP_RUNNING: case NP_ENDING: a = phase_ == NP_ENDING ? "Ending the link together" : "Playing together"; break;
-	case NP_DONE: a = "Link ended"; break;
-	case NP_FAILED: a = "The link failed"; b = link_error_text(); break;
+	case NP_RUNNING: case NP_ENDING: a = phase_ == NP_ENDING ? tr("link.ending_the_link_together") : tr("link.playing_together"); break;
+	case NP_DONE: a = tr("link.link_ended"); break;
+	case NP_FAILED: a = tr("link.the_link_failed_2"); b = link_error_text(); break;
 	default: break;
 	}
 	if (l1) *l1 = a;

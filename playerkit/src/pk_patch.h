@@ -32,7 +32,7 @@ struct PatchResult {
 	PatchKind kind = PATCH_NONE;
 	bool verified = false;      /* true when a checksum of the source and result matched */
 	bool header_handled = false;/* a 512-byte copier header was set aside and put back */
-	std::string text() const;   /* a line for the player */
+	std::string text(bool en = false) const;   /* a line for the player (en: English whatever the language, for log lines) */
 };
 
 PatchKind patch_detect(const uint8_t *patch, size_t n);

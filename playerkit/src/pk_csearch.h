@@ -21,6 +21,7 @@
 #ifndef PK_CSEARCH_H
 #define PK_CSEARCH_H
 
+#include "pk_i18n.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -411,22 +412,22 @@ static inline void pk_cs_addr_text(const pk_cs *cs, uint32_t addr, char *out, si
 
 /* ---- the words, the same on every console ----------------------------------------------------------------------- */
 
-static inline const char *pk_cs_size_name(int width) { return width == 1 ? "1 byte" : width == 2 ? "2 bytes" : "4 bytes"; }
+static inline const char *pk_cs_size_name(int width) { return width == 1 ? ::pk::tr("search.1_byte") : width == 2 ? ::pk::tr("search.2_bytes") : ::pk::tr("search.4_bytes"); }
 /* The Size row's choices: 0..2 are 1, 2, 4 bytes; 3 and 4 (only where pk_cs_can_any) are 2 and 4 bytes at any address.
  * pk_cs_size_width / pk_cs_size_any say what a choice means. */
 static inline const char *pk_cs_size_choice(int i)
 {
-	static const char *const n[5] = { "1 byte", "2 bytes", "4 bytes", "2 bytes, any address", "4 bytes, any address" };
-	return i >= 0 && i < 5 ? n[i] : "";
+	static const char *const n[5] = { "search.1_byte", "search.2_bytes", "search.4_bytes", "search.2_bytes_any_address", "search.4_bytes_any_address" };
+	return i >= 0 && i < 5 ? ::pk::tr(n[i]) : "";
 }
 static inline int pk_cs_size_width(int i) { return i == 0 ? 1 : (i == 1 || i == 3) ? 2 : 4; }
 static inline int pk_cs_size_any(int i) { return i >= 3; }
 static inline int pk_cs_size_count(const pk_cs *cs) { return pk_cs_can_any(cs) ? 5 : 3; }
 static inline const char *pk_cs_op_name(int op)
 {
-	static const char *const n[PK_CS_OPS] = { "Equal to", "Not equal to", "Greater than", "Less than",
-	                                          "Changed", "Unchanged", "Increased", "Decreased" };
-	return op >= 0 && op < PK_CS_OPS ? n[op] : "";
+	static const char *const n[PK_CS_OPS] = { "search.equal_to", "search.not_equal_to", "search.greater_than", "search.less_than",
+	                                          "search.changed", "search.unchanged", "search.increased", "search.decreased" };
+	return op >= 0 && op < PK_CS_OPS ? ::pk::tr(n[op]) : "";
 }
 /* does the step ask for a typed number? */
 static inline int pk_cs_op_needs_value(int op) { return op <= PK_CS_LT; }

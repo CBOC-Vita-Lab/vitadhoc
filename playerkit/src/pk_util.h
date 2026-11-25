@@ -75,7 +75,7 @@ enum WriteResult {
 	W_NO_REPLACE,       /* could not put the new file in place (old file kept) */
 	W_BAD_ARGS
 };
-const char *write_result_text(WriteResult r);
+const char *write_result_text(WriteResult r, bool en = false);      /* en: the English text whatever the language (log lines) */
 
 /* The safe write: path.tmp is written and read back (size and CRC) before
  * anything is touched; then the old file is set aside as path.old, the new one

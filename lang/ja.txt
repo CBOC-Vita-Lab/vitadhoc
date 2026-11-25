@@ -434,7 +434,7 @@ menu.play_together	一緒に遊ぶ
 menu.progress_the_game_has_not_saved	ゲームでセーブしていない進行状況は失われます。
 menu.quit	終了
 menu.resume	再開
-menu.save_clip	クリップを保存
+menu.save_clip	クリップ
 menu.save_or_load_the_game_of	ゲームのセーブ/ロード: %d / %dスロット使用中
 menu.save_states	ステート
 menu.save_states_are_off_while_linked	通信中はステートは使えません
@@ -812,56 +812,56 @@ settings.game_order	ゲームの順序
 settings.game_previews	ゲームプレビュー
 settings.gameplay	ゲームプレイ
 settings.hardcore	ハードコア
-settings.help.a_faint_pixel_grid_like_a	携帯機の画面のような薄い画素の格子。1が薄く、10が濃くなります。
+settings.help.a_faint_pixel_grid_like_a	携帯機の画面のような薄い格子。1が薄く、10が濃い。
 settings.help.a_game_boy_s_picture_has	Game Boyの映像にはこれ以上表示するものがありません。
 settings.help.a_number_that_tells_rooms_apart	複数の人がホストしているときにルームを区別する番号。
-settings.help.a_soft_glow_beside_the_picture	黒帯の代わりに映像の横にやわらかい光を表示。1が薄く、10が明るくなります。
-settings.help.a_tap_on_the_game_opens	ゲームをタップするとメニューが開きます。START + SELECTでも常に開けます。
+settings.help.a_soft_glow_beside_the_picture	黒帯の代わりに映像の横へやわらかい光。1が薄く10が明るい。
+settings.help.a_tap_on_the_game_opens	タップでメニューを開きます。START + SELECTでも開けます。
 settings.help.a_vita_on_the_same_wi	同じWi-FiのVitaがセーブデータとステートをコピーできます。
 settings.help.adds_the_handheld_screen_s_grid	携帯機の画面のドットの格子を加えます。
 settings.help.advanced_the_joiner_types_the_host	上級: 参加側がホストのアドレスを入力します。
-settings.help.also_widens_rotating_3d_tracks_sprites	回転する3Dコースも広げます。スプライトが入り込むことがあります。
+settings.help.also_widens_rotating_3d_tracks_sprites	回転する3Dコースも広がります。スプライトが入ることも。
 settings.help.always_the_16_9_picture_unknown	常に16:9の映像。不明な両端はフェードします。
 settings.help.an_original_game_boy_s_shades	初代Game Boyの濃淡は、上の色設定が色になります。
-settings.help.any_game_shows_what_it_has	すべてのゲーム: 描画済みの内容を画面の横に表示。誤ることがあります。
+settings.help.any_game_shows_what_it_has	全ゲーム: 描画済みの内容を横に表示。誤る場合あり。
 settings.help.as_a_television_showed_them_a	テレビで見たときのように、少しやわらかく深い色合い。
 settings.help.as_on_a_game_boy_color	Game Boy Colorの画面のように。
 settings.help.as_on_a_wonderswan_s_screen	WonderSwanの画面のように。やわらかく、黒がやや浮きます。
 settings.help.auto_adapts_to_keep_60_fps	自動で60 fpsを保つよう調整。可能ならなめらかにします。
 settings.help.auto_follows_the_cartridge_takes_effect	自動はカートリッジに従います。次回の起動で反映されます。
-settings.help.auto_follows_the_game_some_turn	自動はゲームに従います (途中でオンになるものも)。このゲームのみ。
-settings.help.auto_games_that_use_the_zapper	自動: Zapperを使うゲームではタッチスクリーンで使えます。次回の起動から。
+settings.help.auto_follows_the_game_some_turn	自動はゲームに従います。このゲームのみ。
+settings.help.auto_games_that_use_the_zapper	自動: Zapper対応ゲームはタッチ操作。次回の起動から。
 settings.help.auto_on_where_the_game_has	自動: ゲームに搭載されていればオン。次回の起動から。
-settings.help.auto_suits_most_fewer_frames_react	自動が多くの場合に合います。少ないほど反応が速く、多いほどなめらかです。
-settings.help.auto_uses_the_vita_s_fourth	自動: 使えるならVitaの4つ目のコアを使います。次のゲームから。
+settings.help.auto_suits_most_fewer_frames_react	自動が無難。少ないほど反応が速く、多いほどなめらか。
+settings.help.auto_uses_the_vita_s_fourth	自動: 使えるなら4つ目のコアを使います。次のゲームから。
 settings.help.bigger_text_in_the_menus_of	アプリとプレーヤーのメニューの文字を大きくします。
-settings.help.black_and_white_games_grey_or	白黒ゲーム: グレー、または元のLCDの色合い。カラーゲームは元の色のまま。
-settings.help.brighter_text_and_clearer_edges_in	アプリとプレーヤーのメニューの文字を明るく、輪郭をはっきりさせます。
-settings.help.busy_moments_show_every_second_frame	負荷が高いときは1フレームおきに均等に表示し、速度は保ちます。
-settings.help.busy_moments_skip_a_frame_game	負荷が高いときはフレームを飛ばします。ゲームと音の速度は保ちます。
+settings.help.black_and_white_games_grey_or	白黒ゲーム: グレーか元のLCDの色合い。カラーは元のまま。
+settings.help.brighter_text_and_clearer_edges_in	アプリとプレーヤーのメニュー文字を明るく、くっきりします。
+settings.help.busy_moments_show_every_second_frame	負荷が高いときは1フレームおきに均等表示。速度は保ちます。
+settings.help.busy_moments_skip_a_frame_game	負荷が高いときはフレームを飛ばし、速度は保ちます。
 settings.help.busy_moments_slow_the_game_and	負荷が高いときはゲームと音が遅くなります。
-settings.help.choose_just_this_game_to_give	「このゲームのみ」を選ぶと、このゲーム専用の見た目にできます。
+settings.help.choose_just_this_game_to_give	「このゲームのみ」でこのゲーム専用の見た目にできます。
 settings.help.circle_is_a_and_confirms_in	{o}がAで、メニューでは決定になります。{x}がBです。
-settings.help.coloured_stripes_like_a_crt_tube	CRTブラウン管のような色の縞。映像が少し暗くなります。1が薄く、10が濃くなります。
+settings.help.coloured_stripes_like_a_crt_tube	CRTのような色の縞。少し暗くなります。1が薄く、10が濃い。
 settings.help.colours_exactly_as_the_game_sends	ゲームが出力したままの色。
-settings.help.controller_a_zapper_game_is_played	コントローラー: Zapperのゲームをパッドで遊びます。次回の起動から。
-settings.help.copy_saves_and_states_from_the	ルームで共有しているVitaからセーブデータとステートをコピーします。
+settings.help.controller_a_zapper_game_is_played	コントローラー: Zapperゲームをパッドで。次回の起動から。
+settings.help.copy_saves_and_states_from_the	ルーム共有中のVitaからセーブとステートをコピーします。
 settings.help.cross_is_a_and_confirms_in	{x}がAで、メニューでは決定になります。{o}がBです。
-settings.help.dark_lines_between_the_rows_like	テレビのように、行の間に暗い線を入れます。1が薄く、10が濃くなります。
+settings.help.dark_lines_between_the_rows_like	テレビのように行間に暗い線。1が薄く、10が濃い。
 settings.help.dark_or_light_menus	メニューを暗くするか明るくするか。
 settings.help.darkens_a_thin_line_under_every	画素の各行の下に細い暗線を入れます。
 settings.help.display_changes_made_now_apply_to	今行う表示の変更はこのゲームにのみ適用されます。
 settings.help.drawn_on_a_second_core_heavy	2つ目のコアで描画: 重い見た目でもゲームは遅くなりません。
 settings.help.each_game_shows_its_file_name	各ゲームをメモリーカード上のファイル名で表示します。
-settings.help.each_game_shows_its_title_games	各ゲームをタイトルで表示します。同じタイトルのゲームにはファイル名も表示。
+settings.help.each_game_shows_its_title_games	ゲームをタイトルで表示。同名のものはファイル名も表示。
 settings.help.each_save_also_goes_where_retroarch	セーブデータをRetroArchが探す場所にも保存し、同期します。
-settings.help.european_games_run_at_50_hz	欧州のゲームは50 Hzで動きます。なめらか50 Hzは本来の速度を保ち映像を整えます: 6回に1回、2フレームを混ぜます。
-settings.help.european_games_run_at_50_hz_2	欧州のゲームは50 Hzで動きます。本来の50 Hzは本来の速度で遊べ、6フレームに1回同じフレームを再表示します。
+settings.help.european_games_run_at_50_hz	欧州ゲームは50 Hz。なめらか50 Hz: 速度はそのままで映像を整えます。
+settings.help.european_games_run_at_50_hz_2	欧州ゲームは50 Hz。本来の50 Hz: 本来の速度で、時々同じ画面を再表示。
 settings.help.every_frame_when_it_can_be	可能なら全フレーム表示。負荷が高いときは不均等に落ちます。
 settings.help.exact_pixels_sharpest_at_2x_3x	正確な画素。2倍、3倍、4倍で最もくっきりします。
 settings.help.exact_pixels_with_softened_edges_at	正確な画素で輪郭をやわらげます。どの大きさでも使えます。
-settings.help.far_apart_the_host_shows_a	離れている場合: ホストがコードを表示し、フレンドが入力します。
-settings.help.faster_link_play_on_a_strong	回線が強ければ通信プレイを高速化。ホストの設定が使われます。
+settings.help.far_apart_the_host_shows_a	遠方の相手と: ホストがコードを出し、フレンドが入力。
+settings.help.faster_link_play_on_a_strong	回線が強ければ通信を高速化。ホストの設定が使われます。
 settings.help.follows_the_vita_s_own_enter	Vita本体の決定ボタンに従います。押して変更します。
 settings.help.for_a_strong_connection_slightly_faster	回線が強い場合に、通信プレイを少し高速化。
 settings.help.for_rom_hacks_takes_effect_at	ROMハック用。次回の起動で反映されます。
@@ -872,48 +872,48 @@ settings.help.hold_the_right_stick_left_to	右スティックを左に倒し続�
 settings.help.hold_the_right_stick_left_to_2	右スティックを左に倒し続けると巻き戻します。
 settings.help.hold_the_vita_as_level_should	水平にしたい向きでVitaを持ち、{x}を押してください。
 settings.help.hold_to_go_back_in_time	%sを押し続けると時間を戻せます。
-settings.help.how_fast_it_runs_2x_and	動作の速さ。2倍と3倍は、音を速くするか通常の音程で再生できます。
+settings.help.how_fast_it_runs_2x_and	動作の速さ。2倍と3倍は音を速くするか通常の音程にできます。
 settings.help.how_its_pixels_are_drawn	画素の描き方。
 settings.help.how_large_the_game_is_drawn	ゲームを描く大きさ。3倍が正確で最もくっきりします。
 settings.help.how_much_sunlight_the_cartridge_s	カートリッジの太陽センサーが受ける日光の量。
 settings.help.how_strongly_a_turn_or_a	回転や傾きの感じ方の強さ。
 settings.help.how_this_game_links_link_cable	このゲームの通信方法: 通信ケーブルかワイヤレスアダプター。
-settings.help.mmpx_at_twice_its_size_crisp	MMPXで2倍に拡大。くっきりしたドット絵で、Vitaへの負荷は軽め。
+settings.help.mmpx_at_twice_its_size_crisp	MMPXで2倍。くっきりしたドット絵で、負荷は軽め。
 settings.help.more_of_the_map_beside_the	対応ゲームで、映像の横にマップをさらに表示。
 settings.help.muted_and_dark_as_on_the	初代GBAのバックライトなしの画面のように、くすんで暗く。
-settings.help.muted_as_on_a_gba_s	GBAの画面のようにくすんだ色。ドット絵が想定した色合いです。
+settings.help.muted_as_on_a_gba_s	GBAの画面のようにくすんだ色。ドット絵本来の色合い。
 settings.help.no_marks_over_the_game_unlocks	ゲーム上に印を出しません。解除の通知は表示されます。
 settings.help.no_router_the_two_vitas_connect	ルーターなし: 2台のVitaが直接つながります。
 settings.help.no_states_rewind_or_cheats_from	ステート、巻き戻し、チートは使えません。次のゲームから。
 settings.help.off_games_find_no_printer	オフ: ゲームはプリンターを見つけられません。
 settings.help.off_the_app_stays_on_the	オフ: アプリは割り当てられた3つのコアのまま動きます。
 settings.help.off_try_this_if_the_picture	オフ: 映像に不具合が出たときに試してください。
-settings.help.only_start_select_or_l_r	START + SELECT (またはL + R + START) のみでメニューが開きます。
-settings.help.pictures_a_game_prints_are_saved	ゲームが印刷した画像はprints/に保存されます。通信中はオフ。
-settings.help.play_this_game_with_a_friend	このゲームをフレンドと遊びます。1人がホスト、もう1人が参加。同じゲームが必要です。
-settings.help.put_a_png_in_ux0_data	ux0:data/GBAdhoc/overlays/にPNGを置くとゲームに枠を付けられます。
+settings.help.only_start_select_or_l_r	START + SELECT (またはL + R + START) のみで開きます。
+settings.help.pictures_a_game_prints_are_saved	ゲームの印刷画像はprints/に保存。通信中はオフ。
+settings.help.play_this_game_with_a_friend	フレンドとこのゲームを遊びます。1人がホスト、1人が参加。
+settings.help.put_a_png_in_ux0_data	ux0:data/GBAdhoc/overlays/のPNGでゲームに枠を付けます。
 settings.help.redraws_curves_and_diagonals_smoothly_the	曲線と斜線をなめらかに描き直します。最も負荷が高いです。
-settings.help.rest_on_a_game_in_the	ホーム画面でゲームに合わせたままにすると、最後の10秒のプレイが背景で流れます。
-settings.help.retroarch_s_files_are_left_alone	RetroArchのファイルには触れません。書き出しでコピーを作ります。
-settings.help.retry_missing_box_art_and_title	見つからないパッケージ画像とタイトル画面をWi-Fiで再取得します。
+settings.help.rest_on_a_game_in_the	ホームで選んだままにすると、直前10秒のプレイが流れます。
+settings.help.retroarch_s_files_are_left_alone	RetroArchのファイルには触れません。書き出しでコピー。
+settings.help.retry_missing_box_art_and_title	足りないパッケージ画像とタイトル画面をWi-Fiで再取得。
 settings.help.rounds_stair_steps_only_light_adds	階段状のギザギザだけを丸めます。軽く、色は増えません。
 settings.help.running_the_game_backwards_is_switched	ゲームの逆再生をオフにします。
-settings.help.same_wi_fi_or_phone_hotspot	同じWi-Fiかスマートフォンのホットスポット: ルームは自動で出ます。
+settings.help.same_wi_fi_or_phone_hotspot	同じWi-Fiかスマホのホットスポット。ルームは自動で出ます。
 settings.help.screens_with_no_more_to_show	表示するものがない画面は端まで引き伸ばします。
-settings.help.screens_with_no_more_to_show_2	表示するものがない画面は左右でやわらかくフェードアウトします。
+settings.help.screens_with_no_more_to_show_2	表示するものがない画面は両端をフェードアウトします。
 settings.help.screens_with_no_more_to_show_3	表示するものがない画面は黒帯のままにします。
 settings.help.set_by_image_quality_choosing_one	画質で決まります。ここで選ぶと自動に切り替わります。
 settings.help.shot_with_the_buttons_set_in	ボタン割り当てで設定したボタンで撮影します。
-settings.help.shows_each_button_stick_and_touch	ボタン、スティック、タッチパネルの押された状態と役割を表示します。
+settings.help.shows_each_button_stick_and_touch	ボタン、スティック、タッチの入力状態と役割を表示します。
 settings.help.shows_the_game_s_speed_in	ゲームの速度を隅に表示します。
-settings.help.shows_what_you_press_one_frame	次のフレームを先に計算して、押したものを1フレーム早く表示します。ゲームの動作は同じです。自動は余裕があるときに使います。
+settings.help.shows_what_you_press_one_frame	入力を1フレーム早く表示 (先読み)。動作は同じ。自動は余裕時のみ。
 settings.help.small_marks_for_a_challenge_progress	チャレンジ、進捗、リーダーボード挑戦中の小さな印。
 settings.help.smoothed_at_four_times_its_size	4倍に拡大してなめらかに。最も精細で負荷も最大です。
 settings.help.smoothed_at_three_times_its_size	3倍に拡大してなめらかに。より精細ですが負荷も増えます。
 settings.help.smoothed_at_twice_the_game_s	ゲームの2倍に拡大してなめらかにし、画面に合わせます。
 settings.help.soft_every_pixel_blends_into_the	ソフト: 画素が隣の画素となじみます。
 settings.help.states_rewind_and_cheats_allowed	ステート、巻き戻し、チートを使えます。
-settings.help.super_game_boy_games_in_the	Super Game Boy対応ゲームを付属の枠で表示 (Game Boyの色: Super Game Boy)。
+settings.help.super_game_boy_games_in_the	Super Game Boy対応ゲームを付属の枠で表示 (SGB)。
 settings.help.swap_it_if_turning_or_tilting	回転や傾きが逆に感じるときは切り替えてください。
 settings.help.the_console_s_own_picture_bars	本体そのままの映像で、横に帯が出ます。
 settings.help.the_game_s_own_pixels_evenly	ゲームの画素をそのまま、どの画面サイズでも均等な大きさで。
@@ -922,39 +922,39 @@ settings.help.the_host_s_setting_is_used	ホストの設定が使われます。
 settings.help.the_language_of_the_menus_automatic	メニューの言語。自動はVita本体の設定に従います。
 settings.help.the_name_other_players_see_beside	ルームの横に他のプレイヤーへ表示される名前。
 settings.help.the_nes_picture_as_it_was	NESの映像をそのまま: 256列。
-settings.help.the_newest_frame_only_sharper_with	最新のフレームのみ。くっきりしますが、スクロール時に少しカクつきます。
-settings.help.the_order_of_all_games_and	「すべてのゲーム」と「お気に入り」の順序。「最近」は新しい順です。
+settings.help.the_newest_frame_only_sharper_with	最新フレームのみ。くっきり、スクロール時に少しカクつく。
+settings.help.the_order_of_all_games_and	「すべてのゲーム」と「お気に入り」の順序。最近は新しい順。
 settings.help.the_rear_panel_does_nothing	背面パネルは何もしません。
-settings.help.the_rear_panel_s_four_corners	背面パネルの四隅をボタンにできます。ボタン割り当てで設定します。
+settings.help.the_rear_panel_s_four_corners	背面パネルの四隅をボタンにできます。ボタン割り当てで設定。
 settings.help.the_right_stick_does_not_rewind	右スティックでは巻き戻しません。
 settings.help.the_right_stick_is_the_cartridge	右スティックがカートリッジのセンサーになります。
-settings.help.the_sides_filled_with_the_game	わかる場合は、左右をゲーム自身の映像で埋めます。推測はしません。
+settings.help.the_sides_filled_with_the_game	わかる場合は両端をゲーム自身の映像で埋めます。推測なし。
 settings.help.the_slow_lcd_left_a_trail	反応の遅いLCDは動くものに残像が出ました。10が強め。
-settings.help.the_slow_lcd_left_a_trail_2	反応の遅いLCDは動くものに残像が出ました。0でオフ、5で透明表現のちらつきを安定させます。
+settings.help.the_slow_lcd_left_a_trail_2	遅いLCDの残像。0でオフ、5で透明表現のちらつきを安定。
 settings.help.the_small_link_status_in_the	ゲームの隅に出る小さな通信状態表示。
 settings.help.the_vita_s_own_ps_start	Vita本体のPS + STARTでスクリーンショットを撮れます。
-settings.help.the_wonderswan_s_75_frames_a	WonderSwanの毎秒75フレームを各リフレッシュに混ぜます: なめらかなスクロール。
+settings.help.the_wonderswan_s_75_frames_a	WonderSwanの毎秒75フレームを混ぜ、スクロールをなめらかに。
 settings.help.this_game_s_achievements_and_what	このゲームの実績と、それぞれの条件。
-settings.help.this_game_s_own_choice_settings	このゲーム専用の設定。「設定」はゲームプレイの行に従います。自動は余裕があるときに使います。
+settings.help.this_game_s_own_choice_settings	このゲーム専用。「設定」はゲームプレイ行に従います。
 settings.help.this_game_s_own_choice_settings_2	このゲーム専用の設定。「設定」は操作の行に従います。
 settings.help.tiles_over_your_game_a_list	ゲームの上にタイル、画像付きの一覧、または画像を全画面で。
-settings.help.turn_on_rewind_with_right_stick	右スティックで巻き戻しをオンにするか、ボタンを割り当てます。
-settings.help.turn_or_tilt_the_vita_the	Vitaを回すか傾けると、カートリッジのセンサーが感じ取ります。
-settings.help.turn_the_vita_left_for_vertical	縦画面のシーンではVitaを左に回すと、映像が画面いっぱいになります。
-settings.help.type_your_friend_s_room_code	フレンドのルームコードを入力します。相手のゲームを見つけて起動します。
-settings.help.vertical_scenes_upright_on_a_level	縦画面のシーンは水平なVitaで正立し、方向キーも一緒に回ります。
-settings.help.what_fills_the_wide_view_s	ワイドビューの余白を埋めるもの (ワイドビューがオンのとき)。
+settings.help.turn_on_rewind_with_right_stick	右スティックで巻き戻しをオンにするか、ボタンを割り当て。
+settings.help.turn_or_tilt_the_vita_the	Vitaを回す・傾けると、カートリッジのセンサーが反応します。
+settings.help.turn_the_vita_left_for_vertical	縦画面のシーンではVitaを左に回すと全画面になります。
+settings.help.type_your_friend_s_room_code	フレンドのルームコードを入力。相手のゲームを探して起動。
+settings.help.vertical_scenes_upright_on_a_level	縦画面のシーンは水平なVitaで正立。方向キーも回ります。
+settings.help.what_fills_the_wide_view_s	ワイドビュー (オン時) の余白を埋めるもの。
 settings.help.what_the_camera_sees_the_vita	カメラが映すもの: Vitaの背面カメラ。
 settings.help.what_the_camera_sees_the_vita_2	カメラが映すもの: Vitaの前面カメラ。
-settings.help.whether_the_app_is_using_the	アプリがVitaの4つ目のCPUコアを使っているか (CapUnlockerプラグインが必要)。
+settings.help.whether_the_app_is_using_the	4つ目のCPUコアの使用状況 (CapUnlockerプラグインが必要)。
 settings.help.which_button_does_what_and_the	どのボタンが何をするか、およびショートカット。
 settings.help.which_vita_screen_this_is_oled	Vitaの画面の種類。OLEDは色を少しやわらげます。全機種共通。
 settings.help.x_a_copy_retroarch_can_use	{x}: RetroArchが探す場所に、使えるコピーを作ります。
 settings.help.x_a_picture_of_your_own	{x}: 一覧で選んだゲームのカバーに、自分の画像を設定します。
 settings.help.x_add_a_folder_ux0_roms	{x}: フォルダー (ux0:ROMS/GBA) を追加、または選んで削除。
 settings.help.x_check_now_off_no_check	{x}: 今すぐ確認。オフ: 頼まない限り確認しません。
-settings.help.x_check_now_once_a_day	{x}: 今すぐ確認。1日1回、GitHubで新しいVitAdhocがあるか確認します。
-settings.help.x_type_a_folder_ux0_pictures	{x}: フォルダー (ux0:pictures/VitAdhoc) を入力。空欄: screenshots/。
+settings.help.x_check_now_once_a_day	{x}: 今すぐ確認。1日1回GitHubで新版を確認します。
+settings.help.x_type_a_folder_ux0_pictures	{x}: 保存先 (例 ux0:pictures/VitAdhoc)。空欄: screenshots/
 settings.help.your_retroachievements_org_account	retroachievements.orgのアカウント。
 settings.help.zapper_touch_the_screen_to_aim	Zapper: 画面をタッチして狙い、撃ちます。次回の起動から。
 settings.high_contrast	ハイコントラスト

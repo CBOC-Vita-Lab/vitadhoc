@@ -355,7 +355,7 @@ static void kp_draw(const kp_pad *p, int cur, unsigned off)
       int w = k->span * KP_CW - 2, h = KP_CH - 2;
       int grey = (off >> i) & 1, sel = i == cur;
       int strong = k->act == KP_OK && !grey;
-      int tw = vid_text_w(k->label);
+      int tw = vid_text_w(tr(k->label));
       vid_rect(x, y, w, h, strong ? C_CON : C_CARD,
                strong ? (g_pcfg.theme == 1 ? 60 : 90) : 235);
       if (sel)
@@ -366,7 +366,7 @@ static void kp_draw(const kp_pad *p, int cur, unsigned off)
       }
       else
          ov_outline(x, y, w, h, C_ACCENT_DK, 70);
-      vid_text(x + (w - tw) / 2, vid_text_y_in(y, h), k->label,
+      vid_text(x + (w - tw) / 2, vid_text_y_in(y, h), tr(k->label),
                grey ? C_DIM : sel ? C_SEL : k->act == KP_CHAR ? C_VALUE
                                                               : C_ITEM);
       tch_row(KP_ROW_BASE + i, x - 1, y - 1, w + 2, h + 2);

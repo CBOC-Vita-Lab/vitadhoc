@@ -953,41 +953,41 @@ static void hm_home_hints(void)
       g_hm_hint_gap = 26;
       x = hm_cap(x, y, "UP");
       x = hm_cap(x, y, "DOWN");
-      x = hm_hint_word(x, y, "Step");
+      x = hm_hint_word(x, y, tr("home.step"));
       vs_icon(VS_I_BTN_TRI, x + 10, y + 12, 22, HC_TEXT2);
-      x = hm_hint_word(x + 26, y, "Next");
+      x = hm_hint_word(x + 26, y, tr("home.next"));
       vs_icon(VS_I_BTN_X, x + 10, y + 12, 22, HC_TEXT2);
-      x = hm_hint_word(x + 26, y, "Keep");
+      x = hm_hint_word(x + 26, y, tr("home.keep"));
       vs_icon(VS_I_BTN_O, x + 10, y + 12, 22, HC_TEXT2);
-      hm_hint_word(x + 26, y, "Cancel");
+      hm_hint_word(x + 26, y, tr("home.cancel"));
       return;
    }
    /* Text size Large: the line is wider than the screen at the usual spaces, so the five spaces after
     * its words shrink to what fits (at Normal it fits and nothing moves) */
    {
-      const char *find = g_find[0] ? "Clear" : "Find";
-      float w = 4 * 26 + 36 + vs_text_w(VS_CAPTION, "Play") + vs_text_w(VS_CAPTION, "Star") +
-                vs_text_w(VS_CAPTION, find) + vs_text_w(VS_CAPTION, "Views") + vs_text_w(VS_CAPTION, "Lists") +
-                vs_text_w(VS_CAPTION, "Settings") + vs_text_w(VS_CAPTION, "SELECT") +
+      const char *find = g_find[0] ? tr("home.clear") : tr("home.find");
+      float w = 4 * 26 + 36 + vs_text_w(VS_CAPTION, tr("home.play")) + vs_text_w(VS_CAPTION, tr("home.star")) +
+                vs_text_w(VS_CAPTION, find) + vs_text_w(VS_CAPTION, tr("home.views")) + vs_text_w(VS_CAPTION, tr("home.lists")) +
+                vs_text_w(VS_CAPTION, tr("home.settings")) + vs_text_w(VS_CAPTION, "SELECT") +
                 vs_text_w(VS_CAPTION, "SELECT +") + vs_text_w(VS_CAPTION, "START") + 3 * (14 + 6);
       float gap = (VS_W - 2 * HM_X - w) / 5;
       g_hm_hint_gap = gap >= 26 ? 26 : gap < 8 ? 8 : gap;
    }
    vs_icon(VS_I_BTN_X, x + 10, y + 12, 22, HC_TEXT2);
-   x = hm_hint_word(x + 26, y, "Play");
+   x = hm_hint_word(x + 26, y, tr("home.play"));
    vs_icon(VS_I_BTN_SQ, x + 10, y + 12, 22, HC_TEXT2);
-   x = hm_hint_word(x + 26, y, "Star");
+   x = hm_hint_word(x + 26, y, tr("home.star"));
    vs_icon(VS_I_BTN_O, x + 10, y + 12, 22, HC_TEXT2);
-   x = hm_hint_word(x + 26, y, g_find[0] ? "Clear" : "Find");
+   x = hm_hint_word(x + 26, y, g_find[0] ? tr("home.clear") : tr("home.find"));
    x = hm_cap(x, y, "SELECT");
-   x = hm_hint_word(x, y, "Views");
+   x = hm_hint_word(x, y, tr("home.views"));
    x = hm_cap(x, y, "SELECT +");
    vs_icon(VS_I_BTN_SQ, x + 10, y + 12, 22, HC_TEXT2);
-   x = hm_hint_word(x + 26, y, "Lists");
+   x = hm_hint_word(x + 26, y, tr("home.lists"));
    vs_icon(VS_I_BTN_TRI, x + 10, y + 12, 22, HC_TEXT2);
    x += 36;              /* the console's button: its pill carries the name (a word does not fit before START Settings) */
    x = hm_cap(x, y, "START");
-   hm_hint_word(x, y, "Settings");
+   hm_hint_word(x, y, tr("home.settings"));
 }
 
 /* ---- the console picker's table ----------------------------------------
@@ -1089,7 +1089,7 @@ static float hm_topbar(float dy, int n_scan)
    /* Games | Starred | Recent: SELECT steps through them (Recent once a
     * game has been played), a tap goes straight to one. */
    {
-      static const char *const TAB[3] = { "Games", "Starred", "Recent" };
+      const char *const TAB[3] = { tr("home.games"), tr("home.starred"), tr("home.recent") };
       int t, on = browser_tab();
       for (t = 0; t < 3; t++)
       {
@@ -1174,7 +1174,7 @@ static float hm_topbar(float dy, int n_scan)
        * on the words edits the search, on the X clears it. */
       char find[96], count[32];
       float count_x, qx = HM_X + 20;
-      snprintf(count, sizeof(count), "%d of %d", view_count(n_scan), scope_count(n_scan));
+      snprintf(count, sizeof(count), tr("home.of"), view_count(n_scan), scope_count(n_scan));
       count_x = 414 - vs_text_w(VS_CAPTION, count);
       vs_rrect(HM_X - 12, y + 38, 478 - HM_X, 24, 12, HC_GLASS);
       vs_icon(VS_I_SEARCH, HM_X + 6, y + 50, 16, HC_TEXT2);
@@ -1191,7 +1191,7 @@ static float hm_topbar(float dy, int n_scan)
       if (ui_cover_progress(&seen, &total, &have))
       {
          char status[64];
-         snprintf(status, sizeof(status), "Checking covers: %d of %d", seen, total);
+         snprintf(status, sizeof(status), tr("home.checking_covers_of"), seen, total);
          vs_text(VS_CAPTION, VS_W - HM_X - vs_text_w(VS_CAPTION, status),
                  y + 44, status, HC_TEXT2);
       }
@@ -1550,17 +1550,17 @@ static void hm_focus(const char *rom_dir, int rom, float dy, int idle)
    meta_line(&g_roms[rom], buf, sizeof(buf));
    x = hm_chip(x, y, buf, HC_GLASS, HC_TEXT2);
    if (m && m->value.battery != ML_UNKNOWN)
-      x = hm_chip(x, y, m->value.battery == ML_PRESENT ? "Battery save" : "No save yet",
+      x = hm_chip(x, y, m->value.battery == ML_PRESENT ? tr("home.battery_save") : tr("home.no_save_yet"),
                   HC_GLASS, HC_TEXT2);
    if (g_hm_states_for == rom && g_hm_states_n)
    {
-      snprintf(buf, sizeof(buf), g_hm_states_n == 1 ? "%d save state"
-                                                    : "%d save states",
+      snprintf(buf, sizeof(buf), g_hm_states_n == 1 ? tr("home.save_state")
+                                                    : tr("home.save_states"),
                g_hm_states_n);
       x = hm_chip(x, y, buf, HC_GLASS, HC_TEXT2);
    }
    if (g_roms[rom].is_fav)
-      x = hm_chip(x, y, "Starred", VS_ALPHA(hm_tint(g_pcfg.console, 255), 70),
+      x = hm_chip(x, y, tr("home.starred"), VS_ALPHA(hm_tint(g_pcfg.console, 255), 70),
                   HC_TEXT);
    if (g_roms[rom].play_last)
    {
@@ -1571,22 +1571,22 @@ static void hm_focus(const char *rom_dir, int rom, float dy, int idle)
       if (g_roms[rom].play_secs >= 60)
       {
          play_log_duration(g_roms[rom].play_secs, dur, sizeof(dur));
-         snprintf(buf, sizeof(buf), "Played %s, %s", when, dur);
+         snprintf(buf, sizeof(buf), tr("home.played"), when, dur);
       }
       else
-         snprintf(buf, sizeof(buf), "Played %s", when);
+         snprintf(buf, sizeof(buf), tr("home.played_2"), when);
       x = hm_chip(x, y, buf, HC_GLASS, HC_TEXT2);
    }
    if (m && m->value.patch)
-      x = hm_chip(x, y, m->value.patch == 1 ? "Patched (IPS)" :
-                        m->value.patch == 2 ? "Patched (BPS)" : "Patched (UPS)",
+      x = hm_chip(x, y, m->value.patch == 1 ? tr("home.patched_ips") :
+                        m->value.patch == 2 ? tr("home.patched_bps") : tr("home.patched_ups"),
                   HC_GLASS, HC_TEXT2);
 
    /* what the game is, in a few lines -- Wikipedia's (CC BY-SA), said so
     * in a chip of its own, readable over any picture */
    if (blurb[0])
    {
-      x = hm_chip(x, y, "From Wikipedia", HC_GLASS, HC_TEXT2);
+      x = hm_chip(x, y, tr("home.from_wikipedia"), HC_GLASS, HC_TEXT2);
       vs_text_wrap(VS_CAPTION, HM_X, y + 42, HM_BLURB_W, 3, 2, blurb,
                    VS_HEX(0xC9CFE0, la));
    }
@@ -1597,19 +1597,19 @@ static void hm_focus(const char *rom_dir, int rom, float dy, int idle)
    {
       /* Where the game was left: CROSS goes back to it; Start over (UP,
        * or a tap) plays from the battery save as before. */
-      x = hm_button(HM_X, y, VS_I_PLAY, "Continue", 1, PSP_CTRL_CROSS);
-      x = hm_button(x, y, VS_I_REFRESH, "Start over", 0, BROWSER_FRESH_BUTTON);
+      x = hm_button(HM_X, y, VS_I_PLAY, tr("home.continue"), 1, PSP_CTRL_CROSS);
+      x = hm_button(x, y, VS_I_REFRESH, tr("home.start_over"), 0, BROWSER_FRESH_BUTTON);
    }
    else
-      x = hm_button(HM_X, y, VS_I_PLAY, "Play", 1, PSP_CTRL_CROSS);
+      x = hm_button(HM_X, y, VS_I_PLAY, tr("home.play"), 1, PSP_CTRL_CROSS);
    if (g_hm_states_for == rom && g_hm_states_n)
-      x = hm_button(x, y, VS_I_LAYERS, "Save states", 0, PSP_CTRL_DOWN);
+      x = hm_button(x, y, VS_I_LAYERS, tr("home.save_states_2"), 0, PSP_CTRL_DOWN);
    x = hm_button(x, y, g_roms[rom].is_fav ? VS_I_STAR : VS_I_STAR_O, NULL, 0,
                  PSP_CTRL_SQUARE);
    /* a picture of your own for the cover (ui_vita_cover.h) */
-   x = hm_button(x, y, VS_I_CAMERA, "Cover", 0, BROWSER_COVER_BUTTON);
+   x = hm_button(x, y, VS_I_CAMERA, tr("home.cover"), 0, BROWSER_COVER_BUTTON);
    /* the game's collections (ui_vita_lists.h) */
-   x = hm_button(x, y, VS_I_FOLDER, "Lists", 0, BROWSER_LISTS_BUTTON);
+   x = hm_button(x, y, VS_I_FOLDER, tr("home.lists"), 0, BROWSER_LISTS_BUTTON);
    g_hm_btn_end = x;
 }
 
@@ -1689,10 +1689,10 @@ static void hm_cards(const char *rom_dir, int rom, float dy, float lift)
    char head[48];
    psp_state_slot_top(g_browser_state_slot - 1, &top);
    if (PSP_STATE_SLOT_COUNT > PSP_STATE_SLOTS_SHOWN)
-      snprintf(head, sizeof(head), "Save states   %d-%d of %d", top + 1,
+      snprintf(head, sizeof(head), tr("home.save_states_of"), top + 1,
                top + PSP_STATE_SLOTS_SHOWN, PSP_STATE_SLOT_COUNT);
    else
-      snprintf(head, sizeof(head), "Save states");
+      snprintf(head, sizeof(head), tr("home.save_states_2"));
    vs_text(VS_SUB, HM_X, y - 54, head, HC_TEXT);
    for (i = top; i < PSP_STATE_SLOT_COUNT && i < top + PSP_STATE_SLOTS_SHOWN;
         i++)
@@ -1721,16 +1721,16 @@ static void hm_cards(const char *rom_dir, int rom, float dy, float lift)
       }
       if (on)
          vs_rrect_line(x - 6, y - 6, cw + 12, ch + 12, 18, 3, HC_TEXT);
-      snprintf(slot, sizeof(slot), "Slot %d", i + 1);
+      snprintf(slot, sizeof(slot), tr("home.slot"), i + 1);
       vs_text(VS_LABEL, x, y + ch + 12, slot, on ? HC_TEXT : HC_TEXT2);
       {
          /* (UX review H6: "12 Nov 2026, 16:06" ran into the next card)
           * the stamp without its year, cut to the card */
          char cap[32];
          const char *t = have ? (g_hm_cards.rom == rom && g_hm_cards.when[i][0]
-                                    ? g_hm_cards.when[i] : "Saved")
+                                    ? g_hm_cards.when[i] : tr("home.saved"))
                          : (!hm_metadata(rom) || hm_metadata(rom)->value.state[i] == ML_UNKNOWN
-                            ? "Checking..." : "Empty");
+                            ? tr("home.checking") : tr("home.empty"));
          char *yr;
          snprintf(cap, sizeof(cap), "%s", t);
          yr = strstr(cap, " 20");
@@ -2216,8 +2216,8 @@ static void shell_home(const char *rom_dir, int cur, int n, int n_scan,
    {
       char q[40];
       static const int ic[2] = { VS_I_BTN_X, VS_I_BTN_O };
-      static const char *const w[2] = { "Delete", "Keep" };
-      snprintf(q, sizeof(q), "Delete the state in slot %d?", g_shelf_del);
+      const char *const w[2] = { tr("home.delete"), tr("home.keep") };
+      snprintf(q, sizeof(q), tr("home.delete_the_state_in_slot"), g_shelf_del);
       vs_rrect(HM_X - 14, VS_H - 74, VS_W - 2 * HM_X + 28, 56, 28,
                VS_HEX(0x1A2340, 245));
       vs_text(VS_LABEL, HM_X + 8, VS_H - 61, q, HC_TEXT);
@@ -2229,9 +2229,9 @@ static void shell_home(const char *rom_dir, int cur, int n, int n_scan,
    else if (g_browser_state_open)
    {
       static const int ic_all[3] = { VS_I_BTN_X, VS_I_BTN_SQ, VS_I_BTN_O };
-      static const char *const w_all[3] = { "Load", "Delete", "Back" };
+      const char *const w_all[3] = { tr("home.load"), tr("home.delete"), tr("home.back") };
       static const int ic_back[1] = { VS_I_BTN_O };
-      static const char *const w_back[1] = { "Back" };
+      const char *const w_back[1] = { tr("home.back") };
       int have = g_browser_state_exists[g_browser_state_slot - 1];
       const int *ic = have ? ic_all : ic_back;
       const char *const *w = have ? w_all : w_back;
@@ -2267,7 +2267,7 @@ static void home_empty(const char *rom_dir, int n_scan)
    {
       char query[96];
       vs_icon(VS_I_SEARCH, VS_W * 0.5f, y + 36, 56, HC_TEXT3);
-      vs_text_c(VS_SUB, VS_W * 0.5f, y + 94, "No games match", HC_TEXT);
+      vs_text_c(VS_SUB, VS_W * 0.5f, y + 94, tr("home.no_games_match"), HC_TEXT);
       int elsewhere = g_browser_favs || g_browser_recent
                     ? browser_find_count_all(n_scan) : 0;
       snprintf(query, sizeof(query), "\"%s\"", g_find);
@@ -2277,23 +2277,23 @@ static void home_empty(const char *rom_dir, int n_scan)
       {
          /* Nothing starred matches, but games do: one press shows them
           * (SELECT keeps the search). */
-         float w1 = vs_text_w(VS_LABEL, "Clear") + 76;
-         float w2 = vs_text_w(VS_LABEL, "All games") + 76, x;
+         float w1 = vs_text_w(VS_LABEL, tr("home.clear")) + 76;
+         float w2 = vs_text_w(VS_LABEL, tr("home.all_games")) + 76, x;
          snprintf(msg, sizeof(msg), elsewhere == 1
-                  ? "1 game matches in All games"
-                  : "%d games match in All games", elsewhere);
+                  ? tr("home.1_game_matches_in_all_games")
+                  : tr("home.games_match_in_all_games"), elsewhere);
          vs_text_c(VS_CAPTION, VS_W * 0.5f, y + 174, msg, HC_TEXT2);
          x = VS_W * 0.5f - (w1 + 14 + w2) * 0.5f;
-         x = hm_button(x, y + 216, VS_I_BACK, "Clear", 0, PSP_CTRL_CIRCLE);
+         x = hm_button(x, y + 216, VS_I_BACK, tr("home.clear"), 0, PSP_CTRL_CIRCLE);
          /* (not SELECT: with more views than two, it is not the way back) */
-         hm_button(x, y + 216, VS_I_GRID, "All games", 1,
+         hm_button(x, y + 216, VS_I_GRID, tr("home.all_games"), 1,
                    BROWSER_TAB_BUTTON(0));
       }
       else
       {
          vs_text_c(VS_CAPTION, VS_W * 0.5f, y + 174,
-                   "Try fewer words, or part of a word.", HC_TEXT3);
-         hm_button(VS_W * 0.5f - 90, y + 216, VS_I_BACK, "Clear", 1,
+                   tr("home.try_fewer_words_or_part_of"), HC_TEXT3);
+         hm_button(VS_W * 0.5f - 90, y + 216, VS_I_BACK, tr("home.clear"), 1,
                    PSP_CTRL_CIRCLE);
       }
       return;
@@ -2301,11 +2301,11 @@ static void home_empty(const char *rom_dir, int n_scan)
    else if (g_browser_recent)
    {
       vs_icon(VS_I_REWIND, VS_W * 0.5f, y + 20, 56, hm_tint(con, 255));
-      snprintf(msg, sizeof(msg), "No %s games played yet", sk->id);
+      snprintf(msg, sizeof(msg), tr("home.no_games_played_yet"), sk->id);
       vs_text_c(VS_TITLE, VS_W * 0.5f, y + 96, msg, HC_TEXT);
       vs_text_c(VS_BODY, VS_W * 0.5f, y + 156,
-                "The games you play show up here, the latest first.", HC_TEXT2);
-      hm_button(VS_W * 0.5f - 110, y + 216, VS_I_GRID, "All games", 1,
+                tr("home.the_games_you_play_show_up"), HC_TEXT2);
+      hm_button(VS_W * 0.5f - 110, y + 216, VS_I_GRID, tr("home.all_games"), 1,
                 BROWSER_TAB_BUTTON(0));
       return;
    }
@@ -2316,40 +2316,40 @@ static void home_empty(const char *rom_dir, int n_scan)
       vs_icon(g_view_kind == VK_MOST ? VS_I_REWIND : VS_I_FOLDER, VS_W * 0.5f,
               y + 20, 56, hm_tint(con, 255));
       if (g_view_kind == VK_COLL || g_view_kind == VK_LPL)
-         snprintf(msg, sizeof(msg), "Nothing of %s on %s", lib_view_name(g_view_kind, g_view_which), sk->id);
+         snprintf(msg, sizeof(msg), tr("home.nothing_of_on"), lib_view_name(g_view_kind, g_view_which), sk->id);
       else
          snprintf(msg, sizeof(msg), g_view_kind == VK_MOST
-                  ? "No %s games played yet" : "Every %s game has been played",
+                  ? tr("home.no_games_played_yet") : tr("home.every_game_has_been_played"),
                   sk->id);
       vs_text_fit(VS_TITLE, msg, 800);
       vs_text_c(VS_TITLE, VS_W * 0.5f, y + 96, msg, HC_TEXT);
       vs_text_c(VS_BODY, VS_W * 0.5f, y + 156,
-                g_view_kind == VK_COLL ? "Press select and square on a game to add it."
-                : g_view_kind == VK_LPL ? "A RetroArch playlist: it lists games, it cannot be changed here."
-                : g_view_kind == VK_MOST ? "The games you play show up here, the longest played first."
-                : "The games you have not started show up here.", HC_TEXT2);
-      hm_button(VS_W * 0.5f - 110, y + 216, VS_I_GRID, "All games", 1,
+                g_view_kind == VK_COLL ? tr("home.press_select_and_square_on_a")
+                : g_view_kind == VK_LPL ? tr("home.a_retroarch_playlist_it_lists_games")
+                : g_view_kind == VK_MOST ? tr("home.the_games_you_play_show_up_2")
+                : tr("home.the_games_you_have_not_started"), HC_TEXT2);
+      hm_button(VS_W * 0.5f - 110, y + 216, VS_I_GRID, tr("home.all_games"), 1,
                 BROWSER_TAB_BUTTON(0));
       return;
    }
    else if (g_browser_favs)
    {
       vs_icon(VS_I_STAR_O, VS_W * 0.5f, y + 20, 56, hm_tint(con, 255));
-      snprintf(msg, sizeof(msg), "No starred %s games yet", sk->id);
+      snprintf(msg, sizeof(msg), tr("home.no_starred_games_yet"), sk->id);
       vs_text_c(VS_TITLE, VS_W * 0.5f, y + 96, msg, HC_TEXT);
       vs_text_c(VS_BODY, VS_W * 0.5f, y + 156,
-                "Press square on a game to star it.", HC_TEXT2);
-      hm_button(VS_W * 0.5f - 110, y + 216, VS_I_GRID, "All games", 1,
+                tr("home.press_square_on_a_game_to"), HC_TEXT2);
+      hm_button(VS_W * 0.5f - 110, y + 216, VS_I_GRID, tr("home.all_games"), 1,
                 BROWSER_TAB_BUTTON(0));
       return;
    }
    {
       int others = vita_browser_others(rom_dir);
       vs_icon(VS_I_CART, VS_W * 0.5f, y + 20, 60, hm_tint(con, 255));
-      snprintf(msg, sizeof(msg), "No %s games yet", sk->full);
+      snprintf(msg, sizeof(msg), tr("home.no_games_yet"), sk->full);
       vs_text_c(VS_TITLE, VS_W * 0.5f, y + 96, msg, HC_TEXT);
-      snprintf(msg, sizeof(msg), "Copy your .%s files into this folder on "
-               "the memory card:", sk->ext);
+      snprintf(msg, sizeof(msg), tr("home.copy_your_files_into_this_folder")
+, sk->ext);
       vs_text_c(VS_BODY, VS_W * 0.5f, y + 154, msg, HC_TEXT2);
       snprintf(dir, sizeof(dir), "%s", rom_dir);
       vs_text_fit(VS_LABEL, dir, 760);
@@ -2361,7 +2361,7 @@ static void home_empty(const char *rom_dir, int n_scan)
       if (others > 0)
       {
          /* the button opens the console picker, which lists the counts */
-         snprintf(msg, sizeof(msg), "Choose another console");
+         snprintf(msg, sizeof(msg), tr("home.choose_another_console"));
          {
             float w = vs_text_w(VS_LABEL, msg) + 76;
             hm_button(VS_W * 0.5f - w * 0.5f, y + 262, VS_I_BTN_TRI, msg, 1,
@@ -2370,9 +2370,9 @@ static void home_empty(const char *rom_dir, int n_scan)
       }
       else
       {
-         float w = vs_text_w(VS_LABEL, "Look again") + 76;
+         float w = vs_text_w(VS_LABEL, tr("home.look_again")) + 76;
          hm_button(VS_W * 0.5f - w * 0.5f, y + 262, VS_I_REFRESH,
-                   "Look again", 1, PSP_CTRL_CROSS);
+                   tr("home.look_again"), 1, PSP_CTRL_CROSS);
       }
       if (vita_extra_note(dir, sizeof(dir))[0])
       {

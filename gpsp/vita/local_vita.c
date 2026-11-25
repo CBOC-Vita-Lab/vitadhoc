@@ -86,6 +86,7 @@
 #include <strings.h>
 #include <sys/stat.h>
 
+#include "i18n.h"
 #include "app_vita.h"
 #include "ui_host_hooks.h"
 #include "fe_gbadual.h"
@@ -311,7 +312,7 @@ static int file_sum(const char *path, uint32_t *crc, long *size)
 
 static void err_set(char *err, size_t cap, const char *text)
 {
-   snprintf(err, cap, "%s", text && *text ? text : "write incomplete");
+   snprintf(err, cap, "%s", text && *text ? text : tr("local.write_incomplete"));
 }
 
 /* Copy `from` to `to` through to.tmp, check the copy by reading it back (size
@@ -332,7 +333,7 @@ static int copy_file_verified(const char *from, const char *to, char *err,
 
    if (snprintf(tmp, sizeof(tmp), "%s.tmp", to) >= (int)sizeof(tmp))
    {
-      err_set(err, errcap, "path too long");
+      err_set(err, errcap, tr("local.path_too_long"));
       return -1;
    }
    errno = 0;
@@ -363,7 +364,7 @@ static int copy_file_verified(const char *from, const char *to, char *err,
    }
    if (ok && ferror(a))
    {
-      err_set(err, errcap, "read error");
+      err_set(err, errcap, tr("local.read_error"));
       ok = 0;
    }
    fclose(a);
@@ -375,7 +376,7 @@ static int copy_file_verified(const char *from, const char *to, char *err,
    if (ok && (file_sum(tmp, &back, &bsize) != 0 || back != crc ||
               bsize != total))
    {
-      err_set(err, errcap, "the copy did not read back whole");
+      err_set(err, errcap, tr("local.the_copy_did_not_read_back"));
       ok = 0;
    }
    if (ok && rename(tmp, to) != 0)
@@ -386,7 +387,7 @@ static int copy_file_verified(const char *from, const char *to, char *err,
    if (ok && (file_sum(to, &back, &bsize) != 0 || back != crc ||
               bsize != total))
    {
-      err_set(err, errcap, "the copy did not read back whole");
+      err_set(err, errcap, tr("local.the_copy_did_not_read_back"));
       ok = 0;
       remove(to);
    }
@@ -407,14 +408,14 @@ static int save_keep_old(char *err, size_t errcap)
    errno = 0;
    if (file_sum(L.save_path, &crc, &size) != 0)
    {
-      err_set(err, errcap, errno ? strerror(errno) : "cannot be read");
+      err_set(err, errcap, errno ? strerror(errno) : tr("local.cannot_be_read"));
       return -1;
    }
    if (size == 0)
       return 0;                         /* nothing in it to lose */
    if (snprintf(bakp, sizeof(bakp), "%s.bak", L.save_path) >= (int)sizeof(bakp))
    {
-      err_set(err, errcap, "path too long");
+      err_set(err, errcap, tr("local.path_too_long"));
       return -1;
    }
    if (file_bytes(bakp, NULL) == 0)
@@ -425,7 +426,7 @@ static int save_keep_old(char *err, size_t errcap)
       if (snprintf(bakp, sizeof(bakp), "%s.%08x.bak", L.save_path,
                    (unsigned)crc) >= (int)sizeof(bakp))
       {
-         err_set(err, errcap, "path too long");
+         err_set(err, errcap, tr("local.path_too_long"));
          return -1;
       }
       if (file_bytes(bakp, NULL) == 0)
@@ -545,10 +546,10 @@ static void save_report(void)
    fe_evt("local_save file=%s size=%u crc=%08x ok=%d", L.save_path, L.wr.size,
           (unsigned)fe_crc32(0, L.save_snap, L.wr.size), L.wr.ok);
    if (L.wr.bak < 0)
-      osd_toast("The second game's old save could not be backed up - it was not replaced");
+      osd_toast(tr("toast.the_second_game_s_old_save"));
    else if (!L.wr.ok)
-      osd_toast(L.wr.kept ? "The second game's save could not be written - the old one is kept"
-                          : "The second game's save could not be written");
+      osd_toast(L.wr.kept ? tr("toast.the_second_game_s_save_could")
+                          : tr("toast.the_second_game_s_save_could_2"));
 }
 
 /* app_vita.h: on the I/O worker, from main_vita.c's io_step. */
@@ -1235,20 +1236,20 @@ void link_local_present(const uint16_t *pix, unsigned w, unsigned h,
       const char *text;
 
       if (!below)
-         text = lit ? (L.have2 ? (ox > x ? "< sound" : "sound >")
-                               : (ox > x ? "< playing" : "playing >"))
+         text = lit ? (L.have2 ? (ox > x ? tr("local.sound") : tr("local.sound_2"))
+                               : (ox > x ? tr("local.playing") : tr("local.playing_2")))
                     : "";
       else if (L.have2)
-         text = p ? (L.touch ? (lit ? "touch  (sound)" : "touch")
-                             : narrow ? "pad 2" : lit ? "controller 2  (sound)"
-                                                      : "controller 2")
-                  : (narrow ? "pad 1" : lit ? "this console  (sound)"
-                                            : "this console");
+         text = p ? (L.touch ? (lit ? tr("local.touch_sound") : "touch")
+                             : narrow ? tr("local.pad_2") : lit ? tr("local.controller_2_sound")
+                                                      : tr("local.controller_2"))
+                  : (narrow ? tr("local.pad_1") : lit ? tr("local.this_console_sound")
+                                            : tr("local.this_console"));
       else
-         text = p ? (narrow ? "partner" : lit ? "partner's game  (playing)"
-                                              : "partner's game")
-                  : (narrow ? "you" : lit ? "your game  (playing)"
-                                          : "your game");
+         text = p ? (narrow ? "partner" : lit ? tr("local.partner_s_game_playing")
+                                              : tr("local.partner_s_game"))
+                  : (narrow ? "you" : lit ? tr("local.your_game_playing")
+                                          : tr("local.your_game"));
       if (yy >= 2)
          vid_rect(x, yy - 2, ww, 2, col, lit ? 255 : 70);
       if (yy + hh + 2 <= VID_SCR_H)
@@ -1265,11 +1266,11 @@ void link_local_present(const uint16_t *pix, unsigned w, unsigned h,
       if (inset)
       {
          /* under the small picture and its tag */
-         vid_text(r[1].x / 2 + 4, ry + 34, "Right stick or", COL_DIM);
-         vid_text(r[1].x / 2 + 4, ry + 50, "a tap: switch", COL_DIM);
+         vid_text(r[1].x / 2 + 4, ry + 34, tr("local.right_stick_or"), COL_DIM);
+         vid_text(r[1].x / 2 + 4, ry + 50, tr("local.a_tap_switch"), COL_DIM);
       }
       else if (ly + 54 <= VID_SCR_H)
-         vid_text_center(ly + 34, "Right stick or a tap: the other game",
+         vid_text_center(ly + 34, tr("local.right_stick_or_a_tap_the"),
                          COL_DIM);
    }
    vid_overlay_end();
@@ -1375,7 +1376,7 @@ static int start_now(int clone)
    {
       /* main_vita.c decides this for the menu; whatever else asks (the
        * test switch) gets the same answer */
-      L.error = "End the network game first.";
+      L.error = tr("local.end_the_network_game_first");
       fe_evt("local_start REFUSED reason=network");
       return -1;
    }
@@ -1444,9 +1445,9 @@ static int start_now(int clone)
       const char *a, *b;
       ui_link_fail_text(UI_FAIL_LOCAL, &a, &b);
       L.error = rc == FE_GBADUAL_LOCAL_E_CART
-              ? "The partner's game could not be loaded."
+              ? tr("local.the_partner_s_game_could_not")
               : rc == LOCAL_E_UNSUPPORTED
-              ? "This game cannot be linked on one console."
+              ? tr("local.this_game_cannot_be_linked_on")
               : a;
       L.gb = 0;
       fe_evt("local_start FAILED rc=%d clone=%d partner=%s", rc, clone,
@@ -1601,7 +1602,7 @@ void link_local_frame(void)
       fe_evt("local_pair_error err=%d",
              L.gb ? local_gb_error() : fe_gbadual_local_error());
       stop_now("error");
-      osd_toast("The link between the two games stopped");
+      osd_toast(tr("toast.the_link_between_the_two_games"));
       return;
    }
    save_service();
@@ -1615,9 +1616,9 @@ void link_local_frame(void)
       if (p2 != L.have2_told)
       {
          L.have2_told = p2;
-         osd_toast(p2 == 2 ? "Player 2 plays on the touch screen"
-                   : p2 ? "Controller 2 drives the partner's game"
-                        : "One controller: right stick or tap swaps games");
+         osd_toast(p2 == 2 ? tr("toast.player_2_plays_on_the_touch")
+                   : p2 ? tr("toast.controller_2_drives_the_partner_s")
+                        : tr("toast.one_controller_right_stick_or_tap"));
          fe_evt("local_pad2 on=%d touch=%d", p2 != 0, p2 == 2);
       }
    }
@@ -1661,12 +1662,12 @@ void ui_host_local_state(ui_local_state *out)
    if (g_game.console == FE_CONSOLE_GBA)
    {
       if (!fe_gbadual_loaded())
-         out->why_not = "The second game could not be set up for this game.";
+         out->why_not = tr("local.the_second_game_could_not_be");
    }
    else if (!local_gb_available())
-      out->why_not = "This game cannot be linked on one console.";
+      out->why_not = tr("local.this_game_cannot_be_linked_on");
    if (!out->why_not && !L.active && link_net_busy())
-      out->why_not = "End the network game first.";
+      out->why_not = tr("local.end_the_network_game_first");
    out->available = out->why_not == NULL;
 }
 
@@ -1762,7 +1763,7 @@ void link_local_state_saved(const char *state_file)
    free(body);
    fe_evt("local_state_save file=%s size=%ld ok=%d", path, n, ok);
    if (!ok)
-      osd_toast("Saved your game only: the second game was not saved");
+      osd_toast(tr("toast.saved_your_game_only_the_second"));
 }
 
 void link_local_state_loaded(const char *state_file)
@@ -1822,10 +1823,10 @@ void link_local_state_loaded(const char *state_file)
       int r2 = L.gb ? local_gb_restart(reclone)
                     : fe_gbadual_local_restart(reclone);
       if (!strcmp(why, "other_partner"))
-         osd_toast("That state's second game is another cartridge");
+         osd_toast(tr("toast.that_state_s_second_game_is"));
       else
-         osd_toast(reclone ? "State loaded: the second game is a copy again"
-                           : "State loaded: your game only");
+         osd_toast(reclone ? tr("toast.state_loaded_the_second_game_is")
+                           : tr("toast.state_loaded_your_game_only"));
       fe_evt("local_state_load file=%s pair=0 why=%s reclone=%d rc=%d",
              state_file ? state_file : "-", why, reclone, r2);
       return;

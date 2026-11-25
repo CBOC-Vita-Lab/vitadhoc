@@ -331,6 +331,15 @@ and in emulators; none of it has run on a real Vita yet (see
   Ordinary games sound the same (a sound register write now takes effect a few
   clocks later, well under one sample). Old save states load. Host results.
 
+**Interface languages**
+
+- **The app speaks eight languages**: English, Spanish, French, German,
+  Italian, Brazilian Portuguese, Japanese and Simplified Chinese. Pick one in
+  Settings > Interface > Language, or leave it on Automatic to follow the Vita
+  system language. The texts are plain files in `lang/` in the package, so a
+  fix or a new translation needs no new build. (The first release carries the
+  English text and the machinery; translations follow.)
+
 **Names in every alphabet**
 
 - Japanese (kana and kanji), Korean, fullwidth forms, accented Latin, Greek and

@@ -645,6 +645,27 @@ def t_zapper_map(S):
             "every case of the touch-to-pixel map agrees (%s)" % p.stdout[-200:])
 
 
+def t_i18n_loader(S):
+    """The interface-language catalogue loader (../i18n.c): BOM, CRLF,
+    malformed lines, missing keys, a huge file, formats, the pseudo-locale;
+    and lang_en.h agrees with lang/en.txt."""
+    exe = os.path.join(S.outdir, "i18n_test")
+    scratch = os.path.join(S.outdir, "i18n_scratch")
+    os.makedirs(scratch, exist_ok=True)
+    cc = subprocess.run(["cc", "-Wall", "-Wextra", "-fsanitize=address,undefined", "-o", exe,
+                         os.path.join(HERE, "i18n_test.c"), os.path.join(HERE, "..", "i18n.c")],
+                        capture_output=True, text=True)
+    S.check(cc.returncode == 0, "the loader test compiles: %s" % cc.stderr[-300:])
+    if cc.returncode == 0:
+        p = subprocess.run([exe, scratch], capture_output=True, text=True)
+        S.check(p.returncode == 0 and p.stdout.strip().endswith("ok i18n"),
+                "every loader case agrees (%s)" % (p.stdout + p.stderr)[-300:])
+    root = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+    g = subprocess.run(["python3", os.path.join(root, "tools", "i18n", "gen_lang_h.py"), "--check"],
+                       capture_output=True, text=True, cwd=root)
+    S.check(g.returncode == 0, "lang_en.h is current with lang/en.txt: %s" % (g.stdout + g.stderr)[-200:])
+
+
 def t_twopads(S):
     """Two controllers: two equal pictures side by side (even with the
     large + small layout chosen), each pad its own game, either player opens
@@ -2241,7 +2262,7 @@ def t_speed(S):
 
 
 TESTS = [("linktest", t_linktest), ("menu", t_menu), ("switch", t_switch),
-         ("ports", t_ports), ("zapper_map", t_zapper_map), ("twopads", t_twopads), ("touch2", t_touch2),
+         ("ports", t_ports), ("zapper_map", t_zapper_map), ("i18n_loader", t_i18n_loader), ("twopads", t_twopads), ("touch2", t_touch2),
          ("save", t_save), ("cycle", t_cycle), ("cheats", t_cheats),
          ("audio", t_audio), ("states", t_states), ("ff", t_ff),
          ("other", t_other), ("gb", t_gb), ("gb_mixed", t_gb_mixed), ("exclusive", t_exclusive),

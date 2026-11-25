@@ -43,6 +43,12 @@ response, No sprite flicker.
   button by name.
 - **The Button test** shows the WonderSwan's buttons for a game held
   sideways only.
+- **Interface languages are new and checked on the PC test twin only.**
+  Traditional Chinese reads the simplified text. Dates and numbers are not
+  localised. Plurals have two forms only (one, many). The players (Super NES,
+  Sega and the others) have their own text and do not follow the app language
+  yet. A language longer than English can still wrap or cut a text with an
+  ellipsis where the page has no room; `language=xx-long` finds most of these.
 - **Text size Large does not reach every page of the app yet.** It applies to
   the home screen, the console list, the in-game menu (its two-word card
   names go on two lines), Settings, Save states, Cheats (with Add a code and

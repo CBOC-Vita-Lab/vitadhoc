@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
  * Copyright (c) 2026 VitAdhoc contributors */
 /* update_check.c -- see update_check.h. */
+#include "i18n.h"
 #include "update_check.h"
 
 #include <stdio.h>
@@ -111,8 +112,8 @@ const char *upd_latest(void) { return U.latest; }
 
 void upd_notice_text(const char *shown, char *out, size_t cap)
 {
-   snprintf(out, cap, "VitAdhoc %s is out: get it with the CBOC Vita Installer "
-            "or from GitHub", shown);
+   snprintf(out, cap, tr("app.vitadhoc_is_out_get_it_with")
+, shown);
 }
 
 int upd_take_notice(char *text, size_t cap, int by_hand)

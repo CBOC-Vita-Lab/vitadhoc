@@ -20,14 +20,14 @@
 #define CC_SHEET_H  262
 
 static const struct { int icon; const char *label; } CC_CARD[M_COUNT] = {
-   { VS_I_PLAY,   "Resume" },
-   { VS_I_LAYERS, "Save states" },
-   { VS_I_PEOPLE, "Play together" },
-   { VS_I_SPARK,  "Cheats" },
-   { VS_I_GEAR,   "Settings" },
-   { VS_I_CAMERA, "Save clip" },
-   { VS_I_GRID,   "Game list" },
-   { VS_I_POWER,  "Exit" },
+   { VS_I_PLAY,   TR_KEY("menu.resume") },
+   { VS_I_LAYERS, TR_KEY("menu.save_states") },
+   { VS_I_PEOPLE, TR_KEY("menu.play_together") },
+   { VS_I_SPARK,  TR_KEY("menu.cheats") },
+   { VS_I_GEAR,   TR_KEY("menu.settings") },
+   { VS_I_CAMERA, TR_KEY("menu.save_clip") },
+   { VS_I_GRID,   TR_KEY("menu.game_list") },
+   { VS_I_POWER,  TR_KEY("menu.exit") },
 };
 
 /* What the focused card does, in a line. */
@@ -38,49 +38,49 @@ static void cc_says(int i, int session_active, char *out, size_t cap)
    switch (i)
    {
    case M_RESUME:
-      snprintf(out, cap, "Back to the game");
+      snprintf(out, cap, tr("menu.back_to_the_game"));
       break;
    case M_SAVESTATES:
       if (session_active)
-         snprintf(out, cap, "Save states are off while linked");
+         snprintf(out, cap, tr("menu.save_states_are_off_while_linked"));
       else
-         snprintf(out, cap, "Save or load the game: %d of %d slots used",
+         snprintf(out, cap, tr("menu.save_or_load_the_game_of"),
                   g_ov_used, PSP_STATE_SLOT_COUNT);
       break;
    case M_WIRELESS:
       memset(&ls, 0, sizeof(ls));
       ui_host_local_state(&ls);
       if (ls.active)
-         snprintf(out, cap, "Two players on this " UI_DEV);
+         snprintf(out, cap, tr("menu.two_players_on_this"));
       else if (g_link.state == UI_LINK_HOSTING)
-         snprintf(out, cap, "Hosting %s, waiting for the other player",
+         snprintf(out, cap, tr("menu.hosting_waiting_for_the_other_player"),
                   g_link.room);
       else if (g_link.state == UI_LINK_LINKED && g_link.player)
-         snprintf(out, cap, "Linked: you are Player %d", g_link.player);
+         snprintf(out, cap, tr("menu.linked_you_are_player"), g_link.player);
       else if (g_link.state == UI_LINK_LINKED || session_active)
-         snprintf(out, cap, "Linked to another console");
+         snprintf(out, cap, tr("menu.linked_to_another_console"));
       else
          snprintf(out, cap, pad_console()
-                  ? "Two players over Wi-Fi, ad hoc or Online"
-                  : "Link up over Wi-Fi, ad hoc or on this " UI_DEV);
+                  ? tr("menu.two_players_over_wi_fi_ad")
+                  : tr("menu.link_up_over_wi_fi_ad"));
       break;
    case M_CHEATS:
       if (cheats_suspended())
-         snprintf(out, cap, "Cheats are off while linked");
+         snprintf(out, cap, tr("menu.cheats_are_off_while_linked"));
       else
-         snprintf(out, cap, "Cheats: %s", ch_summary(st, sizeof(st)));
+         snprintf(out, cap, tr("menu.cheats_2"), ch_summary(st, sizeof(st)));
       break;
    case M_SETTINGS:
-      snprintf(out, cap, "Picture, controls and more");
+      snprintf(out, cap, tr("menu.picture_controls_and_more"));
       break;
    case M_CLIP:
-      snprintf(out, cap, "Save the last ten seconds as an animated picture");
+      snprintf(out, cap, tr("menu.save_the_last_ten_seconds_as"));
       break;
    case M_GAMELIST:
-      snprintf(out, cap, "Leave this game for the game list");
+      snprintf(out, cap, tr("menu.leave_this_game_for_the_game"));
       break;
    default:
-      snprintf(out, cap, "Close VitAdhoc");
+      snprintf(out, cap, tr("menu.close_vitadhoc"));
       break;
    }
 }
@@ -112,8 +112,8 @@ static void cc_draw(int session_active, int fade_k)
       x = vs_text(VS_CAPTION, 46, 64, skin_of(g_pcfg.console)->full,
                   VS_HEX(0xA7B0C6, a));
       if (g_link.state || session_active)
-         hm_chip(x + 14, 58, g_link.state == UI_LINK_HOSTING ? "Hosting"
-                                                             : "Linked",
+         hm_chip(x + 14, 58, g_link.state == UI_LINK_HOSTING ? tr("menu.hosting")
+                                                             : tr("menu.linked"),
                  VS_ALPHA(hm_tint(g_pcfg.console, 255), 90), HC_TEXT);
       hm_status(VS_W - 44, 24);
    }
@@ -126,8 +126,8 @@ static void cc_draw(int session_active, int fade_k)
    vs_rect(40, y0 + 1, VS_W - 80, 1, VS_HEX(0xFFFFFF, 26));
 
    cc_says(g_cursor, session_active, line, sizeof(line));
-   vs_text(VS_LABEL, 52, y0 + 26, CC_CARD[g_cursor].label, HC_TEXT);
-   vs_text(VS_BODY, 52 + vs_text_w(VS_LABEL, CC_CARD[g_cursor].label) + 16,
+   vs_text(VS_LABEL, 52, y0 + 26, tr(CC_CARD[g_cursor].label), HC_TEXT);
+   vs_text(VS_BODY, 52 + vs_text_w(VS_LABEL, tr(CC_CARD[g_cursor].label)) + 16,
            y0 + 26, line, HC_TEXT2);
 
    x = (VS_W - (M_COUNT * CC_CARD_W + (M_COUNT - 1) * CC_GAP)) * 0.5f;
@@ -147,7 +147,7 @@ static void cc_draw(int session_active, int fade_k)
          vs_rrect(x, y, CC_CARD_W, CC_CARD_H, 20, HC_GLASS);
       {
          uint32_t lc = on ? HC_INK : enabled ? HC_TEXT2 : HC_TEXT3;
-         const char *lb = CC_CARD[i].label, *sp = strchr(lb, ' ');
+         const char *lb = tr(CC_CARD[i].label), *sp = strchr(lb, ' ');
          if (vs_text_w(VS_CAPTION, lb) > CC_CARD_W - 12 && sp)
          {
             /* two lines, split at the space */
@@ -178,7 +178,7 @@ static void cc_draw(int session_active, int fade_k)
    if (!g_menu_ask && !g_menu_note[0])
    {
       static const int ic[2] = { VS_I_BTN_X, VS_I_BTN_O };
-      static const char *const w[2] = { "Select", "Resume" };
+      const char *const w[2] = { tr("menu.select"), tr("menu.resume") };
       static const unsigned b[2] = { PSP_CTRL_CROSS, PSP_CTRL_CIRCLE };
       hm_hints_b(VS_W - 52, y0 + 222, ic, w, b, 2);
    }
@@ -196,13 +196,13 @@ static void cc_plate(int ask, int session_active, const char *note)
       static const int ic[2] = { VS_I_BTN_X, VS_I_BTN_O };
       const char *w[2];
       static const unsigned b[2] = { PSP_CTRL_CROSS, PSP_CTRL_CIRCLE };
-      w[0] = ask == M_EXIT ? "Exit" : "Quit";
-      w[1] = "Stay";
+      w[0] = ask == M_EXIT ? tr("menu.exit") : tr("menu.quit");
+      w[1] = tr("menu.stay");
       tch_modal(PSP_CTRL_CIRCLE);        /* a tap anywhere else stays */
       vs_icon(VS_I_POWER, 82, y + 30, 26, HC_TEXT2);
       vs_text(VS_LABEL, 108, y + 17,
-              session_active ? "This ends the link for both players."
-                             : "Progress the game has not saved is lost.",
+              session_active ? tr("menu.this_ends_the_link_for_both")
+                             : tr("menu.progress_the_game_has_not_saved"),
               HC_TEXT);
       hm_hints_b(VS_W - 72, y + 18, ic, w, b, 2);
    }

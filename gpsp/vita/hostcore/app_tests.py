@@ -4622,7 +4622,7 @@ def near(px, want, tol=40):
 # Settings by wrapping UP: Button mapping, Game order, Game folders, then it.
 # start, then up: Button mapping, Game order, Game folders, Sync RetroArch
 # saves, Cover picture
-COVER_ROW = "60:start\n+30:up\n" + "+8:up\n" * 5
+COVER_ROW = "60:start\n+30:up\n" + "+8:up\n" * 6
 
 
 def t_cover_menu(S):
@@ -7200,7 +7200,7 @@ def t_screen_crt_text(S):
     # display.ini that is not text at all, or holds words nobody wrote: the defaults, and the picture as it was
     _, junk = shot("scr_junk", ini=b"\x00\xff\xfe=\n=\nscreen\nscreen=plasma\ntext_size=huge\ncontrast=maybe\n" + bytes(range(256)))
     S.check(junk.tobytes() == plain.tobytes(), "a damaged display.ini means the defaults: the picture is as it was")
-    # Settings > Interface > Text size is the row two above Theme (where the list's Settings opens): RIGHT makes it
+    # Settings > Interface > Text size is the row two above Theme (Language is above it) (where the list's Settings opens): RIGHT makes it
     # Large and display.ini keeps it beside a key it does not know; the other two keys are written with it
     r = S.run("txt_row", "60:start\n+30:up\n+8:up\n+10:right\n+20:shot=row.png\n+10:circle\n+30:quit\n", extra={"display.ini": "future = 7\n"})
     S.clean(r)
@@ -7225,8 +7225,16 @@ def text_boxes(path):
             cur = shots.setdefault(f[1], [])
         elif f[0] == "B" and cur is not None and int(f[9]) >= 256:      # an atlas, not an icon or a corner
             x0, y0, x1, y1 = [float(v) for v in f[1:5]]
+            sid = int(f[13]) if len(f) > 13 else None
+            sc = [int(v) for v in f[5:9]]
+            # the plain letters and the accented ones of one string are drawn from two atlases: one box
+            square = f[9] == f[10]        # an icon sheet, not a glyph atlas
+            if sid is not None and cur and cur[-1].get("sid") == sid and cur[-1]["sc"] == sc and not square and not cur[-1]["sq"]:
+                a, b, c, d = cur[-1]["box"]
+                x0, y0, x1, y1 = min(a, x0), min(b, y0), max(c, x1), max(d, y1)
+                cur.pop()
             h = y1 - y0
-            cur.append({"box": (x0, y0, x1, y1), "sc": [int(v) for v in f[5:9]],
+            cur.append({"box": (x0, y0, x1, y1), "sc": sc, "sid": sid, "sq": square,
                         "ink": (x0, y0 + 0.24 * h, x1, y1 - 0.22 * h)})
     return shots
 
@@ -7338,6 +7346,134 @@ def t_text_large(S):
     # (the focused game's name is already the largest thing there and stays; the lines around it grow)
     mid = lambda shots: sorted(b["box"][3] - b["box"][1] for b in shots.get("home.png", [{"box": (0, 0, 0, 0)}]))[len(shots.get("home.png", [0])) // 2]
     S.check(mid(hl) > mid(hn), "the home screen's lines are larger at Large (the middle one %.0f px against %.0f)" % (mid(hl), mid(hn)))
+
+
+def t_language(S):
+    """Interface languages (vita/i18n.h, lang/): the pseudo-locale (language=xx-long in display.ini: every text about a
+    third longer, with accents) walks Settings, the in-game menu, Save states, Cheats and Play together: no text off the
+    screen or over other text beyond what English has, and the app's log lines are the very ones English writes.  A
+    catalogue (a test one in a scratch app folder) shows at once through the Language row, Automatic follows the
+    system's language, a damaged catalogue and a missing one are English, and display.ini keeps its other keys."""
+    def norm(r):
+        # not compared: counters of the log writer, the frame the host reached, and the home's pill layout (it
+        # chooses the console's long or short name by the width its neighbours' words leave)
+        keep = [l for l in r.log if l.startswith("EVT ") and not re.match(r"EVT (menu_log|hm_pill) ", l)]
+        # the numbers of timing counters (frames reached, bytes written, microseconds) are not text
+        noise = r"\s*\b(frames?|ticks|bytes|kept|skipped|enc_us_\w+|shown|vc_\w+|presents|write_\w+|total_\w+|emu|us|ms|ts_us|stat_us|dropped|ring_hi|pending|guard_waits|rc|produced|repeated|pictures|gate_waits|timeouts|emu_ms|wall_ms|drift_ms|draw_work_us|present_wait_us)=\S+"
+        return [re.sub(noise, "", l.replace(r.root, "ROOT")) for l in keep]
+
+    def same(r1, r2):
+        """two pictures alike but for the Language row's value (it names the language)"""
+        a, b = r1.shot("a.png").convert("RGB"), r2.shot("a.png").convert("RGB")
+        for im in (a, b):
+            im.paste((0, 0, 0), (0, 215, 960, 250))
+        return a.tobytes() == b.tobytes()
+
+    def walk(tag, ini, script, **kw):
+        bx = os.path.join(S.outdir, tag + ".boxes")
+        if os.path.exists(bx):
+            os.remove(bx)
+        extra = dict(kw.pop("extra", None) or {})
+        if ini:
+            extra["display.ini"] = ini
+        env = dict(kw.pop("env", None) or {})
+        env["GBADHOC_TEXT_BOXES"] = bx
+        env["GBADHOC_TR_AUDIT"] = "1"
+        r = S.run(tag, script, extra=extra or None, env=env, **kw)
+        S.clean(r)
+        return r, text_boxes(bx)
+
+    def compare(tag, script, shots, **kw):
+        if os.environ.get("LANG_PAGES") and tag not in os.environ["LANG_PAGES"].split(","):
+            return None, None             # (a developer's shortcut: LANG_PAGES=settings_game,home)
+        re_, be = walk("lang_%s_en" % tag, "", script, **kw)
+        rp, bp = walk("lang_%s_long" % tag, "language=xx-long\n", script, **kw)
+        bad = {}
+        for shot in shots:
+            off, over = text_misfits(bp.get(shot, []))
+            offe, overe = text_misfits(be.get(shot, []))
+            if not bp.get(shot) or len(off) > len(offe) or len(over) > len(overe):
+                bad[shot] = (off[:2], over[:2])
+        S.check(not bad, "%s in the long test language: nothing more off the screen or overlapping than in English (%s)" % (tag, dict(list(bad.items())[:3]) or "all fit"))
+        a, b = norm(re_), norm(rp)
+        S.check(a == b, "%s: the log lines are the ones English writes (%s)" % (tag, next(((x, y) for x, y in zip(a, b) if x != y), (len(a), len(b)))))
+        shown = [l for l in (re_.err + rp.err).splitlines() if "i18n: key shown" in l]
+        S.check(not shown, "%s: no text key shown in place of its words (%s)" % (tag, sorted(set(shown))[:3]))
+        return re_, rp
+
+    rows = 64
+    script = "60:start\n+30:shot=r000.png\n" + "".join("+8:down\n+14:shot=r%03d.png\n" % i for i in range(1, rows)) + "+10:quit\n"
+    compare("settings", script, ["r%03d.png" % i for i in range(rows)])
+    menu = "100:shot=game.png\n+20:start+select:20\n+30:shot=m0.png\n" + "".join("+8:right\n+10:shot=m%d.png\n" % i for i in range(1, 8)) + "+10:quit\n"
+    compare("menu", menu, ["m%d.png" % i for i in range(8)], autoboot="gbadhoc-test.gba")
+    shots = lambda n: "".join("+8:down\n+14:shot=%s%d.png\n" % (n, i) for i in range(1, 5))
+    states = "100:shot=game.png\n" + menu_pick(1, wait=20) + "+40:shot=s0.png\n" + shots("s") + "+10:circle\n+10:circle\n+30:quit\n"
+    compare("states", states, ["s%d.png" % i for i in range(5)], autoboot="gbadhoc-test.gba")
+    play = "100:shot=game.png\n" + menu_pick(2, wait=20) + "+30:shot=p0.png\n" + shots("p") + "+10:quit\n"
+    compare("play", play, ["p%d.png" % i for i in range(5)], autoboot="gbadhoc-test.gba")
+    if os.path.exists(CHEAT_GBA):
+        cht = 'cheats = 1\ncheat0_desc = "Infinite lives"\ncheat0_code = "02000008 0000"\ncheat0_enable = true\n'
+        cheats = ("100:shot=game.png\n" + menu_pick(3, wait=20) + "+30:shot=c0.png\n+8:triangle\n+14:shot=c1.png\n"
+                  "+10:circle\n+20:start\n+14:shot=c2.png\n+10:quit\n")
+        compare("cheats", cheats, ["c0.png", "c1.png", "c2.png"], autoboot="cheatrom.gba",
+                extra={"roms/cheatrom.gba": open(CHEAT_GBA, "rb").read(), "cheats/cheatrom.cht": cht})
+    compare("home", "90:shot=home.png\n+10:quit\n", ["home.png"], config={"ui_home": 1})
+    # the running game's Settings (its own rows), Button mapping (the last row), Play together's Host and Join pages
+    ingame = "100:shot=game.png\n" + menu_pick(4, wait=20) + "+30:shot=g000.png\n" + "".join(
+        "+8:down\n+14:shot=g%03d.png\n" % i for i in range(1, 70)) + "+10:quit\n"
+    compare("settings_game", ingame, ["g%03d.png" % i for i in range(70)], autoboot="gbadhoc-test.gba")
+    ctl = ("100:shot=game.png\n" + menu_pick(4, wait=20) + "+30:up\n+20:cross\n+30:shot=b0.png\n+8:down\n+14:shot=b1.png\n"
+           "+8:right\n+14:shot=b2.png\n+8:down\n+14:shot=b3.png\n+10:circle\n+10:circle\n+10:quit\n")
+    compare("buttons", ctl, ["b0.png", "b1.png", "b2.png", "b3.png"], autoboot="gbadhoc-test.gba")
+    pages = ("100:shot=game.png\n" + menu_pick(2, wait=20) + "+30:cross\n+30:shot=h0.png\n+10:circle\n+30:down\n+8:cross\n+30:shot=j0.png\n"
+             "+10:circle\n+30:down\n+8:down\n+8:down\n+8:cross\n+30:shot=n0.png\n+10:circle\n+10:quit\n")
+    compare("together", pages, ["h0.png", "j0.png", "n0.png"], autoboot="gbadhoc-test.gba")
+
+    # a catalogue in a scratch app folder: the Language row, Automatic, damaged and missing files
+    import tempfile
+    app = tempfile.mkdtemp(prefix="vad-lang-")
+    try:
+        assets = os.path.join(HERE, "..", "assets")
+        for n in os.listdir(assets):
+            if n != "lang":
+                os.symlink(os.path.abspath(os.path.join(assets, n)), os.path.join(app, n))
+        os.makedirs(os.path.join(app, "lang"))
+        open(os.path.join(app, "lang", "es.txt"), "w", encoding="utf-8").write(
+            "\ufeff# test\r\nsettings.language\tIdioma\r\nsettings.theme\tTem\u00e1tica\r\nbad line\r\n")
+        open(os.path.join(app, "lang", "fr.txt"), "wb").write(bytes(range(256)) * 20)
+        # the browser's Settings opens on Theme: it is the row whose label the catalogue changed
+        look = "60:start\n+30:shot=a.png\n+10:quit\n"
+        r = S.run("lang_es", look, extra={"display.ini": "language=es\nfuture = 7\n"}, args=("--app", app))
+        S.clean(r)
+        im = S.picture(r, "a.png")
+        rs = r
+        r0 = S.run("lang_en0", look, extra={"display.ini": "language=en\n"}, args=("--app", app))
+        S.clean(r0)
+        S.check(im is not None and r0.shot("a.png").tobytes() != im.tobytes(), "language=es shows the catalogue's words (the picture differs from English)")
+        r = S.run("lang_auto", look, extra={"display.ini": "language=auto\n"}, args=("--app", app), env={"GBADHOC_FAKE_LANG": "3"})
+        S.clean(r)
+        S.check(same(r, rs), "Automatic with the system in Spanish is the same picture as language=es")
+        r = S.run("lang_auto_en", look, extra={"display.ini": "language=auto\n"}, args=("--app", app), env={"GBADHOC_FAKE_LANG": "1"})
+        S.clean(r)
+        S.check(same(r, r0), "Automatic with the system in English is English")
+        r = S.run("lang_bad", look, extra={"display.ini": "language=fr\n"}, args=("--app", app))
+        S.clean(r)
+        S.check(same(r, r0), "a damaged catalogue is English")
+        r = S.run("lang_none", look, extra={"display.ini": "language=ja\n"}, args=("--app", app))
+        S.clean(r)
+        S.check(same(r, r0), "a missing catalogue is English")
+        # the Language row: three rows above Theme (Language, Text size, High contrast); RIGHT is the next language
+        r = S.run("lang_row", "60:start\n+30:up\n+8:up\n+8:up\n+10:right\n+20:shot=row.png\n+10:circle\n+30:quit\n",
+                  extra={"display.ini": "future = 7\n"}, args=("--app", app))
+        S.clean(r)
+        ini = open(os.path.join(r.root, "display.ini")).read()
+        S.check(re.search(r"^language\s*=\s*en$", ini, re.M) and re.search(r"^future\s*=\s*7$", ini, re.M),
+                "the Language row writes display.ini (Automatic, then English) and keeps a key it does not know (%r)" % ini)
+        r = S.run("lang_junk", look, extra={"display.ini": "language=klingon\n"}, args=("--app", app))
+        S.clean(r)
+        S.check(same(r, r0), "a language nobody has is Automatic: English here")
+    finally:
+        shutil.rmtree(app, ignore_errors=True)
 
 
 def t_cpu_speed(S):
@@ -10312,7 +10448,7 @@ TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicato
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("biossound", t_biossound), ("chain", t_chain), ("objprio", t_objprio), ("objrand", t_objrand), ("smc", t_smc),
          ("realtime", t_realtime),
          ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_heal", t_save_heal), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("gb_type", t_gb_type), ("launch_param", t_launch_param),
-         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("archives", t_archives), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("screen_crt_text", t_screen_crt_text), ("text_large", t_text_large), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("hand_set_rows", t_hand_set_rows), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
+         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("archives", t_archives), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("screen_crt_text", t_screen_crt_text), ("text_large", t_text_large), ("language", t_language), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("hand_set_rows", t_hand_set_rows), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
          ("controls_defaults", t_controls_defaults),
          ("names_cjk", t_names_cjk),
          ("names_filename", t_names_filename), ("names_duplicate_subtitle", t_names_duplicate_subtitle),

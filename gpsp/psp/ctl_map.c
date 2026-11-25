@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "ctl_map.h"
+#include "i18n.h"
 #include "fe_util.h"
 #include "fe_evt.h"
 
@@ -58,34 +59,34 @@ static const ctl_action_info INFO[CTL_ACTIONS] = {
    { "bind_down",         "Down",           CTL_DOWN,     RJ_DOWN,   CTL_F_GAME },
    { "bind_left",         "Left",           CTL_LEFT,     RJ_LEFT,   CTL_F_GAME },
    { "bind_right",        "Right",          CTL_RIGHT,    RJ_RIGHT,  CTL_F_GAME },
-   { "bind_ff",           "Fast-forward",   CTL_SQUARE,   0,         CTL_F_YIELD },
+   { "bind_ff",           TR_KEY("ctl.fast_forward"),   CTL_SQUARE,   0,         CTL_F_YIELD },
 #ifdef REWIND
-   { "bind_video",        "Video preset",   0,            0,         0 },
+   { "bind_video",        tr("ctl.video_preset"),   0,            0,         0 },
 #else
-   { "bind_video",        "Video preset",   CTL_TRIANGLE, 0,         0 },
+   { "bind_video",        TR_KEY("ctl.video_preset"),   CTL_TRIANGLE, 0,         0 },
 #endif
-   { "bind_quicksave",    "Quick save",     CTL_SELECT | CTL_L, 0,   CTL_F_YIELD },
-   { "bind_quickload",    "Quick load",     CTL_SELECT | CTL_R, 0,   CTL_F_YIELD },
+   { "bind_quicksave",    TR_KEY("ctl.quick_save"),     CTL_SELECT | CTL_L, 0,   CTL_F_YIELD },
+   { "bind_quickload",    TR_KEY("ctl.quick_load"),     CTL_SELECT | CTL_R, 0,   CTL_F_YIELD },
 #ifdef VITA
    /* Unbound on the Vita, which has its own screenshot (PS + Start).  The
     * combo is a Settings row (Controls > Screenshot button combo) that puts
     * L + R + SELECT back; a bind_screenshot already in config.ini wins. */
-   { "bind_screenshot",   "Screenshot",     0, 0,                    CTL_F_YIELD },
+   { "bind_screenshot",   TR_KEY("ctl.screenshot"),     0, 0,                    CTL_F_YIELD },
 #else
    { "bind_screenshot",   "Screenshot",     CTL_L | CTL_R | CTL_SELECT, 0,
                                                                      CTL_F_YIELD },
 #endif
-   { "bind_pause",        "Pause screen",   CTL_SELECT | CTL_TRIANGLE, 0,
+   { "bind_pause",        TR_KEY("ctl.pause_screen"),   CTL_SELECT | CTL_TRIANGLE, 0,
                                                                      CTL_F_YIELD },
-   { "bind_mystery_gift", "Mystery Gift",   CTL_SELECT | CTL_DOWN, 0, 0 },
-   { "bind_catch_test",   "Crash self-test",
+   { "bind_mystery_gift", TR_KEY("ctl.mystery_gift"),   CTL_SELECT | CTL_DOWN, 0, 0 },
+   { "bind_catch_test",   TR_KEY("ctl.crash_self_test"),
                           CTL_L | CTL_R | CTL_UP | CTL_TRIANGLE, 0,  CTL_F_YIELD },
 #ifdef VITA
    /* SELECT + the fast-forward button: the same key, the other way.  It
     * contains fast forward's whole chord, so fast forward stands down while
     * it is held (CTL_F_YIELD there); nothing contains it.  The right stick
     * held LEFT rewinds too, without a binding (vita/main_vita.c). */
-   { "bind_rewind",       "Rewind",         CTL_SELECT | CTL_SQUARE, 0, 0 },
+   { "bind_rewind",       TR_KEY("ctl.rewind"),         CTL_SELECT | CTL_SQUARE, 0, 0 },
 #elif defined(REWIND)
    /* Yields to any longer chord that contains it: SELECT+TRIANGLE is the
     * pause screen, not a rewind. */
@@ -93,10 +94,10 @@ static const ctl_action_info INFO[CTL_ACTIONS] = {
 #endif
    /* Turbo buttons: unbound, and LAST (ctl_map.h).  retro_id is the game
     * button the pulse presses. */
-   { "bind_turbo_a",      "Turbo A",        0,            RJ_A,      CTL_F_TURBO },
-   { "bind_turbo_a2",     "Turbo A (2)",    0,            RJ_A,      CTL_F_TURBO },
-   { "bind_turbo_b",      "Turbo B",        0,            RJ_B,      CTL_F_TURBO },
-   { "bind_turbo_b2",     "Turbo B (2)",    0,            RJ_B,      CTL_F_TURBO },
+   { "bind_turbo_a",      TR_KEY("ctl.turbo_a"),        0,            RJ_A,      CTL_F_TURBO },
+   { "bind_turbo_a2",     TR_KEY("ctl.turbo_a_2"),    0,            RJ_A,      CTL_F_TURBO },
+   { "bind_turbo_b",      TR_KEY("ctl.turbo_b"),        0,            RJ_B,      CTL_F_TURBO },
+   { "bind_turbo_b2",     TR_KEY("ctl.turbo_b_2"),    0,            RJ_B,      CTL_F_TURBO },
 };
 
 /* CONFIG.INI keys of each turbo action's rate and mode. */
@@ -240,11 +241,11 @@ const char *ctl_error_text(int err)
    switch (err)
    {
    case CTL_OK:         return "ok";
-   case CTL_E_ACTION:   return "not available in this build";
-   case CTL_E_BITS:     return "that button cannot be bound";
-   case CTL_E_SINGLE:   return "this one takes a single button";
-   case CTL_E_RESERVED: return "START+SELECT is reserved for the menu";
-   case CTL_E_TOO_MANY: return "at most 4 buttons";
+   case CTL_E_ACTION:   return tr("ctl.not_available_in_this_build");
+   case CTL_E_BITS:     return tr("ctl.that_button_cannot_be_bound");
+   case CTL_E_SINGLE:   return tr("ctl.this_one_takes_a_single_button");
+   case CTL_E_RESERVED: return tr("ctl.start_select_is_reserved_for_the");
+   case CTL_E_TOO_MANY: return tr("ctl.at_most_4_buttons");
    default:             return "invalid";
    }
 }

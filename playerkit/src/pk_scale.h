@@ -26,6 +26,12 @@ enum ScalerKind { SC_NONE = 0, SC_MMPX2, SC_XBR2, SC_XBR3, SC_KINDS };
 inline int scaler_factor(ScalerKind k) { return k == SC_MMPX2 || k == SC_XBR2 ? 2 : k == SC_XBR3 ? 3 : 1; }
 const char *scaler_name(ScalerKind k);      /* "MMPX 2x", "xBR 2x", "xBR 3x", "off" */
 
+/* The NEON loops (ARM builds only) are the console's fast path; the portable C++ loops stay as the reference and for every other CPU, and
+ * make the same picture byte for byte (tests/scale_neon_check.cpp runs both). scale_neon_built() says whether this build has them;
+ * scale_use_neon(false) switches a built-in NEON path off (tests, and timing the C loops on the same CPU). On by default. */
+bool scale_neon_built();
+void scale_use_neon(bool on);
+
 /* Builds the tables (idempotent, call it once before any thread uses a scaler). */
 void scale_init();
 

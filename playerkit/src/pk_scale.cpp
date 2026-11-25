@@ -9,13 +9,29 @@
 #include <string.h>
 #include <vector>
 
-#if defined(__ARM_NEON)
+#if defined(__ARM_NEON) && !defined(PK_SCALE_NO_NEON)
 #include <arm_neon.h>
+#define PK_SCALE_NEON 1
 #endif
 
 namespace pk {
 
 static void xbr_tables_init();
+#ifdef PK_SCALE_NEON
+static bool xbr_neon_selftest();
+#endif
+
+static volatile int g_neon_on = 1;
+#ifdef PK_SCALE_NEON
+static volatile int g_neon_ok = 1;        /* the start-up self check of the NEON arithmetic (xbr_neon_selftest) */
+bool scale_neon_built() { return g_neon_ok != 0; }
+#else
+bool scale_neon_built() { return false; }
+#endif
+void scale_use_neon(bool on) { g_neon_on = on ? 1 : 0; }
+#ifdef PK_SCALE_NEON
+static inline bool use_neon() { return g_neon_on && g_neon_ok; }
+#endif
 
 const char *scaler_name(ScalerKind k)
 {
@@ -46,6 +62,9 @@ void scale_init()
 	for (int i = 0; i < 32; i++) { g_wr[i] = ((float) i / 31.0f) * 14.352f; g_wb[i] = ((float) i / 31.0f) * 5.472f; }
 	for (int i = 0; i < 64; i++) g_wg[i] = ((float) i / 63.0f) * 28.176f;
 	xbr_tables_init();
+#ifdef PK_SCALE_NEON
+	g_neon_ok = xbr_neon_selftest() ? 1 : 0;
+#endif
 	__atomic_store_n(&g_ready, 1, __ATOMIC_RELEASE);
 }
 
@@ -118,6 +137,126 @@ static inline void mmpx_pixel(const uint16_t *const r[7], int x, uint16_t out[4]
 	out[0] = J; out[1] = K; out[2] = L; out[3] = M;
 }
 
+
+#ifdef PK_SCALE_NEON
+/* The same rules as mmpx_pixel, for eight pixels in a row at once (lane k is the pixel at column x + k): every rule is a compare and a
+ * select; a later rule overrides an earlier one in the scalar function's order, and the luma comes from the 565 value the way g_mm_luma
+ * is made, so each lane's answer is the scalar one (tests/scale_neon_check.cpp). Flat pixels come out as themselves. */
+#define MV(p) vld1q_u16(p)
+#define MEQ(a, b) vceqq_u16((a), (b))
+#define MNE(a, b) vmvnq_u16(vceqq_u16((a), (b)))
+#define MAND(a, b) vandq_u16((a), (b))
+#define MOR(a, b) vorrq_u16((a), (b))
+#define MSEL(m, a, b) vbslq_u16((m), (a), (b))
+#define MANY3(b, a0, a1, a2) MOR(MOR(MEQ(b, a0), MEQ(b, a1)), MEQ(b, a2))
+#define MEQ2(b, a0, a1) MAND(MEQ(b, a0), MEQ(b, a1))
+#define MEQ3(b, a0, a1, a2) MAND(MAND(MEQ(b, a0), MEQ(b, a1)), MEQ(b, a2))
+#define MEQ4(b, a0, a1, a2, a3) MAND(MEQ3(b, a0, a1, a2), MEQ(b, a3))
+#define MNONE2(b, a0, a1) MAND(MNE(b, a0), MNE(b, a1))
+#define MNONE4(b, a0, a1, a2, a3) MAND(MNONE2(b, a0, a1), MNONE2(b, a2, a3))
+
+static inline uint16x8_t mm_luma8(uint16x8_t v)
+{
+	const uint16x8_t r = vshrq_n_u16(v, 11);
+	const uint16x8_t g = vandq_u16(vshrq_n_u16(v, 5), vdupq_n_u16(63));
+	const uint16x8_t b = vandq_u16(v, vdupq_n_u16(31));
+	const uint16x8_t r8 = vorrq_u16(vshlq_n_u16(r, 3), vshrq_n_u16(r, 2));
+	const uint16x8_t g8 = vorrq_u16(vshlq_n_u16(g, 2), vshrq_n_u16(g, 4));
+	const uint16x8_t b8 = vorrq_u16(vshlq_n_u16(b, 3), vshrq_n_u16(b, 2));
+	return vaddq_u16(vaddq_u16(vaddq_u16(r8, g8), b8), vdupq_n_u16(1));
+}
+
+static void mmpx_pixel8(const uint16_t *const r[7], int x, uint16x8_t out[4])
+{
+	const uint16x8_t A = MV(r[2] + x - 1), B = MV(r[2] + x), C = MV(r[2] + x + 1);
+	const uint16x8_t D = MV(r[3] + x - 1), E = MV(r[3] + x), F = MV(r[3] + x + 1);
+	const uint16x8_t G = MV(r[4] + x - 1), H = MV(r[4] + x), I = MV(r[4] + x + 1);
+	const uint16x8_t Q = MV(r[3] + x - 2), R = MV(r[3] + x + 2);
+	const uint16x8_t P = MV(r[1] + x), S = MV(r[5] + x);
+	const uint16x8_t Bl = mm_luma8(B), Dl = mm_luma8(D), El = mm_luma8(E), Fl = mm_luma8(F), Hl = mm_luma8(H);
+	uint16x8_t J = E, K = E, L = E, M = E, c;
+
+	/* 1:1 slope rules */
+	c = MAND(MAND(MAND(MEQ(D, B), MNE(D, H)), MNE(D, F)),
+	         MAND(MAND(MOR(vcgeq_u16(El, Dl), MEQ(E, A)), MANY3(E, A, C, G)), MOR(MOR(MOR(vcltq_u16(El, Dl), MNE(A, D)), MNE(E, P)), MNE(E, Q))));
+	J = MSEL(c, D, J);
+	c = MAND(MAND(MAND(MEQ(B, F), MNE(B, D)), MNE(B, H)),
+	         MAND(MAND(MOR(vcgeq_u16(El, Bl), MEQ(E, C)), MANY3(E, A, C, I)), MOR(MOR(MOR(vcltq_u16(El, Bl), MNE(C, B)), MNE(E, P)), MNE(E, R))));
+	K = MSEL(c, B, K);
+	c = MAND(MAND(MAND(MEQ(H, D), MNE(H, F)), MNE(H, B)),
+	         MAND(MAND(MOR(vcgeq_u16(El, Hl), MEQ(E, G)), MANY3(E, A, G, I)), MOR(MOR(MOR(vcltq_u16(El, Hl), MNE(G, H)), MNE(E, S)), MNE(E, Q))));
+	L = MSEL(c, H, L);
+	c = MAND(MAND(MAND(MEQ(F, H), MNE(F, B)), MNE(F, D)),
+	         MAND(MAND(MOR(vcgeq_u16(El, Fl), MEQ(E, I)), MANY3(E, C, G, I)), MOR(MOR(MOR(vcltq_u16(El, Fl), MNE(I, H)), MNE(E, R)), MNE(E, S))));
+	M = MSEL(c, F, M);
+
+	/* Intersection rules */
+	c = MAND(MAND(MNE(E, F), MEQ4(E, C, I, D, Q)), MAND(MEQ2(F, B, H), MNE(F, MV(r[3] + x + 3))));
+	K = MSEL(c, F, K); M = MSEL(c, F, M);
+	c = MAND(MAND(MNE(E, D), MEQ4(E, A, G, F, R)), MAND(MEQ2(D, B, H), MNE(D, MV(r[3] + x - 3))));
+	J = MSEL(c, D, J); L = MSEL(c, D, L);
+	c = MAND(MAND(MNE(E, H), MEQ4(E, G, I, B, P)), MAND(MEQ2(H, D, F), MNE(H, MV(r[6] + x))));
+	L = MSEL(c, H, L); M = MSEL(c, H, M);
+	c = MAND(MAND(MNE(E, B), MEQ4(E, A, C, H, S)), MAND(MEQ2(B, D, F), MNE(B, MV(r[0] + x))));
+	J = MSEL(c, B, J); K = MSEL(c, B, K);
+	c = MAND(MAND(vcltq_u16(Bl, El), MEQ4(E, G, H, I, S)), MNONE4(E, A, D, C, F));
+	J = MSEL(c, B, J); K = MSEL(c, B, K);
+	c = MAND(MAND(vcltq_u16(Hl, El), MEQ4(E, A, B, C, P)), MNONE4(E, D, G, I, F));
+	L = MSEL(c, H, L); M = MSEL(c, H, M);
+	c = MAND(MAND(vcltq_u16(Fl, El), MEQ4(E, A, D, G, Q)), MNONE4(E, B, C, I, H));
+	K = MSEL(c, F, K); M = MSEL(c, F, M);
+	c = MAND(MAND(vcltq_u16(Dl, El), MEQ4(E, C, F, I, R)), MNONE4(E, B, A, G, H));
+	J = MSEL(c, D, J); L = MSEL(c, D, L);
+
+	/* 2:1 slope rules (each one reads the values the earlier ones left) */
+	{
+		const uint16x8_t hb = MNE(H, B), fd = MNE(F, D);
+		uint16x8_t g1, c1;
+		g1 = MAND(hb, MAND(MAND(MNE(H, A), MNE(H, E)), MNE(H, C)));
+		c1 = MAND(g1, MAND(MEQ3(H, G, F, R), MNONE2(H, D, MV(r[2] + x + 2))));
+		L = MSEL(c1, M, L);
+		c1 = MAND(g1, MAND(MEQ3(H, I, D, Q), MNONE2(H, F, MV(r[2] + x - 2))));
+		M = MSEL(c1, L, M);
+		g1 = MAND(hb, MAND(MAND(MNE(B, I), MNE(B, G)), MNE(B, E)));
+		c1 = MAND(g1, MAND(MEQ3(B, A, F, R), MNONE2(B, D, MV(r[4] + x + 2))));
+		J = MSEL(c1, K, J);
+		c1 = MAND(g1, MAND(MEQ3(B, C, D, Q), MNONE2(B, F, MV(r[4] + x - 2))));
+		K = MSEL(c1, J, K);
+		g1 = MAND(fd, MAND(MAND(MNE(D, I), MNE(D, E)), MNE(D, C)));
+		c1 = MAND(g1, MAND(MEQ3(D, A, H, S), MNONE2(D, B, MV(r[5] + x + 1))));
+		J = MSEL(c1, L, J);
+		c1 = MAND(g1, MAND(MEQ3(D, G, B, P), MNONE2(D, H, MV(r[1] + x + 1))));
+		L = MSEL(c1, J, L);
+		g1 = MAND(fd, MAND(MAND(MNE(F, E), MNE(F, A)), MNE(F, G)));
+		c1 = MAND(g1, MAND(MEQ3(F, C, H, S), MNONE2(F, B, MV(r[5] + x - 1))));
+		K = MSEL(c1, M, K);
+		c1 = MAND(g1, MAND(MEQ3(F, I, B, P), MNONE2(F, H, MV(r[1] + x - 1))));
+		M = MSEL(c1, K, M);
+	}
+	out[0] = J; out[1] = K; out[2] = L; out[3] = M;
+}
+#undef MV
+#undef MEQ
+#undef MNE
+#undef MAND
+#undef MOR
+#undef MSEL
+#undef MANY3
+#undef MEQ2
+#undef MEQ3
+#undef MEQ4
+#undef MNONE2
+#undef MNONE4
+
+/* how many of the eight lanes of a mask (0xFFFF or 0) are set */
+static inline unsigned mask_count(uint16x8_t m)
+{
+	const uint32x4_t a = vpaddlq_u16(vshrq_n_u16(m, 15));
+	const uint64x2_t b = vpaddlq_u32(a);
+	return (unsigned) (vgetq_lane_u64(b, 0) + vgetq_lane_u64(b, 1));
+}
+#endif
+
 static unsigned mmpx_rows(const uint16_t *src, int w, int h, int spitch, uint16_t *dst, int dpitch, int y0, int y1, int cx0, int cx1)
 {
 	uint16_t buf[(MM_BAND + 2 * MM_PAD) * (MM_SPAN + 2 * MM_PAD)];
@@ -145,6 +284,37 @@ static unsigned mmpx_rows(const uint16_t *src, int w, int h, int spitch, uint16_
 				uint16_t *o = dst + (size_t) dpitch * 2u * (size_t) y + 2u * (size_t) xa;
 				const int xend = MM_PAD + (xb - xa);
 				int x = MM_PAD;
+#ifdef PK_SCALE_NEON
+				if (use_neon()) {
+					/* eight pixels at a time: the flat test (all eight neighbours equal the pixel) for the eight at once; eight flat
+					 * pixels are two rows of stores, otherwise all eight go through the rules together */
+					for (; x + 8 <= xend; x += 8, o += 16) {
+						const uint16x8_t e = vld1q_u16(&r[3][x]);
+						uint16x8_t f = vceqq_u16(e, vld1q_u16(&r[2][x - 1]));
+						f = vandq_u16(f, vceqq_u16(e, vld1q_u16(&r[2][x])));
+						f = vandq_u16(f, vceqq_u16(e, vld1q_u16(&r[2][x + 1])));
+						f = vandq_u16(f, vceqq_u16(e, vld1q_u16(&r[3][x - 1])));
+						f = vandq_u16(f, vceqq_u16(e, vld1q_u16(&r[3][x + 1])));
+						f = vandq_u16(f, vceqq_u16(e, vld1q_u16(&r[4][x - 1])));
+						f = vandq_u16(f, vceqq_u16(e, vld1q_u16(&r[4][x])));
+						f = vandq_u16(f, vceqq_u16(e, vld1q_u16(&r[4][x + 1])));
+						const uint64x2_t f64 = vreinterpretq_u64_u16(f);
+						if ((vgetq_lane_u64(f64, 0) & vgetq_lane_u64(f64, 1)) == ~(uint64_t) 0) {
+							uint16x8x2_t two; two.val[0] = e; two.val[1] = e;
+							vst2q_u16(o, two);
+							vst2q_u16(o + dpitch, two);
+							continue;
+						}
+						uint16x8_t v[4];
+						mmpx_pixel8(r, x, v);
+						uint16x8x2_t top, bot;
+						top.val[0] = v[0]; top.val[1] = v[1]; bot.val[0] = v[2]; bot.val[1] = v[3];
+						vst2q_u16(o, top);
+						vst2q_u16(o + dpitch, bot);
+						busy += 8 - mask_count(f);
+					}
+				}
+#endif
 				for (; x + 8 <= xend; x += 8, o += 16) {
 					/* eight pixels at once: which have all eight neighbours equal to themselves (a flat spot, copied) */
 					typedef uint16_t v8h __attribute__((vector_size(16)));
@@ -448,6 +618,335 @@ static unsigned xbr_rows(const uint16_t *src, int w, int h, int spitch, uint16_t
 	return busy;
 }
 
+
+#ifdef PK_SCALE_NEON
+/* ---- xBR lv2 in NEON -------------------------------------------------------------------------------------------------------------------
+ * The same arithmetic as the C loop above (and as xbr_reference_int), eight pixels at a time in 16 bit lanes, all the way to the stored
+ * pixels: the luminance plane, the decisions of the four rotations (vabd, compare, select: no branch on a pixel), and the colour of every
+ * output pixel (the 12 bit blends, the choice of the nearer result, the 565 rounding) for the whole group at once; a group with no edge is
+ * stored as copies. Output bit for bit the C loop's (tests/scale_neon_check.cpp, and xbr_neon_selftest() at start-up for the arithmetic
+ * that replaces a table: the luminance, the 565 to 12 bit expansion and the rounding back).
+ *   luminance:  vqrdmulh of (channel << 4 or 5) by a 15 bit constant (the three tables are exactly that for every channel value)
+ *   12 bit:     red/blue 132 i + ((13 i + 50) >> 7), green 65 i
+ *   rounding:   green (8 c + 4) * 63 as vqrdmulh; red/blue ((31 c + 2048) * 4097) >> 24 */
+
+static inline uint16x8_t lum8(uint16x8_t v)
+{
+	const int16x8_t r = vreinterpretq_s16_u16(vandq_u16(vshrq_n_u16(v, 6), vdupq_n_u16(0x3E0)));
+	const int16x8_t g = vreinterpretq_s16_u16(vandq_u16(v, vdupq_n_u16(0x7E0)));
+	const int16x8_t b = vreinterpretq_s16_u16(vandq_u16(vshlq_n_u16(v, 4), vdupq_n_u16(0x1F0)));
+	return vreinterpretq_u16_s16(vaddq_s16(vaddq_s16(vqrdmulhq_n_s16(r, 30341), vqrdmulhq_n_s16(g, 29310)), vqrdmulhq_n_s16(b, 23134)));
+}
+
+struct XM { uint16x8_t edr, edl, edu, edi, px, any; };
+
+static inline XM xdec8(uint16x8_t b, uint16x8_t c, uint16x8_t d, uint16x8_t e, uint16x8_t f, uint16x8_t g, uint16x8_t h, uint16x8_t i,
+                       uint16x8_t i4, uint16x8_t i5, uint16x8_t h5, uint16x8_t f4)
+{
+	const uint16x8_t K = vdupq_n_u16(XQ_EQ), BIAS = vdupq_n_u16(XQ_BIAS);
+#define NQ(a, b_) vcgtq_u16(vabdq_u16(a, b_), K)
+#define EQM(a, b_) vcleq_u16(vabdq_u16(a, b_), K)
+#define NE(a, b_) vmvnq_u16(vceqq_u16(a, b_))
+	const uint16x8_t irlv0 = vandq_u16(NE(e, f), NE(e, h));
+	const uint16x8_t irlv1 = vandq_u16(irlv0, vorrq_u16(vorrq_u16(vorrq_u16(vandq_u16(NQ(f, b), NQ(f, c)), vandq_u16(NQ(h, d), NQ(h, g))),
+	                                                               vandq_u16(EQM(e, i), vorrq_u16(vandq_u16(NQ(f, f4), NQ(f, i4)), vandq_u16(NQ(h, h5), NQ(h, i5))))),
+	                                                     vorrq_u16(EQM(e, g), EQM(e, c))));
+	const uint16x8_t irlv2l = vandq_u16(NE(e, g), NE(d, g)), irlv2u = vandq_u16(NE(e, c), NE(b, c));
+	const uint16x8_t wd1 = vaddq_u16(vaddq_u16(vaddq_u16(vabdq_u16(e, c), vabdq_u16(e, g)), vaddq_u16(vabdq_u16(i, h5), vabdq_u16(i, f4))), vshlq_n_u16(vabdq_u16(h, f), 2));
+	const uint16x8_t wd2 = vaddq_u16(vaddq_u16(vaddq_u16(vabdq_u16(h, d), vabdq_u16(h, i5)), vaddq_u16(vabdq_u16(f, i4), vabdq_u16(f, b))), vshlq_n_u16(vabdq_u16(e, i), 2));
+	XM m;
+	m.edi = vandq_u16(vcgeq_u16(wd2, wd1), irlv0);
+	m.edr = vandq_u16(vcgeq_u16(wd2, vaddq_u16(wd1, BIAS)), irlv1);
+	const uint16x8_t dhc = vabdq_u16(h, c), dfg = vabdq_u16(f, g);
+	m.edl = vandq_u16(vandq_u16(vcgeq_u16(dhc, vshlq_n_u16(dfg, 1)), irlv2l), m.edr);
+	m.edu = vandq_u16(vandq_u16(vcgeq_u16(dfg, vshlq_n_u16(dhc, 1)), irlv2u), m.edr);
+	m.px = vcgeq_u16(vabdq_u16(e, h), vabdq_u16(e, f));
+	m.any = vorrq_u16(vorrq_u16(m.edr, m.edl), vorrq_u16(m.edu, m.edi));
+	return m;
+#undef NQ
+#undef EQM
+#undef NE
+}
+
+struct C12 { int16x8_t r, g, b; };
+static inline C12 c12v(uint16x8_t v)
+{
+	const uint16x8_t r5 = vshrq_n_u16(v, 11), g6 = vandq_u16(vshrq_n_u16(v, 5), vdupq_n_u16(63)), b5 = vandq_u16(v, vdupq_n_u16(31));
+	const uint16x8_t k50 = vdupq_n_u16(50);
+	C12 c;
+	c.r = vreinterpretq_s16_u16(vmlaq_n_u16(vshrq_n_u16(vmlaq_n_u16(k50, r5, 13), 7), r5, 132));
+	c.g = vreinterpretq_s16_u16(vmulq_n_u16(g6, 65));
+	c.b = vreinterpretq_s16_u16(vmlaq_n_u16(vshrq_n_u16(vmlaq_n_u16(k50, b5, 13), 7), b5, 132));
+	return c;
+}
+
+/* x + ((y - x) * m + 128) >> 8, which is (x * (256 - m) + y * m + 128) >> 8 for 0 <= m <= 256 (m = 0 gives x) */
+static inline int16x8_t mix16(int16x8_t x, int16x8_t y, int16x8_t m)
+{
+	const int16x8_t d = vsubq_s16(y, x);
+	const int32x4_t lo = vmull_s16(vget_low_s16(d), vget_low_s16(m)), hi = vmull_s16(vget_high_s16(d), vget_high_s16(m));
+	return vaddq_s16(x, vcombine_s16(vrshrn_n_s32(lo, 8), vrshrn_n_s32(hi, 8)));
+}
+static inline C12 mix12(const C12 &x, const C12 &y, int16x8_t m)
+{
+	C12 c = { mix16(x.r, y.r, m), mix16(x.g, y.g, m), mix16(x.b, y.b, m) };
+	return c;
+}
+
+/* (c * 31 + 2047) / 4095 for c in 0..4095, in 16 bit lanes: floor((31 c + 2048) * 4097 / 2^24) */
+static inline uint16x8_t pack5(int16x8_t c)
+{
+	const uint16x8_t u = vreinterpretq_u16_s16(c);
+	const uint32x4_t k = vdupq_n_u32(2048);
+	const uint32x4_t xl = vmlal_n_u16(k, vget_low_u16(u), 31), xh = vmlal_n_u16(k, vget_high_u16(u), 31);
+	const uint32x4_t tl = vaddq_u32(vshlq_n_u32(xl, 12), xl), th = vaddq_u32(vshlq_n_u32(xh, 12), xh);
+	return vshrq_n_u16(vcombine_u16(vshrn_n_u32(tl, 16), vshrn_n_u32(th, 16)), 8);
+}
+/* (c * 63 + 2047) / 4095 */
+static inline uint16x8_t pack6(int16x8_t c)
+{
+	return vreinterpretq_u16_s16(vqrdmulhq_n_s16(vaddq_s16(vshlq_n_s16(c, 3), vdupq_n_s16(4)), 63));
+}
+static inline uint16x8_t pack565(const C12 &c)
+{
+	return vorrq_u16(vorrq_u16(vshlq_n_u16(pack5(c.r), 11), vshlq_n_u16(pack6(c.g), 5)), pack5(c.b));
+}
+
+/* the colours of the output pixels of eight source pixels to memory: s rows of 8 * s pixels, `left` source pixels of them */
+template <int s> static inline void store_rows(uint16_t *q, size_t dpitch, const uint16x8_t *res, int left);
+template <> inline void store_rows<2>(uint16_t *q, size_t dpitch, const uint16x8_t *res, int left)
+{
+	for (int sy = 0; sy < 2; sy++) {
+		uint16x8x2_t t; t.val[0] = res[sy * 2]; t.val[1] = res[sy * 2 + 1];
+		if (left == 8) vst2q_u16(q + dpitch * sy, t);
+		else { uint16_t tmp[16]; vst2q_u16(tmp, t); memcpy(q + dpitch * sy, tmp, (size_t) left * 4); }
+	}
+}
+template <> inline void store_rows<3>(uint16_t *q, size_t dpitch, const uint16x8_t *res, int left)
+{
+	for (int sy = 0; sy < 3; sy++) {
+		uint16x8x3_t t; t.val[0] = res[sy * 3]; t.val[1] = res[sy * 3 + 1]; t.val[2] = res[sy * 3 + 2];
+		if (left == 8) vst3q_u16(q + dpitch * sy, t);
+		else { uint16_t tmp[24]; vst3q_u16(tmp, t); memcpy(q + dpitch * sy, tmp, (size_t) left * 6); }
+	}
+}
+
+/* Which lanes (rotations) have a non zero ramp at which sub pixel: a sub pixel lies next to one or two corners of the pixel, so most lanes
+ * are dead there and their blends are the colour itself. Fixed by the geometry (the ramps' zeros), so the loops below unroll on it;
+ * xbr_neon_selftest() checks this table against make_ramps(). Bit l = lane l; sub pixel k = sy * s + sx. */
+static constexpr int xlive(int s, int k)
+{
+	return s == 2 ? (k == 0 ? 0xE : k == 1 ? 0x7 : k == 2 ? 0xD : 0xB)
+	              : (k == 0 ? 0xE : k == 1 ? 0x6 : k == 2 ? 0x7 : k == 3 ? 0xC : k == 4 ? 0x0 : k == 5 ? 0x3 : k == 6 ? 0xD : k == 7 ? 0x9 : 0xB);
+}
+
+struct XCtx {
+	const XM *m[4];
+	C12 cE, cd[4];
+	uint16x8_t E16;
+	const uint16x8_t (*rc)[16];
+};
+
+template <int s, int k>
+static inline uint16x8_t xsub(const XCtx &c)
+{
+	enum { LV = xlive(s, k) };
+	int16x8_t mx[4] = { vdupq_n_s16(0), vdupq_n_s16(0), vdupq_n_s16(0), vdupq_n_s16(0) };
+	uint16x8_t any_mx = vdupq_n_u16(0);
+#define XLANE(l) if (LV >> l & 1) { \
+		const uint16x8_t v = vmaxq_u16(vmaxq_u16(vandq_u16(c.m[l]->edl, c.rc[k][l]), vandq_u16(c.m[l]->edu, c.rc[k][4 + l])), \
+		                               vmaxq_u16(vandq_u16(c.m[l]->edr, c.rc[k][8 + l]), vandq_u16(c.m[l]->edi, c.rc[k][12 + l]))); \
+		mx[l] = vreinterpretq_s16_u16(v); any_mx = vorrq_u16(any_mx, v); }
+	XLANE(0) XLANE(1) XLANE(2) XLANE(3)
+#undef XLANE
+	if (LV == 0) return c.E16;
+	const uint16x4_t z4 = vorr_u16(vget_low_u16(any_mx), vget_high_u16(any_mx));
+	if (!vget_lane_u64(vreinterpret_u64_u16(z4), 0)) return c.E16;
+	const bool a0 = (LV & 5) != 0, a1 = (LV & 10) != 0;
+	C12 r1 = c.cE, r2 = c.cE;
+	if (LV & 1) r1 = mix12(r1, c.cd[0], mx[0]);
+	if (LV & 4) r1 = mix12(r1, c.cd[2], mx[2]);
+	if (LV & 2) r2 = mix12(r2, c.cd[1], mx[1]);
+	if (LV & 8) r2 = mix12(r2, c.cd[3], mx[3]);
+	C12 rr;
+	if (a0 && a1) {
+		const int16x8_t d1 = vaddq_s16(vaddq_s16(vabdq_s16(c.cE.r, r1.r), vabdq_s16(c.cE.g, r1.g)), vabdq_s16(c.cE.b, r1.b));
+		const int16x8_t d2 = vaddq_s16(vaddq_s16(vabdq_s16(c.cE.r, r2.r), vabdq_s16(c.cE.g, r2.g)), vabdq_s16(c.cE.b, r2.b));
+		const uint16x8_t t2 = vcgeq_s16(d2, d1);
+		rr.r = vbslq_s16(t2, r2.r, r1.r); rr.g = vbslq_s16(t2, r2.g, r1.g); rr.b = vbslq_s16(t2, r2.b, r1.b);
+	} else rr = a0 ? r1 : r2;       /* the other result is the colour itself: its distance 0 is never the larger unless equal */
+	return vbslq_u16(vtstq_u16(any_mx, any_mx), pack565(rr), c.E16);
+}
+template <int s, int k> struct XFill { static inline void go(const XCtx &c, uint16x8_t *res) { res[k] = xsub<s, k>(c); XFill<s, k + 1>::go(c, res); } };
+template <> struct XFill<2, 4> { static inline void go(const XCtx &, uint16x8_t *) {} };
+template <> struct XFill<3, 9> { static inline void go(const XCtx &, uint16x8_t *) {} };
+
+enum { XBR_VEC_MIN = 2 };     /* fewer busy pixels than this in a group of eight: the one pixel at a time resolve */
+
+template <int s>
+static unsigned xbr_rows_neon(const uint16_t *src, int w, int h, int spitch, uint16_t *dst, int dpitch, int y0, int y1, int cx0, int cx1, ScaleScratch &sc)
+{
+	SubRamp ramps[9];
+	make_ramps(s, ramps);
+	uint16x8_t rc[s * s][16];                                   /* per sub pixel: f30[4], f60[4], f45[4], f45i[4], each in every lane */
+	for (int k = 0; k < s * s; k++)
+		for (int l = 0; l < 4; l++) {
+			rc[k][l] = vdupq_n_u16((uint16_t) ramps[k].f30[l]);
+			rc[k][4 + l] = vdupq_n_u16((uint16_t) ramps[k].f60[l]);
+			rc[k][8 + l] = vdupq_n_u16((uint16_t) ramps[k].f45[l]);
+			rc[k][12 + l] = vdupq_n_u16((uint16_t) ramps[k].f45i[l]);
+		}
+	/* the stripe's colour plane and luminance plane: two rows above and below, two columns left and right, the border repeated; the stride
+	 * is a whole number of vectors with room for the loads past the last pixel */
+	const int nx = cx1 - cx0, lp = ((nx + 7) & ~7) + 16, lr = y1 - y0 + 4;
+	if ((int) sc.lum.size() < lp * lr) sc.lum.resize((size_t) lp * lr);
+	if ((int) sc.pad.size() < lp * lr) sc.pad.resize((size_t) lp * lr);
+	uint16_t *L = &sc.lum[0], *P = &sc.pad[0];
+	for (int r = 0; r < lr; r++) {
+		int sy = y0 - 2 + r;
+		sy = sy < 0 ? 0 : sy > h - 1 ? h - 1 : sy;
+		const uint16_t *sp = src + (size_t) spitch * sy;
+		uint16_t *pd = P + (size_t) lp * r, *ld = L + (size_t) lp * r;
+		const int sx0 = cx0 - 2, cn = nx + 4;
+		int c = 0;
+		for (; c < cn && sx0 + c < 0; c++) pd[c] = sp[0];
+		const int in_end = cn < w - sx0 ? cn : w - sx0;
+		if (in_end > c) { memcpy(pd + c, sp + sx0 + c, (size_t) (in_end - c) * 2u); c = in_end; }
+		for (; c < cn; c++) pd[c] = sp[w - 1];
+		for (; c < lp; c++) pd[c] = 0;
+		for (c = 0; c < lp; c += 8) vst1q_u16(ld + c, lum8(vld1q_u16(pd + c)));
+	}
+	const uint16x8_t lane_id = { 0, 1, 2, 3, 4, 5, 6, 7 };
+	unsigned busy = 0;
+	for (int y = y0; y < y1; y++) {
+		const size_t off = (size_t) lp * (y - y0 + 2) + 2;
+		const uint16_t *lc = L + off, *pc = P + off;
+		uint16_t *o = dst + (size_t) dpitch * (size_t) (y * s);
+		for (int xg = 0; xg < nx; xg += 8) {
+#define LD(dy, dx) vld1q_u16(lc + (dy) * lp + xg + (dx))
+			const int left = nx - xg < 8 ? nx - xg : 8;
+			const uint16x8_t E = LD(0, 0), F = LD(0, 1), H = LD(1, 0), D = LD(0, -1), B = LD(-1, 0);
+			/* flat: no lane has e != f and e != h, which is the same for all four rotations of the neighbours */
+			const uint16x8_t ne_f = vmvnq_u16(vceqq_u16(E, F)), ne_h = vmvnq_u16(vceqq_u16(E, H)), ne_d = vmvnq_u16(vceqq_u16(E, D)), ne_b = vmvnq_u16(vceqq_u16(E, B));
+			const uint16x8_t act = vorrq_u16(vorrq_u16(vandq_u16(ne_f, ne_h), vandq_u16(ne_d, ne_b)), vorrq_u16(vandq_u16(ne_b, ne_f), vandq_u16(ne_h, ne_d)));
+			const uint16x4_t a4 = vorr_u16(vget_low_u16(act), vget_high_u16(act));
+			uint16_t *q = o + (size_t) s * (cx0 + xg);
+			const uint16x8_t E16 = vld1q_u16(pc + xg);
+			uint16x8_t res[s * s];
+			if (!vget_lane_u64(vreinterpret_u64_u16(a4), 0)) {
+				for (int k = 0; k < s * s; k++) res[k] = E16;
+				store_rows<s>(q, (size_t) dpitch, res, left);
+				continue;
+			}
+			const uint16x8_t A = LD(-1, -1), C = LD(-1, 1), G = LD(1, -1), I = LD(1, 1);
+			const uint16x8_t A1 = LD(-2, -1), B1 = LD(-2, 0), G5 = LD(2, -1), H5 = LD(2, 0), I5 = LD(2, 1);
+			const uint16x8_t A0 = LD(-1, -2), D0 = LD(0, -2), G0 = LD(1, -2), C4 = LD(-1, 2), F4 = LD(0, 2), I4 = LD(1, 2);
+			const uint16x8_t C1 = LD(-2, 1);
+#undef LD
+			const XM m0 = xdec8(B, C, D, E, F, G, H, I, I4, I5, H5, F4);
+			const XM m1 = xdec8(D, A, H, E, B, I, F, C, C1, C4, F4, B1);
+			const XM m2 = xdec8(H, G, F, E, D, C, B, A, A0, A1, B1, D0);
+			const XM m3 = xdec8(F, I, B, E, H, A, D, G, G5, G0, D0, H5);
+			const uint16x8_t anyd = vandq_u16(vorrq_u16(vorrq_u16(m0.any, m1.any), vorrq_u16(m2.any, m3.any)), vcltq_u16(lane_id, vdupq_n_u16((uint16_t) left)));
+			const unsigned cnt = mask_count(anyd);
+			busy += cnt;
+			if (!cnt) {
+				for (int k = 0; k < s * s; k++) res[k] = E16;
+				store_rows<s>(q, (size_t) dpitch, res, left);
+				continue;
+			}
+			if (cnt >= XBR_VEC_MIN) {
+				/* the whole group at once */
+				const uint16x8_t pB = vld1q_u16(pc + xg - lp), pD = vld1q_u16(pc + xg - 1), pF = vld1q_u16(pc + xg + 1), pH = vld1q_u16(pc + xg + lp);
+				const C12 cE = c12v(E16);
+				const C12 cd0 = c12v(vbslq_u16(m0.px, pF, pH)), cd1 = c12v(vbslq_u16(m1.px, pB, pF)), cd2 = c12v(vbslq_u16(m2.px, pD, pB)), cd3 = c12v(vbslq_u16(m3.px, pH, pD));
+				XCtx cx = { { &m0, &m1, &m2, &m3 }, cE, { cd0, cd1, cd2, cd3 }, E16, rc };
+				XFill<s, 0>::go(cx, res);
+				store_rows<s>(q, (size_t) dpitch, res, left);
+				continue;
+			}
+			/* one busy pixel: the scalar resolve of the C loop (cheaper than the group of eight for one pixel) */
+			uint16_t ed[4][5][8], anyv[8], e16[8];
+			vst1q_u16(ed[0][0], m0.edr); vst1q_u16(ed[0][1], m0.edl); vst1q_u16(ed[0][2], m0.edu); vst1q_u16(ed[0][3], m0.edi); vst1q_u16(ed[0][4], m0.px);
+			vst1q_u16(ed[1][0], m1.edr); vst1q_u16(ed[1][1], m1.edl); vst1q_u16(ed[1][2], m1.edu); vst1q_u16(ed[1][3], m1.edi); vst1q_u16(ed[1][4], m1.px);
+			vst1q_u16(ed[2][0], m2.edr); vst1q_u16(ed[2][1], m2.edl); vst1q_u16(ed[2][2], m2.edu); vst1q_u16(ed[2][3], m2.edi); vst1q_u16(ed[2][4], m2.px);
+			vst1q_u16(ed[3][0], m3.edr); vst1q_u16(ed[3][1], m3.edl); vst1q_u16(ed[3][2], m3.edu); vst1q_u16(ed[3][3], m3.edi); vst1q_u16(ed[3][4], m3.px);
+			vst1q_u16(anyv, anyd);
+			vst1q_u16(e16, E16);
+			for (int k = 0; k < left; k++) {
+				uint16_t *qk = q + (size_t) s * k;
+				const uint16_t E16k = e16[k];
+				if (!anyv[k]) {
+					for (int sy = 0; sy < s; sy++) for (int sx = 0; sx < s; sx++) qk[(size_t) dpitch * sy + sx] = E16k;
+					continue;
+				}
+				unsigned lane[4];
+				for (int l = 0; l < 4; l++)
+					lane[l] = (unsigned) (ed[l][0][k] & 1) | (unsigned) (ed[l][1][k] & 1) << 1 | (unsigned) (ed[l][2][k] & 1) << 2 | (unsigned) (ed[l][3][k] & 1) << 3 | (unsigned) (ed[l][4][k] & 1) << 4;
+				const unsigned dec = xdec_word(lane);
+				const uint16_t *pk = pc + xg + k;
+				const Q12 cE = q12(E16k), cB = q12(pk[-lp]), cD = q12(pk[-1]), cF = q12(pk[1]), cH = q12(pk[lp]);
+				Q12 cand[4];
+				cand[0] = (dec >> 16 & 1) ? cF : cH;
+				cand[1] = (dec >> 17 & 1) ? cB : cF;
+				cand[2] = (dec >> 18 & 1) ? cD : cB;
+				cand[3] = (dec >> 19 & 1) ? cH : cD;
+				for (int sy = 0; sy < s; sy++)
+					for (int sx = 0; sx < s; sx++) qk[(size_t) dpitch * sy + sx] = (uint16_t) xbr_resolve_q(E16k, cE, cand, ramps[sy * s + sx], dec);
+			}
+		}
+	}
+	return busy;
+}
+
+/* The arithmetic that replaces a table, against the tables, for every 565 value (and the rounding back for every 12 bit value). Any
+ * difference switches the NEON paths off (the C loops make the picture): it cannot happen, and it is cheap to be sure. */
+static bool xbr_neon_selftest()
+{
+	uint16_t in[8], lq[8], cr[8], cg[8], cb[8], pr[8], pg[8];
+	for (unsigned base = 0; base < 65536; base += 8) {
+		for (int k = 0; k < 8; k++) in[k] = (uint16_t) (base + k);
+		const uint16x8_t v = vld1q_u16(in);
+		vst1q_u16(lq, lum8(v));
+		const C12 c = c12v(v);
+		vst1q_s16((int16_t *) cr, c.r); vst1q_s16((int16_t *) cg, c.g); vst1q_s16((int16_t *) cb, c.b);
+		for (int k = 0; k < 8; k++) {
+			const unsigned x = in[k];
+			if (lq[k] != lumq(x)) return false;
+			const Q12 q = q12(x);
+			if ((int) cr[k] != q.r || (int) cg[k] != q.g || (int) cb[k] != q.b) return false;
+		}
+	}
+	for (unsigned base = 0; base < 4096; base += 8) {
+		int16_t c12[8];
+		for (int k = 0; k < 8; k++) c12[k] = (int16_t) (base + k);
+		const int16x8_t c = vld1q_s16(c12);
+		vst1q_u16(pr, pack5(c)); vst1q_u16(pg, pack6(c));
+		for (int k = 0; k < 8; k++) {
+			const int v = c12[k];
+			if (pr[k] != (uint16_t) ((v * 31 + 2047) / 4095) || pg[k] != (uint16_t) ((v * 63 + 2047) / 4095)) return false;
+		}
+	}
+	for (int sc_ = 2; sc_ <= 3; sc_++) {
+		SubRamp rp[9];
+		make_ramps(sc_, rp);
+		for (int k = 0; k < sc_ * sc_; k++)
+			for (int l = 0; l < 4; l++)
+				if ((((rp[k].f30[l] | rp[k].f60[l] | rp[k].f45[l] | rp[k].f45i[l]) != 0) ? 1 : 0) != (xlive(sc_, k) >> l & 1)) return false;
+	}
+	/* the mix: every weight 0..256 on a spread of 12 bit pairs against the integer formula */
+	for (int m = 0; m <= 256; m++)
+		for (int a = 0; a < 4096; a += 97)
+			for (int b = 0; b < 4096; b += 101) {
+				int16_t X[8], Y[8], M[8], Z[8];
+				for (int k = 0; k < 8; k++) { X[k] = (int16_t) a; Y[k] = (int16_t) b; M[k] = (int16_t) m; }
+				vst1q_s16(Z, mix16(vld1q_s16(X), vld1q_s16(Y), vld1q_s16(M)));
+				if (Z[0] != (a * (256 - m) + b * m + 128) >> 8) return false;
+			}
+	return true;
+}
+#endif
+
 unsigned scale_rect(ScalerKind k, const uint16_t *src, int w, int h, int spitch, uint16_t *dst, int dpitch, int y0, int y1, int x0, int x1,
                     ScaleScratch &sc)
 {
@@ -460,8 +959,13 @@ unsigned scale_rect(ScalerKind k, const uint16_t *src, int w, int h, int spitch,
 	scale_init();
 	switch (k) {
 	case SC_MMPX2: return mmpx_rows(src, w, h, spitch, dst, dpitch, y0, y1, x0, x1);
+#ifdef PK_SCALE_NEON
+	case SC_XBR2: if (use_neon()) return xbr_rows_neon<2>(src, w, h, spitch, dst, dpitch, y0, y1, x0, x1, sc); return xbr_rows<2>(src, w, h, spitch, dst, dpitch, y0, y1, x0, x1, sc);
+	case SC_XBR3: if (use_neon()) return xbr_rows_neon<3>(src, w, h, spitch, dst, dpitch, y0, y1, x0, x1, sc); return xbr_rows<3>(src, w, h, spitch, dst, dpitch, y0, y1, x0, x1, sc);
+#else
 	case SC_XBR2: return xbr_rows<2>(src, w, h, spitch, dst, dpitch, y0, y1, x0, x1, sc);
 	case SC_XBR3: return xbr_rows<3>(src, w, h, spitch, dst, dpitch, y0, y1, x0, x1, sc);
+#endif
 	default: return 0;
 	}
 }

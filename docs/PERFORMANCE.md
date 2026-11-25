@@ -1,5 +1,42 @@
 # Performance
 
+## 2.0 NEON xBR and MMPX in the two players (qemu and model numbers; nothing here ran on a Vita)
+
+The Super NES and Sega players scale with playerkit's pk_scale (xBR 2x / 3x and MMPX 2x, 16 bit, on the drawing thread and its helpers).
+The decisions of xBR were already eight pixels wide (compiler vectors); the new NEON loops (playerkit/src/pk_scale.cpp, ARM builds only) also do the
+luminance plane, the output colour of every pixel (12 bit blends, the choice of the nearer result, the 565 rounding) and the stores eight pixels at
+a time, and MMPX's rules for eight pixels at once (the same rules as the main app's mmpx_vita.c, written for 565 output). The C loops stay as the
+reference and for every other CPU. The picture is byte for byte the C loops' (and xBR's the integer reference's): playerkit/tests/scale_neon_check.cpp
+runs both on 11 kinds of generated picture (noise, four colours, flat, flat with specks, gradients, steps, pixel art of three densities with blocks,
+diagonals and dither, near-equal colours, tile maps) at 17 sizes (160x144, 240x160, 256x224, 320x224, 256x192 and odd small ones down to 1x1), whole,
+in three stripes (the helper threads' split) and as partial dirty-region calls, on a wider pitch too, and requires identical bytes, an identical busy
+count and untouched pixels outside a rectangle (`make -C playerkit arm-check`, gate step `playerkit-scale-arm`; 0 mismatches). The arithmetic that
+replaces a table (luminance, 565 to 12 bit, the rounding back, the blend) is checked against the tables for every value when the scaler starts; a
+difference would switch NEON off. The main app's own MMPX NEON loop (the first table of this file) is unchanged; its xBRZ is a different, third-party
+algorithm and is not touched.
+
+Guest instructions per frame under qemu-arm 8.2 (label **qemu**: ARM instructions, NEON ones counted one each, so NOT time and NOT a Vita
+measurement; a NEON instruction on the Vita's Cortex-A9 costs more than one cycle), 256x224, C loop (before) -> NEON loop (after). "Typical" is a
+pixel-art test picture with about 12 % non-flat pixels, "busy" one with 18 % busy xBR pixels and 48 % non-flat MMPX pixels (400 blocks, lines and
+dither; harder than a game frame):
+
+| Scaler | Typical C -> NEON | Busy C -> NEON |
+| --- | --- | --- |
+| MMPX 2x | 2.59 M -> 2.20 M (1.2x fewer) | 7.48 M -> 5.21 M (1.4x) |
+| xBR 2x | 5.46 M -> 2.48 M (2.2x) | 14.36 M -> 7.15 M (2.0x) |
+| xBR 3x | 7.11 M -> 3.26 M (2.2x) | 19.91 M -> 10.19 M (2.0x) |
+
+(The "before" is the tree's C loop, which the compiler already vectorises on ARM; against the float xBR of the first design note the gain is larger.)
+Model, 444 MHz at IPC 0.7 to 1.0 (2.25 to 3.2 ms per million): xBR 2x of a 256x224 typical picture about 5.6 to 8 ms of one core now against about 12 to 17 ms,
+before the helpers share it. Smaller than the 3x the design hoped for: the four rotations' decisions are about a third of the NEON loop and the blends
+about a third; the next steps would be to share the absolute differences between rotations and to prune the ramp tests per sub pixel (the dead lanes of a
+sub pixel are already skipped). MMPX gains little because playerkit's C loop already had the eight wide flat test.
+Not changed: the look governor. The ceilings (pic_scaler_ceiling) are set by the picture's size against the 544 row screen, not by a cost table, and
+the player's ladder rungs carry fixed costs; they should be retuned from the console's own `up_us` once a Vita has timed these loops (build with
+`-DPK_SCALE_NO_NEON` or `scale_use_neon(false)` to compare).
+Compiled with the VitaSDK's arm-vita-eabi-g++ 15.2 with the Makefile's flags (`make -C playerkit vita`): no warning, and the object holds the intended
+NEON (vabd, vqrdmulh, vmull / vrshrn, vst2 / vst3).
+
 ## 2.0 performance pass: MMPX, the NES wide view, the wide-view boot frame (host, qemu and model numbers; nothing here ran on a Vita)
 
 Nothing in this pass lowers a picture: every change is bit-identical to what it replaces, and the tests below prove it.

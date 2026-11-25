@@ -56,6 +56,12 @@ and in emulators; none of it has run on a real Vita yet (see
   state are identical to before (checked on 15 games, 3000 frames each).
   Measured on a computer, not yet on a Vita.
 
+- **Faster pixel-art scaling in the Super NES and Sega players.** The Enhanced
+  looks (xBR 2x and 3x, MMPX 2x) now run in NEON, about twice as fast for xBR
+  on a computer-side count. The pictures are identical to before, byte for byte
+  (checked on many generated pictures under an ARM emulator). Counted in an
+  emulator, not yet timed on a Vita.
+
 - **Smooth 50 Hz for European games.** PAL games on the Vita's 60 Hz screen
   no longer show one picture twice every tenth of a second. The game, its sound
   and its input run at their true speed; scrolling just looks even. On by

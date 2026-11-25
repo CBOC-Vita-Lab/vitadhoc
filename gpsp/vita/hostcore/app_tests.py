@@ -2259,9 +2259,9 @@ def t_touch(S):
 230:touch=480/272:40
 290:drag=300/200/600/300:10
 330:shot=still_game.png
-# the Cheats card by touch, and back with the footer's hint
+# the Cheats card by touch (the fourth of eight since Save clip: x 372..476), and back with the footer's hint
 +2:touch=480/272
-+20:touch=480/420
++20:touch=424/420
 +20:shot=cheats.png
 +10:quit
 """

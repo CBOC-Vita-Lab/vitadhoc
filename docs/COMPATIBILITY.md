@@ -75,13 +75,13 @@ in `gpsp/gbcore/tests/suites-expected.txt`.
 | blargg instr_timing | 1 / 1 | 1 / 1 |
 | blargg interrupt_time | 0 / 1 | 1 / 1 |
 | blargg halt_bug | 0 / 1 | 1 / 1 |
-| blargg dmg_sound (12 singles + combined) | 7 / 13 | 8 / 13 |
-| blargg cgb_sound (12 singles + combined) | 8 / 13 | 9 / 13 |
+| blargg dmg_sound (12 singles + combined) | 7 / 13 | 13 / 13 |
+| blargg cgb_sound (12 singles + combined) | 8 / 13 | 13 / 13 |
 | blargg mem_timing and mem_timing-2 (3 singles + combined each) | 0 / 8 | 0 / 8 |
 | blargg oam_bug (8 singles + combined) | 2 / 9 | 2 / 9 |
 | dmg-acid2 | fail | pass |
 | cgb-acid2 | fail | pass |
-| Total | 20 / 60 | 36 / 60 |
+| Total | 20 / 60 | 45 / 60 |
 
 Mooneye's acceptance tests were not run: they need the WLA-DX assembler,
 which could not be built here. The runner and the gate step support them
@@ -90,9 +90,18 @@ which could not be built here. The runner and the gate step support them
 Still failing: mem_timing (the core runs a whole instruction and then
 advances the clock, so a read or write lands on the wrong cycle inside it),
 oam_bug (the corruption a 16-bit increment does to sprite memory is not
-emulated; its timing tests also depend on cycle-exact reads), and the sound
-tests for sweep details and for wave RAM read, trigger and write while the
-channel plays. Games that depend on those are rare.
+emulated; its timing tests also depend on cycle-exact reads). Games that
+depend on those are rare.
+
+The sound tests for sweep details and for wave RAM read, trigger and write
+while the channel plays now pass too (2.0): the sweep rewrites the channel's
+frequency registers, and channel 3 has its own clock, so a wave RAM read or
+write while it plays finds the byte it is on (a Game Boy Color), or only
+right after the channel fetched it (a Game Boy), and a retrigger on a Game
+Boy at that moment corrupts the start of wave RAM. The sound itself
+changes only for those rare cases, for a sweep followed by a frequency
+write, and for register writes landing a few clocks later (well under one
+sample).
 
 ## Not fixed, and not checked
 

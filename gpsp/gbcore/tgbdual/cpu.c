@@ -57,6 +57,7 @@ byte *ram_bank;
 byte z802gb[256],gb2z80[256];
 //	word org_pal[16][4];
 int total_clock,rest_clock,sys_clock,seri_occer,div_clock;
+int cpu_access_off;/* GBAdhoc: clocks from the instruction start to its memory access */
 static unsigned timer_pending, timer_reloading;
 /* GBAdhoc: the byte an internal-clock transfer delivers into SB when
  * seri_occer expires (0xFF with no cable), set at the SC write. */
@@ -228,6 +229,7 @@ void cpu_save_state_ex(int *dat)
 	dat[3]=total_clock;
 }
 
+extern int tmp_clocks;
 #include "cpu_io.h"
 
 void cpu_restore_state(int *dat)
@@ -730,6 +732,7 @@ void cpu_exec(unsigned short clocks)
 
 
 	}
+	tmp_clocks=0; /* GBAdhoc: a register access outside an instruction has no M-cycle offset */
 	apu_update(); /* GBAdhoc: clocks advance even without sound-register I/O. */
 }
 

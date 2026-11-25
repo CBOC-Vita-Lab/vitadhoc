@@ -264,4 +264,14 @@ a game can notice:
 
 None of these touch the state layout; old states load. Not changed:
 mem_timing (the core advances the clock after each whole instruction),
-oam_bug, the sound sweep details and wave RAM access while the channel plays.
+oam_bug.
+
+## Sound accuracy (2.0, blargg dmg_sound and cgb_sound 13/13)
+
+| File | Change |
+|---|---|
+| `apu_timing.h` | The sweep's frequency update also writes `sq1_init_freq`, the copy a later NR13/NR14 write builds on (on hardware the sweep rewrites NR13/NR14 themselves; a retrigger after a sweep used the old low byte). Fixes 05-sweep details (subtract mode, overflow on retrigger). |
+| `apu_timing.h`, `apu.c` | CPU-side channel 3 clock: `wave_cd` (clocks to the next fetch), `wave_pos`, `wave_since`, advanced in T-clocks by `apu_advance` on the CPU timeline only (the audio generator keeps its own sample-rate position and is untouched). A trigger loads `period + 6` (`WAVE_TRIG`) and restarts at sample 0. |
+| `apu.c` | Wave RAM access while channel 3 plays: a read returns the byte the channel is on (CGB: always; DMG: only within `WAVE_WINDOW` = 2 clocks after the fetch, else 0xFF); a write lands on that byte (DMG: same window, else dropped). The redirected address is what is queued for the audio generator. A DMG retrigger when the next fetch is within `WAVE_CORRUPT` = 2 clocks corrupts wave RAM as Pan Docs describes (byte 0-3: only byte 0; else the first four bytes become the aligned group); the corrupting writes are queued too. The three constants were fitted to the CRCs of 09/10/12 (which come from hardware). |
+| `cpu.c`, `cpu_io.h`, `gb.h` | The core advances the clock after a whole instruction, so an APU register access used to land on the instruction's first clock. For FF10-FF3F and DIV the APU is now brought to the access's M-cycle (`cpu_access_off` = instruction clocks - 4, from `tmp_clocks`; 0 outside an instruction). The queue stamps use the same time. No other component's timing changes. |
+| `apu_timing.h` | State: `WAV1` tag, three words, at byte 96 of the 256 reserved bytes (the APU block fills 0-79, the timer 80-87, the camera 192+). States without the tag load with the channel stopped at sample 0, as before this change. |

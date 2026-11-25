@@ -46,6 +46,14 @@ byte snd_mem[0x100];
 
 /* GBAdhoc: independently clocked register and synthesis state. */
 #include "apu_timing.h"
+/* GBAdhoc: channel 3 clock model (T-cycles): a read or write finds the fetch
+ * if it is within WAVE_WINDOW clocks after it; a retrigger corrupts wave RAM
+ * if the next fetch is within WAVE_CORRUPT clocks; a trigger delays the first
+ * fetch by WAVE_TRIG clocks.  Constants fitted to blargg's dmg_sound/cgb_sound
+ * 09, 10, 12 (their CRCs come from hardware). */
+#define WAVE_WINDOW 2
+#define WAVE_CORRUPT 2
+#define WAVE_TRIG 6
 char snd_b_enable[4];
 
 
@@ -63,7 +71,15 @@ void apu_reset()
 /* GBAdhoc: NR52 reports channel activity, independent of volume/panning. */
 byte apu_read(word adr)
 {
-	apu_update();
+	apu_update_at(cpu_access_off);
+	/* GBAdhoc: while channel 3 plays, wave RAM answers with the byte the
+	 * channel is on: on the DMG only in the clocks right after it fetched
+	 * it (otherwise 0xFF), on the Game Boy Color at any time. */
+	if (adr >= 0xff30 && adr < 0xff40 && snd_stat.wav_playing) {
+		if (now_gb_mode >= 3 || wave_since < WAVE_WINDOW)
+			return snd_mem[0x20 + (wave_pos >> 1)];
+		return 0xff;
+	}
 	if (adr == 0xff26)
 		return 0x70 | (snd_stat.master_enable ? 0x80 : 0) |
 			(snd_stat.sq1_playing ? 1 : 0) | (snd_stat.sq2_playing ? 2 : 0) |
@@ -79,10 +95,29 @@ byte apu_read(word adr)
 	}
 }
 
+static void apu_write_wave(unsigned i, byte v)
+{
+	snd_mem[0x20 + i] = v;
+	apu_enqueue((word)(0xff30 + i), v);
+}
+
 void apu_write(word adr, byte dat, int clock)
 {
 	(void)clock;
-	apu_update();
+	apu_update_at(cpu_access_off);
+	if (adr >= 0xff30 && adr < 0xff40 && snd_stat.wav_playing) {
+		/* GBAdhoc: a write while channel 3 plays lands on the byte it is
+		 * reading (DMG: only just after the fetch, else lost). */
+		if (now_gb_mode < 3 && wave_since >= WAVE_WINDOW) return;
+		adr = (word)(0xff30 + (wave_pos >> 1));
+	} else if (adr == 0xff1e && (dat & 0x80) && snd_stat.wav_playing &&
+	           now_gb_mode < 3 && wave_cd <= WAVE_CORRUPT) {
+		/* GBAdhoc: DMG retrigger while the channel is fetching corrupts the
+		 * start of wave RAM with the 4-byte group it is reading. */
+		unsigned i = ((wave_pos + 1) & 31) >> 1, k;
+		if (i < 4) { apu_write_wave(0, snd_mem[0x20 + i]); }
+		else for (k = 0; k < 4; k++) apu_write_wave(k, snd_mem[0x20 + (i & ~3u) + k]);
+	}
 	apu_enqueue(adr, dat);
 	snd_process(adr, dat);
 }
@@ -123,6 +158,7 @@ void snd_reset()
 	sq1_cur_pos = sq2_cur_pos = wav_cur_pos = noi_cur_pos = 0;
 	sq1_sample = sq2_sample = wav_index = wav_sample = noise_index = 0;
 	noi_sample = 10000;
+	wave_cd = wave_pos = 0; wave_since = 0xffff;
 	memset(&snd_stat,0,sizeof(snd_stat));
 	snd_stat.sq1_playing=false;
 	snd_stat.sq2_playing=false;
@@ -329,6 +365,11 @@ void snd_process(word adr,byte dat)
 			if (!snd_stat.wav_len) snd_stat.wav_len = 256 - (snd_stat.wav_hold && (apu_timer->step & 1));
 			snd_stat.wav_playing=!!snd_stat.wav_enable;
 			if (apu_timer == &gen_timing) { wav_cur_pos = 0; wav_index = 0; }
+			else {
+				/* GBAdhoc: the CPU-side channel restarts at sample 0. */
+				wave_cd = (2048 - (snd_stat.wav_freq & 0x7ff)) * 2 + WAVE_TRIG;
+				wave_pos = 0; wave_since = 0xffff;
+			}
 		}
 		break;
 	case 0xFF20://noi len

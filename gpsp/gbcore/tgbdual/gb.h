@@ -323,6 +323,7 @@ byte *cpu_get_ram_bank();
 void cpu_set_ram_bank(int bank);
 struct cpu_regs *cpu_get_regs();
 int cpu_get_clock();
+extern int cpu_access_off;
 char cpu_get_speed();
 char *cpu_get_halt();
 

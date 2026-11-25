@@ -29,6 +29,25 @@ double gbmux_nes_fps(void);
 int gbmux_nes_cheats(const char *codes);
 int gbmux_nes_save_dirty(const gbcore_t *core);
 
+/* The Accurate Game Boy core (Gambatte, gbcore/gambatte_host.h), through the same path.  Settings > Game Boy core
+ * chooses it for the next Game Boy / Game Boy Color game (gbmux_set_gb_accurate before gbmux_create); a cartridge it
+ * cannot run (Game Boy Camera, MBC6, MBC7, TAMA5, MMM01), and a Super Game Boy game under the Super Game Boy palette,
+ * run on TGB Dual instead (gbmux_gb_fallback_take says so once).  Link play, the Camera and the Super Game Boy border
+ * stay TGB Dual's: only gbcore_* calls reach it, never the machine of a session. */
+void gbmux_set_gb_accurate(int on);
+int gbmux_gb_accurate_chosen(void);
+int gbmux_is_gambatte(const gbcore_t *core);
+int gbmux_gambatte_running(void);
+/* 1, once, after a create that wanted Gambatte and got TGB Dual */
+int gbmux_gb_fallback_take(void);
+/* 1, once, after a state load that met the other core's image */
+int gbmux_state_other_take(void);
+/* gbcore_set_palette / _palette_preview / _set_color_correction / _set_wallclock, for both cores */
+void gbmux_set_palette(unsigned palette);
+int gbmux_palette_preview(unsigned palette, uint16_t rgb565[12]);
+void gbmux_set_color_correction(int on);
+void gbmux_set_wallclock(time_t (*wallclock)(void));
+
 /* The WonderSwan machine (wscore.h), through the same path. */
 int gbmux_is_ws(const gbcore_t *core);
 /* the console the machine is: FE_CONSOLE_NES / _WSWAN, else -1 (a GB one) */
@@ -126,6 +145,10 @@ int gbmux_pad_game_id(const gbcore_t *core, char out[9]);
 #define gbcore_peek gbmux_peek
 #define gbcore_poke gbmux_poke
 #define gbcore_cheats_set gbmux_cheats_set
+#define gbcore_set_palette gbmux_set_palette
+#define gbcore_palette_preview gbmux_palette_preview
+#define gbcore_set_color_correction gbmux_set_color_correction
+#define gbcore_set_wallclock gbmux_set_wallclock
 #endif
 
 #ifdef __cplusplus

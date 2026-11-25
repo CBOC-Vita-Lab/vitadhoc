@@ -249,6 +249,9 @@ const char *gbcore_palette_name(unsigned palette);
  * AUTO shows the Super Game Boy's first palette.  Returns the GBC boot ROM
  * combination number (0..50) for the GBC palettes, -1 otherwise. */
 int gbcore_palette_preview(unsigned palette, uint16_t rgb565[12]);
+/* The same for a cartridge that is not loaded here: `header` is the cartridge header from 0x134 (NULL: none).  For the
+ * Gambatte core, which has no palettes of its own (gambatte_host.h). */
+int gbcore_palette_preview_for(unsigned palette, const uint8_t *header, uint16_t rgb565[12]);
 
 /* Game Boy Color colours.  On (the default), a CGB palette entry is shown
  * as the GBC's own LCD shows it: its response curve lifts the mid-tones and

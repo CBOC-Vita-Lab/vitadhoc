@@ -4720,7 +4720,7 @@ void ui_host_look_changed(void)
    vid_ambient_strength(g_pcfg.glow);
    vid_ambient_mode(app_ambient_mode());
    if (c == FE_CONSOLE_GBC)
-      gbcore_set_color_correction(g_pcfg.color ? 1 : 0);
+      gbmux_set_color_correction(g_pcfg.color ? 1 : 0);
    if (c == FE_CONSOLE_NES)
       app_nes_options();             /* the wide view's soft edges follow the glow */
    fe_evt("display_look console=%s color=%d ghost=%d scan=%d grid=%d glow=%d "
@@ -6343,6 +6343,8 @@ static int game_boot(const char *rom_path, fe_console_t console)
    cfg.wallclock      = plat_wallclock;
    cfg.gb_palette     = g_pcfg.gb_palette;
    cfg.gbc_raw_colors = !g_pcfg.gbc_color_correction;
+   /* the Game Boy core: this game's own choice, else Settings > Gameplay > Game Boy core */
+   cfg.gb_accurate    = g_pgame.on && g_pgame.gb_core >= 0 ? g_pgame.gb_core : g_pcfg.gb_core;
    cfg.boot_status    = loading_stage;
 
    if (console == FE_CONSOLE_GBA)

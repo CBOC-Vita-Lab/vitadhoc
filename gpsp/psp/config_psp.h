@@ -235,6 +235,9 @@ typedef struct
    /* Settings > Gameplay > Quick response (CONFIG.INI quick_response): 0 Off, 1 Auto, 2 On; -1 = never chosen, the console's own
     * default (vita/ahead_glue.h, main_vita.c app_quick_default).  A game's own choice (g_pgame.quick) wins. */
    int  quick_response;
+   /* Settings > Gameplay > Game Boy core (CONFIG.INI gb_core): 0 Standard (TGB Dual), 1 Accurate (Gambatte).  A game's own
+    * choice (g_pgame.gb_core) wins; read when the game starts. */
+   int  gb_core;
 #endif
    /* Media Engine dirty-page VRAM copy: send only the 1 KiB pages the
     * frame actually touched instead of all 96 KiB.  Default 1.  Exposed
@@ -817,6 +820,8 @@ typedef struct
    int ws_rotation, ws_vplay, ws_palette;
    /* Quick response for this game (games/<ROM>.ini quick_response): -1 follows Settings, else 0 Off, 1 Auto, 2 On */
    int quick;
+   /* Game Boy core for this game (games/<ROM>.ini gb_core): -1 follows Settings, else 0 Standard, 1 Accurate */
+   int gb_core;
    /* Game Boy Camera (games/<ROM>.ini camera): what the sensor looks at,
     * PCFG_CAM_* */
    int camera;

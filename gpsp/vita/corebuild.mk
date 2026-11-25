@@ -302,8 +302,11 @@ GB_OBJS += $(NES_OBJS)
 # ---- the WonderSwan core (Beetle), in-process the same way: wswancore.mk
 include $(GP)/vita/wswancore.mk
 GB_OBJS += $(WS_OBJS)
+# ---- the Accurate Game Boy core (Gambatte), in-process the same way: gambattecore.mk
+include $(GP)/vita/gambattecore.mk
+GB_OBJS += $(GAM_OBJS)
 ifeq ($(HOST_OS),macos)
-MACHO_ARCHIVES += $(NES_PRIV) $(WS_PRIV)
+MACHO_ARCHIVES += $(NES_PRIV) $(WS_PRIV) $(GAM_PRIV)
 endif
 
 # ---- frontend-common, netdrv core, the cable bus ----------------------------

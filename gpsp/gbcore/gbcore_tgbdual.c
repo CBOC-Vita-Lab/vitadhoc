@@ -240,12 +240,17 @@ static void palette_apply(void)
 
 int gbcore_palette_preview(unsigned palette, uint16_t rgb565[12])
 {
+  return gbcore_palette_preview_for(palette, active ? active->header : NULL, rgb565);
+}
+
+int gbcore_palette_preview_for(unsigned palette, const uint8_t *header, uint16_t rgb565[12])
+{
   unsigned short c[12];
   unsigned i;
   int combo;
   if (palette >= GBCORE_PALETTE_COUNT)
     palette = GBCORE_PALETTE_AUTO;
-  combo = palette_colors(palette, active ? active->header : NULL, c);
+  combo = palette_colors(palette, header, c);
   for (i = 0; i < 12; i++)
   {
     unsigned r = c[i] & 0x1f, g = (c[i] >> 5) & 0x1f, b = (c[i] >> 10) & 0x1f;

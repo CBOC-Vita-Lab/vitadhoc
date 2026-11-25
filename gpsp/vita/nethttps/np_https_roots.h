@@ -556,7 +556,7 @@ static const unsigned char np_root_SSL_com_Root_Certification_Authority_RSA[] = 
 static const unsigned char np_root_SSL_com_Root_Certification_Authority_RSA_sha256[32] = {
     0x85,0x66,0x6a,0x56,0x2e,0xe0,0xbe,0x5c,0xe9,0x25,0xc1,0xd8,0x89,0x0a,0x6f,0x76,0xa8,0x7e,0xc1,0x6d,0x4d,0x7d,0x5f,0x29,0xea,0x74,0x19,0xcf,0x20,0x12,0x3b,0x69};
 
-/* USERTrust ECC Certification Authority -- Sectigo, via USERTrust (cross-signed Sectigo E46); api.github.com; valid until 2038-01-18; sha256 4ff460d54b9c86dabfbcfc5712e0400d2bed3fbc4d4fbdaa86e06adcd2a9ad7a */
+/* USERTrust ECC Certification Authority -- Sectigo, via USERTrust (cross-signed Sectigo E46); api.github.com only; valid until 2038-01-18; sha256 4ff460d54b9c86dabfbcfc5712e0400d2bed3fbc4d4fbdaa86e06adcd2a9ad7a */
 static const unsigned char np_root_USERTrust_ECC_Certification_Authority[] = {
     0x30,0x82,0x02,0x8f,0x30,0x82,0x02,0x15,0xa0,0x03,0x02,0x01,0x02,0x02,0x10,0x5c,
     0x8b,0x99,0xc5,0x5a,0x94,0xc5,0xd2,0x71,0x56,0xde,0xcd,0x89,0x80,0xcc,0x26,0x30,
@@ -604,7 +604,7 @@ static const unsigned char np_root_USERTrust_ECC_Certification_Authority[] = {
 static const unsigned char np_root_USERTrust_ECC_Certification_Authority_sha256[32] = {
     0x4f,0xf4,0x60,0xd5,0x4b,0x9c,0x86,0xda,0xbf,0xbc,0xfc,0x57,0x12,0xe0,0x40,0x0d,0x2b,0xed,0x3f,0xbc,0x4d,0x4f,0xbd,0xaa,0x86,0xe0,0x6a,0xdc,0xd2,0xa9,0xad,0x7a};
 
-/* USERTrust RSA Certification Authority -- Sectigo, via USERTrust (cross-signed Sectigo R46); api.github.com; valid until 2038-01-18; sha256 e793c9b02fd8aa13e21c31228accb08119643b749c898964b1746d46c3d4cbd2 */
+/* USERTrust RSA Certification Authority -- Sectigo, via USERTrust (cross-signed Sectigo R46); api.github.com only; valid until 2038-01-18; sha256 e793c9b02fd8aa13e21c31228accb08119643b749c898964b1746d46c3d4cbd2 */
 static const unsigned char np_root_USERTrust_RSA_Certification_Authority[] = {
     0x30,0x82,0x05,0xde,0x30,0x82,0x03,0xc6,0xa0,0x03,0x02,0x01,0x02,0x02,0x10,0x01,
     0xfd,0x6d,0x30,0xfc,0xa3,0xca,0x51,0xa8,0x1b,0xbc,0x64,0x0e,0x35,0x03,0x2d,0x30,
@@ -705,7 +705,7 @@ static const unsigned char np_root_USERTrust_RSA_Certification_Authority[] = {
 static const unsigned char np_root_USERTrust_RSA_Certification_Authority_sha256[32] = {
     0xe7,0x93,0xc9,0xb0,0x2f,0xd8,0xaa,0x13,0xe2,0x1c,0x31,0x22,0x8a,0xcc,0xb0,0x81,0x19,0x64,0x3b,0x74,0x9c,0x89,0x89,0x64,0xb1,0x74,0x6d,0x46,0xc3,0xd4,0xcb,0xd2};
 
-/* Sectigo Public Server Authentication Root E46 -- Sectigo, ECDSA chains (DV E36); api.github.com; valid until 2046-03-21; sha256 c90f26f0fb1b4018b22227519b5ca2b53e2ca5b3be5cf18efe1bef47380c5383 */
+/* Sectigo Public Server Authentication Root E46 -- Sectigo, ECDSA chains (DV E36); api.github.com only; valid until 2046-03-21; sha256 c90f26f0fb1b4018b22227519b5ca2b53e2ca5b3be5cf18efe1bef47380c5383 */
 static const unsigned char np_root_Sectigo_Public_Server_Authentication_Root_E46[] = {
     0x30,0x82,0x02,0x3a,0x30,0x82,0x01,0xc1,0xa0,0x03,0x02,0x01,0x02,0x02,0x10,0x42,
     0xf2,0xcc,0xda,0x1b,0x69,0x37,0x44,0x5f,0x15,0xfe,0x75,0x28,0x10,0xb8,0xf4,0x30,
@@ -747,7 +747,7 @@ static const unsigned char np_root_Sectigo_Public_Server_Authentication_Root_E46
 static const unsigned char np_root_Sectigo_Public_Server_Authentication_Root_E46_sha256[32] = {
     0xc9,0x0f,0x26,0xf0,0xfb,0x1b,0x40,0x18,0xb2,0x22,0x27,0x51,0x9b,0x5c,0xa2,0xb5,0x3e,0x2c,0xa5,0xb3,0xbe,0x5c,0xf1,0x8e,0xfe,0x1b,0xef,0x47,0x38,0x0c,0x53,0x83};
 
-/* Sectigo Public Server Authentication Root R46 -- Sectigo, RSA chains (DV R36); api.github.com; valid until 2046-03-21; sha256 7bb647a62aeeac88bf257aa522d01ffea395e0ab45c73f93f65654ec38f25a06 */
+/* Sectigo Public Server Authentication Root R46 -- Sectigo, RSA chains (DV R36); api.github.com only; valid until 2046-03-21; sha256 7bb647a62aeeac88bf257aa522d01ffea395e0ab45c73f93f65654ec38f25a06 */
 static const unsigned char np_root_Sectigo_Public_Server_Authentication_Root_R46[] = {
     0x30,0x82,0x05,0x8a,0x30,0x82,0x03,0x72,0xa0,0x03,0x02,0x01,0x02,0x02,0x10,0x75,
     0x8d,0xfd,0x8b,0xae,0x7c,0x07,0x00,0xfa,0xa9,0x25,0xa7,0xe1,0xc7,0xad,0x14,0x30,
@@ -842,20 +842,22 @@ static const unsigned char np_root_Sectigo_Public_Server_Authentication_Root_R46
 static const unsigned char np_root_Sectigo_Public_Server_Authentication_Root_R46_sha256[32] = {
     0x7b,0xb6,0x47,0xa6,0x2a,0xee,0xac,0x88,0xbf,0x25,0x7a,0xa5,0x22,0xd0,0x1f,0xfe,0xa3,0x95,0xe0,0xab,0x45,0xc7,0x3f,0x93,0xf6,0x56,0x54,0xec,0x38,0xf2,0x5a,0x06};
 
-struct NpHttpsRootEntry { const char* name; const unsigned char* der; unsigned len; const unsigned char* sha256; long long not_after; };
+/* only_host: 0 = a root of every host but the ones named here; else the one host this root is trusted for, and that host
+ * trusts no other root. */
+struct NpHttpsRootEntry { const char* name; const unsigned char* der; unsigned len; const unsigned char* sha256; long long not_after; const char* only_host; };
 static const NpHttpsRootEntry np_https_roots[] = {
-    { "GTS Root R1", np_root_GTS_Root_R1, (unsigned)sizeof(np_root_GTS_Root_R1), np_root_GTS_Root_R1_sha256, 2097705600LL },
-    { "GTS Root R4", np_root_GTS_Root_R4, (unsigned)sizeof(np_root_GTS_Root_R4), np_root_GTS_Root_R4_sha256, 2097705600LL },
-    { "ISRG Root X1", np_root_ISRG_Root_X1, (unsigned)sizeof(np_root_ISRG_Root_X1), np_root_ISRG_Root_X1_sha256, 2064567878LL },
-    { "ISRG Root X2", np_root_ISRG_Root_X2, (unsigned)sizeof(np_root_ISRG_Root_X2), np_root_ISRG_Root_X2_sha256, 2231510400LL },
-    { "SSL.com TLS ECC Root CA 2022", np_root_SSL_com_TLS_ECC_Root_CA_2022, (unsigned)sizeof(np_root_SSL_com_TLS_ECC_Root_CA_2022), np_root_SSL_com_TLS_ECC_Root_CA_2022_sha256, 2418309227LL },
-    { "SSL.com TLS RSA Root CA 2022", np_root_SSL_com_TLS_RSA_Root_CA_2022, (unsigned)sizeof(np_root_SSL_com_TLS_RSA_Root_CA_2022), np_root_SSL_com_TLS_RSA_Root_CA_2022_sha256, 2418309261LL },
-    { "SSL.com Root Certification Authority ECC", np_root_SSL_com_Root_Certification_Authority_ECC, (unsigned)sizeof(np_root_SSL_com_Root_Certification_Authority_ECC), np_root_SSL_com_Root_Certification_Authority_ECC_sha256, 2244305643LL },
-    { "SSL.com Root Certification Authority RSA", np_root_SSL_com_Root_Certification_Authority_RSA, (unsigned)sizeof(np_root_SSL_com_Root_Certification_Authority_RSA), np_root_SSL_com_Root_Certification_Authority_RSA_sha256, 2244303579LL },
-    { "USERTrust ECC Certification Authority", np_root_USERTrust_ECC_Certification_Authority, (unsigned)sizeof(np_root_USERTrust_ECC_Certification_Authority), np_root_USERTrust_ECC_Certification_Authority_sha256, 2147471999LL },
-    { "USERTrust RSA Certification Authority", np_root_USERTrust_RSA_Certification_Authority, (unsigned)sizeof(np_root_USERTrust_RSA_Certification_Authority), np_root_USERTrust_RSA_Certification_Authority_sha256, 2147471999LL },
-    { "Sectigo Public Server Authentication Root E46", np_root_Sectigo_Public_Server_Authentication_Root_E46, (unsigned)sizeof(np_root_Sectigo_Public_Server_Authentication_Root_E46), np_root_Sectigo_Public_Server_Authentication_Root_E46_sha256, 2405289599LL },
-    { "Sectigo Public Server Authentication Root R46", np_root_Sectigo_Public_Server_Authentication_Root_R46, (unsigned)sizeof(np_root_Sectigo_Public_Server_Authentication_Root_R46), np_root_Sectigo_Public_Server_Authentication_Root_R46_sha256, 2405289599LL },
+    { "GTS Root R1", np_root_GTS_Root_R1, (unsigned)sizeof(np_root_GTS_Root_R1), np_root_GTS_Root_R1_sha256, 2097705600LL, 0 },
+    { "GTS Root R4", np_root_GTS_Root_R4, (unsigned)sizeof(np_root_GTS_Root_R4), np_root_GTS_Root_R4_sha256, 2097705600LL, 0 },
+    { "ISRG Root X1", np_root_ISRG_Root_X1, (unsigned)sizeof(np_root_ISRG_Root_X1), np_root_ISRG_Root_X1_sha256, 2064567878LL, 0 },
+    { "ISRG Root X2", np_root_ISRG_Root_X2, (unsigned)sizeof(np_root_ISRG_Root_X2), np_root_ISRG_Root_X2_sha256, 2231510400LL, 0 },
+    { "SSL.com TLS ECC Root CA 2022", np_root_SSL_com_TLS_ECC_Root_CA_2022, (unsigned)sizeof(np_root_SSL_com_TLS_ECC_Root_CA_2022), np_root_SSL_com_TLS_ECC_Root_CA_2022_sha256, 2418309227LL, 0 },
+    { "SSL.com TLS RSA Root CA 2022", np_root_SSL_com_TLS_RSA_Root_CA_2022, (unsigned)sizeof(np_root_SSL_com_TLS_RSA_Root_CA_2022), np_root_SSL_com_TLS_RSA_Root_CA_2022_sha256, 2418309261LL, 0 },
+    { "SSL.com Root Certification Authority ECC", np_root_SSL_com_Root_Certification_Authority_ECC, (unsigned)sizeof(np_root_SSL_com_Root_Certification_Authority_ECC), np_root_SSL_com_Root_Certification_Authority_ECC_sha256, 2244305643LL, 0 },
+    { "SSL.com Root Certification Authority RSA", np_root_SSL_com_Root_Certification_Authority_RSA, (unsigned)sizeof(np_root_SSL_com_Root_Certification_Authority_RSA), np_root_SSL_com_Root_Certification_Authority_RSA_sha256, 2244303579LL, 0 },
+    { "USERTrust ECC Certification Authority", np_root_USERTrust_ECC_Certification_Authority, (unsigned)sizeof(np_root_USERTrust_ECC_Certification_Authority), np_root_USERTrust_ECC_Certification_Authority_sha256, 2147471999LL, "api.github.com" },
+    { "USERTrust RSA Certification Authority", np_root_USERTrust_RSA_Certification_Authority, (unsigned)sizeof(np_root_USERTrust_RSA_Certification_Authority), np_root_USERTrust_RSA_Certification_Authority_sha256, 2147471999LL, "api.github.com" },
+    { "Sectigo Public Server Authentication Root E46", np_root_Sectigo_Public_Server_Authentication_Root_E46, (unsigned)sizeof(np_root_Sectigo_Public_Server_Authentication_Root_E46), np_root_Sectigo_Public_Server_Authentication_Root_E46_sha256, 2405289599LL, "api.github.com" },
+    { "Sectigo Public Server Authentication Root R46", np_root_Sectigo_Public_Server_Authentication_Root_R46, (unsigned)sizeof(np_root_Sectigo_Public_Server_Authentication_Root_R46), np_root_Sectigo_Public_Server_Authentication_Root_R46_sha256, 2405289599LL, "api.github.com" },
 };
 #define NP_HTTPS_ROOT_COUNT 12
 

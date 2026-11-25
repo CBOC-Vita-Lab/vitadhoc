@@ -49,7 +49,7 @@ sharing).
   service.
 - **TLS on the console is new.** The app checks the service's certificate with
   its own list of twelve root certificates (eight for the online service, four
-  Sectigo ones for the update check). If the service serves a chain that
+  Sectigo ones for the update check, each trusted only for its own host). If the service serves a chain that
   needs another root, Online says "The online service could not be reached"
   and the log names the certificate. A Vita whose clock was reset (it shows
   2011) cannot check certificates: set the date and time.

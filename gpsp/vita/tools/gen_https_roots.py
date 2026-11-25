@@ -30,6 +30,7 @@ import os
 import re
 import sys
 
+UPDATE_HOST = "api.github.com"
 ROOTS = [
     # (file stem in CERT_DIR, who may serve it)
     ("GTS_Root_R1", "Google Trust Services, RSA chains (WR1-WR4)"),
@@ -43,10 +44,12 @@ ROOTS = [
     # The update check (gpsp/vita/update_check.c) asks api.github.com, whose certificates are Sectigo's: "Sectigo Public Server
     # Authentication CA DV E36 / R36" (ECDSA / RSA), under the Sectigo roots E46 / R46, which are also served cross-signed by the
     # USERTrust roots.  All four, so that either chain a server may send ends in a root listed here.
-    ("USERTrust_ECC_Certification_Authority", "Sectigo, via USERTrust (cross-signed Sectigo E46); api.github.com"),
-    ("USERTrust_RSA_Certification_Authority", "Sectigo, via USERTrust (cross-signed Sectigo R46); api.github.com"),
-    ("Sectigo_Public_Server_Authentication_Root_E46", "Sectigo, ECDSA chains (DV E36); api.github.com"),
-    ("Sectigo_Public_Server_Authentication_Root_R46", "Sectigo, RSA chains (DV R36); api.github.com"),
+    # A third element is the ONE host the root is trusted for: these four anchor api.github.com only, and api.github.com is anchored
+    # by these four only. The room service's connections (and any other host's) never accept a chain that ends in them.
+    ("USERTrust_ECC_Certification_Authority", "Sectigo, via USERTrust (cross-signed Sectigo E46); api.github.com only", UPDATE_HOST),
+    ("USERTrust_RSA_Certification_Authority", "Sectigo, via USERTrust (cross-signed Sectigo R46); api.github.com only", UPDATE_HOST),
+    ("Sectigo_Public_Server_Authentication_Root_E46", "Sectigo, ECDSA chains (DV E36); api.github.com only", UPDATE_HOST),
+    ("Sectigo_Public_Server_Authentication_Root_R46", "Sectigo, RSA chains (DV R36); api.github.com only", UPDATE_HOST),
 ]
 # Let's Encrypt's new roots (2026), cross-signed by ISRG Root X2 / X1 while those cross-signs are served. Not in the header until a
 # person provides the PEMs and their fingerprints are checked (docs/ONLINE-TLS.md); never typed in by hand.
@@ -152,7 +155,9 @@ def main():
            "#ifndef NP_HTTPS_ROOTS_H", "#define NP_HTTPS_ROOTS_H", "",
            "#define NP_HTTPS_ROOTS_DAY %dLL" % built_at, ""]
     names = []
-    for stem, who in roots:
+    for root in roots:
+        stem, who = root[0], root[1]
+        host = root[2] if len(root) > 2 else None
         pem = open(find_pem(cert_dirs, stem)).read()
         m = re.search(r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----", pem, re.S)
         if not m or pem.count("BEGIN CERTIFICATE") != 1:
@@ -163,7 +168,7 @@ def main():
         if stem in pins and sha.hex() != pins[stem]:
             sys.exit("%s: SHA-256 %s is not the pinned %s; header NOT written" % (stem, sha.hex(), pins[stem]))
         ident = "np_root_" + re.sub(r"[^A-Za-z0-9]", "_", stem)
-        names.append((ident, cn, who, not_after))
+        names.append((ident, cn, who, not_after, host))
         out.append("/* %s -- %s; valid until %s; sha256 %s */" % (
             cn, who, datetime.datetime.fromtimestamp(not_after, datetime.timezone.utc).strftime("%Y-%m-%d"), sha.hex()))
         out.append("static const unsigned char %s[] = {" % ident)
@@ -173,10 +178,13 @@ def main():
         out.append("static const unsigned char %s_sha256[32] = {" % ident)
         out.append("    " + ",".join("0x%02x" % c for c in sha) + "};")
         out.append("")
-    out.append("struct NpHttpsRootEntry { const char* name; const unsigned char* der; unsigned len; const unsigned char* sha256; long long not_after; };")
+    out.append("/* only_host: 0 = a root of every host but the ones named here; else the one host this root is trusted for, and that host")
+    out.append(" * trusts no other root. */")
+    out.append("struct NpHttpsRootEntry { const char* name; const unsigned char* der; unsigned len; const unsigned char* sha256; long long not_after; const char* only_host; };")
     out.append("static const NpHttpsRootEntry np_https_roots[] = {")
-    for ident, cn, who, not_after in names:
-        out.append('    { "%s", %s, (unsigned)sizeof(%s), %s_sha256, %dLL },' % (cn, ident, ident, ident, not_after))
+    for ident, cn, who, not_after, host in names:
+        out.append('    { "%s", %s, (unsigned)sizeof(%s), %s_sha256, %dLL, %s },' % (cn, ident, ident, ident, not_after,
+                                                                                   '"%s"' % host if host else "0"))
     out.append("};")
     out.append("#define NP_HTTPS_ROOT_COUNT %d" % len(names))
     out.append("")

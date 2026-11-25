@@ -3,7 +3,7 @@
  * Included by psp/ui_psp.c under -DVITA just before screen_menu, which
  * keeps its input rules (the cursor, X, O, the questions before leaving)
  * and hands the drawing to cc_draw().  The game stays on screen, frozen and
- * dimmed; a sheet rises from the bottom edge with the seven things the menu
+ * dimmed; a sheet rises from the bottom edge with the eight things the menu
  * does as cards in a row.  LEFT / RIGHT (or UP / DOWN) move along them, a
  * tap on one does it.  Above the sheet, one line says what the focused card
  * will do -- and, for the ones with a state, what that state is (how many

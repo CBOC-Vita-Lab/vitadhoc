@@ -3214,7 +3214,8 @@ def t_settings_order(S):
     config = {"ui_home": 1, "scale_gba": 1, "filter_gba": 4, "quality_gba": 1,
               "scale_gb": 0, "filter_gb": 5, "quality_gb": 3,
               "scale_gbc": 4, "filter_gbc": 2, "quality_gbc": 0}
-    for context, down in (("browser", 20), ("game", 0)):
+    # browser: 21 DOWN from Theme wrap round to Screen size (About gained Check for updates)
+    for context, down in (("browser", 21), ("game", 0)):
         enter = "60:start\n" if context == "browser" else \
             "100:shot=before.png\n" + menu_pick(4, wait=10)
         leave = "+30:cross\n+120:shot=game.png\n+10:quit\n" if context == "browser" else \
@@ -3603,8 +3604,9 @@ def t_update_check(S):
         S.check(len(srv.requests) == 1 and srv.requests[0][0] == "/newer",
                 "the home screen idle: one request (%s)" % [q[0] for q in srv.requests])
         h = {k.lower(): v for k, v in srv.requests[0][1].items()} if srv.requests else {}
-        S.check(h.get("user-agent") == "VitAdhoc/2.0.0",
-                "the User-Agent is VitAdhoc/<version> and nothing says who the player is "
+        S.check(h.get("user-agent") == "VitAdhoc/2.0.0 (PlayStation Vita)",
+                "the User-Agent is the app's own, the one online play set up (the check does "
+                "not change it under the room client), and nothing says who the player is "
                 "(%s)" % h.get("user-agent"))
         S.check(not ({"cookie", "authorization", "x-device-id"} & set(h)) and
                 set(h) <= {"host", "user-agent", "accept", "accept-encoding", "connection"},
@@ -3676,6 +3678,22 @@ def t_update_check(S):
         S.check(r.has(r"^EVT update_check failed err=TIMEOUT") and not r.evt("update_toast"),
                 "an answer that does not come: a timeout, logged, silent (%s)" %
                 [e["_"] for e in r.evt("update_check")])
+        # a game started while the answer is still awaited: the request is dropped
+        # (no request of ours while a game runs), nothing is said, and it was not
+        # the day's try
+        r = upd_run(S, "update_game_starts", srv, "slow", timeout=8000,
+                    script="60:shot=home.png\n+140:cross\n+200:shot=game.png\n" + EXIT_APP)
+        S.clean(r)
+        ev = [e["_"] for e in r.evt("update_check")]
+        S.check(r.has(r"^EVT update_check start by_hand=0") and
+                r.has(r"^EVT update_check dropped by_hand=0") and
+                not r.has(r"update_check (failed|newer|current)") and not r.evt("update_toast"),
+                "a game starts while the check is under way: dropped, silent (%s)" % ev)
+        S.check(r.has(r"^EVT game_start") or r.has(r"^EVT game_boot") or r.evt("clip_begin"),
+                "...and the game did start")
+        st = open(os.path.join(r.root, "update.txt")).read()
+        S.check(re.fullmatch(r"checked=0\nlatest=\n", st) is not None,
+                "...and it does not count as today's try (%r)" % st)
         # nobody listening
         dead = UpdateServer()
         deadurl = dead.url("newer")
@@ -6498,9 +6516,9 @@ def t_display_rows(S):
     """Settings > Display > Scanlines and LCD grid (0-10 each, independent,
     per console) and Screen overlay are rows, applied at once; the strengths
     darken the picture, and Ambient glow's strength brightens the bars."""
-    # browser Settings opens on Theme: 20 DOWN to Screen size (2.0 added Join online and the About row), 7 more to
-    # Scanlines (Screen fill is skipped: Wide view is off here), LCD grid is the row below
-    walk = "60:start\n" + "+8:down\n" * 27 + "+20:shot=grid.png\n"
+    # browser Settings opens on Theme: 21 DOWN to Screen size (2.0 added Join online, the About row and Check for updates),
+    # 7 more to Scanlines (Screen fill is skipped: Wide view is off here), LCD grid is the row below
+    walk = "60:start\n" + "+8:down\n" * 28 + "+20:shot=grid.png\n"
     r = S.run("display_rows", walk + "+4:right\n+10:down\n+4:right\n+8:right\n+10:down\n+10:shot=overlay.png\n"
               "+4:cross\n+20:circle\n+30:quit\n")
     S.clean(r)

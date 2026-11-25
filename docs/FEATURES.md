@@ -389,7 +389,7 @@ seconds, squeezed, in about 6 MB of memory; Save clip copies the last ten of the
 (a moment, usually under 2 MB) and a thread of its own turns them into the
 picture while the game goes on or the menu stays open. A toast says "Clip saved"
 when the file is there. With Game previews off, or in a link session (which keeps
-no recording), there is nothing to save and the menu says so. A game started
+no recording), there is nothing to save and the menu says which it is. A game started
 less than three seconds ago has too little to save. Where the game went still
 for a while before you opened the menu (a pause screen), the clip ends a second
 after it did, as the previews do.
@@ -411,13 +411,16 @@ screen: "VitAdhoc X.Y is out: get it with the CBOC Vita Installer or from
 GitHub". It never downloads or installs anything. **X** on the row checks now
 (also with the setting Off) and says what it found.
 
-What is sent is one request with the User-Agent `VitAdhoc/<version>` and the
-client's standard headers: no account, no console or device id, nothing about
+What is sent is one request with the app's User-Agent (`VitAdhoc/<version>
+(PlayStation Vita)`, the same on every console) and the client's standard
+headers: no account, no console or device id, nothing about
 your games. A failure (no network, a certificate, a timeout, an answer that is
-not a release) is only logged, and the next try is tomorrow's. The day of the
+not a release) is only logged, and the next try is tomorrow's. A request still
+under way when a game starts is dropped and asked again another time. The day of the
 last try and the newest version seen are in `update.txt`. The request uses the
-app's own HTTPS client (Mbed TLS, its own list of root certificates, the same
-as online play), not the Vita's system library.
+app's own HTTPS client (Mbed TLS, the same as online play), not the Vita's
+system library, with four root certificates that are trusted for
+`api.github.com` and for nothing else.
 
 ## Audio
 

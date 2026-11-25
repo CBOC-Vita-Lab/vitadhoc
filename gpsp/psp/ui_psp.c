@@ -7181,9 +7181,8 @@ static int screen_cheats(unsigned edges, const char *game)
  * rows 0-3 stay valid (it never navigates past Settings).  Save and load are
  * one row and one page since 3.5 (docs/UI-OVERLAY.md section 13). */
 #ifdef VITA
-/* THE VITA'S MENU: "Wireless" is Play together, and Cheats has a row.  Seven
- * rows, 24 px apart from y = 80 (the PSP's six sit 22 apart from 88): the
- * last band ends at 246, clear of the footer. */
+/* THE VITA'S MENU: "Wireless" is Play together, Cheats has a row, and so
+ * has Save clip.  Eight cards in a row (ui_vita_menu.h draws them). */
 enum { M_RESUME, M_SAVESTATES, M_WIRELESS, M_CHEATS, M_SETTINGS,
        M_CLIP,      /* 2.0: Save clip, the last ten seconds as an animated PNG */
        M_GAMELIST, M_EXIT, M_COUNT };
@@ -7296,8 +7295,17 @@ static ui_action screen_menu(unsigned edges, int session_active)
          /* On the page's plate, like the other notes: the answer of the
           * save itself is a toast when the file is written. */
          int rc = ui_host_clip_save();
+         ui_local_state ls;
+         memset(&ls, 0, sizeof(ls));
+         ui_host_local_state(&ls);
+         /* nothing recorded: say which of the three reasons it is (the
+          * recording is the previews', and a link keeps none) */
          snprintf(g_menu_note, sizeof(g_menu_note), "%s",
                   rc == 0 ? "Saving the last ten seconds as a clip..."
+                  : rc == 1 && !g_pcfg.previews
+                     ? "Turn on Game previews in Settings to save clips."
+                  : rc == 1 && (session_active || ls.active)
+                     ? "Clips are off while linked."
                   : rc == 1 ? "No clip yet: play for a few seconds first."
                   : rc == 2 ? "A clip is still being saved."
                   : "A clip could not be saved.");

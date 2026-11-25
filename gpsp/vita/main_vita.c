@@ -7385,6 +7385,7 @@ int main(int argc, char **argv)
          break;
 
       /* ---- load ---- */
+      upd_stop();                /* no request of ours while a game runs */
       if (!menu_log_stop())
       {
          app_notice("Storage is still busy", "Please try again in a moment.",

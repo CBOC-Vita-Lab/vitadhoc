@@ -19,7 +19,13 @@ given.
 
 Only these twelve roots are compiled in (`np_https_roots.h`): the first eight are
 the ones a Cloudflare-hosted service can chain to, the last four are the update
-check's (GitHub):
+check's (GitHub). They are two lists, not one: the last four carry
+`only_host = "api.github.com"` in the header, so a connection to
+`api.github.com` is verified against those four alone, and a connection to any
+other host (the room service) against the first eight alone. Adding GitHub's
+roots did not widen what the room service's connections accept
+(`test_onlinehttp.py`: `test_roots_are_per_host`,
+`test_a_host_with_its_own_roots_trusts_no_other`).
 
 | Root | Who serves chains to it |
 |---|---|
@@ -38,8 +44,9 @@ the cross-signed Sectigo root (which the USERTrust roots anchor) or in the
 Sectigo root itself, so both are trusted. The DER files are the ones of Ubuntu
 24.04's `ca-certificates` package 20260816ubuntu0.24.04.2 (Mozilla's root
 store), and the generator was run with `--pin` for each of these SHA-256
-values (they are the ones in common circulation; they were not checked against
-the CAs' own pages from here, which is a step for the release): USERTrust ECC
+values (the ones of Mozilla's root store; the two Sectigo E46 / R46 values
+were also compared with the Chrome Root Program's inclusion notice on the CCADB
+public list, the two USERTrust values with nothing but that store): USERTrust ECC
 `4ff460d5 4b9c86da bfbcfc57 12e0400d 2bed3fbc 4d4fbdaa 86e06adc d2a9ad7a`,
 USERTrust RSA `e793c9b0 2fd8aa13 e21c3122 8accb081 19643b74 9c898964 b1746d46 c3d4cbd2`,
 Sectigo E46 `c90f26f0 fb1b4018 b2222751 9b5ca2b5 3e2ca5b3 be5cf18e fe1bef47 380c5383`,

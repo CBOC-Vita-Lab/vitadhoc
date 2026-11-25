@@ -121,7 +121,8 @@ and in emulators; none of it has run on a real Vita yet (see
   ("VitAdhoc X.Y is out: get it with the CBOC Vita Installer or from
   GitHub"). Nothing is downloaded or installed, nothing about you is sent, and
   a failure is silent. X on the row checks now. The HTTPS client gained four
-  Sectigo root certificates (the ones GitHub's certificates chain to).
+  Sectigo root certificates (the ones GitHub's certificates chain to), trusted
+  for `api.github.com` only: online play's connections accept what they did.
 
 **Controls and gameplay**
 

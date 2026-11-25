@@ -25,6 +25,7 @@ static struct
    int (*online)(void);
    unsigned timeout_ms;
    time_t last;                         /* the last request's day (0 = never) */
+   time_t last_before;                  /* ...and what it was before the one in flight */
    char latest[24];                     /* the newest newer version known    */
    NpHttpsHandle h;
    int plain, by_hand;                  /* the request in flight             */
@@ -136,16 +137,15 @@ static int begin(time_t now, int by_hand)
 {
    NpHttpsRequest rq;
    NpHttpsError err = NP_HTTPS_OK;
-   char ua[48];
 
    if (U.h || !U.started)
       return -1;
    if (U.online && !U.online())
       return -1;
-   /* "VitAdhoc/<version>": all the server learns (the online play client
-    * writes its own, longer one, when it is set up, over this) */
-   snprintf(ua, sizeof(ua), "VitAdhoc/%s", U.version);
-   np_https_set_user_agent(ua);
+   /* The User-Agent is the HTTPS client's own, the one every request of the
+    * app has ("VitAdhoc/<version> (PlayStation Vita)", set once by the online
+    * play client): it is not changed here, where a room request may be
+    * under way and would go out with another name from then on. */
    memset(&rq, 0, sizeof(rq));
    rq.url = U.url;
    rq.method = "GET";
@@ -164,6 +164,7 @@ static int begin(time_t now, int by_hand)
 #endif
       U.h = np_https_start(&rq, &err);
    /* a try counts from here, answered or not: at most one a day */
+   U.last_before = U.last;
    U.last = now;
    save();
    if (!U.h)
@@ -285,6 +286,11 @@ void upd_stop(void)
       return;
    if (U.h)
    {
+      /* dropped, not answered: it is not the day's try (the next idle home
+       * screen asks again) */
+      fe_evt("update_check dropped by_hand=%d", U.by_hand);
+      U.last = U.last_before;
+      save();
 #if !defined(NP_TARGET_VITA)
       if (U.plain)
       {

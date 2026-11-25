@@ -19,13 +19,15 @@
  * WHEN.  Settings > About > Check for updates: Daily (the default) or Off.
  * Daily: at most one request a day (the time of the last one is in
  * update.txt in the data folder), made in the background while the home
- * screen has been idle for a couple of seconds and the network may be used
+ * screen has been idle for a couple of seconds (a request still under way
+ * when a game starts is dropped, and asked again another time) and the network may be used
  * (Wi-Fi is up and the radio is not in ad hoc mode, no link session: the
  * same rule as the box art's and RetroAchievements' fetching).  Off: no
  * request at all -- except the one the player asks for with X on the row.
  *
- * WHAT IS SENT.  One GET with a User-Agent of "VitAdhoc/<version>" and the
- * client's standard headers.  No account, no console or device id, no
+ * WHAT IS SENT.  One GET with the app's User-Agent ("VitAdhoc/<version>
+ * (PlayStation Vita)", the same on every console) and the client's standard
+ * headers.  No account, no console or device id, no
  * cookie, nothing about the player's games.  A failure of any kind (no
  * network, a certificate, a timeout, an answer that is not a release) is
  * logged and otherwise silent: the next try is tomorrow's.
@@ -89,7 +91,9 @@ int  upd_take_notice(char *text, size_t cap, int by_hand);
 /* The words of the notice for version `shown`. */
 void upd_notice_text(const char *shown, char *out, size_t cap);
 
-/* At exit: an unfinished request is cancelled. */
+/* At exit, and when a game starts (the game has the network and the
+ * processor from there): an unfinished request is cancelled, and does not
+ * count as the day's try. */
 void upd_stop(void);
 
 #ifdef __cplusplus

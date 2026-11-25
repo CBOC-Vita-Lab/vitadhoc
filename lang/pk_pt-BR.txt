@@ -1,0 +1,544 @@
+input.a_game_button_takes_one_button	Um botão de jogo aceita um botão
+input.a_shortcut_takes_at_most_four	Um atalho aceita no máximo quatro botões
+input.button_1	Botão 1
+input.button_2	Botão 2
+input.circle	Círculo
+input.cross	X
+input.d_pad_down	D-pad baixo
+input.d_pad_left	D-pad esquerda
+input.d_pad_right	D-pad direita
+input.d_pad_up	D-pad cima
+input.down	Baixo
+input.fast_forward	Avanço rápido
+input.left	Esquerda
+input.left_stick_down	Analóg. esq. baixo
+input.left_stick_left	Analóg. esq. esquerda
+input.left_stick_right	Analóg. esq. direita
+input.left_stick_up	Analóg. esq. cima
+input.mode	Modo
+input.no_such_button	Esse botão não existe
+input.not_set	Sem atribuição
+input.only_player_1_has_shortcuts	Só o jogador 1 tem atalhos
+input.pause	Pausar
+input.quick_load	Carga rápida
+input.quick_save	Salvar rápido
+input.rear_touch_bottom_left	Toque traseiro: inf. esq.
+input.rear_touch_bottom_right	Toque traseiro: inf. dir.
+input.rear_touch_top_left	Toque traseiro: sup. esq.
+input.rear_touch_top_right	Toque traseiro: sup. dir.
+input.rewind	Voltar no tempo
+input.right	Direita
+input.right_stick_down	Analóg. dir. baixo
+input.right_stick_left	Analóg. dir. esquerda
+input.right_stick_right	Analóg. dir. direita
+input.right_stick_up	Analóg. dir. cima
+input.screenshot	Captura de tela
+input.select	Select
+input.square	Quadrado
+input.start	Start
+input.start_select_opens_the_menu_pick	Start + Select abre o menu; escolha outros botões
+input.triangle	Triângulo
+input.turbo_a	Turbo A
+input.turbo_b	Turbo B
+input.up	Cima
+lang.auto	Automático
+link.connecting_over_the_internet	Conectando pela internet
+link.connecting_through_the_relay	Conectando pela retransmissão
+link.ending_the_link_together	Encerrando o link juntos
+link.link_ended	Link encerrado
+link.link_lost_the_other_vita_is	Link perdido: o outro Vita sumiu.
+link.nobody_answered	Ninguém respondeu.
+link.opening_a_path_to_the_other	Abrindo um caminho até o outro console
+link.playing_together	Jogando juntos
+link.reaching_player_1	Contatando o jogador 1
+link.receiving_the_game_from_player_1	Recebendo o jogo do jogador 1
+link.sending_the_game_to_player_2	Enviando o jogo ao jogador 2
+link.starting_the_game_together	Iniciando o jogo juntos
+link.the_game_could_not_be_saved	Não foi possível salvar o jogo.
+link.the_game_could_not_be_started	Não foi possível iniciar o jogo juntos.
+link.the_game_did_not_arrive_intact	O jogo não chegou inteiro. Tente de novo.
+link.the_link_failed	O link falhou.
+link.the_link_failed_2	O link falhou
+link.the_link_is_fine	O link está bom.
+link.the_link_was_cancelled	O link foi cancelado.
+link.the_other_vita_ended_the_link	O outro Vita encerrou o link.
+link.the_other_vita_plays_a_different	O outro Vita joga um jogo diferente.
+link.the_other_vita_runs_a_different	O outro Vita usa uma versão diferente do VitAdhoc.
+link.the_other_vita_s_game_did	O jogo do outro Vita não correspondeu.
+link.the_two_games_fell_out_of	Os dois jogos saíram de sincronia. O link terminou e nada foi salvo.
+link.there_was_not_enough_memory_to	Faltou memória para iniciar o link.
+link.this_vita_went_to_sleep_so	Este Vita entrou em repouso, então o link foi encerrado.
+link.waiting_for_player_2	Aguardando o jogador 2
+look.auto	Auto (%s)
+look.auto_eased	Auto (%s, suave)
+md.128_kb	128 KB
+md.16_kb	16 KB
+md.256_kb	256 KB
+md.32_kb	32 KB
+md.3_buttons	3 botões
+md.512_kb	512 KB
+md.64_kb	64 KB
+md.6_buttons	6 botões
+md.a_game_gear_game_has_one	A Game Gear tem só um controle.
+md.a_game_gear_game_has_one_2	A Game Gear tem só um controle
+md.asic	ASIC
+md.auto_follows_the_game_3_buttons	Auto segue o jogo: 3 ou 6 botões. Alguns jogos leem mal o controle de 6 botões; escolha 3 botões para eles.
+md.auto_follows_the_game_europe_runs	Auto segue o jogo. A Europa roda a 50 Hz, EUA e Japão a 60 Hz; alguns jogos só funcionam na própria região.
+md.both_edges	Ambas as bordas
+md.change_disc	Trocar disco
+md.cheat_code_game_genie_pro_action	Código de cheat (Game Genie, Pro Action Replay ou endereço:valor)
+md.cheat_list_not_saved	Lista de cheats não salva: %s. O arquivo antigo foi mantido.
+md.console	Console
+md.disc	Disco %d
+md.disc_could_not_be_read	Não foi possível ler o disco %d: %s
+md.disc_inserted	Disco %d inserido
+md.disc_is_in_the_drive_already	O disco %d já está na unidade
+md.disc_is_missing	Falta o disco %d: %s
+md.disc_tray_open	Bandeja aberta
+md.discrete	Discreto
+md.enhanced	Aprimorado
+md.europe_50_hz	Europa (50 Hz)
+md.extra_save_memory_some_games_can	Memória de save extra que alguns jogos usam além dos 8 KB internos do console. 512 KB é o padrão; 128 KB é o que a Sega vendeu; Desligado deixa o slot vazio. Um save feito com outro tamanho é mantido e volta ao escolher esse tamanho de novo. Vale na próxima vez que o jogo iniciar. Dois jogadores sempre usam 512 KB.
+md.fm_sound	Som FM
+md.fm_sound_unit	Unidade de som FM
+md.for_a_game_on_several_discs	Para jogo com vários discos: abre a bandeja, tira o disco, põe o que você escolher e fecha a bandeja, como à mão. Faça isso quando o jogo pedir outro disco. Saves e momentos salvos ficam com o jogo.
+md.games_on_the_master_system_cover	Jogos do Master System cobrem as 8 primeiras colunas com uma cor de borda ao rolar a tela. Oculta essas colunas; a imagem fica com 248 de largura.
+md.hide_masked_edge	Ocultar borda mascarada
+md.how_far_back_rewind_reaches_short	Até onde o retorno alcança: Curto cerca de 30 segundos, Médio cerca de um minuto. Os momentos salvos de um jogo em disco são grandes (cerca de 1 MB cada): cenas calmas mantêm esse tempo, uma cena que redesenha a tela toda (vídeo) guarda só alguns segundos. A memória que pode usar é fixa.
+md.japan	Japão
+md.lcd_colours	Cores do LCD
+md.lcd_ghosting	Rastro do LCD
+md.left_edge	Borda esquerda
+md.look_eased_to_keep_full_speed	Visual suave p/ manter velocidade
+md.m3u_empty	A lista .m3u não tem nenhum disco (.cue, .chd ou .iso).
+md.m3u_none_found	Nenhum dos discos da lista .m3u foi encontrado: %s
+md.m3u_unreadable	Não foi possível ler a lista .m3u.
+md.no_sprite_flicker	Sem tremor de sprites
+md.pad_type	Tipo de pad
+md.ram_cartridge	Cartucho de RAM
+md.region	Região
+md.sega_cd_bios_missing	Jogo de Sega CD: ponha sua própria BIOS do Sega CD (por exemplo us_scd1_9210.bin, eu_mcd1_9210.bin ou jp_mcd1_9112.bin) em ux0:data/GBAdhoc/bios ou ao lado do jogo
+md.sega_cd_bios_missing_notice	Um jogo de Sega CD precisa da BIOS: ponha-a em ux0:data/GBAdhoc/bios
+md.sega_cd_load_failed	%s. Sega CD: verifique a imagem do disco (.cue com seus .bin, .chd ou .iso). BIOS encontrada: %s.
+md.start_sega_games_from_vitadhoc	Inicie os jogos Sega pelo VitAdhoc.
+md.that_code_is_already_in_the	Esse código já está na lista
+md.that_code_points_at_an_address	Esse código aponta para um endereço que este jogo não tem
+md.that_is_not_a_cheat_code	Isso não é um código de cheat. Use XXXX-XXXX (Game Genie) ou AAAAAA:VVVV (Pro Action Replay)
+md.that_is_not_a_cheat_code_2	Isso não é um código de cheat. Use XXX-XXX (Game Genie), 00AA-AAVV (Pro Action Replay) ou AAAA:VV
+md.the_console_drew_only_4_sprites	O console desenhava só 4 sprites por linha, então os jogos piscavam o resto. Ligado desenha todos; o jogo em si roda igual.
+md.the_console_drew_only_8_sprites	O console desenhava só 8 sprites por linha, então os jogos piscavam o resto. Ligado desenha todos; o jogo em si roda igual.
+md.the_disc_is_being_changed_already	O disco já está sendo trocado
+md.the_game_gear_s_screen_showed	A tela do Game Gear mostrava cores mais suaves e nunca um preto de verdade. Ligado as desenha assim.
+md.the_list_names_a_disc_that_is_missing	A lista cita um disco que falta: %s
+md.the_master_system_s_fm_add	O acessório FM do Master System, usado por alguns jogos. Auto o liga nos jogos que o pedem.
+md.the_ram_cartridge_changes_when_the_game	O cartucho de RAM muda quando o jogo reinicia
+md.the_sega_core_could_not_start	Não foi possível iniciar o núcleo Sega.
+md.the_slow_game_gear_screen_left	A tela lenta do Game Gear deixava rastro atrás do que se movia. 0 é desligado, 10 é forte.
+md.the_sound_chip_discrete_is_the	O chip de som: Discreto é o YM2612 original, ASIC o YM3438 posterior, Aprimorado adiciona os agudos que faltam.
+md.usa	EUA
+menu.10_a_second	10 por segundo
+menu.15_a_second	15 por segundo
+menu.30_a_second	30 por segundo
+menu.a_faint_pixel_grid_like_a	Uma grade de pixels discreta, como na tela de um portátil. 1 é leve, 10 é forte.
+menu.a_number_you_type	Um número que você digita
+menu.a_shortcut_can_be_one_button	Um atalho pode ser um botão ou uma combinação: pressione-os juntos.
+menu.a_soft_glow_beside_the_picture	Um brilho suave ao lado da imagem no lugar das barras pretas.
+menu.add_a_cheat	Adicionar cheat
+menu.all_games	Todos os jogos
+menu.ambient_glow	Brilho ambiente
+menu.anything_the_game_has_not_saved	O que o jogo não salvou será perdido.
+menu.apply_to	Aplicar a
+menu.auto	Auto
+menu.auto_adapts_to_keep_60_fps	Auto se adapta para manter 60 fps; suaviza quando pode.
+menu.back	Voltar
+menu.back_to_the_game	Voltar ao jogo
+menu.back_to_the_game_list	Voltar à lista de jogos?
+menu.bigger_text_in_the_menus_of	Texto maior nos menus do app e dos players.
+menu.bilinear	Bilinear
+menu.brighter_text_and_clearer_edges_in	Texto mais claro e bordas mais nítidas nos menus do app e dos players.
+menu.btntest.chord	%s (combinação)
+menu.button_mapping	Mapeamento de botões
+menu.button_mapping_for_every_player_the	Mapeamento de botões de cada jogador, analógicos e botões turbo.
+menu.button_test	Teste de botões
+menu.buttons	Botões
+menu.cancel	Cancelar
+menu.change	Alterar
+menu.cheat_deleted	Cheat apagado
+menu.cheat_deleted_name	Apagado: %s
+menu.cheats	Cheats
+menu.cheats_you_add_or_turn_on	Os cheats que você adicionar ou ativar aparecem aqui.
+menu.choose_which_vita_button_does_what	Escolha qual botão do Vita faz o quê, para cada jogador.
+menu.clear	Limpar
+menu.cleared	%s limpo
+menu.coloured_stripes_like_a_crt_tube	Listras coloridas como em um tubo CRT. Escurece um pouco a imagem. 1 é leve, 10 é forte.
+menu.coming	Em breve
+menu.confirm	Confirmar
+menu.controls	Controles
+menu.controls_reset_to_the_defaults	Controles restaurados ao padrão
+menu.controls_save_failed	Não foi possível salvar os controles: %s
+menu.could_not_save_the_state_the	Não foi possível salvar o estado: o jogo não pôde ser capturado
+menu.crt_mask	Máscara CRT
+menu.customised	Personalizado
+menu.d_pad	D-pad
+menu.dark_lines_between_the_rows_like	Linhas escuras entre as fileiras, como numa TV. 1 é leve, 10 é forte.
+menu.default	Padrão
+menu.delete	Apagar
+menu.delete_slot	Apagar o Slot %d?
+menu.delete_this_cheat	Apagar este cheat?
+menu.empty_slot	Slot vazio
+menu.enhanced_2x	Aprimorado 2x
+menu.enhanced_3x	Aprimorado 3x
+menu.enhanced_4x	Aprimorado 4x
+menu.every_button_stick_and_turbo_setting	Todo botão, analógico e ajuste de turbo volta ao padrão.
+menu.exit	Sair
+menu.exit_help	Fechar o VitAdhoc
+menu.fast_forward	Avanço rápido
+menu.fast_forward_and_sound_while_it	Avanço rápido e som enquanto ele roda.
+menu.ff_button	Botão de avanço
+menu.find_a_value_s_address	Buscar o endereço de um valor
+menu.find_where_the_game_keeps_lives	Descubra onde o jogo guarda vidas, dinheiro ou saúde: anote o número e depois reduza conforme ele muda. Transforme um resultado em cheat.
+menu.game_list	Lista de jogos
+menu.h_m_played	%lldh %02lldm jogados
+menu.high_contrast	Alto contraste
+menu.hold	Segurar
+menu.hold_the_fast_forward_button_or	Segure o botão de avanço rápido, ou pressione uma vez para ligar e desligar o avanço rápido.
+menu.hold_the_rewind_button_to_run	Segure o botão de voltar no tempo para rodar o jogo para trás.
+menu.hold_turbo_runs_while_the_button	Segurar: o turbo age enquanto o botão é mantido. Alternar: pressione uma vez para iniciar, de novo para parar.
+menu.how_fast_it_runs_2x_and	Velocidade de execução. 2x e 3x podem acelerar o som, ou manter o tom normal. Ilimitado e Ilimitado suave são mudos: tantos quadros quanto couberem, uma imagem a cada dois refreshes (Ilimitado) ou a cada refresh (Ilimitado suave).
+menu.how_fast_turbo_a_presses_10	Velocidade do Turbo A: 10, 15 ou 30 vezes por segundo.
+menu.how_fast_turbo_b_presses_10	Velocidade do Turbo B: 10, 15 ou 30 vezes por segundo.
+menu.how_large_the_game_is_drawn	Tamanho do jogo na tela. Original mantém o formato do console; Pixel perfeito usa passos inteiros.
+menu.how_the_game_is_run_and	Como o jogo roda e é exibido.
+menu.image_quality	Qualidade de imagem
+menu.in_the_list	%d na lista
+menu.interface	Interface
+menu.is_now	%s agora é %s
+menu.keep	Manter
+menu.keep_sound	Manter o som
+menu.keep_the_places_that_are_just	Mantém os locais iguais ao que eram na última etapa.
+menu.keep_the_places_that_are_not	Mantém os locais diferentes do que eram na última etapa.
+menu.keep_the_places_that_do_not	Mantém os locais que não têm o número digitado.
+menu.keep_the_places_that_hold_less	Mantém os locais com valor menor que o número digitado.
+menu.keep_the_places_that_hold_more	Mantém os locais com valor maior que o número digitado.
+menu.keep_the_places_that_hold_the	Mantém os locais que têm o número digitado. Procure-o no jogo.
+menu.keep_the_places_that_went_down	Mantém os locais que diminuíram desde a última etapa.
+menu.keep_the_places_that_went_up	Mantém os locais que aumentaram desde a última etapa.
+menu.keep_these_controls_for_every_game	Manter estes controles em todos os jogos, ou só neste.
+menu.keep_these_picture_settings_for_every	Manter estes ajustes de imagem em todos os jogos, ou só neste.
+menu.language	Idioma
+menu.large	Grande
+menu.lcd_grid	Grade do LCD
+menu.lcd_pch_2000	LCD (PCH-2000)
+menu.leave_this_game_for_the_game	Sair deste jogo para a lista de jogos
+menu.left_stick	Analógico esquerdo
+menu.left_stick_2	Analógico esquerdo  %d, %d
+menu.lets_the_rear_touch_panel_s	Deixa os quatro cantos do painel traseiro agirem como botões mapeáveis.
+menu.load	Carregar
+menu.load_undone	Carga desfeita
+menu.loading_states_is_not_available	Carregar estados não está disponível
+menu.look_at_the_game_s_memory	Ver a memória do jogo agora
+menu.make_this_a_cheat_that_keeps	Cria um cheat que mantém o valor atual.
+menu.map.press_ok_for	Pressione OK e depois o botão do Vita que deve ser %s.
+menu.medium	Médio
+menu.min_played	%lld min jogados
+menu.mmpx_2x	MMPX 2x
+menu.mmpx_at_twice_its_size_crisp	MMPX no dobro do tamanho: pixel art nítida, leve para o Vita.
+menu.modal.cheat_delete_body	O cheat é removido da lista. Isso não pode ser desfeito.
+menu.modal.cheat_delete_body_named	"%s" é removido da lista. Isso não pode ser desfeito.
+menu.modal.exit_title	Fechar o VitAdhoc?
+menu.modal.exit_title_named	%s?
+menu.most_counters_are_1_byte_try	A maioria dos contadores tem 1 byte. Tente 2 bytes para dinheiro e pontos. Qualquer endereço também olha lugares ímpares. Usado na próxima Nova busca.
+menu.most_counters_are_1_byte_try_2	A maioria dos contadores tem 1 byte. Tente 2 bytes para dinheiro e pontos, 4 bytes para números grandes. Usado na próxima Nova busca.
+menu.moved_here_from	%s veio de %s para cá
+menu.moves_like_the_d_pad	Age como o D-pad
+menu.narrow_it_down_to_or_fewer	Reduza a %d ou menos para vê-los.
+menu.new_search	Nova busca
+menu.no_cheats_for_this_game	Sem cheats para este jogo
+menu.no_cheats_yet	Ainda sem cheats
+menu.no_picture	Sem imagem
+menu.no_results_start_a_new_search	Sem resultados. Inicie uma nova busca
+menu.no_saved_state_in_this_slot	Nenhum estado salvo neste slot
+menu.normal	Normal
+menu.normal_pitch	Tom normal
+menu.not_set	Sem atribuição
+menu.not_usable_here	Não utilizável aqui
+menu.not_used	Não usado
+menu.nothing_matched_start_a_new_search	Nada correspondeu. Inicie uma nova busca.
+menu.nothing_pressed_the_button_was_not	Nada pressionado: o botão não foi alterado
+menu.nothing_to_undo	Nada para desfazer
+menu.off	Desligado
+menu.oled_pch_1000	OLED (PCH-1000)
+menu.on	Ligado
+menu.original	Original
+menu.overwrite	Sobrescrever
+menu.overwrite_slot	Sobrescrever o Slot %d?
+menu.pick_a_result_to_make_it	Escolha um resultado para criar um cheat que mantém o valor.
+menu.pick_the_player_whose_buttons_you	Escolha o jogador cujos botões você está alterando.
+menu.picture	Imagem
+menu.picture_controls_speed_and_text	Imagem, controles, velocidade e texto
+menu.play_together	Jogar juntos
+menu.play_with_a_friend	Jogar com um amigo
+menu.player	Jogador
+menu.player_2	Jogador %d
+menu.player_buttons_reset	Botões do Jogador %d restaurados
+menu.press_a_button_for	Pressione um botão para %s
+menu.press_ok_then_the_vita_button	Pressione OK e depois o botão do Vita para isso.
+menu.press_one_button_or_hold_several	Pressione um botão, ou segure vários juntos para uma combinação.
+menu.press_the_vita_button_stick_direction	Pressione o botão do Vita, a direção do analógico ou o canto traseiro a usar.
+menu.ps_tv	PS TV
+menu.put_every_button_stick_and_turbo	Restaura ao padrão todo botão, analógico e ajuste de turbo.
+menu.put_this_player_s_buttons_back	Restaura ao padrão os botões deste jogador.
+menu.quit	Sair
+menu.rear_touch_panel	Painel traseiro
+menu.reason.no_link	Indisponível para este console: o player não tem link
+menu.reason.unsupported	Indisponível neste player
+menu.remember_the_game_s_memory_as	Memoriza a memória do jogo como está agora. Continue jogando e depois reduza a lista com as etapas abaixo.
+menu.reset	Redefinir
+menu.reset_game	Reiniciar jogo
+menu.reset_the_controls	Redefinir os controles?
+menu.reset_the_game	Reiniciar o jogo?
+menu.reset_this_player_s_buttons	Redefinir os botões deste jogador
+menu.reset_to_defaults	Restaurar padrões
+menu.results	Resultados
+menu.resume	Retomar
+menu.rewind	Voltar no tempo
+menu.rewind_length_help	Até onde o retorno alcança: Curto cerca de 30 segundos, Médio cerca de um minuto. Um jogo pesado guarda um pouco menos: a memória que pode usar é fixa.
+menu.right_stick	Analógico direito
+menu.right_stick_2	Analógico direito  %d, %d
+menu.save	Salvar
+menu.save_here	Salvar aqui
+menu.save_or_load_the_game_of	Salvar ou carregar o jogo: %d de %d slots usados
+menu.save_states	Estados salvos
+menu.saved	Salvo
+menu.saving_states_is_not_available	Salvar estados não está disponível
+menu.saving_to_slot	Salvando no slot %d...
+menu.scanlines	Scanlines
+menu.screen	Tela
+menu.screen_size	Tamanho da tela
+menu.screen_size_image_quality_scanlines_lcd	Tamanho da tela, qualidade de imagem, scanlines, grade LCD e brilho ambiente.
+menu.search.ask_number	%s (um número)
+menu.search.found_at	Encontrado em %s
+menu.search.n_result	%d resultado
+menu.search.n_results	%d resultados
+menu.search_memory	Buscar na memória
+menu.search_started_places_play_on_then	Busca iniciada: %d locais. Continue jogando e depois reduza
+menu.select	Select
+menu.settings	Configurações
+menu.shape.fit	Ajustar
+menu.shape.pixel_perfect	Pixel perfeito
+menu.shape.stretch	Esticar
+menu.shape.zoom	Zoom
+menu.sharp_bilinear	Bilinear nítido
+menu.short	Curto
+menu.shows_each_button_stick_and_touch	Mostra cada botão, analógico e painel de toque ao pressionar, e o que faz.
+menu.shows_more_of_the_world_than	Mostra mais do mundo do que o console mostrava, em jogos com perfil de visão ampla.
+menu.since_the_last_step	Desde a última etapa
+menu.size_of_the_number	Tamanho do número
+menu.slot	Slot %d
+menu.slot_deleted	Slot %d apagado
+menu.slot_of	Slot %d de %d
+menu.smoothed_at_four_times_its_size	Suavizado em quatro vezes o tamanho. Mais detalhe e mais trabalho.
+menu.smoothed_at_three_times_its_size	Suavizado em três vezes o tamanho. Mais detalhe, mais trabalho.
+menu.smoothed_at_twice_the_game_s	Suavizado no dobro do tamanho do jogo, depois ajustado.
+menu.sped_up	Acelerado
+menu.speed	Velocidade
+menu.speed.value_ff	Avanço rápido %s
+menu.start_again	Recomeçar
+menu.start_the_game_again_from_the	Inicia o jogo de novo desde o começo
+menu.state_loaded_from_slot	Estado carregado do slot %d
+menu.state_saved_to_slot	Estado salvo no slot %d
+menu.states.empty	Vazio
+menu.stay	Ficar
+menu.text_size	Tamanho do texto
+menu.text_size_and_high_contrast_for	Tamanho do texto e alto contraste para os menus do app e dos players.
+menu.the_cheat_could_not_be_deleted	Não foi possível apagar o cheat
+menu.the_game_s_own_pixels_evenly	Os pixels do jogo, com tamanho uniforme em qualquer tela.
+menu.the_game_starts_again_from_the	O jogo recomeça do início. O que ele não salvou será perdido.
+menu.the_saved_state_and_its_picture	O estado salvo e sua imagem são removidos. Isso não pode ser desfeito.
+menu.the_search_could_not_start_not	Não foi possível iniciar a busca: memória insuficiente
+menu.the_sound_while_fast_forwarding_off	O som durante o avanço rápido: desligado, acelerado com o jogo, ou no tom normal.
+menu.the_state_could_not_be_deleted	Não foi possível apagar o estado
+menu.the_state_could_not_be_loaded	Não foi possível carregar o estado: este jogo ou versão não consegue lê-lo
+menu.the_state_saved_there_will_be	O estado salvo ali será substituído pelo jogo como está agora.
+menu.the_undo_could_not_be_applied	Não foi possível aplicar o desfazer
+menu.there_is_no_memory_to_search	Não há memória para buscar neste jogo
+menu.there_is_no_search_to_narrow	Não há busca para reduzir
+menu.this_game	Este jogo
+menu.this_place_cannot_be_made_into	Este local não pode virar um cheat aqui
+menu.to_leave_hold_start_select_or	Para sair: segure Start + Select, ou toque nesta linha
+menu.toggle	Alternar
+menu.touch_screen	Tela de toque
+menu.touch_screen_2	Tela de toque  %d, %d
+menu.touching	Tocando
+menu.turbo_a_speed	Velocidade do Turbo A
+menu.turbo_b_speed	Velocidade do Turbo B
+menu.turbo_mode	Modo turbo
+menu.turn_cheats_on_and_off	Ativar e desativar cheats
+menu.turn_this_cheat_on_or_off	Ativa ou desativa este cheat.
+menu.turn_this_cheat_on_or_off_2	Ativa ou desativa este cheat. Triângulo ou Apagar o remove.
+menu.type_a_game_genie_pro_action	Digite um código Game Genie, Pro Action Replay ou endereço=valor com o teclado.
+menu.type_a_whole_number_from_0	Digite um número inteiro de 0 a %u (ou 0x e hex)
+menu.ui.language_help	Idioma dos menus do app e dos players. Automático segue o idioma do próprio Vita; um idioma sem tradução mostra inglês.
+menu.ui.large_text	Texto grande
+menu.ui.normal_text	Texto normal
+menu.ui.value_contrast	%s, alto contraste
+menu.undo_last_load	Desfazer última carga
+menu.unlimited	Ilimitado
+menu.unlimited_smooth	Ilimitado suave
+menu.video_filter_help	Como a imagem se ajusta à tela. Bilinear nítido: pixels exatos com bordas suavizadas, em qualquer tamanho. Bilinear: suave, cada pixel se mistura ao próximo.
+menu.waiting	Aguardando...  %d
+menu.what_the_left_stick_does_nothing	O que o analógico esquerdo faz: nada, o D-pad, ou botões próprios mapeáveis.
+menu.what_the_right_stick_does_nothing	O que o analógico direito faz: nada, o D-pad, ou botões próprios mapeáveis.
+menu.which_vita_screen_this_is_oled	Qual tela de Vita é esta. OLED suaviza um pouco as cores. Todo console.
+menu.wide_view	Visão ampla
+patch.patch_applied_checksums_match	Patch aplicado (checksums conferem)
+patch.patch_applied_this_kind_of_patch	Patch aplicado (este tipo de patch não consegue verificar a ROM)
+patch.the_patch_file_is_cut_short	O arquivo de patch está incompleto
+patch.the_patch_file_is_damaged	O arquivo de patch está danificado
+patch.the_patch_file_is_not_valid	O arquivo de patch não é válido
+patch.the_patched_rom_does_not_match	A ROM com patch não confere com o checksum do patch
+patch.the_patched_rom_would_be_too	A ROM com patch ficaria grande demais
+patch.this_patch_was_made_for_a	Este patch foi feito para outra ROM
+player.a_name_for_it_you_can	Um nome para ele (pode deixar vazio)
+player.brought_in_the_newer_retroarch_save	Save mais novo do RetroArch importado
+player.cancel_hint	%s: cancelar
+player.cheat_added	Cheat adicionado e ativado: %s
+player.cheat_added_not_saved	Cheat adicionado e ativado, mas a lista não pôde ser salva: %s
+player.cheat_deleted_not_saved	Cheat apagado, mas a lista não pôde ser salva: %s
+player.cheat_off	Cheat desativado: %s
+player.cheat_off_not_saved	Cheat desativado, mas a lista não pôde ser salva: %s
+player.cheat_on	Cheat ativado: %s
+player.cheat_on_not_saved	Cheat ativado, mas a lista não pôde ser salva: %s
+player.cheats_are_off_while_linked_to	Cheats desativados durante a conexão com outro console.
+player.could_not_bring_in_the_retroarch	Não foi possível importar o save do RetroArch: o save antigo foi mantido
+player.could_not_continue	Não foi possível continuar: %s
+player.could_not_continue_the_resume_point	Não foi possível continuar: o ponto de retomada não serve para este jogo
+player.could_not_save_the_screen_settings	Não foi possível salvar os ajustes de tela
+player.draws_each_picture_on_its_own	Desenha cada imagem em uma thread própria, então opções de imagem pesadas não deixam o jogo lento. Desligue se a imagem tiver problemas.
+player.european_games_run_at_50_hz	Jogos europeus rodam a 50 Hz. O 50 Hz suave os joga na velocidade real e uniformiza a imagem: um refresh em seis mostra a mistura de dois quadros. O 50 Hz real repete um quadro em seis; o 60 Hz rápido os roda 20 % fora do ritmo, como em uma tela de 60 Hz.
+player.fast_60_hz	60 Hz rápido
+player.game_not_started_err	Não foi possível iniciar este jogo: %s
+player.hardcore_mode_the_game_starts_from	Modo Hardcore: o jogo começa do início
+player.moved_old_states	%d estados antigos movidos para os novos slots
+player.moved_one_old_state	%d estado antigo movido para os novos slots
+player.no_game_was_given	Nenhum jogo foi informado.
+player.no_point_to_continue_from_the	Sem ponto para continuar: o jogo começa do início
+player.not_enough_memory	Memória insuficiente.
+player.pal_games_speed	Velocidade jogos PAL
+player.patch_failed_notice	Não foi possível aplicar o patch: %s
+player.quick_response	Resposta rápida
+player.returning_to_vitadhoc	Voltando ao VitAdhoc...
+player.rewind_length	Duração do retorno
+player.save_failed_retry	Não foi possível salvar o jogo: %s. O save antigo foi mantido; tentando de novo.
+player.shows_what_you_press_one_frame	Mostra o que você pressiona um quadro antes: o próximo quadro é calculado adiantado e exibido. O jogo em si roda igual. Auto usa enquanto o jogo deixar tempo.
+player.slot	Slot %d: %s
+player.slot_1_is_empty	O Slot 1 está vazio
+player.slot_could_not_be_loaded_this	Não foi possível carregar o Slot %d: este jogo não consegue lê-lo
+player.smooth_50_hz	50 Hz suave
+player.smooth_hand_over	Transição suave
+player.start_it_from_the_game_list	Inicie pela lista de jogos: Configurações > Dois jogadores
+player.state_loaded_from_slot_1	Estado carregado do slot 1
+player.steady_pacing	Ritmo constante
+player.that_code_is_too_long_16	Esse código é longo demais (no máximo 16 partes)
+player.the_cheat_could_not_be_added	Não foi possível adicionar o cheat
+player.the_cheat_list_is_full	A lista de cheats está cheia
+player.the_connection_could_not_be_opened	Não foi possível abrir a conexão.
+player.the_game_file_could_not_be	Não foi possível ler o arquivo do jogo.
+player.the_game_file_could_not_be_2	Não foi possível ler o arquivo do jogo de novo.
+player.the_game_is_saved_again	O jogo foi salvo de novo
+player.the_game_was_reset	O jogo foi reiniciado
+player.the_patch_could_not_be_applied	Não foi possível aplicar o patch, então o jogo não foi iniciado.
+player.the_resume_point_was_made_with	O ponto de retomada foi feito com outro patch: o jogo começa do início
+player.the_two_player_game_could_not	Não foi possível iniciar o jogo para dois.
+player.the_two_player_link_could_not	Não foi possível iniciar o link para dois jogadores.
+player.this_cheat_cannot_be_switched_on	Este cheat não pode ser ativado aqui
+player.this_game_could_not_be_started	Não foi possível iniciar este jogo.
+player.true_50_hz	50 Hz real
+player.two_player_game	Jogo para dois
+player.unknown_error	erro desconhecido
+player.video_filter	Filtro de vídeo
+player.when_a_scene_is_too_heavy	Quando uma cena é pesada demais para todos os quadros, mostra um quadro sim, outro não, de forma uniforme. O jogo em si mantém a velocidade total.
+ra.achievement	Conquista: %s (%u)
+ra.achievements_sent	Conquistas enviadas
+ra.achievements_will_be_sent_when_back	Conquistas serão enviadas ao voltar online
+ra.challenge	Desafio: %s
+ra.challenges_active	%u desafios ativos
+ra.completed	Concluído: %s
+ra.error	RetroAchievements: %s
+ra.hardcore_no_cheats	Modo Hardcore: cheats desativados
+ra.hardcore_no_rewind	Modo Hardcore: voltar no tempo desativado
+ra.hardcore_no_states	Modo Hardcore: não é possível carregar estados
+ra.leaderboard_attempt	Tentativa de placar: %s
+ra.leaderboard_failed	Tentativa de placar falhou: %s
+ra.leaderboard_submitted	Enviado: %s %s
+ra.mastered	Dominado: %s
+ra.no_achievements_for_this_game_yet	Ainda não há conquistas para este jogo
+ra.progress	%u de %u conquistas
+ra.progress_hardcore	%u de %u conquistas - Hardcore
+ra.rank	Posição %u de %u
+ra.retroachievements_does_not_know_this_version	O RetroAchievements não conhece esta versão
+ra.server_error	RetroAchievements: erro do servidor
+ra.set_completed	Conjunto concluído: %s
+ra.sign_in_retry	RetroAchievements: não foi possível entrar, tentará de novo
+ra.unavailable_error	Conquistas indisponíveis: %s
+ra.unavailable_no_answer	Conquistas indisponíveis: sem resposta
+rewind.chip	<< VOLTAR %u s
+rewind.chip_oldest	<< VOLTAR %u s (mais antigo)
+rewind.rewind_failed	Falha ao voltar no tempo
+rewind.rewind_is_off_while_games_are	Voltar no tempo desativado com jogos conectados
+rewind.rewind_is_switched_off_settings	Voltar no tempo está desligado (Configurações)
+rewind.rewind_not_enough_memory_for_it	Voltar no tempo: memória insuficiente
+rewind.this_is_as_far_back_as	Este é o limite do retorno
+search.1_byte	1 byte
+search.2_bytes	2 bytes
+search.2_bytes_any_address	2 bytes, qualquer endereço
+search.4_bytes	4 bytes
+search.4_bytes_any_address	4 bytes, qualquer endereço
+search.changed	Mudou
+search.decreased	Diminuiu
+search.equal_to	Igual a
+search.greater_than	Maior que
+search.increased	Aumentou
+search.less_than	Menor que
+search.not_equal_to	Diferente de
+search.unchanged	Não mudou
+snes.8_7_console	8:7 (console)
+snes.averages_pairs_of_columns_in_512	Faz a média de pares de colunas em imagens de 512 de largura, suavizando seus efeitos de transparência em dither. Suaviza o texto.
+snes.averages_pairs_of_lines_in_interlaced	Faz a média de pares de linhas em imagens entrelaçadas, o que remove o tremor.
+snes.blend_hi_res_columns	Mesclar colunas hi-res
+snes.blend_interlace_lines	Mesclar linhas entrelaçadas
+snes.cheat_code_game_genie_pro_action	Código de cheat (Game Genie, Pro Action Replay ou endereço=valor)
+snes.look_eased_to_keep_full_speed	Visual suavizado para manter a velocidade
+snes.multitap	Multitap
+snes.pixel_perfect_only_the_console_s	Só no pixel perfeito: os pixels levemente largos do console (8:7), ou quadrados.
+snes.pixel_shape	Formato do pixel
+snes.start_snes_games_from_vitadhoc	Inicie os jogos de SNES pelo VitAdhoc.
+snes.that_code_points_at_address_0	Esse código aponta para o endereço 0, que não pode ser alterado
+snes.that_is_not_a_cheat_code	Isso não é um código de cheat. Use XXXX-XXXX (Game Genie), AAAAAAVV (Pro Action Replay) ou AAAAAA=VV
+snes.the_snes_core_could_not_start	Não foi possível iniciar o núcleo do SNES.
+snes.the_super_multitap_for_players_3	O Super Multitap para os jogadores 3 e 4. Auto o liga nos jogos que sabidamente o usam.
+speed.unlimited	>> Ilimitado
+speed.unlimited_smooth	>> Ilimitado suave
+states.apr	Abr
+states.aug	Ago
+states.could_not_save_the_state	Não foi possível salvar o estado: %s
+states.dec	Dez
+states.feb	Fev
+states.jan	Jan
+states.jul	Jul
+states.jun	Jun
+states.mar	Mar
+states.may	Mai
+states.no_saved_state_in_this_slot	Nenhum estado salvo neste slot
+states.no_such_slot	Esse slot não existe
+states.nov	Nov
+states.oct	Out
+states.sep	Set
+states.the_state_could_not_be_read	Não foi possível ler o estado do cartão de memória
+states.the_state_could_not_be_written	Não foi possível gravar o estado
+states.the_state_file_is_damaged	O arquivo de estado está danificado
+states.the_state_file_is_too_large	O arquivo de estado é grande demais
+util.bad_request	requisição inválida
+util.could_not_replace_the_old_file	não foi possível substituir o arquivo antigo (foi mantido)
+util.could_not_write_to_the_memory	não foi possível gravar no cartão de memória (cheio ou protegido contra gravação)
+util.the_card_did_not_keep_what	o cartão não guardou o que foi gravado

@@ -1165,7 +1165,7 @@ static ui_action screen_cheat_search(unsigned edges, unsigned pad)
       case CSR_NEW:
          snprintf(label, sizeof(label), "New search");
          snprintf(value, sizeof(value), "%s", pk_cs_active(&g_cs.cs)
-                  ? "Start again" : "Look at the memory now");
+                  ? "Start again" : "Look at the game's memory now");
          break;
       case CSR_RESULTS:
          snprintf(label, sizeof(label), "Results");
@@ -1174,7 +1174,7 @@ static ui_action screen_cheat_search(unsigned edges, unsigned pad)
       case CSR_OP:
          snprintf(label, sizeof(label), "%s", pk_cs_op_name(arg[i]));
          snprintf(value, sizeof(value), "%s", pk_cs_op_needs_value(arg[i])
-                  ? "a number you type" : "since the last step");
+                  ? "A number you type" : "Since the last step");
          break;
       default:
          pk_cs_addr_text(&g_cs.cs, g_cs.addr[arg[i]], label, sizeof(label));

@@ -1309,7 +1309,13 @@ bool MdPlayer::search_setup(pk_cs *cs)
 	static const pk_cs_region md_reg[1] = { { 0, 0x10000 } };
 	static const pk_cs_region z80_reg[1] = { { 0, 0x2000 } };
 	if (system_ == MD_SYS_MD) pk_cs_init(cs, &MdPlayer::ra_read, this, PK_CS_MDW, PK_CS_MD, md_reg, 1);
-	else pk_cs_init(cs, &MdPlayer::ra_read, this, PK_CS_Z80, PK_CS_LE, z80_reg, 1);
+	else {
+		/* an SG-1000 has 1 KB of RAM (an SG-1000 II 2 KB) repeated up to $DFFF: only the first copy is searched, the one a typed
+		 * code writes (the copies would be eight results for one place, seven of them codes that do nothing) */
+		const std::string hw = md_host_system_hw();
+		pk_cs_region one[1] = { { 0, hw == "SG-1000" ? 0x400u : hw == "SG-1000 II" ? 0x800u : z80_reg[0].size } };
+		pk_cs_init(cs, &MdPlayer::ra_read, this, PK_CS_Z80, PK_CS_LE, one, 1);
+	}
 	return true;
 }
 

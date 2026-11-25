@@ -295,11 +295,12 @@ static inline int pk_cs_code(const pk_cs *cs, uint32_t addr, uint32_t v, char *o
 	out[0] = 0;
 	if (cs->kind == PK_CS_GBA)
 	{
-		/* RAM address: AAAAAAAA with VV, VVVV or VVVVVVVV */
+		/* RAM address: AAAAAAAA with VV or VVVV, and AAAAAAAA:VVVVVVVV (the app reads "AAAAAAAA VVVVVVVV" with a value
+		 * under 0x100 as a one byte write, the raw GameShark line; the colon form is 4 bytes whatever the value) */
 		uint32_t real = addr < 0x8000 ? 0x03000000u + addr : 0x02000000u + (addr - 0x8000);
 		if (w == 1) snprintf(t, sizeof t, "%08X %02X", (unsigned)real, (unsigned)v);
 		else if (w == 2) snprintf(t, sizeof t, "%08X %04X", (unsigned)real, (unsigned)v);
-		else snprintf(t, sizeof t, "%08X %08X", (unsigned)real, (unsigned)v);
+		else snprintf(t, sizeof t, "%08X:%08X", (unsigned)real, (unsigned)v);
 		if (strlen(t) + 1 > cap)
 			return 0;
 		strcpy(out, t);
@@ -307,17 +308,26 @@ static inline int pk_cs_code(const pk_cs *cs, uint32_t addr, uint32_t v, char *o
 	}
 	if (cs->kind == PK_CS_MDW)
 	{
-		/* AAAAAA:VVVV, a word at an even 68000 address. "Keep the value" writes back what is there now, so a byte or a
-		 * long is the word or words it lies in, read as they are (the core's layout: the byte at X is the 68000's byte at
-		 * X ^ 1, so the word is the two bytes at the even X, low byte first). */
+		/* A byte is AAAAAA:VV, the byte at its 68000 address (the core's layout: the byte at X is the 68000's byte at
+		 * X ^ 1). A word is AAAAAA:VVVV at its even address, a long its two words, the high one first. The player
+		 * stores a word under 0100 as Genesis Plus GX does, as its low byte alone, so such a word also gets its high
+		 * byte as AAAAAA:00: then the whole word is kept whatever the game writes there. */
 		uint32_t a, first = addr & ~1u, last = (addr + (uint32_t)w - 1) & ~1u;
-		(void)v;
+		if (w == 1)
+		{
+			snprintf(t, sizeof t, "%06X:%02X", (unsigned)(0xFF0000u + ((addr ^ 1u) & 0xFFFFu)), (unsigned)(v & 0xFFu));
+			if (strlen(t) + 1 > cap)
+				return 0;
+			strcpy(out, t);
+			return (int)strlen(out);
+		}
 		for (a = first; a <= last; a += 2)
 		{
-			uint8_t b[2];
-			if (!cs->read || cs->read(cs->ud, a, b, 2) != 2)
-				return 0;
-			snprintf(t, sizeof t, "%s%06X:%04X", len ? "+" : "", (unsigned)(0xFF0000u + a), (unsigned)(b[0] | b[1] << 8));
+			const unsigned word = w == 2 ? (unsigned)(v & 0xFFFFu) : (unsigned)((a == first ? v >> 16 : v) & 0xFFFFu);
+			if (word & 0xFF00u)
+				snprintf(t, sizeof t, "%s%06X:%04X", len ? "+" : "", (unsigned)(0xFF0000u + a), word);
+			else
+				snprintf(t, sizeof t, "%s%06X:%04X+%06X:00", len ? "+" : "", (unsigned)(0xFF0000u + a), word, (unsigned)(0xFF0000u + a));
 			if (len + strlen(t) + 1 > cap)
 				return 0;
 			strcpy(out + len, t);
@@ -331,8 +341,12 @@ static inline int pk_cs_code(const pk_cs *cs, uint32_t addr, uint32_t v, char *o
 		uint32_t a = addr + (uint32_t)k;
 		switch (cs->kind)
 		{
-		case PK_CS_GB:                        /* GameShark 01VVAAAA, the address low byte first */
-			snprintf(t, sizeof t, "%s01%02X%02X%02X", k ? "+" : "", b, (unsigned)(a & 0xFF), (unsigned)((a >> 8) & 0xFF));
+		case PK_CS_GB:                        /* GameShark 01VVAAAA, the address low byte first. D000-DFFF is 91VVAAAA:
+			                                       * work RAM bank 1, the bank the search read (gbcore_ra_read), whichever
+			                                       * bank a Game Boy Color game has mapped when the code is applied; a
+			                                       * Game Boy, with its one bank, takes it as 01 */
+			snprintf(t, sizeof t, "%s%s%02X%02X%02X", k ? "+" : "", a >= 0xD000 && a < 0xE000 ? "91" : "01", b,
+			         (unsigned)(a & 0xFF), (unsigned)((a >> 8) & 0xFF));
 			break;
 		case PK_CS_NES:
 			snprintf(t, sizeof t, "%s%04X:%02X", k ? "+" : "", (unsigned)a, b);

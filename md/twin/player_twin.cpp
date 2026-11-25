@@ -747,7 +747,7 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 		if (md) { EXPECT(to_row("Size of the number")); rig.press(PH_RIGHT); }   /* 2 bytes: a word */
 		EXPECT(to_row("New search"));
 		rig.press(PH_CIRCLE);
-		EXPECT(pl->menu().search_active() && (md ? pl->menu().search_count() == 0x8000 : (pl->menu().search_count() > 0x300 && pl->menu().search_count() <= 0x2000)));   /* the SG-1000 has less RAM than the other 8 bit systems */
+		EXPECT(pl->menu().search_active() && (md ? pl->menu().search_count() == 0x8000 : pl->menu().search_count() == (std::string(md_host_system_hw()) == "SG-1000" ? 0x400 : std::string(md_host_system_hw()) == "SG-1000 II" ? 0x800 : 0x2000)));   /* an SG-1000's 1 KB is searched once, not its copies up to $DFFF */
 		rig.pf.ime_answers.push_back(md ? "43981" : "171");
 		EXPECT(to_row("Equal to"));
 		rig.press(PH_CIRCLE);
@@ -777,6 +777,36 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 		EXPECT(pl->menu().notices().text().find("Cheat added and on") == 0);
 		EXPECT(pl->delete_cheat(n0));
 		EXPECT((int) pl->cheats().size() == n0);
+		if (md) {
+			/* the code keeps the place found and nothing else. The player stores a 00VV patch in one byte (as Genesis Plus GX does):
+			 * a byte that holds 0 at an even 68000 address is still that byte, and a word under 0100 is kept with both its bytes */
+			pk_cs cs;
+			char code[64];
+			auto play_with = [&](const char *c, const char *name) {
+				pl->cheat_entered(true, c, name);
+				close_menu();
+				rig.run(3);
+				pl->open_menu(0);
+				rig.settle(4);
+			};
+			EXPECT(pl->search_setup(&cs));
+			play_with("FFF200:1234", "fill");
+			EXPECT(md_host_peek(0xFFF200) == 0x12 && md_host_peek(0xFFF201) == 0x34);
+			EXPECT(pl->delete_cheat(n0));
+			cs.width = 1;
+			EXPECT(pk_cs_code(&cs, 0xF201, 0x00, code, sizeof code) > 0);      /* held at F201: the 68000's FFF200 */
+			play_with(code, "byte");
+			EXPECT(md_host_peek(0xFFF200) == 0x00 && md_host_peek(0xFFF201) == 0x34);
+			EXPECT(pl->delete_cheat(n0));
+			play_with("FFF200:1234", "fill");
+			EXPECT(pl->delete_cheat(n0));
+			cs.width = 2;
+			EXPECT(pk_cs_code(&cs, 0xF200, 0x0003, code, sizeof code) > 0);
+			play_with(code, "word");
+			EXPECT(md_host_peek(0xFFF200) == 0x00 && md_host_peek(0xFFF201) == 0x03);
+			EXPECT(pl->delete_cheat(n0));
+			EXPECT((int) pl->cheats().size() == n0);
+		}
 	}
 
 	/* ---- Reset and Game list need confirmation ---- */

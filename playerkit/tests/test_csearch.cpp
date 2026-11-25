@@ -135,10 +135,15 @@ TEST(csearch_codes_in_each_consoles_format)
 	CHECK(pk_cs_code(&cs, 0x0010, 0x63, c, sizeof c) > 0); CHECK_STR(c, "03000010 63");
 	CHECK(pk_cs_code(&cs, 0x8010, 0x63, c, sizeof c) > 0); CHECK_STR(c, "02000010 63");
 	cs.width = 2; CHECK(pk_cs_code(&cs, 0x0010, 0x1234, c, sizeof c) > 0); CHECK_STR(c, "03000010 1234");
-	cs.width = 4; CHECK(pk_cs_code(&cs, 0x0010, 0x12345678, c, sizeof c) > 0); CHECK_STR(c, "03000010 12345678");
+	cs.width = 4; CHECK(pk_cs_code(&cs, 0x0010, 0x12345678, c, sizeof c) > 0); CHECK_STR(c, "03000010:12345678");
+	CHECK(pk_cs_code(&cs, 0x8010, 0x2A, c, sizeof c) > 0); CHECK_STR(c, "02000010:0000002A");   /* 4 bytes whatever the value */
 	cs.kind = PK_CS_GB; cs.width = 1;
 	CHECK(pk_cs_code(&cs, 0xC123, 0x09, c, sizeof c) > 0); CHECK_STR(c, "010923C1");
 	cs.width = 2; CHECK(pk_cs_code(&cs, 0xC123, 0x1234, c, sizeof c) > 0); CHECK_STR(c, "013423C1+011224C1");
+	/* D000-DFFF: work RAM bank 1 by name, the bank the search read */
+	cs.width = 1; CHECK(pk_cs_code(&cs, 0xD123, 0x09, c, sizeof c) > 0); CHECK_STR(c, "910923D1");
+	CHECK(pk_cs_code(&cs, 0xFF80, 0x09, c, sizeof c) > 0); CHECK_STR(c, "010980FF");
+	cs.width = 2; CHECK(pk_cs_code(&cs, 0xCFFF, 0x1234, c, sizeof c) > 0); CHECK_STR(c, "0134FFCF+911200D0");
 	cs.kind = PK_CS_NES; cs.width = 1;
 	CHECK(pk_cs_code(&cs, 0x0075, 0x05, c, sizeof c) > 0); CHECK_STR(c, "0075:05");
 	cs.kind = PK_CS_WS;
@@ -151,10 +156,16 @@ TEST(csearch_codes_in_each_consoles_format)
 	/* Mega Drive: the word as it is now, at the even 68000 address */
 	cs.kind = PK_CS_MDW; cs.order = PK_CS_MD;
 	m.a[0x20] = 0x34; m.a[0x21] = 0x12;
-	cs.width = 1; CHECK(pk_cs_code(&cs, 0x21, 0x34, c, sizeof c) > 0); CHECK_STR(c, "FF0020:1234");
+	/* a byte: the byte at its 68000 address (held at 0x21 = the 68000's FF0020), nothing beside it, also when it is 0 */
+	cs.width = 1; CHECK(pk_cs_code(&cs, 0x21, 0x12, c, sizeof c) > 0); CHECK_STR(c, "FF0020:12");
+	CHECK(pk_cs_code(&cs, 0x21, 0, c, sizeof c) > 0); CHECK_STR(c, "FF0020:00");
+	CHECK(pk_cs_code(&cs, 0x20, 0x34, c, sizeof c) > 0); CHECK_STR(c, "FF0021:34");
 	cs.width = 2; CHECK(pk_cs_code(&cs, 0x20, 0x1234, c, sizeof c) > 0); CHECK_STR(c, "FF0020:1234");
+	/* a word under 0100 is stored by the player as its low byte alone: its high byte is written too */
+	CHECK(pk_cs_code(&cs, 0x20, 0x0003, c, sizeof c) > 0); CHECK_STR(c, "FF0020:0003+FF0020:00");
 	m.a[0x22] = 0x78; m.a[0x23] = 0x56;
 	cs.width = 4; CHECK(pk_cs_code(&cs, 0x20, 0x12345678, c, sizeof c) > 0); CHECK_STR(c, "FF0020:1234+FF0022:5678");
+	CHECK(pk_cs_code(&cs, 0x20, 0x00000064, c, sizeof c) > 0); CHECK_STR(c, "FF0020:0000+FF0020:00+FF0022:0064+FF0022:00");
 	CHECK_EQ(pk_cs_code(&cs, 0x20, 1, c, 4), 0);   /* too small a buffer */
 }
 

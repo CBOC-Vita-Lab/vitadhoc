@@ -329,10 +329,12 @@ steps are the same everywhere:
    code.
 
 A result becomes the same typed code each console already takes: GBA `03000010 63`
-(raw: 2 and 4 byte values are `VVVV` and `VVVVVVVV`), Game Boy and Game Boy
-Color GameShark `01VVAAAA`, NES `AAAA:VV`, WonderSwan `AAAAA:VV`, Super NES
-`7E1234:56`, Genesis and Sega CD `FF1234:ABCD` (a word; the word a byte or half of
-a long lies in), Master System, Game Gear and SG-1000 `C123:56`. On the
+(raw: a 2 byte value is `VVVV`, a 4 byte value `03000010:VVVVVVVV`), Game Boy and Game Boy
+Color GameShark `01VVAAAA` (`91VVAAAA` in D000-DFFF: work RAM bank 1, the bank
+the search reads), NES `AAAA:VV`, WonderSwan `AAAAA:VV`, Super NES
+`7E1234:56`, Genesis and Sega CD `FF1234:ABCD` (a word; a byte is `FF1234:56`,
+and a word under 0100 also names its high byte, `FF1234:0003+FF1234:00`, so the
+whole word is kept), Master System, Game Gear and SG-1000 `C123:56`. On the
 consoles whose codes poke one byte a 2 or 4 byte result is several pokes
 joined by `+`. It searches the work RAM a typed code can reach (GBA IWRAM and
 EWRAM; Game Boy C000-DFFF and the top RAM; NES 0000-07FF; WonderSwan system

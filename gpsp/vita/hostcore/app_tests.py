@@ -5921,6 +5921,132 @@ def t_zip(S):
     S.check(r.has(r"boot_refused reason=zip_crc"), "a damaged zip is refused")
 
 
+def sevenz_make(S, files, *opts):
+    """A .7z of {name: bytes}, built with the 7z program (p7zip) from generated data; None when it is not installed."""
+    import subprocess, tempfile
+    exe = next((x for x in (shutil.which("7z"), shutil.which("7za"), shutil.which("7zr")) if x), None)
+    if not exe:
+        return None
+    d = tempfile.mkdtemp(prefix="sevenz-", dir=S.outdir)
+    src = os.path.join(d, "src")
+    os.makedirs(src)
+    for n, data in files.items():
+        with open(os.path.join(src, n), "wb") as f:
+            f.write(data)
+    out = os.path.join(d, "a.7z")
+    r = subprocess.run([exe, "a", "-bd", "-y", out] + list(opts) + list(files), cwd=src,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    assert r.returncode == 0, r.stdout
+    with open(out, "rb") as f:
+        return f.read()
+
+
+def t_archives(S):
+    """Games in a .7z (LZMA SDK, sz_rom.c) work where a .zip does: listed under their console (GBA and Genesis here),
+    unpacked once into unzipped/ and started, saves beside the archive, a damaged one refused with a clear notice, a
+    game over the size limit refused, a solid block over the memory limit refused; and a Sega CD game on several discs:
+    the .m3u is the game in the Sega CD list, the discs it names are not listed on their own, a single .cue still is,
+    and picking it starts md.bin with the .m3u."""
+    own = open(OWN_GBA, "rb").read()
+    md = sega_rom("md")
+    g7 = sevenz_make(S, {"readme.txt": b"hello", "Seven Game (USA).gba": own}, "-ms=on")
+    if g7 is None:
+        S.note("no 7z program (p7zip) here: skipped")
+        return
+    m7 = sevenz_make(S, {"Seven Genesis.md": md})
+    # autoboot the 7z one, press A (battery write), quit
+    r = S.run("sz_boot", "150:a:40\n+60:quit\n", autoboot="Seven.7z",
+              extra={"roms/Seven.7z": g7, "roms/NoGame.7z": sevenz_make(S, {"notes.txt": b"x"}),
+                     "ux0:ROMS/Genesis/Seven Genesis.7z": m7})
+    S.clean(r)
+    S.check(r.has(r"^EVT zip_unpack rc=0 entry=\"Seven Game \(USA\)\.gba\" method=7"),
+            "the .7z cartridge is unpacked (method 7)")
+    up = os.path.join(r.root, "unzipped", "Seven.gba")
+    S.check(os.path.exists(up) and open(up, "rb").read() == own, "unzipped/Seven.gba is the cartridge, byte for byte")
+    S.check(r.has(r"^EVT game rom=.*Seven\.7z .*save=.*roms/Seven\.sav"), "its save is named after the archive, beside it")
+    # the lists: the GBA one holds it (the archive with no game is not listed), the Genesis one holds the other
+    r = S.run("sz_list", "90:quit\n",
+              extra={"roms/Seven.7z": g7, "roms/NoGame.7z": sevenz_make(S, {"notes.txt": b"x"})})
+    S.clean(r)
+    done = [d for d in r.evt("ui_browser") if d.get("console") == "0"]
+    S.check(done and int(done[-1]["roms"]) == len(S.roms(r.root, ".gba")) + 1,
+            "the .7z GBA game is in the GBA list, the one with no game is not (%s)" % (done[-1]["_"] if done else "no list"))
+    cwd = os.path.join(S.outdir, "sz_library_cwd")
+    shutil.rmtree(cwd, ignore_errors=True)
+    path = os.path.join(cwd, "ux0:ROMS/Genesis/Seven Genesis.7z")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(m7)
+    r = S.run("sz_sega", "90:quit\n", cwd=cwd, config={"ui_home": 1, "console": 6})
+    S.clean(r)
+    sw = [d for d in r.evt("ui_browser") if d["console"] == "6"]
+    S.check(sw and int(sw[0]["roms"]) == 1, "a Genesis game in a .7z is on the Genesis shelf (%s)" % (sw[0]["_"] if sw else "no ui_browser line"))
+    # second start reuses the copy
+    for i in range(2):
+        r = S.run("sz_reuse", "60:quit\n", autoboot="Seven.7z", extra={"roms/Seven.7z": g7}, prepared=True if i else None)
+        S.clean(r)
+    S.check(r.has(r"^EVT zip_unpack reused=1"), "the second start reuses the copy")
+    # damaged: a byte of the (stored) data flipped
+    stored = sevenz_make(S, {"Bad.gba": own}, "-m0=copy")
+    bad = bytearray(stored)
+    k = bad.find(own[0x100:0x110])
+    bad[k] ^= 0xFF
+    r = S.run("sz_crc", "40:cross\n+40:quit\n", autoboot="Bad.7z", extra={"roms/Bad.7z": bytes(bad)})
+    S.clean(r, allow=r"boot_refused|notice title|zip_unpack rc=-2")
+    S.check(r.has(r"boot_refused reason=zip_crc"), "a damaged .7z is refused")
+    # a truncated archive and not-an-archive: refused, no crash
+    for nm, data in (("Cut.7z", g7[:len(g7) // 2]), ("Junk.7z", b"7z\xbc\xaf\x27\x1c" + bytes(200))):
+        r = S.run("sz_" + nm[:3].lower(), "40:cross\n+40:quit\n", autoboot=nm, extra={"roms/" + nm: data})
+        S.clean(r, allow=r"boot_refused|notice title|zip_")
+        S.check(r.has(r"boot_refused reason=zip_"), "%s is refused" % nm)
+    # over the limit: a game of 33 MiB, and a solid block of more than 64 MiB
+    big = sevenz_make(S, {"Big.gba": b"\x00" * ((32 << 20) + 1)})
+    r = S.run("sz_big", "40:cross\n+40:quit\n", autoboot="Big.7z", extra={"roms/Big.7z": big})
+    S.clean(r, allow=r"boot_refused|notice title|zip_")
+    S.check(r.has(r"boot_refused reason=zip_unsupported") and not os.path.exists(os.path.join(r.root, "unzipped", "Big.gba")),
+            "a game over 32 MB is refused and not unpacked")
+    z = b"\x00" * (20 << 20)
+    blk = sevenz_make(S, {"a.dat": z, "b.dat": z, "c.dat": z, "d.dat": z, "Block.gba": own}, "-ms=on")
+    r = S.run("sz_block", "40:cross\n+40:quit\n", autoboot="Block.7z", extra={"roms/Block.7z": blk})
+    S.clean(r, allow=r"boot_refused|notice title|zip_")
+    S.check(r.has(r"boot_refused reason=zip_unsupported"), "a solid block over 64 MB is refused")
+
+    # ---- an .m3u in the Sega CD list ----
+    cwd = os.path.join(S.outdir, "m3u_library_cwd")
+    shutil.rmtree(cwd, ignore_errors=True)
+    disc = bytes(0x10000)
+    cue = lambda n: ('FILE "%s.bin" BINARY\r\n  TRACK 01 MODE1/2352\r\n    INDEX 01 00:00:00\r\n' % n).encode()
+    files = {
+        "ux0:ROMS/Sega CD/Quest (Disc 1).cue": cue("Quest (Disc 1)"),
+        "ux0:ROMS/Sega CD/Quest (Disc 1).bin": disc,
+        "ux0:ROMS/Sega CD/Quest (Disc 2).cue": cue("Quest (Disc 2)"),
+        "ux0:ROMS/Sega CD/Quest (Disc 2).bin": disc,
+        "ux0:ROMS/Sega CD/Quest.m3u": b"#EXTM3U\r\nQuest (Disc 1).cue\r\nQuest (Disc 2).cue\r\n",
+        "ux0:ROMS/Sega CD/Single.cue": cue("Single"),
+        "ux0:ROMS/Sega CD/Single.bin": disc,
+        "ux0:ROMS/Sega CD/Deep/Saga (Disc 1).chd": disc,
+        "ux0:ROMS/Sega CD/Deep/Saga (Disc 2).chd": disc,
+        "ux0:ROMS/Sega CD/Saga.m3u": b"Deep\\Saga (Disc 1).chd\nDeep/Saga (Disc 2).chd\n",
+        "ux0:ROMS/Sega CD/Lonely.m3u": b"Missing Disc.cue\n",
+    }
+    for rel, data in files.items():
+        pth = os.path.join(cwd, rel)
+        os.makedirs(os.path.dirname(pth), exist_ok=True)
+        with open(pth, "wb") as f:
+            f.write(data)
+    r = S.run("m3u_lib", "90:quit\n", cwd=cwd, config={"ui_home": 1, "console": 10})
+    S.clean(r)
+    sw = [d for d in r.evt("ui_browser") if d["console"] == "10"]
+    # listed: Quest.m3u, Saga.m3u, Lonely.m3u (its disc is missing: the game still lists, the player says why), Single.cue
+    S.check(sw and int(sw[0]["roms"]) == 4,
+            "the Sega CD shelf holds the 3 lists and the single disc, not the discs the lists name (%s)" % (sw[0]["_"] if sw else "no ui_browser line"))
+    r = S.run("m3u_pick", "90:cross\n+60:quit\n", cwd=cwd, config={"console": 10})
+    S.clean(r, allow="could not be started")
+    ln = r.evt("sega_launch")
+    S.check(ln and "console=scd" in ln[0]["_"] and ".m3u" in ln[0]["_"],
+            "picking the first game starts md.bin with the .m3u (%s)" % (ln[0]["_"] if ln else "no sega_launch line"))
+
+
 def t_folders_ui(S):
     """Settings > Library > Game folders: a folder typed on the keyboard is
     added (written to vita.ini, the list scanned again with its games), and
@@ -8756,7 +8882,7 @@ TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicato
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("biossound", t_biossound), ("chain", t_chain), ("objprio", t_objprio), ("smc", t_smc),
          ("realtime", t_realtime),
          ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_heal", t_save_heal), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("gb_type", t_gb_type), ("launch_param", t_launch_param),
-         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("hand_set_rows", t_hand_set_rows), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
+         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("archives", t_archives), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("hand_set_rows", t_hand_set_rows), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
          ("controls_defaults", t_controls_defaults),
          ("names_cjk", t_names_cjk),
          ("names_filename", t_names_filename), ("names_duplicate_subtitle", t_names_duplicate_subtitle),

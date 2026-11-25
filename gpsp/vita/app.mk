@@ -75,6 +75,13 @@ APP_SRCS      += cpuclock.c boot_guard.c
 # what has been played, when and for how long (play_log.h); patches applied
 # to a game as it starts (rom_patch.h)
 APP_SRCS      += play_log.c rom_patch.c zip_rom.c save_sync.c
+# games in a .7z (sz_rom.h): Igor Pavlov's LZMA SDK decoder (third_party/lzma,
+# public domain; PROVENANCE there)
+LZMA_DIR      := third_party/lzma
+APP_SRCS      += sz_rom.c $(addprefix $(LZMA_DIR)/,7zAlloc.c 7zArcIn.c 7zBuf.c \
+                    7zCrc.c 7zCrcOpt.c 7zDec.c 7zStream.c Bcj2.c \
+                    Bra.c Bra86.c BraIA64.c CpuArch.c Delta.c Lzma2Dec.c \
+                    LzmaDec.c)
 # RetroAchievements (ra_vita.h): the app's side, the web requests, and the
 # runtime every RetroAchievements emulator uses (third_party/rcheevos, MIT;
 # PROVENANCE there).  Built with RC_NO_THREADS: one thread calls it.
@@ -92,7 +99,7 @@ APP_SRCS      += $(RC_DIR)/rc_client.c $(RC_DIR)/rc_compat.c \
 APP_SRCS_VITA := plat_vita.c jit_vita.c heap_vita.c
 APP_SRCS_HOST := hostcore/plat_host.c
 APP_DEFS      := -DVITA -DRC_NO_THREADS
-APP_INCDIRS   := third_party/rcheevos/include third_party/rcheevos/src
+APP_INCDIRS   := third_party/rcheevos/include third_party/rcheevos/src third_party/lzma
 APP_LIBS_VITA := -lSceHttp_stub -lSceSsl_stub
 VPK_EXTRA     :=
 

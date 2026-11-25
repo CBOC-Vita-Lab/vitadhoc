@@ -1193,7 +1193,7 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
       a->sys[0] = 11;              /* SG-1000 */
       a->nsys = 1;
    }
-   else if (ext && (!strcasecmp(ext, ".cue") || !strcasecmp(ext, ".chd") || !strcasecmp(ext, ".iso")))
+   else if (ext && (!strcasecmp(ext, ".cue") || !strcasecmp(ext, ".chd") || !strcasecmp(ext, ".iso") || !strcasecmp(ext, ".m3u")))
    {
       a->sys[0] = 12;              /* Sega CD: a disc has no cartridge checksum: by its name only */
       a->nsys = 1;

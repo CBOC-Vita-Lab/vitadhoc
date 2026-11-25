@@ -202,6 +202,19 @@ clarification and the remaining package review.
   own and ships in the source package, not in the VPK; it uses no third-party code at run time
   (its only development dependency is Cloudflare's `wrangler` deploy tool, which is not
   redistributed).
+- **LZMA SDK decoder (`.7z` games, 2.0):** Igor Pavlov, public domain ("Igor
+  Pavlov : Public domain" in every file). The 7-Zip 26.06 source release's `C/`
+  directory, which is the LZMA SDK's C code, from
+  <https://github.com/ip7z/7zip> (commit
+  `d3296e39e1f1f92c7b41c0c3848e65640428d42d`, 2026-11-07): the 7z reader
+  (`7zArcIn.c`, `7zDec.c`, `7zStream.c`, `7zBuf.c`, `7zAlloc.c`),
+  the LZMA and LZMA2 decoders, the BCJ, BCJ2, ARM, PPC, SPARC, IA64 and Delta
+  filters, CRC-32 and the headers they need, copied unchanged into
+  `gpsp/vita/third_party/lzma/` (`PROVENANCE` there). Linked into the main
+  app only (the players receive an unpacked file). The 7-Zip package as a whole
+  is under the GNU LGPL, but these files state that they are public domain; no
+  LGPL file, no RAR code and no encoder is used. The app's own reader is
+  `gpsp/vita/sz_rom.c`.
 - **Game descriptions:** English Wikipedia contributors, CC BY-SA 4.0.
   Article and history links, adaptation notes and attribution are in
   `notices/WIKIPEDIA-ATTRIBUTION.md`. Wikidata article mappings are CC0.

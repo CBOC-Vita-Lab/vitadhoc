@@ -215,6 +215,9 @@ STEPS = [
     Step("gamedb", "title database: gamedb.c against assets/gamedb.txt and make_gamedb.py",
          "make -C gpsp/vita/tests/gamedb test", "quick", {"gpsp", "gamedb"}, inputs=["gpsp/"],
          requires=CC, group=GROUP_MAKE),
+    Step("archive-7z", "games in a .7z: the reader (sz_rom.c, LZMA SDK) on archives 7z builds here, limits, damaged and cut archives under ASan + UBSan",
+         "python3 -I gpsp/vita/tests/archive/test_archive.py", "quick", {"gpsp", "library"}, inputs=["gpsp/"],
+         requires=CC + [("exe", "7z")], parse="unittest", timeout=1800),
     Step("save-sync", "save sync: RetroArch edits, short sources, backups (test_save_sync.c)",
          "mkdir -p {out}/bin && gcc -Wall -Wextra -Werror -I vita -I frontend-common "
          "vita/tests/savesync/test_save_sync.c vita/save_sync.c frontend-common/fe_util.c "

@@ -379,7 +379,7 @@ static inline int ui_rom_matches_console(const char *name, fe_console_t console)
       static const char *const sms_ext[] = { ".sms", "", "", "", "" };
       static const char *const gg_ext[] = { ".gg", "", "", "", "" };
       static const char *const sg_ext[] = { ".sg", ".sc", "", "", "" };   /* .sc: an SC-3000 cartridge, run as the SG-1000 family */
-      static const char *const scd_ext[] = { ".cue", ".chd", ".iso", "", "" };   /* Sega CD: a disc (its .bin tracks are not listed) */
+      static const char *const scd_ext[] = { ".cue", ".chd", ".iso", ".m3u", "" };   /* Sega CD: a disc, or the .m3u of a game on several discs (its .bin tracks and the discs an .m3u names are not listed) */
       const char *const *exts = console == FE_CONSOLE_MD ? md_ext
                               : console == FE_CONSOLE_SMS ? sms_ext
                               : console == FE_CONSOLE_GG ? gg_ext

@@ -720,7 +720,7 @@ static fe_console_t oc_console_of(const char *path)
       return FE_CONSOLE_GG;
    if (dot && (!strcasecmp(dot, ".sg") || !strcasecmp(dot, ".sc")))
       return FE_CONSOLE_SG;
-   if (dot && (!strcasecmp(dot, ".cue") || !strcasecmp(dot, ".chd") || !strcasecmp(dot, ".iso")))
+   if (dot && (!strcasecmp(dot, ".cue") || !strcasecmp(dot, ".chd") || !strcasecmp(dot, ".iso") || !strcasecmp(dot, ".m3u")))
       return FE_CONSOLE_SCD;
    return !strcmp(g_oc.card.console, "gbc") ? FE_CONSOLE_GBC
         : !strcmp(g_oc.card.console, "gb") ? FE_CONSOLE_GB
@@ -861,8 +861,8 @@ static ui_action screen_online_card(unsigned edges)
          vw_line(22, 70, 436, g_oc.l1, C_VALUE);
          vw_wrap(22, 90, 436, g_oc.l2, C_ITEM, 3);
          if (g_oc.card.state == 1 && g_oc.nhit == 0 && online_lib_skipped() > 0)
-            vw_wrap(22, 134, 436, "A compressed .zip cannot be checked "
-                    "here. Unzip the game into your games folder.", C_DIM, 2);
+            vw_wrap(22, 134, 436, "A compressed .zip or .7z cannot be "
+                    "checked here. Unpack the game into your games folder.", C_DIM, 2);
       }
       footer(VID_GLYPH_O " back");
       return act;

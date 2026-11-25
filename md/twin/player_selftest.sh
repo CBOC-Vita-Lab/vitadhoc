@@ -101,6 +101,7 @@ if command -v python3 >/dev/null; then
 		run "Sega CD Quick response (run-ahead)" ahead scd "$SD" "$T/q_scd"
 		run "Sega CD RetroAchievements (fake server)" ra scd "$SD" "$T/a_scd"
 		run "Sega CD costs (state size, rewind ring, capture time)" costs scd "$SD"
+		run "Sega CD game on several discs (.m3u): the list's name for save and states, Change disc (tray open, swap, close), a state remembers its disc, a missing disc, an empty list" m3u "$SC" "$T/m3u_scd"
 	else echo "FAIL  Sega CD player tests (mkscd.py could not write the fixtures)"; fail=1; fi
 else echo "SKIP  Sega CD player tests (python3 not found)"; fi
 # the wide view through the picture pipe (direct drawing and copies, composed on a second thread) against composing at once, bit for bit

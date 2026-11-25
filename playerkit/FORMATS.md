@@ -229,7 +229,7 @@ knows and keeps the rest.
 ### The Sega player (`md.bin`): console ids, extra keys, settings files
 
 One program, four consoles: the launch file's `console=` is `md` (Mega Drive / Genesis, extensions `.md .gen .smd .bin`), `sms` (Master
-System, `.sms`), `gg` (Game Gear, `.gg`) `sg` (SG-1000, `.sg .sc`) or `scd` (Sega CD, `.cue .chd .iso`). The app writes `launch/<console>.ini`, so up to four launch files exist
+System, `.sms`), `gg` (Game Gear, `.gg`) `sg` (SG-1000, `.sg .sc`) or `scd` (Sega CD, `.cue .chd .iso .m3u`). For a game on several discs `game=` is the `.m3u` (one disc per line, see `pk_m3u.h`); the player starts the first disc that is there, and `save=`, the states and everything else are named after the `.m3u`. The app writes `launch/<console>.ini`, so up to four launch files exist
 beside each other; the player takes the one whose `game=` is the argument it was started with, else the newest. A game file is run as
 the console the app names, whatever its extension (a Game Gear game that carries an `.sms` name is started with `console=gg`); without a
 launch file the extension decides. Everything keyed by console (states, look memory, controls, settings, backups, the log) uses the

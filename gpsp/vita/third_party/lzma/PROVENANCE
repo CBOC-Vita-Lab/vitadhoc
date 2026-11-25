@@ -1,0 +1,28 @@
+LZMA SDK decoder files (public domain) -- Igor Pavlov's C code for reading .7z archives.
+
+Source:    https://github.com/ip7z/7zip  (a public mirror of the 7-Zip source releases)
+Version:   7-Zip 26.06 sources (DOC/readme.txt "7-Zip 26.06 Sources"; 7zVersion.h MY_VERSION 26.06, 2026-11-06)
+Commit:    d3296e39e1f1f92c7b41c0c3848e65640428d42d (2026-11-07)
+Taken:     2026-11-24, by `git clone --depth 1`.
+Directory: C/ of that tree.  The 7-Zip tree's C/ directory is the LZMA SDK's C code (the SDK is cut from it); the SDK's own
+           statement, "LZMA SDK is written and placed in the public domain by Igor Pavlov" (DOC/lzma-sdk.txt of the SDK 18.05
+           release, https://github.com/jljusten/LZMA-SDK, read for this check), is the licence the per-file headers repeat.
+           The 26.06 files are used because they are the current release (18.05 is from 2018).
+
+Licence:   every file here carries "Igor Pavlov : Public domain" in its first lines (7zVersion.h has the same words in its
+           MY_COPYRIGHT_PD).  DOC/License.txt of the 7-Zip tree says: "Some files are 'public domain' files, if 'public domain'
+           status is stated in source file", and that the other files are under the GNU LGPL; none of those is used here.
+           No LGPL file, no RAR code, no encoder and no BSD file (ZstdDec.c, Xxh64.c) is part of this directory.
+
+Files, copied unchanged (byte for byte; nothing was edited):
+  7z.h 7zAlloc.c 7zAlloc.h 7zArcIn.c 7zBuf.c 7zBuf.h 7zCrc.c 7zCrc.h 7zCrcOpt.c 7zDec.c 7zStream.c
+  7zTypes.h 7zVersion.h Bcj2.c Bcj2.h Bra.c Bra.h Bra86.c BraIA64.c Compiler.h CpuArch.c CpuArch.h Delta.c Delta.h
+  Lzma2Dec.c Lzma2Dec.h LzmaDec.c LzmaDec.h Precomp.h RotateDefs.h
+
+What is used: the 7z container reader (7zArcIn, 7zDec), LZMA and LZMA2 decoding (LzmaDec, Lzma2Dec), the branch filters (Bra,
+  Bra86, BraIA64, Bcj2) and Delta, CRC-32 (7zCrc, 7zCrcOpt), the stream and allocation glue (7zStream, 7zAlloc, 7zBuf,
+  CpuArch; the file stream itself is stdio, in sz_rom.c).  Not built in: PPMd (Z7_PPMD_SUPPORT is off, as in the SDK's default), AES, any encoder.
+Used by: gpsp/vita/sz_rom.c (the app's .7z reader, own code, GPL-2.0-or-later like the app), built from gpsp/vita/app.mk.
+  Only the main app links it; the SNES and Sega players are handed an unpacked file.
+
+To verify: run `git clone --depth 1 https://github.com/ip7z/7zip` and compare each file with `cmp` against C/<file> at the commit above.

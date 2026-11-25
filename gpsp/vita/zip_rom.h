@@ -1,4 +1,5 @@
-/* zip_rom.h -- games kept in .zip files.
+/* zip_rom.h -- games kept in .zip and .7z files (a .7z goes through sz_rom.h:
+ * the same calls, method 7).
  *
  *   zip_rom_peek     which game a .zip holds: its first entry named .gba,
  *                    .gb, .gbc, .sfc, .smc, .nes, .fds, .unf, .unif, .ws, .wsc, .pc2, .md, .gen, .smd, .bin, .68k, .sms, .gg, .sg or .sc.  0 = found and usable; -2 = found but in a
@@ -16,7 +17,7 @@
 typedef struct
 {
    int           console;              /* 0 GBA, 1 GB, 2 GBC, 3 SNES, 4 NES, 5 WS, 6 MD, 7 SMS, 8 GG, 9 SG (fe_console_t) */
-   int           method;               /* 0 stored, 8 deflated            */
+   int           method;               /* 0 stored, 8 deflated, 7 a .7z   */
    unsigned      flags;
    unsigned long crc, csize, usize, local;
    char          name[256];            /* the entry's name in the archive */

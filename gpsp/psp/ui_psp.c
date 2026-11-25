@@ -68,6 +68,7 @@ static inline void *memalign(size_t al, size_t n)
 #include "video_vita.h"
 #include "menu_diag.h"
 #include "play_log.h"
+#include "../../playerkit/src/pk_m3u.h"   /* .m3u disc lists (Sega CD) */
 #include "ra_vita.h"
 #include "plat.h"
 #include "vback.h"
@@ -9569,9 +9570,75 @@ static int rom_gb_match(const char *dir, const char *nm, fe_console_t c)
 }
 #endif
 
+#ifdef VITA
+/* The discs an .m3u names (a Sega CD game on several discs) are not listed on their own: the .m3u is the game.  Before a folder is read for
+ * games, the .m3u files in it are read and the full paths of their discs kept (a hash of each, lower case, folded: FAT does not tell
+ * Disc.CUE from disc.cue); they stay for the folders below it and go when the folder is done.  A full table just stops hiding. */
+#define M3U_HIDE_MAX 1024
+static unsigned g_m3u_hide[M3U_HIDE_MAX];
+static int g_m3u_hide_n;
+
+static unsigned m3u_path_hash(const char *path)
+{
+   char low[PK_M3U_PATH + 8];
+   size_t i;
+   for (i = 0; path[i] && i + 1 < sizeof(low); i++)
+      low[i] = (path[i] >= 'A' && path[i] <= 'Z') ? (char)(path[i] + 'a' - 'A') : path[i];
+   low[i] = '\0';
+   return (unsigned)fe_crc32(0, low, i) | 1u;
+}
+
+static void m3u_hide_dir(const char *dir)
+{
+   static char list[PK_M3U_MAX_DISCS][PK_M3U_PATH];
+   SceIoDirent e;
+   SceUID d = sceIoDopen(dir);
+   if (d < 0)
+      return;
+   memset(&e, 0, sizeof(e));
+   while (sceIoDread(d, &e) > 0)
+   {
+      if (e.d_name[0] != '.' && pk_m3u_is_list(e.d_name) &&
+          !(e.d_stat.st_mode & 0x1000) && !(e.d_stat.st_attr & 0x0010))
+      {
+         char full[PK_M3U_PATH];
+         int fl = snprintf(full, sizeof(full), "%s/%s", dir, e.d_name);
+         if (fl > 0 && fl < (int)sizeof(full))
+         {
+            int nd = pk_m3u_load(full, list, PK_M3U_MAX_DISCS, NULL, NULL), i;
+            for (i = 0; i < nd && g_m3u_hide_n < M3U_HIDE_MAX; i++)
+               g_m3u_hide[g_m3u_hide_n++] = m3u_path_hash(list[i]);
+         }
+      }
+      memset(&e, 0, sizeof(e));
+   }
+   sceIoDclose(d);
+}
+
+static int m3u_hidden(const char *dir, const char *name)
+{
+   char full[PK_M3U_PATH];
+   unsigned h;
+   int i, fl;
+   if (!g_m3u_hide_n || !pk_m3u_is_disc(name))
+      return 0;
+   fl = snprintf(full, sizeof(full), "%s/%s", dir, name);
+   if (fl <= 0 || fl >= (int)sizeof(full))
+      return 0;
+   h = m3u_path_hash(full);
+   for (i = 0; i < g_m3u_hide_n; i++)
+      if (g_m3u_hide[i] == h)
+         return 1;
+   return 0;
+}
+#endif
+
 static void rom_scan_dir(const char *rel, int depth, int *n,
                          fe_console_t console)
 {
+#ifdef VITA
+   const int hide_base = g_m3u_hide_n;
+#endif
    char dir[PSP_FILE_PATH_CAP];
    SceUID d;
    SceIoDirent ent;
@@ -9599,6 +9666,8 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
    }
    memset(&ent, 0, sizeof(ent));
 #ifdef VITA
+   if (console == FE_CONSOLE_SCD || g_side[FE_CONSOLE_SCD].on)
+      m3u_hide_dir(dir);
    if (g_dirset_n < sizeof(g_dirset) / sizeof(g_dirset[0]))
       g_dirset[g_dirset_n++] = savset_hash(dir, strlen(dir), NULL);
    else
@@ -9631,13 +9700,14 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
       }
 #endif
 #ifdef VITA
-      /* A game in a .zip: the console of the cartridge inside it (the
+      /* A game in a .zip or .7z: the console of the cartridge inside it (the
        * host's zip reader, ui_host_zip_console); -1 for every other file. */
       int zipc = -1;
       {
          size_t nl = strlen(ent.d_name);
-         if (!is_dir && ent.d_name[0] != '.' && nl > 4 &&
-             !strcasecmp(ent.d_name + nl - 4, ".zip"))
+         if (!is_dir && ent.d_name[0] != '.' && nl > 3 &&
+             ((nl > 4 && !strcasecmp(ent.d_name + nl - 4, ".zip")) ||
+              !strcasecmp(ent.d_name + nl - 3, ".7z")))
          {
             char full[PSP_FILE_PATH_CAP];
             int fl = snprintf(full, sizeof(full), "%s/%s", dir, ent.d_name);
@@ -9675,6 +9745,10 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
          }
       }
 #ifdef VITA
+      /* (a disc an .m3u names: the .m3u is the game) */
+      else if (g_m3u_hide_n && m3u_hidden(dir, ent.d_name))
+      {
+      }
       /* (another console's game: into its own list, rom_side_add) */
       else if (ent.d_name[0] != '.' && !ROM_MATCH(ent.d_name, console))
       {
@@ -9745,6 +9819,9 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
       g_rom_scan_io_errors++;
 #endif
    sceIoDclose(d);
+#ifdef VITA
+   g_m3u_hide_n = hide_base;
+#endif
 }
 
 static int rom_entry_less(const rom_entry *a, const rom_entry *b)

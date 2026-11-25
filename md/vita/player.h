@@ -106,7 +106,7 @@ class MdPlayer : public pk::MenuHost {
 public:
 	enum { ROW_SCALER = pk::ROW_HOST_BASE + 1, ROW_SMS_BORDER, ROW_GG_COLORS, ROW_GG_LCD, ROW_PADTYPE, ROW_REGION, ROW_FM, ROW_YM2413, ROW_STEADY,
 	       ROW_REWIND_LEN = pk::ROW_HOST_BASE + 30, ROW_HANDOFF = pk::ROW_HOST_BASE + 40, ROW_PALSPEED = pk::ROW_HOST_BASE + 41, ROW_LOOK = pk::ROW_HOST_BASE + 42,
-	       ROW_QUICK = pk::ROW_HOST_BASE + 43, ROW_FLICKER = pk::ROW_HOST_BASE + 44, ROW_RAMCART = pk::ROW_HOST_BASE + 45, ROW_FILTER = pk::ROW_HOST_BASE + 46 };
+	       ROW_QUICK = pk::ROW_HOST_BASE + 43, ROW_FLICKER = pk::ROW_HOST_BASE + 44, ROW_RAMCART = pk::ROW_HOST_BASE + 45, ROW_FILTER = pk::ROW_HOST_BASE + 46, ROW_DISC = pk::ROW_HOST_BASE + 47 };
 	explicit MdPlayer(Platform *pf);
 	~MdPlayer();
 
@@ -239,6 +239,11 @@ public:
 	const std::string &root() const { return root_; }
 	const std::string &rom_path() const { return rom_; }
 	const std::string &srm_path() const { return srm_; }
+	/* Sega CD, a game on several discs (an .m3u): the tray opens, the disc is swapped and the tray closes over the next frames (disc_tick, once per frame); the Change disc row calls it */
+	void change_disc(int index);
+	int disc_phase() const { return disc_phase_; }
+	static int disc_tray_frames() { return kDiscTrayFrames; }
+	const std::vector<std::string> &discs() const { return discs_; }
 	pk::States *states() { return states_; }
 	pk::SessionTracker &session() { return session_; }
 	const pk::Profile &profile() const { return profile_; }
@@ -337,6 +342,11 @@ private:
 	int region_ = 0, fm_ = 0, ym2413_ = 2, pad_type_ = 0, sms_border_ = 0, gg_lcd_ = 0;
 	int ram_cart_ = 0;             /* Sega CD: the RAM cartridge (0 none, 1..6 = 16 KB .. 512 KB); read when the disc is loaded */
 	bool scd_ = false;             /* the game is a Sega CD disc (console "scd") */
+	std::vector<std::string> discs_;   /* an .m3u game: the discs of the list, in order (empty for a single disc) */
+	int disc_want_ = 0, disc_phase_ = 0, disc_wait_ = 0;   /* Change disc: 0 idle, 1 tray open (the disc goes in when the wait ends), 2 disc in (the tray closes when the wait ends) */
+	static const int kDiscTrayFrames = 60;                /* about a second of the game's own time for each step */
+	void disc_tick();
+	void sync_disc_row();
 	/* Speed page: fast forward 0 = 2x 1 = 3x, with sound, hold or toggle; rewind on, its length (0 = 30 s, 1 = 60 s) and memory (MB) */
 	bool qsync_ = false;       /* Image quality / Video filter rows to be brought in line after the menu's own change */
 	int ff_speed_ = 0, ff_sound_ = 1, ff_toggle_ = 0, rewind_on_ = 1, rewind_len_ = 1, rewind_mb_ = 12;

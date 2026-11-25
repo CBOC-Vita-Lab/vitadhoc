@@ -1465,7 +1465,7 @@ int ui_host_online_rom_id(const char *path, char out[9])
        !strcmp(path, g_game.rom_path))
       return rom_identity(g_game.boot_path, out);
    dot = strrchr(path, '.');
-   if (!dot || !strcasecmp(dot, ".zip"))
+   if (!dot || !strcasecmp(dot, ".zip") || !strcasecmp(dot, ".7z"))
       return -1;
    stem = (size_t)(dot - path);
    for (i = 0; i < 3 && !has_patch; i++)
@@ -3625,7 +3625,7 @@ const char *link_snes_console_of_file(const char *rom_path)
       return "gg";
    if (dot && (!strcasecmp(dot, ".sg") || !strcasecmp(dot, ".sc")))
       return "sg";
-   if (dot && (!strcasecmp(dot, ".cue") || !strcasecmp(dot, ".chd") || !strcasecmp(dot, ".iso")))
+   if (dot && (!strcasecmp(dot, ".cue") || !strcasecmp(dot, ".chd") || !strcasecmp(dot, ".iso") || !strcasecmp(dot, ".m3u")))
       return "scd";
    return "snes";
 }

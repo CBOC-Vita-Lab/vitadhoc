@@ -39,6 +39,7 @@ static fe_lpl_rom    g_lrom[BROWSER_MAX];       /* match keys of the scan    */
 static int           g_lrom_n = -1;
 static char          g_lib_rom_dir[PSP_FILE_PATH_CAP];
 static int           g_lpl_read;        /* the playlists were read this run  */
+static int           g_sel_pending;     /* SELECT is down: it steps when let go */
 
 static const char *const LIB_VIEW_ID[] = {
    "all", "starred", "recent", "most_played", "not_played", "collection",
@@ -206,7 +207,6 @@ static void lib_keys(int n_scan)
 /* After every scan (favs_mark): the counts the tabs are offered by. */
 static void lib_mark(int n_scan)
 {
-   static unsigned h[BROWSER_MAX];
    int i, k;
    g_lrom_n = -1;
    g_lib_played = 0;
@@ -218,12 +218,17 @@ static void lib_mark(int n_scan)
       g_lpl_cnt[k] = 0;
    if (g_coll.n)
    {
+      /* one pass over the entries for each game, whatever the number of
+       * collections (a game is in a collection once: fe_coll_add) */
+      unsigned e;
       for (i = 0; i < n_scan; i++)
-         h[i] = fe_favs_hash(g_roms[i].name);
-      for (k = 0; k < (int)g_coll.ncoll; k++)
-         if (g_coll.count[k])
-            for (i = 0; i < n_scan; i++)
-               g_coll_cnt[k] += fe_coll_has_h(&g_coll, k, g_roms[i].name, h[i]);
+      {
+         unsigned hi = fe_favs_hash(g_roms[i].name);
+         for (e = 0; e < g_coll.n; e++)
+            if (g_coll.hash[e] == hi &&
+                strcmp(g_coll.pool + g_coll.off[e], g_roms[i].name) == 0)
+               g_coll_cnt[g_coll.owner[e]]++;
+      }
    }
    if (g_lpl.nlist && n_scan > 0)
    {

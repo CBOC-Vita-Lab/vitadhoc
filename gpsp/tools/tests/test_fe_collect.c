@@ -475,8 +475,48 @@ static void test_lpl_bad(void)
       assert(fe_lpl_load(&S, p, "huge.lpl") == 1 && S.list[1].cut);
       assert(S.bytes <= FE_LPL_BYTES_MAX);
    }
+   {
+      /* the cap falls inside a string (a 9 MiB label): the items before it
+       * are still kept */
+      FILE *f;
+      size_t i;
+      static char pad[65536];
+      snprintf(p, sizeof(p), "%s/huge2.lpl", dir);
+      f = fopen(p, "wb");
+      assert(f);
+      fputs("{\"items\":[{\"path\":\"/first.gba\"},{\"label\":\"", f);
+      memset(pad, 'x', sizeof(pad));
+      for (i = 0; i < (9u << 20) / sizeof(pad); i++)
+         fwrite(pad, 1, sizeof(pad), f);
+      fputs("\"}]}", f);
+      fclose(f);
+      assert(fe_lpl_load(&S, p, "huge2.lpl") == 1 && S.list[2].cut);
+   }
    snprintf(cmd, sizeof(cmd), "rm -rf %s", dir);
    assert(system(cmd) == 0);
+
+   /* a "#" in a file name is part of the name: only the one after an
+    * archive starts the name */
+   {
+      static const char J[] =
+         "{\"items\":[{\"path\":\"/other/place/Game #1.gba\"},"
+         "{\"path\":\"/other/Pack.7z#dir/In #2.gbc\"}]}";
+      const char *lib[] = {
+         "ux0:data/GBAdhoc/roms/Game #1.gba",
+         "ux0:data/GBAdhoc/roms/Other #1.gba",
+         "ux0:data/GBAdhoc/roms/In #2.gbc",
+         "ux0:data/GBAdhoc/roms/Out #2.gbc",
+      };
+      fe_lpl_rom r[4];
+      unsigned short out[4];
+      fe_lpl_clear(&S);
+      assert(fe_lpl_begin(&S, "hash") == 0);
+      fe_lpl_feed(&S, J, sizeof(J) - 1);
+      assert(fe_lpl_end(&S) == 2);
+      keys(r, lib, 4);
+      assert(fe_lpl_match(&S, 0, r, 4, out, 4, NULL, NULL) == 2);
+      assert(out[0] == 0 && out[1] == 2);
+   }
 }
 
 int main(void)

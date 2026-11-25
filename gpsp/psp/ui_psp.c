@@ -13590,6 +13590,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
    g_swap_to = -1;
    g_view_kind = VK_ALL;
    g_view_which = 0;
+   g_sel_pending = 0;
 #endif
    favs_load(rom_dir);
 #ifdef VITA
@@ -13977,25 +13978,31 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
        * SQUARE can be the game's Collections page instead (the Home's Lists
        * button is the same page). */
       {
-         static int sel_pending;
          int lists = (edges & BROWSER_LISTS_BUTTON) != 0;
          edges &= ~BROWSER_LISTS_BUTTON;
          if ((edges & PSP_CTRL_SELECT) && !g_browser_state_open &&
              !(pd.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER)))
-            sel_pending = 1;
-         if (sel_pending && (pd.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER)))
-            sel_pending = 0;
-         if (sel_pending && (edges & PSP_CTRL_SQUARE))
+            g_sel_pending = 1;
+         /* SELECT held and another button pressed is not a step: the game
+          * started, Settings, the console list, Find or the save states took
+          * the press, and the view must not change behind them or later */
+         if (g_sel_pending &&
+             ((pd.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER |
+                             PSP_CTRL_CROSS | PSP_CTRL_CIRCLE |
+                             PSP_CTRL_TRIANGLE | PSP_CTRL_START)) ||
+              g_browser_state_open || find_owns_input))
+            g_sel_pending = 0;
+         if (g_sel_pending && (edges & PSP_CTRL_SQUARE))
          {
             lists = 1;
             edges &= ~PSP_CTRL_SQUARE;
-            sel_pending = 0;
+            g_sel_pending = 0;
          }
-         if (sel_pending && !(pd.Buttons & PSP_CTRL_SELECT) &&
-             !g_browser_state_open)
+         if (g_sel_pending && !(pd.Buttons & PSP_CTRL_SELECT))
          {
-            sel_pending = 0;
-            swap_begin(0);
+            g_sel_pending = 0;
+            if (!g_swap.active && !g_sw.active)
+               swap_begin(0);
          }
          if (lists && n > 0 && !g_browser_state_open && !g_pop.active &&
              !g_swap.active && !g_sw.active && !g_pick_on)

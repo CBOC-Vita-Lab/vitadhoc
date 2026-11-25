@@ -3259,8 +3259,24 @@ def t_collections(S):
             "one view each; a collection with nothing on this console is not stepped to; then back to Games")
     S.picture(r, "a.png")
 
-    # A write that fails (the temp file's name is taken by a folder): the file
-    # is as it was, the page says so, and what it shows is what is on the card.
+    # Deleting a collection that comes before the one on screen: the list
+    # behind keeps showing the collection it showed (the later ones move up).
+    r = run("delete_before", "90:select\n+50:select\n+50:select\n+50:select+square:3\n+40:triangle\n"
+            "+10:cross\n+20:circle\n+60:cross\n+60:quit\n",
+            {"collections.txt": "#collection A\ncoll-01.gba\n#collection B\ngbadhoc-test.gba\n"
+                                "#collection C\ncoll-03.gba\n"})
+    S.check(r.has(r'^EVT library view=collection name="B" shown=1') and
+            r.has(r'^EVT ui_collection op=delete name="A"') and
+            coll(r) == "#collection B\ngbadhoc-test.gba\n#collection C\ncoll-03.gba\n" and
+            picked(r, "gbadhoc-test.gba"),
+            "after deleting A from B's view, the list is still B (its game is the one started)")
+
+    # SELECT held with START is Settings, not a step: the view is the same
+    # one when Settings closes.
+    r = run("select_start", "90:select+start:3\n+40:circle\n+60:cross\n+60:quit\n")
+    S.check(not r.evt("library") and picked(r, "gbadhoc-test.gba"),
+            "SELECT + START opens Settings and steps no view, then or afterwards")
+
     keep = "#collection A\nzzz.gba\n"
     r = run("failed", "90:select+square:3\n+40:cross\n+30:shot=failed.png\n+4:circle\n+30:quit\n",
             {"collections.txt": keep, "collections.txt.tmp/keep": "x"})

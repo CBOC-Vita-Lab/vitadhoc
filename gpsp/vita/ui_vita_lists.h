@@ -132,7 +132,19 @@ static int ls_screen(unsigned edges)
          snprintf(nm, sizeof(nm), "%s", g_coll.name[g_ls.ask]);
          fe_coll_delete(&g_coll, g_ls.ask);
          if (ls_save() == 0)
+         {
             snprintf(g_ls.note, sizeof(g_ls.note), "Deleted \"%s\"", nm);
+            /* the ones after it moved up: the list behind keeps showing the
+             * collection it showed, or all games when that one is gone */
+            if (g_view_kind == VK_COLL && g_view_which == g_ls.ask)
+            {
+               g_view_kind = VK_ALL;
+               g_view_which = 0;
+               g_browser_favs = 0;
+            }
+            else if (g_view_kind == VK_COLL && g_view_which > g_ls.ask)
+               g_view_which--;
+         }
          fe_evt("ui_collection op=delete name=\"%s\"", nm);
          g_ls.ask = -1;
          total = (int)g_coll.ncoll + 1;

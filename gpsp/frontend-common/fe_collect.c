@@ -433,11 +433,16 @@ void fe_lpl_norm(const char *in, char *out, size_t cap)
    }
 }
 
+/* The file's name: what follows the last "/", or the "#" RetroArch puts
+ * after an archive ("pack.zip#game.gbc").  Any other "#" is part of the name
+ * ("Game #1.gba" and "Other #1.gba" are two games). */
 static const char *base_of(const char *norm)
 {
    const char *b = norm, *p;
    for (p = norm; *p; p++)
-      if (*p == '/' || *p == '#')
+      if (*p == '/' ||
+          (*p == '#' && ((p - norm >= 4 && !memcmp(p - 4, ".zip", 4)) ||
+                         (p - norm >= 3 && !memcmp(p - 3, ".7z", 3)))))
          b = p + 1;
    return b;
 }
@@ -706,8 +711,9 @@ void fe_lpl_feed(fe_lpl_set *s, const char *buf, size_t len)
 int fe_lpl_end(fe_lpl_set *s)
 {
    fe_lpl_list *l = &s->list[s->nlist];
-   int ok = s->open && !s->bad && !s->in_str && s->saw_items &&
-            (s->depth == 0 || l->cut);
+   /* a file read only up to the cap stops anywhere, inside a string too */
+   int ok = s->open && !s->bad && s->saw_items &&
+            (l->cut || (!s->in_str && s->depth == 0));
    s->open = 0;
    if (!ok)
    {

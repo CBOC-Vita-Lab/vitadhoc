@@ -43,7 +43,7 @@ app.was_not_found	%.180s wurde nicht gefunden.
 browse.also_looked_in	Auch gesucht in %s
 browse.also_looked_in_and_more	Auch gesucht in %s und %d weiteren
 browse.copy_your_files_into_this_folder	Kopiere deine .%s-Dateien auf der Speicherkarte in diesen Ordner:
-browse.games_go_there_then_press	.gba-, .gb-, .gbc-, .sfc- und .nes-Spiele kommen dorthin. Dann {x} drücken.
+browse.games_go_there_then_press	.gba-, .gb-, .gbc-, .sfc-, .nes-Spiele dorthin. Dann {x} drücken.
 browse.no_games_yet	Noch keine %s-Spiele
 browse.other_game_many	{tri} zeigt deine %d anderen Spiele
 browse.other_game_one	{tri} zeigt dein %d anderes Spiel
@@ -213,7 +213,7 @@ ctl.turbo_b	Turbo B
 ctl.turbo_b_2	Turbo B (2)
 ctl.video_preset	Video-Preset
 hint.dpad_change_o_back	DPAD Ändern   {o} Zurück
-hint.dpad_letter_move_x_pad_sq	DPAD Buchstabe, Bewegen   {x} Pad   {sq} Löschen   {tri} Beitreten   {o} Zurück
+hint.dpad_letter_move_x_pad_sq	DPAD Zeichen, Cursor   {x} Pad   {sq} Löschen   {tri} Los   {o} Zurück
 hint.l_r_page_o_back	L/R Seite   {o} Zurück
 hint.o_back	{o} Zurück
 hint.o_cancel	{o} Abbrechen
@@ -221,7 +221,7 @@ hint.sq_save_r_undo_o_back	{sq} Speichern   R Zurücknehmen   {o} Zurück
 hint.to_leave_hold_start_select_or	Verlassen: START + SELECT halten oder Finger auf diese Zeile
 hint.tri_add_a_code_select_find	{tri} Code hinzufügen   SELECT Finden   START Suchen   {o} Zurück
 hint.up_down_scroll_l_r_page	UP/DOWN Scrollen   L/R Seite   {o} Zurück
-hint.x_add_remove_sq_rename_tri	{x} Hinzufügen/Entfernen   {sq} Umbenennen   {tri} Löschen   {o} Zurück
+hint.x_add_remove_sq_rename_tri	{x} Hinzuf./Entf.   {sq} Umbenennen   {tri} Löschen   {o} Zurück
 hint.x_back_o_back	{x} Zurück   {o} Zurück
 hint.x_change_dpad_move_change_o	{x} Ändern   DPAD Bewegen/Ändern   {o} Zurück
 hint.x_change_o_back	{x} Ändern   {o} Zurück
@@ -234,14 +234,14 @@ hint.x_export_dpad_move_choose_o	{x} Exportieren   DPAD Bewegen/Wählen   {o} Zu
 hint.x_host_dpad_room_number_o	{x} Hosten   DPAD Raumnummer   {o} Zurück
 hint.x_host_o_back	{x} Hosten   {o} Zurück
 hint.x_join_o_back	{x} Beitreten   {o} Zurück
-hint.x_load_sq_save_tri_delete	{x} Laden   {sq} Speichern   {tri} Löschen   L Sperren   R Rückgängig   {o} Zurück
+hint.x_load_sq_save_tri_delete	{x} Laden   {sq} Sichern   {tri} Löschen   L Sperre   R Rückg.   {o} Zurück
 hint.x_look_dpad_move_l_r	{x} Ansehen   DPAD Bewegen   L R Seite   {o} Zurück
 hint.x_name_it_tri_save_o	{x} Benennen   {tri} Speichern   {o} Zurück
 hint.x_new_collection_o_back	{x} Neue Sammlung   {o} Zurück
 hint.x_on_off_o_back	{x} An/Aus     {o} Zurück
 hint.x_on_off_sq_all_off	{x} An/Aus     {sq} Alle aus     {o} Zurück
-hint.x_on_off_tri_add_select	{x} An/Aus   {tri} Hinzufügen   SELECT Finden   START Suchen   {o} Zurück
-hint.x_on_off_tri_add_sq	{x} An/Aus   {tri} Hinzufügen   {sq} Löschen   SELECT Finden   START Suchen
+hint.x_on_off_tri_add_select	{x} An/Aus   {tri} Neu   SELECT Finden   START Suchen   {o} Zurück
+hint.x_on_off_tri_add_sq	{x} An/Aus   {tri} Neu   {sq} Löschen   SELECT Finden   START Suchen
 hint.x_open_and_join_o_back	{x} Öffnen und beitreten   {o} Zurück
 hint.x_open_dpad_move_o_back	{x} Öffnen   DPAD Bewegen   {o} Zurück
 hint.x_open_o_back_auto_fire	{x} Öffnen   {o} Zurück      Dauerfeuer für A und B
@@ -256,7 +256,7 @@ hint.x_set_level_now_dpad_move	{x} Stufe setzen   DPAD Bewegen   {o} Zurück
 hint.x_start_o_back	{x} Starten   {o} Zurück
 hint.x_stop_o_back_keeps_listening	{x} Stoppen   {o} Zurück (hört weiter zu)
 hint.x_the_steps_o_back	{x} Die Schritte   {o} Zurück
-hint.x_type_sq_delete_l_keyboard	{x} Tippen   {sq} Löschen   L Tastatur   SELECT Name   {tri} Speichern   {o} Zurück
+hint.x_type_sq_delete_l_keyboard	{x} Tippen   {sq} Entf.   L Tastatur   SELECT Name   {tri} OK   {o} Zurück
 hint.x_type_sq_delete_tri_join	{x} Tippen   {sq} Löschen   {tri} Beitreten   {o} Zurück
 hint.x_use_it_o_back	{x} Verwenden   {o} Zurück
 hint.x_which_connection_o_back	{x} Welche Verbindung?   {o} Zurück
@@ -326,7 +326,7 @@ home.save_states_2	Savestates
 home.save_states_of	Savestates   %d-%d von %d
 home.saved	Gespeichert
 home.september	September
-home.settings	Einstellungen
+home.settings	Optionen
 home.slot	Slot %d
 home.star	Stern
 home.starred	Favoriten
@@ -465,7 +465,7 @@ menu.game_list	Spieleliste
 menu.hosting	Hostet
 menu.hosting_waiting_for_the_other_player	Hoste %s, warte auf den anderen Spieler
 menu.leave_this_game_for_the_game	Dieses Spiel verlassen, zur Spieleliste
-menu.link_up_over_wi_fi_ad	Verbinden per WLAN, Ad-hoc oder auf dieser Vita
+menu.link_up_over_wi_fi_ad	Per WLAN, Ad-hoc oder auf dieser Vita
 menu.linked	Verbunden
 menu.linked_to_another_console	Mit anderer Konsole verbunden
 menu.linked_you_are_player	Verbunden: Du bist Spieler %d
@@ -478,9 +478,9 @@ menu.save_clip	Clip speichern
 menu.save_or_load_the_game_of	Spiel speichern oder laden: %d von %d Slots belegt
 menu.save_states	Savestates
 menu.save_states_are_off_while_linked	Savestates sind bei Verbindung aus
-menu.save_the_last_ten_seconds_as	Die letzten zehn Sekunden als Animation speichern
+menu.save_the_last_ten_seconds_as	Die letzten 10 Sekunden als Animation speichern
 menu.select	Auswählen
-menu.settings	Einstellungen
+menu.settings	Optionen
 menu.stay	Bleiben
 menu.this_ends_the_link_for_both	Das beendet die Verbindung für beide Spieler.
 menu.two_players_on_this	Zwei Spieler auf dieser Vita

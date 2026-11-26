@@ -245,7 +245,7 @@ hint.x_on_off_tri_add_sq	{x} on/off   {tri} aggiungi   {sq} elimina   SELECT cer
 hint.x_open_and_join_o_back	{x} apri e unisciti   {o} indietro
 hint.x_open_dpad_move_o_back	{x} apri   DPAD sposta   {o} indietro
 hint.x_open_o_back_auto_fire	{x} apri   {o} indietro      fuoco auto per A e B
-hint.x_rebind_sq_none_tri_default	{x} riassegna   {sq} nessuno   {tri} predefinito   {o} indietro      vuoto = disattivato
+hint.x_rebind_sq_none_tri_default	{x} riassegna   {sq} nessuno   {tri} predef.   {o} indietro      vuoto = off
 hint.x_reset_o_back_blank_disabled	{x} reimposta   {o} indietro      vuoto = disattivato
 hint.x_retry_missing_dpad_move_o	{x} riprova mancanti   DPAD sposta   {o} indietro
 hint.x_select_dpad_change_o_resume	{x} scegli   DPAD cambia   {o} riprendi
@@ -326,7 +326,7 @@ home.save_states_2	Stati salvati
 home.save_states_of	Stati salvati   %d-%d di %d
 home.saved	Salvato
 home.september	settembre
-home.settings	Impostazioni
+home.settings	Opzioni
 home.slot	Slot %d
 home.star	Preferito
 home.starred	Preferiti

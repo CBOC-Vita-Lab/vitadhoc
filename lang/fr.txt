@@ -240,8 +240,8 @@ hint.x_name_it_tri_save_o	{x} nommer   {tri} enreg.   {o} retour
 hint.x_new_collection_o_back	{x} nouvelle collection   {o} retour
 hint.x_on_off_o_back	{x} oui/non     {o} retour
 hint.x_on_off_sq_all_off	{x} act./désact.     {sq} tout couper     {o} retour
-hint.x_on_off_tri_add_select	{x} act./désact.   {tri} ajouter   SELECT chercher   START fouiller   {o} retour
-hint.x_on_off_tri_add_sq	{x} act./désact.   {tri} ajouter   {sq} suppr.   SELECT chercher   START fouiller
+hint.x_on_off_tri_add_select	{x} on/off   {tri} ajouter   SELECT trouver   START mémoire   {o} retour
+hint.x_on_off_tri_add_sq	{x} on/off   {tri} ajouter   {sq} suppr.   SELECT trouver   START mémoire
 hint.x_open_and_join_o_back	{x} ouvrir/rejoindre   {o} retour
 hint.x_open_dpad_move_o_back	{x} ouvrir   DPAD déplacer   {o} retour
 hint.x_open_o_back_auto_fire	{x} ouvrir   {o} retour      tir auto pour A et B
@@ -326,7 +326,7 @@ home.save_states_2	États
 home.save_states_of	États   %d-%d sur %d
 home.saved	Enregistré
 home.september	septembre
-home.settings	Paramètres
+home.settings	Réglages
 home.slot	Empl. %d
 home.star	Favori
 home.starred	Favoris
@@ -478,9 +478,9 @@ menu.save_clip	Enregistrer un clip
 menu.save_or_load_the_game_of	Sauvegarder ou charger : %d emplacements sur %d utilisés
 menu.save_states	États
 menu.save_states_are_off_while_linked	Les états sont désactivés en liaison
-menu.save_the_last_ten_seconds_as	Enregistre les dix dernières secondes en image animée
+menu.save_the_last_ten_seconds_as	Les 10 dernières secondes en image animée
 menu.select	Choisir
-menu.settings	Paramètres
+menu.settings	Réglages
 menu.stay	Rester
 menu.this_ends_the_link_for_both	Cela termine la liaison pour les deux joueurs.
 menu.two_players_on_this	Deux joueurs sur cette Vita

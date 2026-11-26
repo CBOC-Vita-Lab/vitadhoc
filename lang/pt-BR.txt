@@ -240,8 +240,8 @@ hint.x_name_it_tri_save_o	{x} nomear   {tri} salvar   {o} voltar
 hint.x_new_collection_o_back	{x} nova coleção   {o} voltar
 hint.x_on_off_o_back	{x} alternar     {o} voltar
 hint.x_on_off_sq_all_off	{x} alternar     {sq} desativar todos     {o} voltar
-hint.x_on_off_tri_add_select	{x} alternar   {tri} adicionar   SELECT buscar   START procurar   {o} voltar
-hint.x_on_off_tri_add_sq	{x} alternar   {tri} adicionar   {sq} apagar   SELECT buscar   START procurar
+hint.x_on_off_tri_add_select	{x} alternar   {tri} novo   SELECT buscar   START memória   {o} voltar
+hint.x_on_off_tri_add_sq	{x} alternar   {tri} novo   {sq} apagar   SELECT buscar   START memória
 hint.x_open_and_join_o_back	{x} abrir e entrar   {o} voltar
 hint.x_open_dpad_move_o_back	{x} abrir   DPAD mover   {o} voltar
 hint.x_open_o_back_auto_fire	{x} abrir   {o} voltar      tiro automático para A e B
@@ -478,9 +478,9 @@ menu.save_clip	Salvar clipe
 menu.save_or_load_the_game_of	Salvar ou carregar o jogo: %d de %d slots usados
 menu.save_states	Estados salvos
 menu.save_states_are_off_while_linked	Estados salvos desativados durante o link
-menu.save_the_last_ten_seconds_as	Salva os últimos dez segundos como imagem animada
+menu.save_the_last_ten_seconds_as	Salva os últimos 10 segundos como imagem animada
 menu.select	Select
-menu.settings	Configurações
+menu.settings	Opções
 menu.stay	Ficar
 menu.this_ends_the_link_for_both	Isso encerra o link para os dois jogadores.
 menu.two_players_on_this	Dois jogadores neste Vita

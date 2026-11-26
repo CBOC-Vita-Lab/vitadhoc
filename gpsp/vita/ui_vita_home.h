@@ -963,15 +963,33 @@ static void hm_home_hints(void)
       return;
    }
    /* Text size Large: the line is wider than the screen at the usual spaces, so the five spaces after
-    * its words shrink to what fits (at Normal it fits and nothing moves) */
+    * its words shrink to what fits (at Normal it fits and nothing moves).  A language whose words are
+    * longer still leaves out SELECT Views (the tabs at the top are the views, and a tap picks one),
+    * then SELECT + Square Lists, rather than run off the screen or shrink the words. */
+   int views = 1, lists = 1;
    {
       const char *find = g_find[0] ? tr("home.clear") : tr("home.find");
-      float w = 4 * 26 + 36 + vs_text_w(VS_CAPTION, tr("home.play")) + vs_text_w(VS_CAPTION, tr("home.star")) +
-                vs_text_w(VS_CAPTION, find) + vs_text_w(VS_CAPTION, tr("home.views")) + vs_text_w(VS_CAPTION, tr("home.lists")) +
-                vs_text_w(VS_CAPTION, tr("home.settings")) + vs_text_w(VS_CAPTION, "SELECT") +
-                vs_text_w(VS_CAPTION, "SELECT +") + vs_text_w(VS_CAPTION, "START") + 3 * (14 + 6);
+      const float wv = vs_text_w(VS_CAPTION, "SELECT") + 14 + 6 + vs_text_w(VS_CAPTION, tr("home.views"));
+      const float wl = vs_text_w(VS_CAPTION, "SELECT +") + 14 + 6 + 26 + vs_text_w(VS_CAPTION, tr("home.lists"));
+      float w = 3 * 26 + 36 + vs_text_w(VS_CAPTION, tr("home.play")) + vs_text_w(VS_CAPTION, tr("home.star")) +
+                vs_text_w(VS_CAPTION, find) + vs_text_w(VS_CAPTION, tr("home.settings")) +
+                vs_text_w(VS_CAPTION, "START") + (14 + 6) + wv + wl;
       float gap = (VS_W - 2 * HM_X - w) / 5;
+      if (gap < 8)
+      {
+         views = 0;
+         w -= wv;
+         gap = (VS_W - 2 * HM_X - w) / 4;
+      }
+      if (gap < 8)
+      {
+         lists = 0;
+         w -= wl;
+         gap = (VS_W - 2 * HM_X - w) / 3;
+      }
       g_hm_hint_gap = gap >= 26 ? 26 : gap < 8 ? 8 : gap;
+      if (i18n_audit_on && (!views || !lists) && vid_text_pct() <= 100)
+         fprintf(stderr, "EVT i18n: home hint line too wide, %s left out\n", !lists ? "Views and Lists" : "Views");
    }
    vs_icon(VS_I_BTN_X, x + 10, y + 12, 22, HC_TEXT2);
    x = hm_hint_word(x + 26, y, tr("home.play"));
@@ -979,11 +997,17 @@ static void hm_home_hints(void)
    x = hm_hint_word(x + 26, y, tr("home.star"));
    vs_icon(VS_I_BTN_O, x + 10, y + 12, 22, HC_TEXT2);
    x = hm_hint_word(x + 26, y, g_find[0] ? tr("home.clear") : tr("home.find"));
-   x = hm_cap(x, y, "SELECT");
-   x = hm_hint_word(x, y, tr("home.views"));
-   x = hm_cap(x, y, "SELECT +");
-   vs_icon(VS_I_BTN_SQ, x + 10, y + 12, 22, HC_TEXT2);
-   x = hm_hint_word(x + 26, y, tr("home.lists"));
+   if (views)
+   {
+      x = hm_cap(x, y, "SELECT");
+      x = hm_hint_word(x, y, tr("home.views"));
+   }
+   if (lists)
+   {
+      x = hm_cap(x, y, "SELECT +");
+      vs_icon(VS_I_BTN_SQ, x + 10, y + 12, 22, HC_TEXT2);
+      x = hm_hint_word(x + 26, y, tr("home.lists"));
+   }
    vs_icon(VS_I_BTN_TRI, x + 10, y + 12, 22, HC_TEXT2);
    x += 36;              /* the console's button: its pill carries the name (a word does not fit before START Settings) */
    x = hm_cap(x, y, "START");

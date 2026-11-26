@@ -483,9 +483,9 @@ hint.x_on_off_o_back	{x} act/desact     {o} atrás
 # context: footer in ui_psp.c, screen_cheats
 hint.x_on_off_sq_all_off	{x} act/desact     {sq} desact. todo     {o} atrás
 # context: footer in ui_vita_cheats.h, screen_cheats_page
-hint.x_on_off_tri_add_select	{x} act/desact   {tri} añadir   SELECT buscar   START búsqueda   {o} atrás
+hint.x_on_off_tri_add_select	{x} act/des   {tri} añadir   SELECT buscar   START memoria   {o} atrás
 # context: footer in ui_vita_cheats.h, screen_cheats_page
-hint.x_on_off_tri_add_sq	{x} act/desact   {tri} añadir   {sq} borrar   SELECT buscar   START búsqueda
+hint.x_on_off_tri_add_sq	{x} act/des   {tri} añadir   {sq} borrar   SELECT buscar   START memoria
 # context: footer in ui_vita_online.h, screen_online_card
 hint.x_open_and_join_o_back	{x} abrir y unirse   {o} atrás
 # context: footer in ui_psp.c, screen_settings_page
@@ -493,7 +493,7 @@ hint.x_open_dpad_move_o_back	{x} abrir   DPAD mover   {o} atrás
 # context: footer in ui_psp.c, screen_controls
 hint.x_open_o_back_auto_fire	{x} abrir   {o} atrás      turbo para A y B
 # context: footer in ui_psp.c, screen_turbo
-hint.x_rebind_sq_none_tri_default	{x} reasignar   {sq} ninguno   {tri} predet.   {o} atrás      vacío = desactivado
+hint.x_rebind_sq_none_tri_default	{x} reasignar   {sq} ninguno   {tri} predet.   {o} atrás      vacío = sin uso
 # context: footer in ui_psp.c, screen_controls
 hint.x_reset_o_back_blank_disabled	{x} restablecer   {o} atrás      vacío = inactivo
 # context: footer in ui_psp.c, screen_settings_page
@@ -515,7 +515,7 @@ hint.x_stop_o_back_keeps_listening	{x} detener   {o} atrás (sigue escuchando)
 # context: footer in ui_vita_play.h, screen_help
 hint.x_the_steps_o_back	{x} los pasos   {o} atrás
 # context: footer in ui_vita_cheats.h, screen_cheat_add_page
-hint.x_type_sq_delete_l_keyboard	{x} escribir   {sq} borrar   L teclado   SELECT nombre   {tri} guardar   {o} atrás
+hint.x_type_sq_delete_l_keyboard	{x} letra   {sq} borrar   L teclado   SELECT nombre   {tri} listo   {o} atrás
 # context: footer in ui_vita_play.h, screen_addr
 hint.x_type_sq_delete_tri_join	{x} escribir   {sq} borrar   {tri} unir   {o} atrás
 # context: footer in ui_vita_cover.h, cv_screen
@@ -951,13 +951,13 @@ menu.resume	Reanudar
 # context: ui_vita_menu.h
 menu.save_clip	Guardar clip
 # context: snprintf in ui_vita_menu.h, cc_says
-menu.save_or_load_the_game_of	Guardar o cargar el juego: %d de %d ranuras usadas
+menu.save_or_load_the_game_of	Guardar o cargar: %d de %d ranuras usadas
 # context: ui_vita_menu.h
 menu.save_states	Estados guardados
 # context: snprintf in ui_vita_menu.h, cc_says
 menu.save_states_are_off_while_linked	Los estados guardados están desactivados mientras hay conexión
 # context: snprintf in ui_vita_menu.h, cc_says
-menu.save_the_last_ten_seconds_as	Guarda los últimos diez segundos como imagen animada
+menu.save_the_last_ten_seconds_as	Guarda los últimos 10 segundos como animación
 # context: ui_vita_menu.h, cc_draw
 menu.select	Elegir
 # context: ui_vita_menu.h

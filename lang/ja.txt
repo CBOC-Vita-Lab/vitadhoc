@@ -43,7 +43,7 @@ app.was_not_found	%.180sが見つかりませんでした。
 browse.also_looked_in	%sも探しました
 browse.also_looked_in_and_more	%sほか%d件も探しました
 browse.copy_your_files_into_this_folder	.%sファイルをメモリーカードのこのフォルダーにコピーしてください:
-browse.games_go_there_then_press	.gba、.gb、.gbc、.sfc、.nesのゲームをそこに入れて、{x}を押してください。
+browse.games_go_there_then_press	.gba、.gb、.gbc、.sfc、.nesを入れて{x}を押してください。
 browse.no_games_yet	%sのゲームはまだありません
 browse.other_game_many	{tri}で他の%d個のゲームを表示
 browse.other_game_one	{tri}で他の%d個のゲームを表示

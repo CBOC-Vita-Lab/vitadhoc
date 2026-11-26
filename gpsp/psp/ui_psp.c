@@ -1614,6 +1614,25 @@ static const char *footer_fit(const char *hint, char *buf, size_t cap)
          break;
       q[-1] = 0;                       /* the last hint off */
    }
+   /* the twin's audit: a catalogue whose hint line had to give up hints
+    * (once per line; the glyph bytes as their placeholders, the log is UTF-8) */
+   if (i18n_audit_on && strlen(buf) + 8 < strlen(hint))
+   {
+      static const char *told;
+      if (told != hint)
+      {
+         static const char *const gl[6] = { "{tri}", "{o}", "{x}", "{sq}", "{star}", "{staro}" };
+         const char *e = tr_english_of(hint), *c;
+         told = hint;
+         fprintf(stderr, "EVT i18n: hint line too wide, hints left out: ");
+         for (c = e; *c; c++)
+            if ((unsigned char)*c >= 0x7F && (unsigned char)*c <= 0x84)
+               fputs(gl[(unsigned char)*c - 0x7F], stderr);
+            else
+               fputc(*c, stderr);
+         fputc('\n', stderr);
+      }
+   }
    return buf;
 }
 #endif
@@ -2352,7 +2371,8 @@ static void ov_plate(const char *msg)
        * footer's top (14 px above its text) and ran off the bottom edge,
        * cutting "Slot 2 saved" in half. */
       int w = vid_text_w(msg) + 40;
-      const int ty = OV_PLATE_Y - 32;                /* text row, logical */
+      /* text row, logical; Text size Large: 4 rows higher, clear of a page's taller last line */
+      const int ty = OV_PLATE_Y - 32 - (vid_text_scope_large() ? 4 : 0);
       float nx = (float)(VID_SCR_W - w), ny = (float)(ty * 2 + 16 - 25);
       vs_shadow(nx, ny, (float)(w * 2), 50, 25, 14, VS_HEX(0x000000, 130));
       vs_rrect(nx, ny, (float)(w * 2), 50, 25, VS_HEX(0x1C2646, 250));
@@ -5039,7 +5059,7 @@ static ui_action screen_settings_page(unsigned edges)
          break;
       case SET_SHARE:
       {
-         char lbl[ROOM_LABEL_CAP], v[48];
+         char lbl[ROOM_LABEL_CAP], v[96];   /* a translation's bytes: Japanese is 3 a character */
          snprintf(v, sizeof(v), tr("settings.value.host_saves_and_states_on"),
                   room_label(g_pcfg.group, lbl, sizeof(lbl)));
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label), v);
@@ -5048,7 +5068,7 @@ static ui_action screen_settings_page(unsigned edges)
       case SET_JOIN:
 #ifdef VITA
       {
-         char lbl[ROOM_LABEL_CAP], v[48];
+         char lbl[ROOM_LABEL_CAP], v[96];
          snprintf(v, sizeof(v), tr("settings.value.the_one_on"),
                   room_label(g_pcfg.group, lbl, sizeof(lbl)));
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label), v);

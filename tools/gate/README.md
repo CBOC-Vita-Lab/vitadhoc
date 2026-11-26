@@ -23,7 +23,7 @@ python3 tools/gate/gate.py --baseline F    # compare with a saved summary.json
 | tier | what runs |
 |---|---|
 | `--quick` | release unit tests, the package test on a fresh `make vpk` build, the three save tests, `gamedb`, `playerkit` (with `pk-link`, the players' own link under ASan+UBSan and TSan), `widekit`, the SNES, NES and WonderSwan selftests |
-| default | quick, plus the host app (`app`, `rewind`, `local`, `link` on x86), the unit suites, audio, cover art, cheats, library, the online play steps (below), and the private-ROM steps (skipped unless their folder is set) |
+| default | quick, plus the host app (`app`, `rewind`, `local`, `link` on x86), the unit suites, the translated catalogues (`i18n-catalogues`), audio, cover art, cheats, library, the online play steps (below), and the private-ROM steps (skipped unless their folder is set) |
 | `--full` | everything, plus armhf under qemu (including `online-armhf`), the cheats end-to-end, the NES armhf check, the Vita compile checks, and the Vita package build (`make vpk`) |
 | `--release` | `--full` plus the release pins: `release-package-pinned` (the committed root VitAdhoc.vpk and its pinned hashes) and `check-files` (SHA256SUMS); stale by design between releases |
 

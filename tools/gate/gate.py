@@ -212,6 +212,10 @@ STEPS = [
     Step("check-files", "SHA256SUMS: every listed file matches (tools/check-files.py)",
          "python3 tools/check-files.py --directory .", "release", {"release"}, inputs=["."],
          parse="check_files"),
+    # the interface languages: every catalogue against English (keys, order, printf forms, glyphs, line breaks, encoding)
+    Step("i18n-catalogues", "translated catalogues against lang/en.txt and lang/pk_en.txt (tools/i18n/check_catalogues.py)",
+         "python3 -I tools/i18n/check_catalogues.py", "default", {"i18n", "gpsp", "playerkit"},
+         inputs=["lang/", "tools/i18n/", "gpsp/vita/lang_en.h", "playerkit/src/pk_strings_en.inc", "playerkit/tools/gen_strings.py"]),
     Step("gamedb", "title database: gamedb.c against assets/gamedb.txt and make_gamedb.py",
          "make -C gpsp/vita/tests/gamedb test", "quick", {"gpsp", "gamedb"}, inputs=["gpsp/"],
          requires=CC, group=GROUP_MAKE),

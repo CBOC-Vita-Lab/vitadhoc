@@ -7372,9 +7372,13 @@ def t_text_large(S):
             if not pl.get(shot) or len(off) > len(offn) or len(over) > len(overn):
                 bad[shot] = (off[:2], over[:2])
         S.check(not bad, "%s at Large: nothing more off the screen or overlapping than at Normal (%s)" % (tag, bad or "all fit"))
-        med = lambda shots: sorted(b["box"][3] - b["box"][1] for b in shots.get(tall_shot, [{"box": (0, 0, 0, 0)}]))[len(shots.get(tall_shot, [0])) // 2]
-        S.check(med(pl) >= med(pn) * 1.1,
-                "%s: the lines are larger at Large (the middle one %.0f px against %.0f)" % (tag, med(pl), med(pn)))
+        # the middle line, or (a translation's accented words come from a second atlas and make some boxes taller at
+        # both sizes, which can move the middle one between sizes) the mean line
+        hs = lambda shots: sorted(b["box"][3] - b["box"][1] for b in shots.get(tall_shot, [{"box": (0, 0, 0, 0)}]))
+        med = lambda shots: hs(shots)[len(hs(shots)) // 2]
+        mean = lambda shots: sum(hs(shots)) / max(1, len(hs(shots)))
+        S.check(med(pl) >= med(pn) * 1.1 or mean(pl) >= mean(pn) * 1.1,
+                "%s: the lines are larger at Large (the middle one %.0f px against %.0f, %.1f against %.1f on average)" % (tag, med(pl), med(pn), mean(pl), mean(pn)))
     cart = open(CHEAT_GBA, "rb").read() if os.path.exists(CHEAT_GBA) else None
     cht = ('cheats = 3\ncheat0_desc = "Infinite lives"\ncheat0_code = "02000008 0000"\ncheat0_enable = true\n'
            'cheat1_desc = "Max money"\ncheat1_code = "02000020:0000FFFF"\ncheat1_enable = false\n'

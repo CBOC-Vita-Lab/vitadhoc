@@ -1595,7 +1595,7 @@ ui.no_roms_found	.%s ROMが見つかりません
 ui.no_save	セーブなし
 ui.none_for_this_game	このゲームにはありません
 ui.nothing_in_it_reads_as_a	チートとして読めるものがありません:
-ui.nothing_saved_here	ここには何も保存されていません
+ui.nothing_saved_here	何も保存されていません
 ui.nothing_to_undo	元に戻すものがありません
 ui.nov	11月
 ui.o_clear	{o} クリア
@@ -1682,7 +1682,7 @@ ui.slot_locked	スロット%dをロックしました
 ui.slot_not_deleted	スロット%dは削除されていません
 ui.slot_of	スロット%d / %d  -  %s%s
 ui.slot_old	旧形式
-ui.slot_saved	スロット%dにセーブしました
+ui.slot_saved	スロット%dにセーブ
 ui.slot_state_saved	保存済み
 ui.slot_unlocked	スロット%dのロックを解除しました
 ui.smoothing_is_lighter_to_keep_full	全速を保つためスムージングを軽くしています。

@@ -1834,7 +1834,7 @@ static void gbcam_frame(void)
          g_cam_have = gbcam_load_file() == 0;
          fresh = 1;
          if (!g_cam_have)
-            toast_now("camera.png not found: using a test picture");
+            toast_now(tr("toast.camera_png_not_found_using_a_test"));
       }
       fe_evt("camera_source mode=%d device=%d file=%d", mode, g_cam_lazy, g_cam_have);
    }
@@ -1845,7 +1845,7 @@ static void gbcam_frame(void)
       {
          /* none here, or it would not start: camera.png or a test picture */
          g_cam_lazy = 0;
-         toast_now("No camera: using camera.png or a test picture");
+         toast_now(tr("toast.no_camera_using_camera_png_or_a"));
          g_cam_have = gbcam_load_file() == 0;
          fresh = 1;
          fe_evt("camera_source mode=%d device=0 file=%d", g_cam_mode, g_cam_have);
@@ -4783,6 +4783,13 @@ const char *ui_host_look_label(void)
 }
 
 /* ui_host_hooks.h: Settings > About > Extra CPU core */
+/* The rewind chip in the interface language (rewind_vita.h; its weak English
+ * one is the unit test's). */
+const char *rewind_chip_format(int oldest)
+{
+   return tr(oldest ? "ui.rewind_chip_oldest" : "ui.rewind_chip");
+}
+
 const char *ui_host_core4_status(void)
 {
    /* The row is "Extra CPU core" + a short value ("in use" / "not available" /
@@ -4800,7 +4807,9 @@ const char *ui_host_core4_status(void)
       n = sizeof(v) - 1;
    memcpy(v, s, n);
    v[n] = 0;
-   return v;
+   return !strcmp(v, "in use") ? tr("settings.value.in_use")
+        : !strcmp(v, "off") ? tr("settings.value.off")
+        : !strcmp(v, "not available") ? tr("settings.value.not_available") : v;
 }
 
 /* ui_host_hooks.h: the Fourth core row changed; the probe and the thread
@@ -6445,7 +6454,7 @@ static int game_boot(const char *rom_path, fe_console_t console)
    ui_loading_finish(1);
    g_game_loaded = 1;
    if (fe_host_gb_core_notice_take() == 1)
-      osd_toast("Accurate core can't run this cartridge: using Standard");
+      osd_toast(tr("toast.accurate_core_can_t_run_this_cartridge"));
    g_faults_seen = fe_host_guest_faults();   /* the count is the process's */
    fe_evt("gba_cable_ready=%d", fe_host_gba_cable_ready());
    plat_memory_report();        /* now the core has taken its memory */
@@ -7461,7 +7470,7 @@ static void game_loop(void)
       i = rewind_frame(rw_want && !local, session || local ||
                        link_locks_states() || g_sw.link_bench);
       if ((rw_note = rewind_notice()) != NULL)
-         toast_now("%s", rw_note);
+         toast_now("%s", tr(rw_note));
       if (i)
       {
          ho_discard();           /* what was in flight is of the other way */

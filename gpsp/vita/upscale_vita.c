@@ -969,8 +969,9 @@ const char *upscale_gov_note(void)
    const int l = upscale_gov_level();
    if (!l)
       return NULL;
-   return A_LOAD(g_gov_nat) - l < 2 ? "Smoothing is off to keep full speed."
-                                    : "Smoothing is lighter to keep full speed.";
+   /* catalogue keys (i18n.h): the menu shows tr() of it */
+   return A_LOAD(g_gov_nat) - l < 2 ? "ui.smoothing_is_off_to_keep_full_speed"
+                                    : "ui.smoothing_is_lighter_to_keep_full";
 }
 
 int upscale_factor(int slot, int kind, unsigned w, unsigned h, int dw)

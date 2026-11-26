@@ -2066,7 +2066,7 @@ static int local_gb_start(int clone, const char *partner_rom,
    lc.pad = gb_partner_pad;
    rc = fe_host_gb_local_start(&lc);
    if (fe_host_gb_core_notice_take() == 2)
-      osd_toast("Two-cart play uses the Standard Game Boy core");
+      osd_toast(tr("toast.two_cart_play_uses_the_standard_gb_core"));
    /* The machine was shut down and made again around the start, whatever
     * came of it: the frame main_vita.c remembers is gone. */
    app_frame_forget();

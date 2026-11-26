@@ -1797,7 +1797,7 @@ static int session_begin(void)
           L.is_host ? "host" : "guest");
    rc = fe_host_gblink_start(L.is_host, L.delay, 0);
    if (fe_host_gb_core_notice_take() == 2)
-      osd_toast("Link play uses the Standard Game Boy core");
+      osd_toast(tr("toast.link_play_uses_the_standard_gb_core"));
    app_frame_forget();               /* the single machine's frame is gone */
    app_audio_flush();
    app_pace_reset();

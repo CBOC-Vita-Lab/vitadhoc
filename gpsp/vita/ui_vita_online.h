@@ -861,8 +861,7 @@ static ui_action screen_online_card(unsigned edges)
          vw_line(22, 70, 436, g_oc.l1, C_VALUE);
          vw_wrap(22, 90, 436, g_oc.l2, C_ITEM, 3);
          if (g_oc.card.state == 1 && g_oc.nhit == 0 && online_lib_skipped() > 0)
-            vw_wrap(22, 134, 436, "A compressed .zip or .7z cannot be "
-                    "checked here. Unpack the game into your games folder.", C_DIM, 2);
+            vw_wrap(22, 134, 436, tr("online.a_compressed_zip_or_7z_cannot_be"), C_DIM, 2);
       }
       footer(tr("hint.o_back"));
       return act;

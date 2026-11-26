@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "play_log.h"
+#include "i18n.h"
 #include "fe_evt.h"
 
 #define PL_SLOTS 4096                 /* hash slots: twice the records */
@@ -273,23 +274,23 @@ int play_log_save(void)
 void play_log_when(uint32_t last, uint32_t now, char *out, size_t cap)
 {
    static const char *const month[12] = {
-      "January", "February", "March", "April", "May", "June", "July",
-      "August", "September", "October", "November", "December" };
+      "home.january", "home.february", "home.march", "home.april", "home.may", "home.june", "home.july",
+      "home.august", "home.september", "home.october", "home.november", "home.december" };
    long days;
    if (!last)
    {
-      snprintf(out, cap, "never");
+      snprintf(out, cap, "%s", tr("home.never"));
       return;
    }
    days = (long)(now / 86400u) - (long)(last / 86400u);
    if (days <= 0)
-      snprintf(out, cap, "today");
+      snprintf(out, cap, "%s", tr("home.today"));
    else if (days == 1)
-      snprintf(out, cap, "yesterday");
+      snprintf(out, cap, "%s", tr("home.yesterday"));
    else if (days < 14)
-      snprintf(out, cap, "%ld days ago", days);
+      snprintf(out, cap, tr("home.days_ago"), days);
    else if (days < 60)
-      snprintf(out, cap, "%ld weeks ago", days / 7);
+      snprintf(out, cap, tr("home.weeks_ago"), days / 7);
    else
    {
       /* civil month of `last` (days since 1970 -> y/m/d, Hinnant) */
@@ -311,9 +312,9 @@ void play_log_when(uint32_t last, uint32_t now, char *out, size_t cap)
          ny = yoe2 + era2 * 400 + (m2 <= 2);
       }
       if (y == ny)
-         snprintf(out, cap, "in %s", month[m - 1]);
+         snprintf(out, cap, tr("home.in_month"), tr(month[m - 1]));
       else
-         snprintf(out, cap, "in %s %ld", month[m - 1], y);
+         snprintf(out, cap, tr("home.in_month_year"), tr(month[m - 1]), y);
    }
 }
 
@@ -321,11 +322,11 @@ void play_log_duration(uint32_t secs, char *out, size_t cap)
 {
    unsigned h = secs / 3600u, m = (secs % 3600u) / 60u;
    if (secs < 60)
-      snprintf(out, cap, "under a minute");
+      snprintf(out, cap, "%s", tr("home.under_a_minute"));
    else if (!h)
-      snprintf(out, cap, "%u min", m);
+      snprintf(out, cap, tr("home.minutes"), m);
    else if (h < 10 && m)
-      snprintf(out, cap, "%u h %u min", h, m);
+      snprintf(out, cap, tr("home.hours_minutes"), h, m);
    else
-      snprintf(out, cap, "%u h", h);
+      snprintf(out, cap, tr("home.hours"), h);
 }

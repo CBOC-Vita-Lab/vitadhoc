@@ -1748,7 +1748,7 @@ static void shj_holds(const fe_share_entry *x, int states_ok, char *out,
       snprintf(out, n, st == 1 ? tr("share.save_state_one") : tr("share.save_state_many"), st,
                states_ok ? "" : tr("share.not_for_this_build"));
    else if (x->save_size)
-      snprintf(out, n, "SAVE");
+      snprintf(out, n, "%s", tr("share.save_only"));
    else
       snprintf(out, n, st == 1 ? tr("share.state_one") : tr("share.state_many"), st,
                states_ok ? "" : tr("share.not_for_this_build"));
@@ -1762,7 +1762,7 @@ static void shj_took(unsigned mark, char *out, size_t n)
    if ((mark & MARK_SAVE) && st)
       snprintf(out, n, st == 1 ? tr("share.took_save_state_one") : tr("share.took_save_state_many"), st);
    else if (mark & MARK_SAVE)
-      snprintf(out, n, "save");
+      snprintf(out, n, "%s", tr("share.took_save_only"));
    else if (st)
       snprintf(out, n, st == 1 ? tr("share.took_state_one") : tr("share.took_state_many"), st);
    else
@@ -2009,7 +2009,7 @@ static void shj_draw_their(share_join_t *j)
       snprintf(t, sizeof(t), tr("share.slot"), i + 1);
       vid_text(64, y, t, c1);
       if (!have)
-         vid_text(64, y + 14, "empty", SH_DIM);
+         vid_text(64, y + 14, tr("ui.slot_empty"), SH_DIM);
       else if (j->mark[j->ent] & (1u << (i + 1)))
       {
          sh_tick(64, y + 18, sh_ok_col());
@@ -2018,7 +2018,7 @@ static void shj_draw_their(share_join_t *j)
       else
       {
          fe_share_time_text(x->st[i].time, 1, d1, sizeof(d1));
-         vid_text(64, y + 14, d1[0] ? d1 : "saved", c2);
+         vid_text(64, y + 14, d1[0] ? d1 : tr("ui.slot_state_saved"), c2);
       }
    }
 
@@ -2091,10 +2091,10 @@ static void shj_draw_yours(share_join_t *j)
       if (j->y_have[i])
       {
          fe_share_time_text(j->y_time[i], 1, d1, sizeof(d1));
-         vid_text(64, y + 14, d1[0] ? d1 : "saved", sel ? C_VALUE : SH_DIM);
+         vid_text(64, y + 14, d1[0] ? d1 : tr("ui.slot_state_saved"), sel ? C_VALUE : SH_DIM);
       }
       else
-         vid_text(64, y + 14, "empty", SH_DIM);
+         vid_text(64, y + 14, tr("ui.slot_empty"), SH_DIM);
    }
    shj_panel_their(j, j->xf_src);
    fe_share_time_text(x->st[j->xf_src - 1].time, 0, d1, sizeof(d1));

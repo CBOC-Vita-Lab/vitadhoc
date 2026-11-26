@@ -110,8 +110,8 @@ static ui_action screen_btntest(unsigned edges)
       { CTL_SELECT, "SELECT" }, { CTL_START, "START" }
    };
    static const bt_input rear[] = {
-      { CTL_REAR_TL, "REAR TOP LEFT" }, { CTL_REAR_TR, "REAR TOP RIGHT" },
-      { CTL_REAR_BL, "REAR BOTTOM LEFT" }, { CTL_REAR_BR, "REAR BOTTOM RIGHT" }
+      { CTL_REAR_TL, TR_KEY("btntest.rear_top_left") }, { CTL_REAR_TR, TR_KEY("btntest.rear_top_right") },
+      { CTL_REAR_BL, TR_KEY("btntest.rear_bottom_left") }, { CTL_REAR_BR, TR_KEY("btntest.rear_bottom_right") }
    };
    ui_btn_state s;
    const int console = pcfg_display_console();
@@ -160,11 +160,11 @@ static ui_action screen_btntest(unsigned edges)
       /* the left stick is the d-pad's second hand; the right stick's words are its gestures */
       int moved = abs(s.lx - 128) > 40 || abs(s.ly - 128) > 40;
       snprintf(num, sizeof(num), "%d, %d", s.lx, s.ly);
-      bt_row(BT_COL2, y, 218, "LEFT STICK", moved, num);
+      bt_row(BT_COL2, y, 218, tr("btntest.left_stick"), moved, num);
       y += BT_PITCH;
       moved = abs(s.rx - 128) > 40 || abs(s.ry - 128) > 40;
       snprintf(num, sizeof(num), "%d, %d", s.rx, s.ry);
-      bt_row(BT_COL2, y, 218, "RIGHT STICK", moved, num);
+      bt_row(BT_COL2, y, 218, tr("btntest.right_stick"), moved, num);
       y += BT_PITCH;
       vid_text(BT_COL2 + 8, y, tr("btntest.left_stick_moves_like_the_d"), C_DIM);
       y += BT_PITCH;
@@ -186,7 +186,7 @@ static ui_action screen_btntest(unsigned edges)
       bt_action_text(rear[i].bit, console, txt, sizeof(txt));
       if (!txt[0])
          snprintf(txt, sizeof(txt), tr("btntest.not_set"));
-      bt_row(BT_COL2, y + i * BT_PITCH, 218, rear[i].name,
+      bt_row(BT_COL2, y + i * BT_PITCH, 218, tr(rear[i].name),
              (s.rear & rear[i].bit) != 0, txt);
    }
 

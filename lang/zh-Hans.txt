@@ -43,6 +43,7 @@ app.was_not_found	未找到 %.180s。
 browse.also_looked_in	还查找了 %s
 browse.also_looked_in_and_more	还查找了 %s 等另外 %d 处
 browse.copy_your_files_into_this_folder	请把 .%s 文件复制到记忆卡的此文件夹中：
+browse.games_go_there_then_press	.gba、.gb、.gbc、.sfc 和 .nes 游戏放在那里，然后按 {x}。
 browse.no_games_yet	还没有 %s 游戏
 browse.other_game_many	{tri} 查看其他 %d 个游戏
 browse.other_game_one	{tri} 查看其他 %d 个游戏
@@ -50,9 +51,15 @@ btntest.button_test	按键测试
 btntest.buttons	按键
 btntest.chord	（组合键）
 btntest.front_touch	正面触摸
+btntest.left_stick	左摇杆
 btntest.left_stick_moves_like_the_d	左摇杆：与方向键相同
 btntest.not_set	未设置
+btntest.rear_bottom_left	背面左下
+btntest.rear_bottom_right	背面右下
+btntest.rear_top_left	背面左上
+btntest.rear_top_right	背面右上
 btntest.right_left_rewind_right_fast_forward	右侧：左为倒带，右为快进
+btntest.right_stick	右摇杆
 btntest.sticks_and_touch	摇杆与触摸
 cheats.6_or_8_letters_game_genie	6 或 8 个字母（Game Genie）或 AAAA:VV（RAM）。多个代码之间用 +。
 cheats.8_digits_gameshark_or_3_3	8 位数字（GameShark）或 3-3-3 位数字（Game Genie）。多个代码之间用 +。
@@ -102,6 +109,7 @@ cheats.look_at_the_game_s_memory	立即查看游戏内存
 cheats.makes_a_cheat_that_keeps_this	生成一个保持此数值不变的金手指。
 cheats.most_counters_are_1_byte_money	多数计数器为 1 字节；金钱和分数常为 2 字节。“任意地址”也会查看奇数位置。
 cheats.most_counters_are_1_byte_money_2	多数计数器为 1 字节；金钱和分数常为 2 字节。
+cheats.name_title	名称
 cheats.narrow_it_down_to_50_or	缩小到 50 个以内即可查看。
 cheats.new_search	新搜索
 cheats.no_cheat_s_name_contains	没有名称含“%s”的金手指。
@@ -112,6 +120,7 @@ cheats.no_name	（无名称）
 cheats.no_results_start_a_new_search	没有结果。请开始新搜索
 cheats.no_room_for_more_cheats	金手指已满，无法再添加。
 cheats.no_such_cheat	没有这个金手指。
+cheats.none	无
 cheats.not_a_whole_code_yet	代码还不完整
 cheats.nothing_matched_start_a_new_search	没有匹配项：请开始新搜索。
 cheats.of	“%s”：%d / %d
@@ -121,6 +130,8 @@ cheats.raw	原始
 cheats.ready_to_save	可以保存
 cheats.recognised_not_supported	已识别，但不支持
 cheats.remember_the_memory_play_on_then	记住内存，继续游戏，然后缩小范围。
+cheats.result_many	%d 个结果
+cheats.result_one	%d 个结果
 cheats.results	结果
 cheats.save	保存
 cheats.search_memory	搜索内存
@@ -131,6 +142,8 @@ cheats.since_the_last_step	自上一步以来
 cheats.size_of_the_number	数字大小
 cheats.space	空格
 cheats.start_again	重新开始
+cheats.status_off	关闭
+cheats.the_built_in_list_has_none_for	内置列表中没有。用 {tri} 添加你自己的代码，或把 .cht 文件复制到 roms 旁边的 cheats 文件夹。
 cheats.the_cheat_could_not_be_used	无法使用此金手指。
 cheats.the_cheat_file_could_not_be	无法保存金手指文件。
 cheats.the_code	该代码
@@ -149,6 +162,8 @@ cheats.throw_this_code_away_x_discard	放弃这个代码？      {x} 放弃     
 cheats.type_a_whole_number_from_0	请输入 0 到 %u 的整数（或以 0x 开头的十六进制）
 cheats.type_the_code_first	请先输入代码。
 cheats.unknown	未知
+cheats.unsupported	不支持
+cheats.yours	自己的
 cover.a_cover_you_pick_always_wins	你选的封面始终优先于下载的图片。covers/ 中与游戏同名的 PNG 或 JPG 也会被使用。
 cover.automatic_a_cover_is_downloaded_when	自动。有 Wi-Fi 时会下载封面。
 cover.automatic_download	自动（下载）
@@ -248,6 +263,8 @@ hint.x_which_connection_o_back	{x} 连接方式？   {o} 返回
 home.1_game_matches_in_all_games	全部游戏中有 1 个匹配
 home.a_retroarch_playlist_it_lists_games	RetroArch 播放列表：仅列出游戏，无法在此更改。
 home.all_games	全部游戏
+home.april	4月
+home.august	8月
 home.back	返回
 home.battery_save	电池存档
 home.cancel	取消
@@ -258,18 +275,32 @@ home.clear	清除
 home.continue	继续
 home.copy_your_files_into_this_folder	请把 .%s 文件复制到记忆卡的此文件夹中：
 home.cover	封面
+home.days_ago	%ld 天前
+home.december	12月
 home.delete	删除
 home.delete_the_state_in_slot	删除存档位 %d 中的即时存档？
 home.empty	空
 home.every_game_has_been_played	所有 %s 游戏都玩过了
+home.february	2月
 home.find	查找
 home.from_wikipedia	来自维基百科
 home.games	游戏
 home.games_match_in_all_games	全部游戏中有 %d 个匹配
+home.hours	%u 小时
+home.hours_minutes	%u 小时 %u 分钟
+home.in_month	%s
+home.in_month_year	%s（%ld年）
+home.january	1月
+home.july	7月
+home.june	6月
 home.keep	保留
 home.lists	列表
 home.load	读取
 home.look_again	重新查找
+home.march	3月
+home.may	5月
+home.minutes	%u 分钟
+home.never	从未
 home.next	下一个
 home.no_games_match	没有匹配的游戏
 home.no_games_played_yet	还没玩过 %s 游戏
@@ -277,6 +308,8 @@ home.no_games_yet	还没有 %s 游戏
 home.no_save_yet	还没有存档
 home.no_starred_games_yet	还没有星标的 %s 游戏
 home.nothing_of_on	%s：%s 暂无内容
+home.november	11月
+home.october	10月
 home.of	%d / %d
 home.patched_bps	已打补丁 (BPS)
 home.patched_ips	已打补丁 (IPS)
@@ -292,6 +325,7 @@ home.save_states	%d 个即时存档
 home.save_states_2	即时存档
 home.save_states_of	即时存档   %d-%d / %d
 home.saved	已保存
+home.september	9月
 home.settings	设置
 home.slot	存档位 %d
 home.star	星标
@@ -301,8 +335,12 @@ home.step	步骤
 home.the_games_you_have_not_started	还没开始玩的游戏会显示在这里。
 home.the_games_you_play_show_up	玩过的游戏会显示在这里，最近玩的在前。
 home.the_games_you_play_show_up_2	玩过的游戏会显示在这里，游玩时间最长的在前。
+home.today	今天
 home.try_fewer_words_or_part_of	试试少几个字，或只输入词的一部分。
+home.under_a_minute	不到一分钟
 home.views	视图
+home.weeks_ago	%ld 周前
+home.yesterday	昨天
 lib.games	游戏
 lib.most_played	玩得最多
 lib.not_played_yet	还没玩过
@@ -471,6 +509,7 @@ notice.the_launcher_s_path_was_used	已按原样使用启动器的路径。
 notice.the_two_player_game_could_not	双人游戏无法开始
 notice.this_game_could_not_be_started	无法启动此游戏
 notice.use_same_wi_fi_or_online	双人游戏请使用“同一 Wi-Fi”或“在线”。
+online.a_compressed_zip_or_7z_cannot_be	压缩的 .zip 或 .7z 无法在此检查。请把游戏解压到游戏文件夹。
 online.a_game	一个游戏
 online.a_player	一位玩家
 online.add_to_this_vita_to_join	请把 %s 添加到这台 Vita 后再加入。
@@ -561,8 +600,10 @@ play.by_link_cable	通过连接线
 play.by_wireless_adapter_the_game_pairs	%s，通过无线适配器。由游戏为玩家配对。
 play.cable_or_adapter	连接线或适配器
 play.cancel	取消
+play.chosen	已选
 play.connect_in_the_vita_s_settings	请在 Vita 的“设置”>“网络”中连接，然后重试。
 play.connect_in_the_vita_s_settings_2	请在 Vita 的“设置”>“网络”中连接。连接后此页面会自动继续。
+play.connected	已连接
 play.connecting_to_wi_fi	%s：正在连接 Wi-Fi...
 play.connection	连接方式
 play.connection_2	连接方式
@@ -576,12 +617,14 @@ play.end_it_first_play_together_disconnect	请先结束它（“一起玩”>“
 play.end_the_current_link_first	请先结束当前的联机。
 play.far_apart_host_shows_a_code	相隔遥远：房主显示代码，好友输入代码。
 play.fewer_frames_react_faster_more_ride	帧数越少反应越快；帧数越多越能应对慢速连接。
+play.fine	良好
 play.firered_leafgreen_and_emerald_from_a	火红、叶绿和绿宝石，通过手机
 play.for_a_friend_far_away_the	适合远方的好友。房主的屏幕上会显示五个字符的代码，加入者输入该代码。
 play.found	找到 %d 个
 play.frame	%d 帧
 play.frames	%d 帧
 play.from_a_phone	通过手机
+play.full	已满
 play.game	游戏
 play.gb_link_cable	GB 连接线
 play.good	良好
@@ -628,6 +671,7 @@ play.linked_with	已与 %s 联机
 play.linked_with_the_other	已与另一台 Vita 联机
 play.links_by_link_cable_or_wireless	通过连接线或无线适配器联机：由房主选择。
 play.listening	监听中
+play.listening_value	监听中
 play.looking_for_a_game_at_that	正在该地址查找游戏...
 play.looking_for_games_on_this_wi	正在此 Wi-Fi 上查找游戏...
 play.looks_right	看起来正确
@@ -657,6 +701,8 @@ play.not_for_this_game	不适用于此游戏
 play.not_listed_connection_internet_type	没有列出？连接方式选“互联网”，输入 %s
 play.not_listening	未监听
 play.nothing_was_changed_choose_host_or	未做任何更改。请选择“创建”或“加入”重试。
+play.now_the_partner_s	当前：对方的
+play.now_yours	当前：你的
 play.off	关
 play.on	开
 play.on_pad_in_use	开（手柄使用中）
@@ -671,6 +717,7 @@ play.phone	手机
 play.play_together	一起玩
 play.player_2_on_the_touch_screen	玩家 2 使用触摸屏
 play.player_2_plays_on_the_front	未配对手柄时，玩家 2 在前屏幕上游玩。
+play.quick	很快
 play.quit_to_the_game_list_open	退出到游戏列表，重新打开游戏并先联机。
 play.recent	最近
 play.restart_the_game_to_link	请重启游戏后联机
@@ -688,6 +735,7 @@ play.settings_network_join_the_wi_fi	“设置”>“网络”：加入神秘礼
 play.side_by_side	左右并排
 play.side_by_side_two_equal_pictures	左右并排：两个等大的画面。大 + 小：你操作的游戏显示为大画面。
 play.side_by_side_two_players	左右并排（双人）
+play.signal	信号
 play.slow	较慢
 play.slow_expect_delay	较慢，会有延迟
 play.start_listening	开始监听
@@ -697,6 +745,7 @@ play.start_the_partner_plays_its_game	开始：搭档玩自己的游戏
 play.start_the_partner_uses_its_own	开始：搭档使用自己的存档
 play.starting_the_second_game	正在启动第二个游戏...
 play.starts_a_new_game	开始新游戏
+play.status_off	已关闭
 play.still_trying	仍在尝试。
 play.stop	停止
 play.stop_hosting	停止创建
@@ -818,6 +867,7 @@ settings.ff_button_square	快进键 (Square)
 settings.fourth_core	第四核心
 settings.fps_counter	帧率显示
 settings.game_boy_colours	Game Boy 配色
+settings.game_boy_core	Game Boy 核心
 settings.game_boy_printer	Game Boy Printer
 settings.game_boy_type	Game Boy 类型
 settings.game_folders	游戏文件夹
@@ -833,6 +883,7 @@ settings.help.a_number_that_tells_rooms_apart	多人创建房间时用来区分�
 settings.help.a_soft_glow_beside_the_picture	用画面旁的柔和光晕代替黑边。1 为淡，10 为亮。
 settings.help.a_tap_on_the_game_opens	轻触游戏可打开菜单。Start + Select 始终可用。
 settings.help.a_vita_on_the_same_wi	同一 Wi-Fi 上的 Vita 可以复制你的存档和即时存档。
+settings.help.accurate_gambatte_closer_to_a_real	精确：Gambatte，更接近真实 Game Boy，负担更重。不支持联机、相机和边框。下个游戏生效。
 settings.help.adds_the_handheld_screen_s_grid	加上掌机屏幕的点阵网格。
 settings.help.advanced_the_joiner_types_the_host	高级：加入者输入房主的地址。
 settings.help.also_widens_rotating_3d_tracks_sprites	也会拓宽旋转的 3D 赛道。精灵可能会闯入画面。
@@ -855,6 +906,7 @@ settings.help.brighter_text_and_clearer_edges_in	应用和播放器菜单中的�
 settings.help.busy_moments_show_every_second_frame	繁忙时每隔一帧显示，均匀地全速运行。
 settings.help.busy_moments_skip_a_frame_game	繁忙时跳过一帧；游戏和声音保持原速。
 settings.help.busy_moments_slow_the_game_and	繁忙时游戏及其声音会变慢。
+settings.help.cannot_write_the_psvshell_profile	无法写入 PSVshell 配置
 settings.help.choose_just_this_game_to_give	选“仅此游戏”可让它拥有自己的外观。
 settings.help.circle_is_a_and_confirms_in	Circle 为 A，在菜单中用于确认。Cross 为 B。
 settings.help.coloured_stripes_like_a_crt_tube	像 CRT 显像管那样的彩色条纹。会让画面略暗。1 为淡，10 为浓。
@@ -893,10 +945,13 @@ settings.help.how_large_the_game_is_drawn	游戏画面的大小。3x 为精确�
 settings.help.how_much_sunlight_the_cartridge_s	卡带的太阳光传感器感受到多少阳光。
 settings.help.how_strongly_a_turn_or_a	转动或倾斜的感应强度。
 settings.help.how_this_game_links_link_cable	此游戏的联机方式：连接线或无线适配器。
+settings.help.measured_mhz	实测：%u MHz%s
+settings.help.measured_not_known	实测：未知
 settings.help.mmpx_at_twice_its_size_crisp	MMPX 放大两倍：清晰的像素画，对 Vita 负担轻。
 settings.help.more_of_the_map_beside_the	在已知的游戏中，画面旁显示更多地图。
 settings.help.muted_and_dark_as_on_the	柔和而暗，如初代 GBA 无背光的屏幕。
 settings.help.muted_as_on_a_gba_s	柔和，如 GBA 屏幕：美术原本就是为此绘制的。
+settings.help.needs_an_overclock_plugin_such_as	需要 PSVshell 等超频插件
 settings.help.no_marks_over_the_game_unlocks	游戏上不显示标记。解锁提示仍会显示。
 settings.help.no_router_the_two_vitas_connect	没有路由器：两台 Vita 直接相连。
 settings.help.no_states_rewind_or_cheats_from	不可用即时存档、倒带和金手指。下个游戏生效。
@@ -909,6 +964,7 @@ settings.help.play_this_game_with_a_friend	与好友一起玩此游戏：一人�
 settings.help.put_a_png_in_ux0_data	把 PNG 放进 ux0:data/GBAdhoc/overlays/ 即可给游戏加边框。
 settings.help.redraws_curves_and_diagonals_smoothly_the	平滑地重绘曲线和斜线。负担最重。
 settings.help.rest_on_a_game_in_the	在主屏幕停在某个游戏上，它最近玩过的十秒会在背景中播放。
+settings.help.restart_the_app_to_apply	。重启应用后生效
 settings.help.retroarch_s_files_are_left_alone	不会改动 RetroArch 的文件；“导出存档”可复制一份。
 settings.help.retry_missing_box_art_and_title	通过 Wi-Fi 重试缺失的包装图和标题画面。
 settings.help.rounds_stair_steps_only_light_adds	只平滑锯齿。负担轻，不增加颜色。
@@ -927,6 +983,7 @@ settings.help.smoothed_at_four_times_its_size	放大四倍并平滑。细节最�
 settings.help.smoothed_at_three_times_its_size	放大三倍并平滑。细节更多，负担更大。
 settings.help.smoothed_at_twice_the_game_s	放大两倍并平滑，再缩放到合适大小。
 settings.help.soft_every_pixel_blends_into_the	柔和：每个像素都与相邻像素融合。
+settings.help.standard_the_usual_core_fast_with	标准：常用核心，速度快，支持联机、相机和 Super Game Boy 边框。下个游戏生效。
 settings.help.states_rewind_and_cheats_allowed	允许即时存档、倒带和金手指。
 settings.help.super_game_boy_games_in_the	Super Game Boy 游戏使用其自带边框（Game Boy 配色：Super Game Boy）。
 settings.help.swap_it_if_turning_or_tilting	如果转动或倾斜的方向感觉反了，请切换。
@@ -950,6 +1007,7 @@ settings.help.the_small_link_status_in_the	游戏角落的小型联机状态。
 settings.help.the_vita_s_own_ps_start	Vita 自带的 PS + Start 可截图。
 settings.help.the_wonderswan_s_75_frames_a	WonderSwan 每秒 75 帧混合进每次刷新：滚动平滑。
 settings.help.this_game_s_achievements_and_what	此游戏的成就及各自的要求。
+settings.help.this_game_s_own_choice_next_start	此游戏自己的选择。“设置”跟随“游戏”一行。下次启动游戏时生效。
 settings.help.this_game_s_own_choice_settings	此游戏自己的选择。“设置”跟随“游戏”一行。“自动”在时间充裕时使用。
 settings.help.this_game_s_own_choice_settings_2	此游戏自己的选择。“设置”跟随“操作”一行。
 settings.help.tiles_over_your_game_a_list	游戏上的磁贴、带封面的列表，或全屏封面。
@@ -959,6 +1017,7 @@ settings.help.turn_the_vita_left_for_vertical	向左转动 Vita 玩竖屏场景�
 settings.help.type_your_friend_s_room_code	输入好友的房间码。会找到你的对应游戏副本并启动。
 settings.help.vertical_scenes_upright_on_a_level	Vita 水平放置时竖屏场景保持直立；方向键也随之旋转。
 settings.help.what_fills_the_wide_view_s	宽视野边缘的填充内容（需开启宽视野）。
+settings.help.what_the_camera_sees_camera_png	相机所见：数据文件夹中的 camera.png。
 settings.help.what_the_camera_sees_the_vita	相机所见：Vita 的后置相机。
 settings.help.what_the_camera_sees_the_vita_2	相机所见：Vita 的前置相机。
 settings.help.whether_the_app_is_using_the	应用是否正在使用 Vita 的第四个 CPU 核心（需要 CapUnlocker 插件）。
@@ -966,10 +1025,12 @@ settings.help.which_button_does_what_and_the	各按键的功能，以及快捷�
 settings.help.which_vita_screen_this_is_oled	这是哪种 Vita 屏幕。OLED 会让颜色略显柔和。适用于所有主机。
 settings.help.x_a_copy_retroarch_can_use	X：复制一份 RetroArch 可用的存档到它查找的位置。
 settings.help.x_a_picture_of_your_own	{x}：为列表中所选的游戏设置你自己的封面图片。
+settings.help.x_a_plain_sav_beside_the_game	X：在游戏旁放一个普通 .sav（mGBA、SameBoy 等）。
 settings.help.x_add_a_folder_ux0_roms	{x}：添加文件夹（ux0:ROMS/GBA），或选一个来移除。
 settings.help.x_check_now_off_no_check	{x}：立即检查。关：除非你要求，否则不检查。
 settings.help.x_check_now_once_a_day	{x}：立即检查。每天会询问一次 GitHub 是否有新版 VitAdhoc。
 settings.help.x_type_a_folder_ux0_pictures	{x}：输入文件夹（ux0:pictures/VitAdhoc）。留空：screenshots/。
+settings.help.your_picture_from_overlays_over_the	将 overlays/ 中你的图片叠在游戏上（gba.png、gb.png、gbc.png 或游戏名）。
 settings.help.your_retroachievements_org_account	你的 retroachievements.org 账号。
 settings.help.zapper_touch_the_screen_to_aim	Zapper：触摸屏幕瞄准并射击。下次启动游戏时生效。
 settings.high_contrast	高对比度
@@ -1025,6 +1086,7 @@ settings.this_game	此游戏
 settings.two_players	双人游戏
 settings.value.444_mhz_standard	444 MHz（标准）
 settings.value.500_mhz_fast	500 MHz（快速）
+settings.value.accurate	精确
 settings.value.all_games	全部 %s 游戏
 settings.value.as_held_at_the_start	以开始时的姿势为准
 settings.value.as_the_vita	（与 Vita 相同）
@@ -1036,7 +1098,10 @@ settings.value.circle_is_a	Circle 为 A
 settings.value.classic_lcd_tint	经典 LCD 色调
 settings.value.controller	手柄
 settings.value.cross_is_a	Cross 为 A
+settings.value.custom	自定义
 settings.value.daily	每天
+settings.value.dark	深色
+settings.value.default	默认
 settings.value.ff_button	快进键 (%s)
 settings.value.file_name	文件名
 settings.value.follows_the_clock	跟随时钟
@@ -1049,18 +1114,24 @@ settings.value.gb_gbc_only	仅 GB / GBC
 settings.value.gb_only	仅 GB
 settings.value.gba_link_cable_only	仅 GBA 连接线
 settings.value.greyscale	灰阶
+settings.value.hidden	隐藏
+settings.value.home	主屏幕
 settings.value.host_or_join	创建或加入
 settings.value.host_saves_and_states_on	在 %s 上共享存档和即时存档
+settings.value.in_use	使用中
 settings.value.just_this_game	仅此游戏
 settings.value.large	大
 settings.value.last_played_first	最近玩的在前
 settings.value.lcd_pch_2000	LCD (PCH-2000)
+settings.value.light	浅色
+settings.value.marquee	大图
 settings.value.min	%d 分钟
 settings.value.most_played_first	玩得最多的在前
 settings.value.no_game	无游戏
 settings.value.none_shade	无（灰阶）
 settings.value.normal	正常
 settings.value.normal_pitch	，正常音调
+settings.value.not_available	不可用
 settings.value.not_checking	不检查
 settings.value.ntsc_colours	NTSC 配色
 settings.value.of	%u / %u
@@ -1074,11 +1145,17 @@ settings.value.on_from_the_next_game	开（下个游戏生效）
 settings.value.on_l_r_select	开 (L + R + Select)
 settings.value.on_none_in_overlays	开 - overlays/ 中没有
 settings.value.only_roms	仅 roms/
+settings.value.plain_sav	普通 .sav
+settings.value.reversed	反向
 settings.value.scan_now	立即扫描
+settings.value.set	已设定
 settings.value.settings	设置
+settings.value.shelf	书架
+settings.value.shown	显示
 settings.value.sign_in	登录
 settings.value.signing_in	正在登录...
 settings.value.smooth_50_hz	平滑 50 Hz
+settings.value.standard	标准
 settings.value.the_one_on	%s 上的那个
 settings.value.this_game	此游戏
 settings.value.true_50_hz	真实 50 Hz
@@ -1158,6 +1235,7 @@ share.save_file_2	存档文件
 share.save_file_3	存档文件
 share.save_file_replaced_yours	存档文件已替换你的
 share.save_file_saved	存档文件已保存
+share.save_only	存档
 share.save_state_many	存档  -  %d 个即时存档%s
 share.save_state_one	存档  -  %d 个即时存档%s
 share.saved_to_your_slot	已保存到你的存档位 %d
@@ -1200,6 +1278,7 @@ share.theirs_you_have_none	对方 %s   你没有
 share.theirs_yours	对方 %s   你的 %s
 share.there_are_no_saves_or_states	还没有可共享的存档或即时存档。
 share.they_share_some_for_the_other	对方共享了一些其他主机的内容。
+share.took_save_only	存档
 share.took_save_state_many	存档，%d 个即时存档
 share.took_save_state_one	存档，%d 个即时存档
 share.took_state_many	%d 个即时存档
@@ -1267,6 +1346,7 @@ snes.you_start_the_room	由你创建房间
 toast.a_plain_file	普通文件
 toast.a_player	有玩家
 toast.a_player_left	有玩家离开了 %s
+toast.accurate_core_can_t_run_this_cartridge	精确核心无法运行此卡带：改用标准
 toast.achievement	成就：%s
 toast.achievements_sent	成就已发送
 toast.achievements_unavailable	成就不可用：%s
@@ -1274,6 +1354,7 @@ toast.achievements_will_be_sent_when_back	恢复联网后会发送成就
 toast.already_checking_for_updates	已在检查更新
 toast.already_linked_disconnect_first	已联机。请先断开连接。
 toast.audio_output_unavailable	音频输出不可用
+toast.camera_png_not_found_using_a_test	未找到 camera.png：使用测试图片
 toast.cannot_load_a_state_during_a	联机期间无法读取即时存档
 toast.cannot_save_a_state_during_a	联机期间无法保存即时存档
 toast.checking_for_updates	正在检查更新...
@@ -1286,6 +1367,7 @@ toast.controller_2_drives_the_partner_s	手柄 2 操作搭档的游戏
 toast.could_not_continue_starting_from_the	无法继续：将从存档开始
 toast.could_not_load_state	无法读取即时存档 %d
 toast.could_not_sign_in_will_try	无法登录，稍后会重试
+toast.could_not_write_gb_override_txt	无法写入 gb_override.txt
 toast.disconnected	已断开连接
 toast.eight_folders_is_the_most	最多八个文件夹
 toast.emulation_fault_game_was_reset	模拟出错 - 游戏已重置
@@ -1317,6 +1399,7 @@ toast.link_lost_the_other_vita_is	联机中断：另一台 Vita 已断开。你�
 toast.link_lost_the_other_vita_is_2	联机中断：另一台 Vita 已断开。你的游戏继续。
 toast.link_lost_the_other_vita_is_3	联机中断：另一台 Vita 已断开。未保存任何内容。
 toast.link_lost_the_other_vita_is_4	联机中断：另一台 Vita 已断开。
+toast.link_play_uses_the_standard_gb_core	联机使用标准 Game Boy 核心
 toast.load_undone	已撤销读取
 toast.looking_again_for_missing_covers	正在重新查找缺失的封面
 toast.mastered	已精通：%s
@@ -1327,6 +1410,7 @@ toast.mystery_gift_listening	神秘礼物监听中
 toast.mystery_gift_off	神秘礼物已关闭
 toast.no_achievements_for_this_game_yet	此游戏还没有成就
 toast.no_answer	无应答
+toast.no_camera_using_camera_png_or_a	无相机：使用 camera.png 或测试图片
 toast.no_folder_with_that_name_on	记忆卡上没有该名称的文件夹
 toast.no_motion_reading_to_set_level	没有体感读数，无法设定级别
 toast.no_network_to_check_with	没有可用于检查的网络
@@ -1346,6 +1430,10 @@ toast.printed_saved_to_prints	已打印：保存到 prints
 toast.retroachievements	RetroAchievements：%s
 toast.retroachievements_does_not_know_this_version	RetroAchievements 不认识此版本
 toast.retroachievements_please_sign_in_again	RetroAchievements：请重新登录
+toast.rewind_failed	倒带失败
+toast.rewind_is_off_while_games_are_linked	联机时无法倒带
+toast.rewind_is_switched_off_settings	倒带已关闭（设置）
+toast.rewind_not_enough_memory_for_it	倒带：内存不足
 toast.rom_path_is_too_long	ROM 路径过长
 toast.save_failed	存档失败
 toast.save_type_is_used_the_next	存档类型将在下次启动游戏时生效
@@ -1374,6 +1462,7 @@ toast.stop_the_two_player_game_on	请先停止这台 Vita 上的双人游戏
 toast.stopped_hosting	已停止创建 %s
 toast.submitted	已提交：%s
 toast.that_folder_can_t_be_used	该文件夹无法使用
+toast.that_state_is_from_the_other_gb_core_starting	该即时存档属于另一个核心：将从存档开始
 toast.that_state_s_second_game_is	该即时存档的第二个游戏是另一张卡带
 toast.the_camera_stopped	相机已停止
 toast.the_card_is_slow_showing_what	记忆卡较慢：显示已找到的内容
@@ -1401,6 +1490,9 @@ toast.the_save_could_not_be_exported	无法导出存档
 toast.the_second_game_s_old_save	无法备份第二个游戏的旧存档，未替换
 toast.the_second_game_s_save_could	无法写入第二个游戏的存档，旧存档已保留
 toast.the_second_game_s_save_could_2	无法写入第二个游戏的存档
+toast.this_is_as_far_back_as_rewind	已倒带到最早位置
+toast.this_state_is_from_the_other_gb_core	此即时存档属于另一个 Game Boy 核心
+toast.two_cart_play_uses_the_standard_gb_core	双卡带游玩使用标准 Game Boy 核心
 toast.vertical_the_d_pad_turns_with	竖屏：方向键随画面旋转。L = A，R = B
 toast.vertical_turn_the_vita_left_l	竖屏：向左转动 Vita。L = A，R = B
 toast.video	视频：%s
@@ -1462,6 +1554,8 @@ ui.hardcore_mode_states_cannot_be_loaded	硬核模式：无法读取即时存档
 ui.hold	按住
 ui.hold_1_5_s	按住 1.5 秒
 ui.hold_fires_for_as_long_as	按住：按住按键期间持续连发。
+ui.hold_tag	按住
+ui.host_title	创建
 ui.hosting	创建中
 ui.hosting_2	创建中
 ui.hosting_waiting	已创建 %s，等待中
@@ -1522,6 +1616,7 @@ ui.paused_for_link_play	联机游玩时暂停
 ui.pick_a_game	选择游戏
 ui.play_together	一起玩
 ui.player_name	玩家名称
+ui.press	请按...
 ui.press_a_button_for	请按下按键以设置
 ui.press_a_button_or_combo_for	请按下按键或组合键以设置
 ui.press_any_button_to_return_to	按任意键返回 LiveArea。
@@ -1541,7 +1636,10 @@ ui.resume	继续
 ui.retroachievements_password	RetroAchievements 密码
 ui.retroachievements_user_name	RetroAchievements 用户名
 ui.returning_to_game_list	正在返回游戏列表...
+ui.rewind_chip	<< 倒带 %s
+ui.rewind_chip_oldest	<< %s（最早）
 ui.rom_path_is_too_long	ROM 路径过长
+ui.save_badge	存档
 ui.save_clip	保存片段
 ui.save_present	有存档
 ui.save_states	即时存档
@@ -1575,6 +1673,7 @@ ui.slot_could_not_be_locked	无法锁定存档位 %d
 ui.slot_could_not_be_saved	无法保存存档位 %d
 ui.slot_could_not_be_undone	无法撤销存档位 %d
 ui.slot_deleted	存档位 %d 已删除
+ui.slot_empty	空
 ui.slot_is_as_it_was_before	存档位 %d 已恢复为保存前的样子
 ui.slot_is_empty_again	存档位 %d 又变空了
 ui.slot_is_locked	存档位 %d 已锁定
@@ -1582,8 +1681,12 @@ ui.slot_is_locked_l_unlocks_it	存档位 %d 已锁定：按 L 解锁
 ui.slot_locked	存档位 %d 已锁定
 ui.slot_not_deleted	存档位 %d 未删除
 ui.slot_of	存档位 %d / %d  -  %s%s
+ui.slot_old	旧
 ui.slot_saved	存档位 %d 已保存
+ui.slot_state_saved	已保存
 ui.slot_unlocked	存档位 %d 已解锁
+ui.smoothing_is_lighter_to_keep_full	为保持全速，已减轻平滑。
+ui.smoothing_is_off_to_keep_full_speed	为保持全速，已关闭平滑。
 ui.some_paths_were_too_long_and	有些路径过长，已跳过。
 ui.some_rom_folders_were_skipped	有些 ROM 文件夹已跳过
 ui.sq_star	{sq} 加星标
@@ -1591,6 +1694,8 @@ ui.sq_unstar	{sq} 取消星标
 ui.srm	%.*s.srm
 ui.start_select_hold_opens_the_menu	START+SELECT（按住）打开菜单  -  HOME 为系统功能
 ui.start_settings	START 设置
+ui.status_hosting	创建中
+ui.status_linked	已联机
 ui.the_file_is_over_kb_showing	文件超过 %d KB：显示前 %u 个金手指
 ui.the_game_s_wireless_mode	游戏自己的无线模式
 ui.the_games_you_have_not_started	还没开始玩的游戏会显示在这里
@@ -1618,6 +1723,8 @@ ui.undo_the_save_in_slot_x	撤销存档位 %d 中的存档？      {x} 撤销   
 ui.undo_x_the_save_in_slot	撤销？      {x} 存档位 %d 的存档     {sq} 上次读取     {o} 保留
 ui.up_dn_slot	UP/DN：存档位
 ui.up_dn_slot_sq_delete	UP/DN：存档位   {sq}：删除
+ui.verb_exit	退出
+ui.verb_quit	退出
 ui.was_is_now_blank_disabled	%s 原为 %s  -  %s 现已留空（停用）
 ui.wireless_adapter	无线适配器
 ui.x_delete_o_keep	{x}：删除   {o}：保留

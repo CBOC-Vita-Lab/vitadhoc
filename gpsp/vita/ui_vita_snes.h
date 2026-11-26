@@ -46,7 +46,7 @@ static const char *s2_room_why(const ui_room *r)
    if (!r->compatible)
       return tr("snes.different_version");
    if (r->max_players > 0 && r->players >= r->max_players)
-      return "full";
+      return tr("play.full");
    if (!r->open)
       return tr("snes.already_playing");
    return NULL;

@@ -3971,7 +3971,7 @@ static void settings_adjust(int id, int dir)
          fe_evt("game_setting gb_type=%d", k);
       }
       else
-         osd_toast("Could not write gb_override.txt");
+         osd_toast(tr("toast.could_not_write_gb_override_txt"));
       break;
    }
    case SET_EXPORT:
@@ -4304,11 +4304,10 @@ static const char *set_help(int id)
                              : tr("settings.help.vertical_scenes_upright_on_a_level")
 ;
    case SET_EXPORT:   return g_export_dest
-                             ? "X: a plain .sav beside the game (mGBA, "
-                               "SameBoy...)."
+                             ? tr("settings.help.x_a_plain_sav_beside_the_game")
                              : tr("settings.help.x_a_copy_retroarch_can_use");
    case SET_CAMERA:   return g_pgame.camera == PCFG_CAM_FILE
-                             ? "What the camera sees: camera.png from the data folder."
+                             ? tr("settings.help.what_the_camera_sees_camera_png")
                              : g_pgame.camera == PCFG_CAM_BACK
                              ? tr("settings.help.what_the_camera_sees_the_vita")
                              : tr("settings.help.what_the_camera_sees_the_vita_2");
@@ -4320,8 +4319,7 @@ static const char *set_help(int id)
    case SET_WSPAL:    return tr("settings.help.black_and_white_games_grey_or")
 ;
    case SET_OVERLAY:  return ui_host_overlay_on()
-                             ? "Your picture from overlays/ over the game "
-                               "(gba.png, gb.png, gbc.png or its name)."
+                             ? tr("settings.help.your_picture_from_overlays_over_the")
                              : tr("settings.help.put_a_png_in_ux0_data")
 ;
    case SET_SHOTDIR:  return tr("settings.help.x_type_a_folder_ux0_pictures")
@@ -4996,7 +4994,7 @@ static ui_action screen_settings_page(unsigned edges)
          break;
       case SET_OSD:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
-             g_pcfg.osd_wireless ? "shown" : "hidden");
+             g_pcfg.osd_wireless ? tr("settings.value.shown") : tr("settings.value.hidden"));
          break;
       case SET_SHARE:
       {
@@ -5030,7 +5028,7 @@ static ui_action screen_settings_page(unsigned edges)
       case SET_FASTLINK:
          set_item(y, g_cursor == i, set_row_enabled(i), tr(set_rows[i].label),
                   !set_row_enabled(i) ? tr("settings.value.gba_link_cable_only")
-                  : g_pcfg.fast_link ? "on" : "off");
+                  : g_pcfg.fast_link ? tr("settings.value.on") : tr("settings.value.off"));
          break;
       case SET_SCALE:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
@@ -5059,7 +5057,7 @@ static ui_action screen_settings_page(unsigned edges)
          char v[8];
          snprintf(v, sizeof(v), "%d", g_pcfg.glow);
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
-                  g_pcfg.glow ? v : "off");
+                  g_pcfg.glow ? v : tr("settings.value.off"));
          break;
       }
 #else
@@ -5095,7 +5093,7 @@ static ui_action screen_settings_page(unsigned edges)
             snprintf(lbl, sizeof(lbl), tr("settings.value.ff_button"), b);
          }
          set_item(y, g_cursor == i, 1, lbl,
-             g_pcfg.ff_hold ? "hold" : "toggle");
+             g_pcfg.ff_hold ? tr("ui.hold") : tr("ui.toggle"));
          break;
       }
 #ifdef VITA
@@ -5140,7 +5138,7 @@ static ui_action screen_settings_page(unsigned edges)
                      : i == SET_GRID ? g_pcfg.scan
                      : i == SET_CRT ? g_pcfg.crt : g_pcfg.grid;
          snprintf(v, sizeof(v), "%d", n);
-         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), n ? v : "off");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label), n ? v : tr("settings.value.off"));
          break;
       }
       case SET_NESWIDE:
@@ -5153,7 +5151,7 @@ static ui_action screen_settings_page(unsigned edges)
          break;
       case SET_WSBLEND:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
-                  g_pcfg.ws_blend ? "on" : "off");
+                  g_pcfg.ws_blend ? tr("settings.value.on") : tr("settings.value.off"));
          break;
       case SET_WSROT:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
@@ -5184,7 +5182,7 @@ static ui_action screen_settings_page(unsigned edges)
       }
       case SET_EXPORT:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
-                  g_export_dest ? "plain .sav" : tr("settings.value.for_retroarch"));
+                  g_export_dest ? tr("settings.value.plain_sav") : tr("settings.value.for_retroarch"));
          break;
       case SET_ABOUT_UPDATE:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
@@ -5199,7 +5197,7 @@ static ui_action screen_settings_page(unsigned edges)
          char v[64];
          const char *n = ui_host_overlay_name();
          if (!ui_host_overlay_on())
-            snprintf(v, sizeof(v), "off");
+            snprintf(v, sizeof(v), "%s", tr("settings.value.off"));
          else if (n && n[0])
             snprintf(v, sizeof(v), tr("settings.value.on_2"), n);
          else
@@ -5228,7 +5226,7 @@ static ui_action screen_settings_page(unsigned edges)
       {
          char d[16];
          if (!g_pcfg.rewind)
-            snprintf(d, sizeof(d), "off");
+            snprintf(d, sizeof(d), "%s", tr("settings.value.off"));
          else if (g_pcfg.rewind < 60)
             snprintf(d, sizeof(d), "%d s", g_pcfg.rewind);
          else
@@ -5249,7 +5247,7 @@ static ui_action screen_settings_page(unsigned edges)
       }
       case SET_STICKRW:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
-                  g_pcfg.stick_rewind ? "on" : "off");
+                  g_pcfg.stick_rewind ? tr("settings.value.on") : tr("settings.value.off"));
          break;
       case SET_TAPMENU:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
@@ -5260,7 +5258,7 @@ static ui_action screen_settings_page(unsigned edges)
          char v[40];
          unsigned sb = g_pcfg.controls.bind[CTL_SC_SHOT];
          if (!sb)
-            snprintf(v, sizeof(v), "off");
+            snprintf(v, sizeof(v), "%s", tr("settings.value.off"));
          else if (sb == (CTL_L | CTL_R | CTL_SELECT))
             snprintf(v, sizeof(v), tr("settings.value.on_l_r_select"));
          else
@@ -5272,23 +5270,23 @@ static ui_action screen_settings_page(unsigned edges)
       case SET_CONTROLS:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
              ctl_is_default(&g_pcfg.controls)
-                ? "default" : "custom");
+                ? tr("settings.value.default") : tr("settings.value.custom"));
          break;
       case SET_THEME:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
-             g_pcfg.theme ? "light" : "dark");
+             g_pcfg.theme ? tr("settings.value.light") : tr("settings.value.dark"));
          break;
       case SET_SHELL:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
 #ifdef VITA
-             g_pcfg.ui_home ? "home" :
+             g_pcfg.ui_home ? tr("settings.value.home") :
 #endif
-             g_pcfg.ui_shell ? "marquee" : "shelf");
+             g_pcfg.ui_shell ? tr("settings.value.marquee") : tr("settings.value.shelf"));
          break;
 #ifdef VITA
       case SET_PREVIEW:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
-             g_pcfg.previews ? "on" : "off");
+             g_pcfg.previews ? tr("settings.value.on") : tr("settings.value.off"));
          break;
       case SET_QUALITY:
       {
@@ -5318,7 +5316,7 @@ static ui_action screen_settings_page(unsigned edges)
 #endif
       case SET_FPS:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
-             g_pcfg.show_fps ? "on" : "off");
+             g_pcfg.show_fps ? tr("settings.value.on") : tr("settings.value.off"));
          break;
 #ifdef VITA
       case SET_CPU:
@@ -5327,7 +5325,7 @@ static ui_action screen_settings_page(unsigned edges)
          break;
       case SET_STEADY:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
-                  g_pcfg.steady_pacing ? "on" : "off");
+                  g_pcfg.steady_pacing ? tr("settings.value.on") : tr("settings.value.off"));
          break;
       case SET_QUICK:
       {
@@ -5353,12 +5351,12 @@ static ui_action screen_settings_page(unsigned edges)
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label), "");
          break;
       case SET_GBCORE:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pcfg.gb_core ? "Accurate" : "Standard");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pcfg.gb_core ? tr("settings.value.accurate") : tr("settings.value.standard"));
          break;
       case SET_GBCOREGAME:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pgame.gb_core < 0 ? "Settings" : g_pgame.gb_core ? "Accurate" : "Standard");
+         set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+                  g_pgame.gb_core < 0 ? tr("settings.value.settings") : g_pgame.gb_core ? tr("settings.value.accurate") : tr("settings.value.standard"));
          break;
       case SET_QUICKGAME:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
@@ -5367,21 +5365,21 @@ static ui_action screen_settings_page(unsigned edges)
          break;
       case SET_HANDOFF:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
-                  g_pcfg.smooth_handoff ? "on" : "off");
+                  g_pcfg.smooth_handoff ? tr("settings.value.on") : tr("settings.value.off"));
          break;
       case SET_CORE4:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
-                  g_pcfg.core4_off ? "off" : "auto");
+                  g_pcfg.core4_off ? tr("settings.value.off") : tr("settings.value.auto"));
          break;
       case SET_SPEED:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
-             g_pcfg.full_speed ? "on" : "off");
+             g_pcfg.full_speed ? tr("settings.value.on") : tr("settings.value.off"));
          break;
       case SET_SGB:
       {
          int en = set_row_enabled(i);
          set_item(y, g_cursor == i, en, tr(set_rows[i].label),
-                  !en ? tr("settings.value.gb_only") : g_pcfg.sgb_border ? "on" : "off");
+                  !en ? tr("settings.value.gb_only") : g_pcfg.sgb_border ? tr("settings.value.on") : tr("settings.value.off"));
          break;
       }
       case SET_RA_ACCOUNT:
@@ -5399,7 +5397,7 @@ static ui_action screen_settings_page(unsigned edges)
       }
       case SET_RA_HARDCORE:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
-                  ra_hardcore_pref() ? tr("settings.value.on_from_the_next_game") : "off");
+                  ra_hardcore_pref() ? tr("settings.value.on_from_the_next_game") : tr("settings.value.off"));
          break;
       case SET_RA_INDIC:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
@@ -5417,7 +5415,7 @@ static ui_action screen_settings_page(unsigned edges)
       case SET_COVERPIC:
          set_item(y, g_cursor == i, g_cover_row != 0, tr(set_rows[i].label),
                   g_cover_row == 2 ? tr("settings.value.your_own") :
-                  g_cover_row == 1 ? "automatic" : tr("settings.value.no_game"));
+                  g_cover_row == 1 ? tr("settings.value.automatic") : tr("settings.value.no_game"));
          set_row_trace(g_cursor == i, "cover", tr(set_rows[i].label));
          break;
       case SET_FOLDERS:
@@ -5438,7 +5436,7 @@ static ui_action screen_settings_page(unsigned edges)
       }
       case SET_SYNCRA:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
-                  ui_host_sync_ra_on() ? "on" : "off");
+                  ui_host_sync_ra_on() ? tr("settings.value.on") : tr("settings.value.off"));
          set_row_trace(g_cursor == i, "sync", tr(set_rows[i].label));
          break;
       case SET_NAMES:
@@ -5471,11 +5469,11 @@ static ui_action screen_settings_page(unsigned edges)
          break;
       case SET_REVERSE:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
-                  g_pgame.sensor_rev ? "reversed" : "normal");
+                  g_pgame.sensor_rev ? tr("settings.value.reversed") : tr("settings.value.normal"));
          break;
       case SET_LEVEL:
          set_item(y, g_cursor == i, set_row_enabled(i), tr(set_rows[i].label),
-                  g_pgame.level_set ? "set" : tr("settings.value.as_held_at_the_start"));
+                  g_pgame.level_set ? tr("settings.value.set") : tr("settings.value.as_held_at_the_start"));
          break;
       case SET_SUN:
       {
@@ -6008,7 +6006,7 @@ static const char *ctl_fixed_row(const ctl_row *ri, const char **chip,
       *tag = quit ? tr("ui.hold_1_5_s") : "fixed";
 #ifdef VITA
    if (tag)
-      *tag = "hold";              /* the one fixed row is the menu chord */
+      *tag = tr("ui.hold_tag");   /* the one fixed row is the menu chord */
 #endif
    return quit ? tr("ui.quit") : tr(ri->label);
 }
@@ -6138,7 +6136,7 @@ static ui_action screen_turbo(unsigned edges)
                n = chord_parts(g_cap.got, parts);
             else
             {
-               parts[0] = "press...";
+               parts[0] = tr("ui.press");
                n = 1;
             }
             w = combo_right(xr, y, parts, n, CHIP_CAPTURE, ctl_pulse());
@@ -6337,7 +6335,7 @@ static ui_action screen_controls(unsigned edges, unsigned pad)
             parts[0] = g_pcfg.controls.menu_home ? "HOME" : "START+SELECT";
             w = combo_right(xr, y, parts, 1, CHIP_BOUND, 255);
             ov_text_right(xr - w - 8, y,
-                          g_pcfg.controls.menu_home ? tr("ui.in_game") : "hold",
+                          g_pcfg.controls.menu_home ? tr("ui.in_game") : tr("ui.hold_tag"),
                           C_DIM);
             break;
          case CR_TURBO:
@@ -6358,7 +6356,7 @@ static ui_action screen_controls(unsigned edges, unsigned pad)
                   n = chord_parts(g_cap.got, parts);
                else
                {
-                  parts[0] = "press...";
+                  parts[0] = tr("ui.press");
                   n = 1;
                }
                combo_right(xr, y, parts, n, CHIP_CAPTURE, ctl_pulse());
@@ -6669,7 +6667,7 @@ static ui_action wl_session(unsigned edges, const char *session_info)
                    ? (g_link.fast ? "on (host)" : "off (host)")
                 : g_link.fast_src == FE_GBLINK_FL_OLD_PEER
                    ? "off (other PSP: older version)"
-                   : (g_link.fast ? "on" : "off"));
+                   : (g_link.fast ? tr("settings.value.on") : tr("settings.value.off")));
    footer("\x81 select   \x80 back");
    return UI_ACT_NONE;
 }
@@ -6772,7 +6770,7 @@ static ui_action screen_wireless(unsigned edges, int session_active,
                       "Link Cable only");
          else
             wl_row(i, g_cursor == i, "Fast link",
-                   g_pcfg.fast_link ? "on" : "off");
+                   g_pcfg.fast_link ? tr("settings.value.on") : tr("settings.value.off"));
          break;
       default:
          wl_row(i, g_cursor == i, "Back", NULL);
@@ -6825,7 +6823,7 @@ static ui_action screen_host(unsigned edges)
 #endif
    }
    ov_backdrop(OV_SCRIM);
-   ov_head(g_ov_title, "HOST");
+   ov_head(g_ov_title, tr("ui.host_title"));
    vid_text(22, 72, tr("ui.how_will_the_other_vita_connect"), C_ITEM);
    /* 460 wide, not the Wireless rows' 300: "Wireless Adapter" and its note
     * do not both fit in 300 px (the design's own render overlapped them). */
@@ -7744,7 +7742,7 @@ static ui_action screen_menu(unsigned edges, int session_active)
    if (g_menu_note[0])
       cc_plate(0, session_active, g_menu_note);
    else if (vid_smooth_note())
-      cc_plate(0, session_active, vid_smooth_note());
+      cc_plate(0, session_active, tr(vid_smooth_note()));
    return UI_ACT_NONE;
 #endif
    ov_backdrop(OV_SCRIM * k / OV_OPEN_FRAMES);
@@ -7775,7 +7773,7 @@ static ui_action screen_menu(unsigned edges, int session_active)
          else if (g_link.state == UI_LINK_LINKED && g_link.player)
             snprintf(st, sizeof(st), tr("ui.linked_player"), g_link.player);
          else if (g_link.state == UI_LINK_LINKED || session_active)
-            snprintf(st, sizeof(st), "linked");
+            snprintf(st, sizeof(st), "%s", tr("ui.status_linked"));
          if (st[0])
             vid_text(18 + vid_text_w(labels[i]) + 12, y, st,
                      mix565(C_ACCENT_DK, C_BG_BOT, fade));
@@ -7796,10 +7794,10 @@ static ui_action screen_menu(unsigned edges, int session_active)
        * say "linked" (docs/GBA-LINK-UI.md); a cable host waiting says so. */
       if (i == M_WIRELESS && (session_active || g_link.state))
          vid_text(18 + vid_text_w(labels[i]) + 12, y,
-                  g_link.state == UI_LINK_HOSTING ? "hosting" :
+                  g_link.state == UI_LINK_HOSTING ? tr("ui.status_hosting") :
                   g_link.state == UI_LINK_LINKED
                      ? (g_link.cable ? tr("ui.link_cable") : tr("ui.wireless_adapter"))
-                     : "linked",
+                     : tr("ui.status_linked"),
                   mix565(C_ACCENT_DK, C_BG_BOT, fade));
       /* Save states: how many slots hold a state (the open-time stat). */
       if (i == M_SAVESTATES && enabled)
@@ -7831,7 +7829,7 @@ static ui_action screen_menu(unsigned edges, int session_active)
 ,
                session_active ? tr("ui.this_ends_the_link_for_both")
                               : tr("ui.progress_the_game_has_not_saved"),
-               g_menu_ask == M_EXIT ? "exit" : "quit");
+               g_menu_ask == M_EXIT ? tr("ui.verb_exit") : tr("ui.verb_quit"));
       tch_modal(PSP_CTRL_CIRCLE);    /* a tap anywhere else stays */
       ov_plate(q);
       return UI_ACT_NONE;
@@ -8502,10 +8500,10 @@ static ui_action screen_state_slots(unsigned edges)
          /* Text size Large: the second line sits two rows lower */
          const int y2 = y + (vid_text_scope_large() ? 16 : 14);
          if (g_ov_slot[i])
-            vid_text(64, y2, g_ov_stamp[i][0] ? g_ov_stamp[i] : "saved",
+            vid_text(64, y2, g_ov_stamp[i][0] ? g_ov_stamp[i] : tr("ui.slot_state_saved"),
                      sel ? C_VALUE : C_DIM);
          else
-            vid_text(64, y2, "empty", C_DIM);
+            vid_text(64, y2, tr("ui.slot_empty"), C_DIM);
       }
       UI_TCH_ROW(i, 0, by - 1, 212, 34);
    }
@@ -8513,8 +8511,8 @@ static ui_action screen_state_slots(unsigned edges)
    {
       char cap[48];
       snprintf(cap, sizeof(cap), tr("ui.slot_of"), cur + 1,
-               PSP_STATE_SLOT_COUNT, !g_ov_slot[cur] ? "empty"
-               : g_ov_stamp[cur][0] ? g_ov_stamp[cur] : "saved",
+               PSP_STATE_SLOT_COUNT, !g_ov_slot[cur] ? tr("ui.slot_empty")
+               : g_ov_stamp[cur][0] ? g_ov_stamp[cur] : tr("ui.slot_state_saved"),
                g_ov_lock[cur] ? tr("ui.locked") : "");
       clip_title(cap, VID_SCR_W - SS_PX - 10);   /* Text size Large: the date is long */
       vid_text(SS_PX, 228, cap, C_DIM);
@@ -12652,7 +12650,7 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int n_scan,
                   mix565(d == 0 ? C_CON : mix565(C_CON, C_BG_TOP, 115),
                          C_BG_TOP, fade));
       if (rom_has_sav(idx))
-         vid_text(288 - vid_text_w("SAVE") + dx, y, "SAVE",
+         vid_text(288 - vid_text_w(tr("ui.save_badge")) + dx, y, tr("ui.save_badge"),
                   mix565(d == 0 ? C_ACCENT : C_ACCENT_DK, C_BG_TOP, fade));
    }
    vid_clip_off();
@@ -12904,7 +12902,7 @@ static void browser_state_panel(const char *rom_dir, int cur, int n)
       else
       {
          vid_rect(x + 14, y - 1, 42, 28, C_HDR_BOT, 255);
-         vid_text(x + 15, vid_text_y_in(y - 1, 28), exists ? "old" : "empty",
+         vid_text(x + 15, vid_text_y_in(y - 1, 28), exists ? tr("ui.slot_old") : tr("ui.slot_empty"),
                   C_DIM);
       }
       {
@@ -12912,7 +12910,7 @@ static void browser_state_panel(const char *rom_dir, int cur, int n)
          snprintf(slot, sizeof(slot), tr("ui.slot"), i + 1);
          vid_text(x + 66, ty, slot, C_SEL);
       }
-      vid_text(x + 66, ty + 14, exists ? "saved" : "empty",
+      vid_text(x + 66, ty + 14, exists ? tr("ui.slot_state_saved") : tr("ui.slot_empty"),
                exists ? C_VALUE : C_DIM);
 #ifdef VITA
       if (g_browser_state_open && !g_shelf_del)

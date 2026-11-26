@@ -136,7 +136,7 @@ static const char *ch_summary(char *out, size_t cap)
    else if (n > 0)
       snprintf(out, cap, tr("cheats.available"), n);
    else
-      snprintf(out, cap, "none");
+      snprintf(out, cap, "%s", tr("cheats.none"));
    return out;
 }
 
@@ -360,7 +360,7 @@ static ui_action screen_cheats_page(unsigned edges, unsigned pad)
                   ? tr("cheats.cheats_are_off_in_hardcore_mode")
                   : tr("cheats.cheats_are_off_while_linked_to"),
                   C_VALUE);
-         ov_text_right(460, 48, "OFF", C_DIM);
+         ov_text_right(460, 48, tr("cheats.status_off"), C_DIM);
       }
       else if (g_ch.find[0])
          snprintf(sum, sizeof(sum), tr("cheats.of"), g_ch.find, g_ch.n,
@@ -386,10 +386,7 @@ static ui_action screen_cheats_page(unsigned edges, unsigned pad)
       else
       {
          vid_text(22, 84, tr("cheats.no_cheats_for_this_game_yet"), C_ITEM);
-         vw_wrap(22, 84 + FE_FONT_H + 4, 436, "The built-in list has none "
-                 "for it. Add a code of your own with " VID_GLYPH_TRI
-                 ", or copy a .cht file into the cheats folder beside "
-                 "roms.", C_DIM, 3);
+         vw_wrap(22, 84 + FE_FONT_H + 4, 436, tr("cheats.the_built_in_list_has_none_for"), C_DIM, 3);
       }
    }
    else
@@ -438,9 +435,9 @@ static ui_action screen_cheats_page(unsigned edges, unsigned pad)
             vid_text(CH_NAME_X, y, nm, col);
          }
          if (!e->usable)
-            ov_text_right(448, y, "unsupported", C_DIM);
+            ov_text_right(448, y, tr("cheats.unsupported"), C_DIM);
          else if (!e->builtin)
-            ov_text_right(448, y, "yours", cur ? C_ACCENT_DK : C_DIM);
+            ov_text_right(448, y, tr("cheats.yours"), cur ? C_ACCENT_DK : C_DIM);
          {
             int ty = y - CH_TEXT_DY + 1, th = CH_ROW_H;
             if (ty < CH_VIEW_TOP) { th -= CH_VIEW_TOP - ty; ty = CH_VIEW_TOP; }
@@ -791,7 +788,7 @@ static ui_action screen_cheat_add_page(unsigned edges)
          vid_rect(bx - 2, 66, bw + 2, 36, C_ACCENT, 40);
          vid_rect(bx - 2, 66, 3, 36, C_ACCENT, 255);
       }
-      vid_text(x, 68, "NAME", C_ACCENT);
+      vid_text(x, 68, tr("cheats.name_title"), C_ACCENT);
       if (g_ca.name[0])
          vid_text(x, 84, vw_clip(nm, sizeof(nm), g_ca.name, 172), C_VALUE);
       else
@@ -1001,7 +998,7 @@ static void cs_step(int op, uint32_t v)
    else if (n == 0)
       cs_note(tr("cheats.no_results_start_a_new_search"));
    else
-      cs_note("%d %s", (int)n, n == 1 ? "result" : "results");
+      cs_note(tr(n == 1 ? "cheats.result_one" : "cheats.result_many"), (int)n);
 }
 
 static void cs_add(int i)
@@ -1162,8 +1159,8 @@ static ui_action screen_cheat_search_page(unsigned edges, unsigned pad)
       if (pk_cs_active(&g_cs.cs))
       {
          char c[40];
-         snprintf(c, sizeof(c), "%u %s", (unsigned)g_cs.cs.count,
-                  g_cs.cs.count == 1 ? "result" : "results");
+         snprintf(c, sizeof(c), tr(g_cs.cs.count == 1 ? "cheats.result_one" : "cheats.result_many"),
+                  (int)g_cs.cs.count);
          ov_text_right(460, 48, c, C_VALUE);
       }
    }

@@ -181,8 +181,7 @@ static void vita_browser_empty(const char *rom_dir, const ui_skin *s,
                  vid_text_w(msg) + 20, 32);
    }
    else
-      vid_text_center(200, ".gba, .gb, .gbc, .sfc and .nes games go there. "
-                      "Then press " VID_GLYPH_X ".", dim);
+      vid_text_center(200, tr("browse.games_go_there_then_press"), dim);
    if (vita_extra_note(dir, sizeof(dir))[0])
    {
       clip_title(dir, 440);

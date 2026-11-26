@@ -148,7 +148,7 @@ void upscale_gov_reset(void);        /* a new game */
 int upscale_gov_frame(int work_late);
 void upscale_gov_miss(void);         /* (the upscaler's own: a picture missed) */
 int upscale_gov_level(void);
-/* One line for the in-game menu, or NULL while smoothing is at full. */
+/* One line for the in-game menu (a catalogue key, i18n.h), or NULL while smoothing is at full. */
 const char *upscale_gov_note(void);
 
 /* The caller has up to `max_us` microseconds with nothing to do (the game's

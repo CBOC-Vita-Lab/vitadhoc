@@ -88,6 +88,8 @@ browse.also_looked_in	Also looked in %s
 browse.also_looked_in_and_more	Also looked in %s and %d more
 # context: snprintf in ui_vita_browser.h, vita_browser_empty
 browse.copy_your_files_into_this_folder	Copy your .%s files into this folder on the memory card:
+# context: empty game list, under the folder path
+browse.games_go_there_then_press	.gba, .gb, .gbc, .sfc and .nes games go there. Then press {x}.
 # context: snprintf in ui_vita_browser.h, vita_browser_empty
 browse.no_games_yet	No %s games yet
 # context: plural of the line above
@@ -102,12 +104,24 @@ btntest.buttons	BUTTONS
 btntest.chord	 (chord)
 # context: bt_row in ui_vita_btntest.h, screen_btntest
 btntest.front_touch	FRONT TOUCH
+# context: Button test: row label
+btntest.left_stick	LEFT STICK
 # context: vid_text in ui_vita_btntest.h, screen_btntest
 btntest.left_stick_moves_like_the_d	Left stick: moves like the d-pad
 # context: snprintf in ui_vita_btntest.h, screen_btntest
 btntest.not_set	not set
+# context: Button test: a corner of the rear touch panel
+btntest.rear_bottom_left	REAR BOTTOM LEFT
+# context: Button test: a corner of the rear touch panel
+btntest.rear_bottom_right	REAR BOTTOM RIGHT
+# context: Button test: a corner of the rear touch panel
+btntest.rear_top_left	REAR TOP LEFT
+# context: Button test: a corner of the rear touch panel
+btntest.rear_top_right	REAR TOP RIGHT
 # context: vid_text in ui_vita_btntest.h, screen_btntest
 btntest.right_left_rewind_right_fast_forward	Right: left Rewind, right Fast-forward
+# context: Button test: row label
+btntest.right_stick	RIGHT STICK
 # context: vid_text in ui_vita_btntest.h, screen_btntest
 btntest.sticks_and_touch	STICKS AND TOUCH
 # context: cheats_vita.c, cheats_format_hint
@@ -206,6 +220,8 @@ cheats.makes_a_cheat_that_keeps_this	Makes a cheat that keeps this value.
 cheats.most_counters_are_1_byte_money	Most counters are 1 byte; money and scores often 2. Any address looks at odd places too.
 # context: ui_vita_cheats.h, screen_cheat_search_page
 cheats.most_counters_are_1_byte_money_2	Most counters are 1 byte; money and scores often 2.
+# context: Add a code: the title over the name field
+cheats.name_title	NAME
 # context: ui_vita_cheats.h, screen_cheat_search_page
 cheats.narrow_it_down_to_50_or	Narrow it down to 50 or fewer to see them.
 # context: snprintf in ui_vita_cheats.h, screen_cheat_search_page
@@ -226,6 +242,8 @@ cheats.no_results_start_a_new_search	No results. Start a new search
 cheats.no_room_for_more_cheats	No room for more cheats.
 # context: cheats_vita.c, cheats_error_text
 cheats.no_such_cheat	No such cheat.
+# context: in-game menu: beside Cheats when the game has none (like "%d available")
+cheats.none	none
 # context: vid_text in ui_vita_cheats.h, screen_cheat_add_page
 cheats.not_a_whole_code_yet	not a whole code yet
 # context: ui_vita_cheats.h, screen_cheat_search_page
@@ -244,6 +262,10 @@ cheats.ready_to_save	ready to save
 cheats.recognised_not_supported	recognised, not supported
 # context: ui_vita_cheats.h, screen_cheat_search_page
 cheats.remember_the_memory_play_on_then	Remember the memory, play on, then narrow it down.
+# context: Search memory: how many places are left, any other number
+cheats.result_many	%d results
+# context: Search memory: how many places are left, exactly 1
+cheats.result_one	%d result
 # context: snprintf in ui_vita_cheats.h, screen_cheat_search_page
 cheats.results	Results
 # context: ui_vita_cheats.h, screen_cheats_page
@@ -264,6 +286,10 @@ cheats.size_of_the_number	Size of the number
 cheats.space	Space
 # context: snprintf in ui_vita_cheats.h, screen_cheat_search_page
 cheats.start_again	Start again
+# context: Cheats page: top right while cheats are off (Hardcore or linked)
+cheats.status_off	OFF
+# context: Cheats page with no cheats; cheats and roms are folder names
+cheats.the_built_in_list_has_none_for	The built-in list has none for it. Add a code of your own with {tri}, or copy a .cht file into the cheats folder beside roms.
 # context: cheats_vita.c, cheats_error_text
 cheats.the_cheat_could_not_be_used	The cheat could not be used.
 # context: cheats_vita.c, cheats_error_text
@@ -300,6 +326,10 @@ cheats.type_a_whole_number_from_0	Type a whole number from 0 to %u (or 0x and he
 cheats.type_the_code_first	Type the code first.
 # context: cheats_vita.c, cheats_kind_name
 cheats.unknown	Unknown
+# context: cheat list: a code this app cannot run (right of the name)
+cheats.unsupported	unsupported
+# context: cheat list: a code the player added (right of the name)
+cheats.yours	yours
 # context: vw_wrap in ui_vita_cover.h, cv_screen
 cover.a_cover_you_pick_always_wins	A cover you pick always wins over downloaded art. A PNG or JPG in covers/ named like the game is used too.
 # context: snprintf in ui_vita_cover.h, cv_automatic
@@ -498,6 +528,10 @@ home.1_game_matches_in_all_games	1 game matches in All games
 home.a_retroarch_playlist_it_lists_games	A RetroArch playlist: it lists games, it cannot be changed here.
 # context: vs_text_w in ui_vita_home.h, home_empty
 home.all_games	All games
+# context: month name for home.in_month
+home.april	April
+# context: month name for home.in_month
+home.august	August
 # context: ui_vita_home.h, shell_home
 home.back	Back
 # context: hm_chip in ui_vita_home.h, hm_focus
@@ -518,6 +552,10 @@ home.continue	Continue
 home.copy_your_files_into_this_folder	Copy your .%s files into this folder on the memory card:
 # context: hm_button in ui_vita_home.h, hm_focus
 home.cover	Cover
+# context: fills the first %s of home.played (2 to 13 days)
+home.days_ago	%ld days ago
+# context: month name for home.in_month
+home.december	December
 # context: ui_vita_home.h, shell_home
 home.delete	Delete
 # context: snprintf in ui_vita_home.h, shell_home
@@ -526,6 +564,8 @@ home.delete_the_state_in_slot	Delete the state in slot %d?
 home.empty	Empty
 # context: snprintf in ui_vita_home.h, home_empty
 home.every_game_has_been_played	Every %s game has been played
+# context: month name for home.in_month
+home.february	February
 # context: ui_vita_home.h, hm_home_hints
 home.find	Find
 # context: hm_chip in ui_vita_home.h, hm_focus
@@ -534,6 +574,20 @@ home.from_wikipedia	From Wikipedia
 home.games	Games
 # context: snprintf in ui_vita_home.h, home_empty
 home.games_match_in_all_games	%d games match in All games
+# context: how long a game was played
+home.hours	%u h
+# context: how long a game was played
+home.hours_minutes	%u h %u min
+# context: fills the first %s of home.played; %s is a month name (home.january...)
+home.in_month	in %s
+# context: fills the first %s of home.played; a month name and a year
+home.in_month_year	in %s %ld
+# context: month name for home.in_month
+home.january	January
+# context: month name for home.in_month
+home.july	July
+# context: month name for home.in_month
+home.june	June
 # context: hm_hint_word in ui_vita_home.h, hm_home_hints
 home.keep	Keep
 # context: vs_text_w in ui_vita_home.h, hm_home_hints
@@ -542,6 +596,14 @@ home.lists	Lists
 home.load	Load
 # context: vs_text_w in ui_vita_home.h, home_empty
 home.look_again	Look again
+# context: month name for home.in_month
+home.march	March
+# context: month name for home.in_month
+home.may	May
+# context: how long a game was played
+home.minutes	%u min
+# context: fills %s of home.played_2
+home.never	never
 # context: hm_hint_word in ui_vita_home.h, hm_home_hints
 home.next	Next
 # context: vs_text_c in ui_vita_home.h, home_empty
@@ -556,6 +618,10 @@ home.no_save_yet	No save yet
 home.no_starred_games_yet	No starred %s games yet
 # context: snprintf in ui_vita_home.h, home_empty
 home.nothing_of_on	Nothing of %s on %s
+# context: month name for home.in_month
+home.november	November
+# context: month name for home.in_month
+home.october	October
 # context: snprintf in ui_vita_home.h, hm_topbar
 home.of	%d of %d
 # context: hm_chip in ui_vita_home.h, hm_focus
@@ -586,6 +652,8 @@ home.save_states_2	Save states
 home.save_states_of	Save states   %d-%d of %d
 # context: ui_vita_home.h, hm_cards
 home.saved	Saved
+# context: month name for home.in_month
+home.september	September
 # context: vs_text_w in ui_vita_home.h, hm_home_hints
 home.settings	Settings
 # context: snprintf in ui_vita_home.h, hm_cards
@@ -604,10 +672,18 @@ home.the_games_you_have_not_started	The games you have not started show up here.
 home.the_games_you_play_show_up	The games you play show up here, the latest first.
 # context: vs_text_c in ui_vita_home.h, home_empty
 home.the_games_you_play_show_up_2	The games you play show up here, the longest played first.
+# context: fills the first %s of home.played / home.played_2
+home.today	today
 # context: vs_text_c in ui_vita_home.h, home_empty
 home.try_fewer_words_or_part_of	Try fewer words, or part of a word.
+# context: how long a game was played, second %s of home.played
+home.under_a_minute	under a minute
 # context: vs_text_w in ui_vita_home.h, hm_home_hints
 home.views	Views
+# context: fills the first %s of home.played (2 to 8 weeks)
+home.weeks_ago	%ld weeks ago
+# context: fills the first %s of home.played
+home.yesterday	yesterday
 # context: ui_vita_library.h, lib_view_name
 lib.games	Games
 # context: ui_vita_library.h, lib_view_name
@@ -944,6 +1020,8 @@ notice.the_two_player_game_could_not	The two-player game could not start
 notice.this_game_could_not_be_started	This game could not be started
 # context: app_notice in main_vita.c, snes_link_page
 notice.use_same_wi_fi_or_online	Use Same Wi-Fi or Online for two players.
+# context: Online: why a game in an archive was not found
+online.a_compressed_zip_or_7z_cannot_be	A compressed .zip or .7z cannot be checked here. Unpack the game into your games folder.
 # context: vw_clip in ui_vita_online.h, oc_title_of
 online.a_game	a game
 # context: snprintf in ui_vita_online.h, screen_online_card
@@ -1124,10 +1202,14 @@ play.by_wireless_adapter_the_game_pairs	%s, by Wireless Adapter. The game pairs 
 play.cable_or_adapter	Cable or Adapter
 # context: vw_row in ui_vita_play.h, play_session
 play.cancel	Cancel
+# context: Two players: the second game picked in the list
+play.chosen	chosen
 # context: ui_vita_play.h, ui_link_fail_text
 play.connect_in_the_vita_s_settings	Connect in the Vita's Settings > Network, then try again.
 # context: snprintf in ui_vita_play.h, screen_join
 play.connect_in_the_vita_s_settings_2	Connect in the Vita's Settings > Network. This page carries on by itself as soon as it is.
+# context: network line: shown in place of the Wi-Fi name when it is not known
+play.connected	connected
 # context: snprintf in ui_vita_play.h, play_status_line
 play.connecting_to_wi_fi	%s: connecting to Wi-Fi...
 # context: vw_row in ui_vita_play.h, screen_play_page
@@ -1154,6 +1236,8 @@ play.end_the_current_link_first	End the current link first.
 play.far_apart_host_shows_a_code	Far apart: host shows a code, your friend types it.
 # context: vw_line in ui_vita_play.h, screen_conn
 play.fewer_frames_react_faster_more_ride	Fewer frames react faster; more ride out a slow connection.
+# context: link quality, fills the second %s of play.ms_round_trip_2
+play.fine	fine
 # context: vw_head in ui_vita_play.h, screen_mgift
 play.firered_leafgreen_and_emerald_from_a	FireRed, LeafGreen and Emerald, from a phone
 # context: ui_vita_play.h, screen_help
@@ -1166,6 +1250,8 @@ play.frame	%d frame
 play.frames	%d frames
 # context: vw_row in ui_vita_play.h, screen_play_page
 play.from_a_phone	from a phone
+# context: a room that cannot be joined: it has all its players (short, like "a different game")
+play.full	full
 # context: ui_vita_play.h, screen_mgift
 play.game	Game
 # context: ui_vita_play.h, kind_name
@@ -1258,6 +1344,8 @@ play.linked_with_the_other	Linked with the other Vita
 play.links_by_link_cable_or_wireless	Links by Link Cable or Wireless Adapter: the host chooses.
 # context: ov_status_right in ui_vita_play.h, screen_mgift
 play.listening	LISTENING
+# context: Play together row value: Mystery Gift is listening for a phone
+play.listening_value	listening
 # context: snprintf in ui_vita_play.h, screen_join
 play.looking_for_a_game_at_that	Looking for a game at that address...
 # context: snprintf in ui_vita_play.h, screen_join
@@ -1316,6 +1404,10 @@ play.not_listed_connection_internet_type	Not listed? Connection: Internet, type 
 play.not_listening	Not listening
 # context: ui_vita_play.h, ui_link_fail_text
 play.nothing_was_changed_choose_host_or	Nothing was changed. Choose Host or Join to try again.
+# context: Two players: row value, whose game the buttons play now
+play.now_the_partner_s	now: the partner's
+# context: Two players: row value, whose game the buttons play now
+play.now_yours	now: yours
 # context: vw_row in ui_vita_play.h, screen_conn
 play.off	Off
 # context: vw_row in ui_vita_play.h, screen_conn
@@ -1344,6 +1436,8 @@ play.play_together	PLAY TOGETHER
 play.player_2_on_the_touch_screen	Player 2 on the touch screen
 # context: vw_line in ui_vita_play.h, screen_local
 play.player_2_plays_on_the_front	Player 2 plays on the front screen while no controller is paired.
+# context: link quality, fills the second %s of play.ms_round_trip_2 (the others: "fine", "slow, expect delay")
+play.quick	quick
 # context: ui_vita_play.h, ui_link_fail_text
 play.quit_to_the_game_list_open	Quit to the game list, open the game again and link first.
 # context: vid_text_w in ui_vita_play.h, screen_addr
@@ -1378,6 +1472,8 @@ play.side_by_side	side by side
 play.side_by_side_two_equal_pictures	Side by side: two equal pictures. Large + small: the game you drive is the large one.
 # context: vw_row in ui_vita_play.h, screen_local
 play.side_by_side_two_players	side by side (two players)
+# context: link page: label before the Wi-Fi signal bars
+play.signal	signal
 # context: ui_vita_play.h, play_session
 play.slow	Slow
 # context: snprintf in ui_vita_play.h, play_session
@@ -1396,6 +1492,8 @@ play.start_the_partner_uses_its_own	Start: the partner uses its own save
 play.starting_the_second_game	Starting the second game...
 # context: vw_row in ui_vita_play.h, screen_local
 play.starts_a_new_game	starts a new game
+# context: Mystery Gift page: status at the top right when not listening (the other is LISTENING)
+play.status_off	OFF
 # context: snprintf in ui_vita_play.h, screen_join
 play.still_trying	Still trying.
 # context: vw_row in ui_vita_play.h, screen_local
@@ -1638,6 +1736,8 @@ settings.fourth_core	Fourth core
 settings.fps_counter	FPS counter
 # context: ui_psp.c, ff_step_now
 settings.game_boy_colours	Game Boy colours
+# context: Settings row (Gameplay, and This game for a running Game Boy game): which Game Boy emulator runs the games
+settings.game_boy_core	Game Boy core
 # context: ui_psp.c, ff_step_now
 settings.game_boy_printer	Game Boy Printer
 # context: ui_psp.c, ff_step_now
@@ -1668,6 +1768,8 @@ settings.help.a_soft_glow_beside_the_picture	A soft glow beside the picture in p
 settings.help.a_tap_on_the_game_opens	A tap on the game opens the menu. Start + Select always does.
 # context: ui_psp.c, set_help
 settings.help.a_vita_on_the_same_wi	A Vita on the same Wi-Fi can copy your saves and states.
+# context: help line under Game Boy core when Accurate is chosen
+settings.help.accurate_gambatte_closer_to_a_real	Accurate: Gambatte, closer to a real Game Boy, heavier. No link play, Camera or border. Next game.
 # context: ui_psp.c, set_help
 settings.help.adds_the_handheld_screen_s_grid	Adds the handheld screen's grid of dots.
 # context: ui_psp.c, set_help
@@ -1712,6 +1814,8 @@ settings.help.busy_moments_show_every_second_frame	Busy moments show every secon
 settings.help.busy_moments_skip_a_frame_game	Busy moments skip a frame; game and sound keep speed.
 # context: ui_psp.c, set_help
 settings.help.busy_moments_slow_the_game_and	Busy moments slow the game and its sound down.
+# context: help line of CPU speed
+settings.help.cannot_write_the_psvshell_profile	Cannot write the PSVshell profile
 # context: ui_psp.c, set_help
 settings.help.choose_just_this_game_to_give	Choose "just this game" to give it a look of its own.
 # context: ui_psp.c, set_help
@@ -1788,6 +1892,10 @@ settings.help.how_much_sunlight_the_cartridge_s	How much sunlight the cartridge'
 settings.help.how_strongly_a_turn_or_a	How strongly a turn or a tilt is felt.
 # context: ui_psp.c, set_help
 settings.help.how_this_game_links_link_cable	How this game links: Link Cable or Wireless Adapter.
+# context: help line of CPU speed; %s is empty or settings.help.restart_the_app_to_apply
+settings.help.measured_mhz	Measured: %u MHz%s
+# context: help line of CPU speed
+settings.help.measured_not_known	Measured: not known
 # context: ui_psp.c, set_help
 settings.help.mmpx_at_twice_its_size_crisp	MMPX at twice its size: crisp pixel art, light on the Vita.
 # context: ui_psp.c, set_help
@@ -1796,6 +1904,8 @@ settings.help.more_of_the_map_beside_the	More of the map beside the picture, in 
 settings.help.muted_and_dark_as_on_the	Muted and dark, as on the first GBA's unlit screen.
 # context: ui_psp.c, set_help
 settings.help.muted_as_on_a_gba_s	Muted, as on a GBA's screen: what the art was made for.
+# context: help line of CPU speed
+settings.help.needs_an_overclock_plugin_such_as	Needs an overclock plugin such as PSVshell
 # context: ui_psp.c, set_help
 settings.help.no_marks_over_the_game_unlocks	No marks over the game. Unlocks still show.
 # context: ui_psp.c, set_help
@@ -1820,6 +1930,8 @@ settings.help.put_a_png_in_ux0_data	Put a PNG in ux0:data/GBAdhoc/overlays/ to f
 settings.help.redraws_curves_and_diagonals_smoothly_the	Redraws curves and diagonals smoothly. The heaviest.
 # context: ui_psp.c, set_help
 settings.help.rest_on_a_game_in_the	Rest on a game in the home screen and the last ten seconds you played of it play behind it.
+# context: end of settings.help.measured_mhz (starts with its own full stop)
+settings.help.restart_the_app_to_apply	. Restart the app to apply
 # context: ui_psp.c, set_help
 settings.help.retroarch_s_files_are_left_alone	RetroArch's files are left alone; Export save copies one.
 # context: ui_psp.c, set_help
@@ -1856,6 +1968,8 @@ settings.help.smoothed_at_three_times_its_size	Smoothed at three times its size.
 settings.help.smoothed_at_twice_the_game_s	Smoothed at twice the game's size, then sized to fit.
 # context: ui_psp.c, set_help
 settings.help.soft_every_pixel_blends_into_the	Soft: every pixel blends into the next.
+# context: help line under Game Boy core when Standard is chosen
+settings.help.standard_the_usual_core_fast_with	Standard: the usual core, fast, with link play, Camera and Super Game Boy borders. Next game.
 # context: ui_psp.c, set_help
 settings.help.states_rewind_and_cheats_allowed	States, rewind and cheats allowed.
 # context: ui_psp.c, set_help
@@ -1902,6 +2016,8 @@ settings.help.the_vita_s_own_ps_start	The Vita's own PS + Start takes screenshot
 settings.help.the_wonderswan_s_75_frames_a	The WonderSwan's 75 frames a second blended into each refresh: smooth scrolling.
 # context: ui_psp.c, set_help
 settings.help.this_game_s_achievements_and_what	This game's achievements and what each asks.
+# context: help line under This game > Game Boy core; "Settings" is the value that follows Settings > Gameplay
+settings.help.this_game_s_own_choice_next_start	This game's own choice. Settings follows the Gameplay row. Next start of the game.
 # context: ui_psp.c, set_help
 settings.help.this_game_s_own_choice_settings	This game's own choice. Settings follows the Gameplay row. Auto uses it while there is time.
 # context: ui_psp.c, set_help
@@ -1920,6 +2036,8 @@ settings.help.type_your_friend_s_room_code	Type your friend's room code. Your co
 settings.help.vertical_scenes_upright_on_a_level	Vertical scenes upright on a level Vita; the d-pad turns with them.
 # context: ui_psp.c, set_help
 settings.help.what_fills_the_wide_view_s	What fills the wide view's margins (needs Wide view on).
+# context: help line of Camera when the picture comes from a file
+settings.help.what_the_camera_sees_camera_png	What the camera sees: camera.png from the data folder.
 # context: ui_psp.c, set_help
 settings.help.what_the_camera_sees_the_vita	What the camera sees: the Vita's back camera.
 # context: ui_psp.c, set_help
@@ -1934,6 +2052,8 @@ settings.help.which_vita_screen_this_is_oled	Which Vita screen this is. OLED sof
 settings.help.x_a_copy_retroarch_can_use	X: a copy RetroArch can use, where it looks.
 # context: ui_psp.c, set_help
 settings.help.x_a_picture_of_your_own	{x}: a picture of your own as the cover of the game picked in the list.
+# context: help line of Export save when the value is Plain .sav; X is the Cross button
+settings.help.x_a_plain_sav_beside_the_game	X: a plain .sav beside the game (mGBA, SameBoy...).
 # context: ui_psp.c, set_help
 settings.help.x_add_a_folder_ux0_roms	{x}: add a folder (ux0:ROMS/GBA), or pick one to remove it.
 # context: ui_psp.c, set_help
@@ -1942,6 +2062,8 @@ settings.help.x_check_now_off_no_check	{x}: check now. Off: no check unless you 
 settings.help.x_check_now_once_a_day	{x}: check now. Once a day it asks GitHub if a newer VitAdhoc is out.
 # context: ui_psp.c, set_help
 settings.help.x_type_a_folder_ux0_pictures	{x}: type a folder (ux0:pictures/VitAdhoc). Empty: screenshots/.
+# context: help line of Overlay when it is on; overlays/ is a folder name
+settings.help.your_picture_from_overlays_over_the	Your picture from overlays/ over the game (gba.png, gb.png, gbc.png or its name).
 # context: ui_psp.c, set_help
 settings.help.your_retroachievements_org_account	Your retroachievements.org account.
 # context: ui_psp.c, set_help
@@ -2052,6 +2174,8 @@ settings.two_players	Two players
 settings.value.444_mhz_standard	444 MHz (standard)
 # context: set_item in ui_psp.c, screen_settings_page
 settings.value.500_mhz_fast	500 MHz (fast)
+# context: Game Boy core value: Gambatte, closer to a real Game Boy
+settings.value.accurate	Accurate
 # context: snprintf in ui_psp.c, screen_settings_page
 settings.value.all_games	all %s games
 # context: set_item in ui_psp.c, screen_settings_page
@@ -2074,8 +2198,14 @@ settings.value.classic_lcd_tint	Classic LCD tint
 settings.value.controller	Controller
 # context: snprintf in ui_psp.c, screen_settings_page
 settings.value.cross_is_a	Cross is A
+# context: value of Button mapping: changed by the player
+settings.value.custom	Custom
 # context: set_item in ui_psp.c, screen_settings_page
 settings.value.daily	Daily
+# context: value of Theme
+settings.value.dark	Dark
+# context: value of Button mapping: nothing changed
+settings.value.default	Default
 # context: snprintf in ui_psp.c, screen_settings_page
 settings.value.ff_button	FF button (%s)
 # context: set_item in ui_psp.c, screen_settings_page
@@ -2100,10 +2230,16 @@ settings.value.gb_only	GB only
 settings.value.gba_link_cable_only	GBA Link Cable only
 # context: set_item in ui_psp.c, screen_settings_page
 settings.value.greyscale	Greyscale
+# context: value of the link status row: not drawn
+settings.value.hidden	Hidden
+# context: value of Game list look: tiles over your game (the home screen)
+settings.value.home	Home
 # context: set_item in ui_psp.c, screen_settings_page
 settings.value.host_or_join	host or join
 # context: snprintf in ui_psp.c, screen_settings_page
 settings.value.host_saves_and_states_on	host saves and states on %s
+# context: value of Extra CPU core (About): the fourth core is in use
+settings.value.in_use	In use
 # context: snprintf in ui_psp.c, screen_settings_page
 settings.value.just_this_game	just this game
 # context: set_item in ui_psp.c, screen_settings_page
@@ -2112,6 +2248,10 @@ settings.value.large	Large
 settings.value.last_played_first	last played first
 # context: set_item in ui_psp.c, screen_settings_page
 settings.value.lcd_pch_2000	LCD (PCH-2000)
+# context: value of Theme
+settings.value.light	Light
+# context: value of Game list look: art full screen
+settings.value.marquee	Marquee
 # context: snprintf in ui_psp.c, screen_settings_page
 settings.value.min	%d min
 # context: set_item in ui_psp.c, screen_settings_page
@@ -2124,6 +2264,8 @@ settings.value.none_shade	none (shade)
 settings.value.normal	Normal
 # context: snprintf in ui_psp.c, screen_settings_page
 settings.value.normal_pitch	, normal pitch
+# context: value of Extra CPU core (About): the fourth core cannot be used
+settings.value.not_available	Not available
 # context: snprintf in ui_psp.c, screen_settings_page
 settings.value.not_checking	Not checking
 # context: set_item in ui_psp.c, screen_settings_page
@@ -2150,16 +2292,28 @@ settings.value.on_l_r_select	on (L + R + Select)
 settings.value.on_none_in_overlays	on - none in overlays/
 # context: snprintf in ui_psp.c, screen_settings_page
 settings.value.only_roms	only roms/
+# context: value of Export save: a plain .sav file (the other value is "for RetroArch")
+settings.value.plain_sav	Plain .sav
+# context: value of Reverse (motion controls)
+settings.value.reversed	Reversed
 # context: set_item in ui_psp.c, screen_settings_page
 settings.value.scan_now	scan now
+# context: value of Level (motion controls): a level was set by hand
+settings.value.set	Set
 # context: set_item in ui_psp.c, screen_settings_page
 settings.value.settings	Settings
+# context: value of Game list look: a list with art
+settings.value.shelf	Shelf
+# context: value of the link status row: the small status is drawn
+settings.value.shown	Shown
 # context: snprintf in ui_psp.c, screen_settings_page
 settings.value.sign_in	sign in
 # context: snprintf in ui_psp.c, screen_settings_page
 settings.value.signing_in	signing in...
 # context: set_item in ui_psp.c, screen_settings_page
 settings.value.smooth_50_hz	Smooth 50 Hz
+# context: Game Boy core value: the usual core (fast, link play, Camera)
+settings.value.standard	Standard
 # context: snprintf in ui_psp.c, screen_settings_page
 settings.value.the_one_on	the one on %s
 # context: snprintf in ui_psp.c, screen_settings_page
@@ -2318,6 +2472,8 @@ share.save_file_3	Save file
 share.save_file_replaced_yours	Save file replaced yours
 # context: snprintf in ui_share.inc, shj_xf_commit
 share.save_file_saved	Save file saved
+# context: Share game data: what is offered, only the save file (see share.save_state_one)
+share.save_only	SAVE
 # context: plural of the line above
 share.save_state_many	SAVE  -  %d states%s
 # context: one save file and one state; the last %s is a short note or nothing
@@ -2402,6 +2558,8 @@ share.theirs_yours	Theirs %s   Yours %s
 share.there_are_no_saves_or_states	There are no saves or states to share yet.
 # context: vid_text_center in ui_share.inc, shj_draw_list
 share.they_share_some_for_the_other	They share some for the other consoles.
+# context: Share game data: what was taken, only the save file (see share.took_save_state_one)
+share.took_save_only	save
 # context: plural
 share.took_save_state_many	save, %d states
 # context: you took the save and one state
@@ -2536,6 +2694,8 @@ toast.a_plain_file	a plain file
 toast.a_player	A player
 # context: osd_toast in link_vita.c, adapter_service
 toast.a_player_left	A player left %s
+# context: toast: Gambatte refused the game, the usual core runs it
+toast.accurate_core_can_t_run_this_cartridge	Accurate core can't run this cartridge: using Standard
 # context: toast in ra_vita.c, on_event
 toast.achievement	Achievement: %s
 # context: toast in ra_vita.c, on_event
@@ -2550,6 +2710,8 @@ toast.already_checking_for_updates	Already checking for updates
 toast.already_linked_disconnect_first	Already linked. Disconnect first.
 # context: osd_toast in main_vita.c, game_boot
 toast.audio_output_unavailable	Audio output unavailable
+# context: toast; camera.png is a file name
+toast.camera_png_not_found_using_a_test	camera.png not found: using a test picture
 # context: toast_now in main_vita.c, game_loop
 toast.cannot_load_a_state_during_a	Cannot load a state during a link session
 # context: toast_now in main_vita.c, game_loop
@@ -2574,6 +2736,8 @@ toast.could_not_continue_starting_from_the	Could not continue: starting from the
 toast.could_not_load_state	Could not load state %d
 # context: toast in ra_vita.c, login_done
 toast.could_not_sign_in_will_try	could not sign in, will try again
+# context: toast; gb_override.txt is a file name
+toast.could_not_write_gb_override_txt	Could not write gb_override.txt
 # context: osd_toast in link_vita.c, link_disconnect
 toast.disconnected	Disconnected
 # context: osd_toast in ui_psp.c, screen_settings_page
@@ -2636,6 +2800,8 @@ toast.link_lost_the_other_vita_is_2	Link lost: the other Vita is gone. Your game
 toast.link_lost_the_other_vita_is_3	Link lost: the other Vita is gone. Nothing saved.
 # context: osd_toast in link_vita.c, adapter_service
 toast.link_lost_the_other_vita_is_4	Link lost: the other Vita is gone.
+# context: toast when a link starts while Game Boy core is Accurate
+toast.link_play_uses_the_standard_gb_core	Link play uses the Standard Game Boy core
 # context: osd_toast in main_vita.c, menu_action
 toast.load_undone	Load undone
 # context: osd_toast in ui_psp.c, screen_settings_page
@@ -2656,6 +2822,8 @@ toast.mystery_gift_off	Mystery Gift off
 toast.no_achievements_for_this_game_yet	No achievements for this game yet
 # context: toast in ra_vita.c, login_done
 toast.no_answer	no answer
+# context: toast; camera.png is a file name
+toast.no_camera_using_camera_png_or_a	No camera: using camera.png or a test picture
 # context: osd_toast in ui_psp.c, screen_settings_page
 toast.no_folder_with_that_name_on	No folder with that name on the card
 # context: osd_toast in ui_psp.c, settings_adjust
@@ -2694,6 +2862,14 @@ toast.retroachievements	RetroAchievements: %s
 toast.retroachievements_does_not_know_this_version	RetroAchievements does not know this version
 # context: toast in ra_vita.c, login_done
 toast.retroachievements_please_sign_in_again	RetroAchievements: please sign in again
+# context: toast
+toast.rewind_failed	Rewind failed
+# context: toast
+toast.rewind_is_off_while_games_are_linked	Rewind is off while games are linked
+# context: toast
+toast.rewind_is_switched_off_settings	Rewind is switched off (Settings)
+# context: toast
+toast.rewind_not_enough_memory_for_it	Rewind: not enough memory for it
 # context: osd_toast in ui_psp.c, ui_browser
 toast.rom_path_is_too_long	ROM path is too long
 # context: toast_now in main_vita.c, game_loop
@@ -2750,6 +2926,8 @@ toast.stopped_hosting	Stopped hosting %s
 toast.submitted	Submitted: %s
 # context: osd_toast in ui_psp.c, screen_settings_page
 toast.that_folder_can_t_be_used	That folder can't be used
+# context: toast: Continue found a state of the other Game Boy core
+toast.that_state_is_from_the_other_gb_core_starting	That state is from the other Game Boy core: starting from the save
 # context: osd_toast in local_vita.c, link_local_state_loaded
 toast.that_state_s_second_game_is	That state's second game is another cartridge
 # context: toast_now in main_vita.c, gbcam_frame
@@ -2804,6 +2982,12 @@ toast.the_second_game_s_old_save	The second game's old save could not be backed 
 toast.the_second_game_s_save_could	The second game's save could not be written - the old one is kept
 # context: osd_toast in local_vita.c, save_report
 toast.the_second_game_s_save_could_2	The second game's save could not be written
+# context: toast at the oldest point of rewind
+toast.this_is_as_far_back_as_rewind	This is as far back as rewind goes
+# context: toast: a save state made with the other Game Boy core (Standard / Accurate) cannot be loaded
+toast.this_state_is_from_the_other_gb_core	This state is from the other Game Boy core
+# context: toast when two players on one Vita start (two cartridges) while Game Boy core is Accurate
+toast.two_cart_play_uses_the_standard_gb_core	Two-cart play uses the Standard Game Boy core
 # context: toast_now in main_vita.c, ws_layout_hint
 toast.vertical_the_d_pad_turns_with	Vertical: the d-pad turns with the picture. L = A, R = B
 # context: toast_now in main_vita.c, ws_layout_hint
@@ -2926,6 +3110,10 @@ ui.hold	Hold
 ui.hold_1_5_s	hold 1.5 s
 # context: ui_psp.c, ctl_fixed_row
 ui.hold_fires_for_as_long_as	Hold: fires for as long as you hold the button.
+# context: Button mapping: beside the fixed START+SELECT chip, how the menu chord is pressed
+ui.hold_tag	hold
+# context: page title: hosting a link game (the other Vita joins)
+ui.host_title	HOST
 # context: ov_cluster_text in ui_psp.c, ov_cluster
 ui.hosting	HOSTING
 # context: ui_psp.c, ov_head
@@ -3046,6 +3234,8 @@ ui.pick_a_game	pick a game
 ui.play_together	Play together
 # context: ui_text_open in ui_psp.c, screen_settings_page
 ui.player_name	Player name
+# context: Button mapping: the chip while it waits for a button
+ui.press	press...
 # context: ui_psp.c, ctl_capture_plate
 ui.press_a_button_for	Press a button for
 # context: ui_psp.c, ctl_capture_plate
@@ -3083,8 +3273,14 @@ ui.retroachievements_password	RetroAchievements password
 ui.retroachievements_user_name	RetroAchievements user name
 # context: ui_psp.c, ret_chip
 ui.returning_to_game_list	Returning to game list...
+# context: on-screen chip while rewinding; %s is the time back ("12 s", "4:59")
+ui.rewind_chip	<< REWIND %s
+# context: on-screen chip at the oldest point of rewind; %s is the time back
+ui.rewind_chip_oldest	<< %s (oldest)
 # context: vid_text_center in ui_psp.c, ui_browser
 ui.rom_path_is_too_long	ROM path is too long
+# context: game list (Shelf look): badge on a game that has a save file
+ui.save_badge	SAVE
 # context: ui_psp.c, screen_menu
 ui.save_clip	Save clip
 # context: vid_text in ui_psp.c, shell_shelf
@@ -3151,6 +3347,8 @@ ui.slot_could_not_be_saved	Slot %d could not be saved
 ui.slot_could_not_be_undone	Slot %d could not be undone
 # context: snprintf in ui_psp.c, screen_state_slots
 ui.slot_deleted	Slot %d deleted
+# context: Save states: under an empty slot
+ui.slot_empty	empty
 # context: snprintf in ui_psp.c, screen_state_slots
 ui.slot_is_as_it_was_before	Slot %d is as it was before the save
 # context: snprintf in ui_psp.c, screen_state_slots
@@ -3165,10 +3363,18 @@ ui.slot_locked	Slot %d locked
 ui.slot_not_deleted	Slot %d not deleted
 # context: snprintf in ui_psp.c, screen_state_slots
 ui.slot_of	Slot %d of %d  -  %s%s
+# context: state list: a state of an older version (no picture)
+ui.slot_old	old
 # context: snprintf in ui_psp.c, ui_state_save_done
 ui.slot_saved	Slot %d saved
+# context: Save states: under a slot that holds a state with no date
+ui.slot_state_saved	saved
 # context: snprintf in ui_psp.c, screen_state_slots
 ui.slot_unlocked	Slot %d unlocked
+# context: in-game menu plate: the smoothing governor lowered smoothing
+ui.smoothing_is_lighter_to_keep_full	Smoothing is lighter to keep full speed.
+# context: in-game menu plate: the smoothing governor stopped smoothing
+ui.smoothing_is_off_to_keep_full_speed	Smoothing is off to keep full speed.
 # context: ui_psp.c, ui_browser
 ui.some_paths_were_too_long_and	Some paths were too long and were skipped.
 # context: snprintf in ui_psp.c, ui_browser
@@ -3183,6 +3389,10 @@ ui.srm	%.*s.srm
 ui.start_select_hold_opens_the_menu	START+SELECT (hold) opens the menu  -  HOME is the system's
 # context: ui_psp.c, browser_footer
 ui.start_settings	START settings
+# context: in-game menu: beside Play together while waiting as the host
+ui.status_hosting	hosting
+# context: in-game menu: beside Play together while games are linked (lowercase, dim)
+ui.status_linked	linked
 # context: snprintf in ui_psp.c, cht_page_reset
 ui.the_file_is_over_kb_showing	The file is over %d KB: showing the first %u cheats
 # context: wl_row_at_w in ui_psp.c, screen_host
@@ -3237,6 +3447,10 @@ ui.undo_x_the_save_in_slot	Undo?      {x} the save in Slot %d     {sq} the last 
 ui.up_dn_slot	UP/DN: slot
 # context: vid_text in ui_psp.c, browser_state_panel
 ui.up_dn_slot_sq_delete	UP/DN: slot   {sq}: delete
+# context: the question before leaving the game: "{x} exit" (fills %s in ui.x_o_stay)
+ui.verb_exit	exit
+# context: the question before closing the app: "{x} quit" (fills %s in ui.x_o_stay)
+ui.verb_quit	quit
 # context: snprintf in ui_psp.c, ctl_note_result
 ui.was_is_now_blank_disabled	%s was %s  -  %s is now blank (disabled)
 # context: ui_psp.c, linkmode_value

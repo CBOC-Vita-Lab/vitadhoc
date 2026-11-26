@@ -43,6 +43,7 @@ app.was_not_found	%.180sが見つかりませんでした。
 browse.also_looked_in	%sも探しました
 browse.also_looked_in_and_more	%sほか%d件も探しました
 browse.copy_your_files_into_this_folder	.%sファイルをメモリーカードのこのフォルダーにコピーしてください:
+browse.games_go_there_then_press	.gba、.gb、.gbc、.sfc、.nesのゲームをそこに入れて、{x}を押してください。
 browse.no_games_yet	%sのゲームはまだありません
 browse.other_game_many	{tri}で他の%d個のゲームを表示
 browse.other_game_one	{tri}で他の%d個のゲームを表示
@@ -50,9 +51,15 @@ btntest.button_test	ボタンテスト
 btntest.buttons	ボタン
 btntest.chord	 (同時押し)
 btntest.front_touch	前面タッチ
+btntest.left_stick	左スティック
 btntest.left_stick_moves_like_the_d	左スティック: 方向キーと同じ動き
 btntest.not_set	未設定
+btntest.rear_bottom_left	背面 左下
+btntest.rear_bottom_right	背面 右下
+btntest.rear_top_left	背面 左上
+btntest.rear_top_right	背面 右上
 btntest.right_left_rewind_right_fast_forward	右: 左で巻き戻し、右で早送り
+btntest.right_stick	右スティック
 btntest.sticks_and_touch	スティックとタッチ
 cheats.6_or_8_letters_game_genie	6または8文字 (Game Genie) かAAAA:VV (RAM)。コードは+でつなぎます。
 cheats.8_digits_gameshark_or_3_3	8桁 (GameShark) か3-3-3桁 (Game Genie)。コードは+でつなぎます。
@@ -102,6 +109,7 @@ cheats.look_at_the_game_s_memory	ゲームのメモリーを今すぐ調べる
 cheats.makes_a_cheat_that_keeps_this	この値を保つチートを作ります。
 cheats.most_counters_are_1_byte_money	カウンターの多くは1バイト、お金やスコアは2バイトが多めです。「すべてのアドレス」は奇数アドレスも調べます。
 cheats.most_counters_are_1_byte_money_2	カウンターの多くは1バイト、お金やスコアは2バイトが多めです。
+cheats.name_title	名前
 cheats.narrow_it_down_to_50_or	50件以下に絞ると表示されます。
 cheats.new_search	新しい検索
 cheats.no_cheat_s_name_contains	「%s」を含む名前のチートはありません。
@@ -112,6 +120,7 @@ cheats.no_name	(名前なし)
 cheats.no_results_start_a_new_search	結果なし。新しい検索を始めてください
 cheats.no_room_for_more_cheats	これ以上チートを追加できません。
 cheats.no_such_cheat	そのチートはありません。
+cheats.none	なし
 cheats.not_a_whole_code_yet	コードが未完成です
 cheats.nothing_matched_start_a_new_search	一致なし。新しい検索を始めてください。
 cheats.of	「%s」: %d / %d
@@ -121,6 +130,8 @@ cheats.raw	生コード
 cheats.ready_to_save	保存できます
 cheats.recognised_not_supported	認識しましたが未対応です
 cheats.remember_the_memory_play_on_then	メモリーを記憶し、プレイを続けてから絞り込みます。
+cheats.result_many	%d件
+cheats.result_one	%d件
 cheats.results	結果
 cheats.save	保存
 cheats.search_memory	メモリー検索
@@ -131,6 +142,8 @@ cheats.since_the_last_step	前回のステップから
 cheats.size_of_the_number	数値のサイズ
 cheats.space	スペース
 cheats.start_again	最初から
+cheats.status_off	オフ
+cheats.the_built_in_list_has_none_for	内蔵リストにはありません。{tri}で自分のコードを追加するか、.chtファイルをromsの隣のcheatsフォルダにコピーしてください。
 cheats.the_cheat_could_not_be_used	このチートは使えませんでした。
 cheats.the_cheat_file_could_not_be	チートファイルを保存できませんでした。
 cheats.the_code	コード
@@ -149,6 +162,8 @@ cheats.throw_this_code_away_x_discard	このコードを破棄しますか?     
 cheats.type_a_whole_number_from_0	0から%uまでの整数を入力 (0xで16進も可)
 cheats.type_the_code_first	先にコードを入力してください。
 cheats.unknown	不明
+cheats.unsupported	非対応
+cheats.yours	自作
 cover.a_cover_you_pick_always_wins	自分で選んだカバーは、ダウンロードした画像より優先されます。covers/にゲーム名と同じ名前のPNGかJPGを置いても使えます。
 cover.automatic_a_cover_is_downloaded_when	自動。Wi-Fiにつながるとカバーをダウンロードします。
 cover.automatic_download	自動 (ダウンロード)
@@ -248,6 +263,8 @@ hint.x_which_connection_o_back	{x} どの接続?   {o} 戻る
 home.1_game_matches_in_all_games	すべてのゲームで1件一致
 home.a_retroarch_playlist_it_lists_games	RetroArchのプレイリストです。ゲームの一覧のみで、ここでは変更できません。
 home.all_games	すべてのゲーム
+home.april	4月
+home.august	8月
 home.back	戻る
 home.battery_save	バッテリーセーブ
 home.cancel	キャンセル
@@ -258,18 +275,32 @@ home.clear	クリア
 home.continue	続ける
 home.copy_your_files_into_this_folder	.%sファイルをメモリーカードのこのフォルダーにコピーしてください:
 home.cover	カバー
+home.days_ago	%ld日前
+home.december	12月
 home.delete	削除
 home.delete_the_state_in_slot	スロット%dのステートを削除しますか?
 home.empty	空
 home.every_game_has_been_played	%sのゲームはすべてプレイ済みです
+home.february	2月
 home.find	検索
 home.from_wikipedia	Wikipediaより
 home.games	ゲーム
 home.games_match_in_all_games	すべてのゲームで%d件一致
+home.hours	%u時間
+home.hours_minutes	%u時間%u分
+home.in_month	%s
+home.in_month_year	%s (%ld年)
+home.january	1月
+home.july	7月
+home.june	6月
 home.keep	残す
 home.lists	リスト
 home.load	ロード
 home.look_again	再検索
+home.march	3月
+home.may	5月
+home.minutes	%u分
+home.never	未プレイ
 home.next	次へ
 home.no_games_match	一致するゲームなし
 home.no_games_played_yet	%sのゲームはまだプレイしていません
@@ -277,6 +308,8 @@ home.no_games_yet	%sのゲームはまだありません
 home.no_save_yet	セーブなし
 home.no_starred_games_yet	お気に入りの%sゲームはまだありません
 home.nothing_of_on	%sの%sはありません
+home.november	11月
+home.october	10月
 home.of	%d / %d
 home.patched_bps	パッチ済み (BPS)
 home.patched_ips	パッチ済み (IPS)
@@ -292,6 +325,7 @@ home.save_states	ステート%d件
 home.save_states_2	ステート
 home.save_states_of	ステート   %d-%d / %d
 home.saved	保存済み
+home.september	9月
 home.settings	設定
 home.slot	スロット%d
 home.star	お気に入り
@@ -301,8 +335,12 @@ home.step	コマ送り
 home.the_games_you_have_not_started	まだ始めていないゲームがここに出ます。
 home.the_games_you_play_show_up	遊んだゲームが新しい順にここに出ます。
 home.the_games_you_play_show_up_2	遊んだゲームがプレイ時間の長い順にここに出ます。
+home.today	今日
 home.try_fewer_words_or_part_of	語数を減らすか、語の一部で試してください。
+home.under_a_minute	1分未満
 home.views	表示
+home.weeks_ago	%ld週間前
+home.yesterday	昨日
 lib.games	ゲーム
 lib.most_played	よく遊ぶ
 lib.not_played_yet	未プレイ
@@ -471,6 +509,7 @@ notice.the_launcher_s_path_was_used	ランチャーのパスを書かれたと�
 notice.the_two_player_game_could_not	2人プレイを開始できませんでした
 notice.this_game_could_not_be_started	このゲームを起動できませんでした
 notice.use_same_wi_fi_or_online	2人プレイには「同じWi-Fi」か「オンライン」を使ってください。
+online.a_compressed_zip_or_7z_cannot_be	圧縮された.zipや.7zはここでは確認できません。ゲームフォルダに展開してください。
 online.a_game	ゲーム
 online.a_player	プレイヤー
 online.add_to_this_vita_to_join	参加するには%sをこのVitaに追加してください。
@@ -561,8 +600,10 @@ play.by_link_cable	通信ケーブル
 play.by_wireless_adapter_the_game_pairs	%s、ワイヤレスアダプター。ゲームが2人を組み合わせます。
 play.cable_or_adapter	ケーブルかアダプター
 play.cancel	キャンセル
+play.chosen	選択中
 play.connect_in_the_vita_s_settings	Vitaの設定 > ネットワークで接続してから、もう一度お試しください。
 play.connect_in_the_vita_s_settings_2	Vitaの設定 > ネットワークで接続してください。接続されると、このページは自動で進みます。
+play.connected	接続済み
 play.connecting_to_wi_fi	%s: Wi-Fiに接続中...
 play.connection	接続
 play.connection_2	接続
@@ -576,12 +617,14 @@ play.end_it_first_play_together_disconnect	先に終了してください (一�
 play.end_the_current_link_first	先に今の通信を終了してください。
 play.far_apart_host_shows_a_code	離れている場合: ホストがコードを表示し、フレンドが入力します。
 play.fewer_frames_react_faster_more_ride	少ないほど反応が速く、多いほど遅い回線に耐えます。
+play.fine	良好
 play.firered_leafgreen_and_emerald_from_a	FireRed、LeafGreen、Emerald (スマートフォンから)
 play.for_a_friend_far_away_the	遠くのフレンドと遊ぶ場合です。ホストの画面に5文字のコードが出るので、参加側が入力します。
 play.found	%d件見つかりました
 play.frame	%dフレーム
 play.frames	%dフレーム
 play.from_a_phone	スマートフォンから
+play.full	満員
 play.game	ゲーム
 play.gb_link_cable	GB通信ケーブル
 play.good	良好
@@ -628,6 +671,7 @@ play.linked_with	%sと通信中
 play.linked_with_the_other	相手のVitaと通信中
 play.links_by_link_cable_or_wireless	通信ケーブルかワイヤレスアダプターで通信します。ホストが選びます。
 play.listening	待ち受け中
+play.listening_value	待ち受け中
 play.looking_for_a_game_at_that	そのアドレスのゲームを探しています...
 play.looking_for_games_on_this_wi	このWi-Fiのゲームを探しています...
 play.looks_right	正しそうです
@@ -657,6 +701,8 @@ play.not_for_this_game	このゲーム用ではありません
 play.not_listed_connection_internet_type	見つからない場合は、接続を「インターネット」にして%sを入力
 play.not_listening	待ち受けしていません
 play.nothing_was_changed_choose_host_or	変更はありません。「ホスト」か「参加」を選んでもう一度お試しください。
+play.now_the_partner_s	現在: 相手のゲーム
+play.now_yours	現在: 自分のゲーム
 play.off	オフ
 play.on	オン
 play.on_pad_in_use	オン (パッド使用中)
@@ -671,6 +717,7 @@ play.phone	スマートフォン
 play.play_together	一緒に遊ぶ
 play.player_2_on_the_touch_screen	プレイヤー2はタッチスクリーン
 play.player_2_plays_on_the_front	コントローラーがつながっていない間は、プレイヤー2が前面画面で遊びます。
+play.quick	速い
 play.quit_to_the_game_list_open	ゲーム一覧に戻り、ゲームを開き直して先に通信してください。
 play.recent	最近
 play.restart_the_game_to_link	ゲームを再起動して通信
@@ -688,6 +735,7 @@ play.settings_network_join_the_wi_fi	設定 > ネットワーク: Wi-Fiに接続
 play.side_by_side	左右に並べる
 play.side_by_side_two_equal_pictures	左右に並べる: 同じ大きさの画面2つ。大 + 小: 操作中のゲームが大きく表示されます。
 play.side_by_side_two_players	左右に並べる (2人プレイ)
+play.signal	電波
 play.slow	遅い
 play.slow_expect_delay	遅い (遅延あり)
 play.start_listening	待ち受けを開始
@@ -697,6 +745,7 @@ play.start_the_partner_plays_its_game	開始: 相手が自分のゲームを遊�
 play.start_the_partner_uses_its_own	開始: 相手が自分のセーブデータを使う
 play.starting_the_second_game	2つ目のゲームを開始中...
 play.starts_a_new_game	最初から始めます
+play.status_off	停止中
 play.still_trying	再試行中です。
 play.stop	停止
 play.stop_hosting	ホストを停止
@@ -818,6 +867,7 @@ settings.ff_button_square	早送りボタン ({sq})
 settings.fourth_core	4つ目のコア
 settings.fps_counter	FPS表示
 settings.game_boy_colours	Game Boyの色
+settings.game_boy_core	Game Boyコア
 settings.game_boy_printer	Game Boyプリンター
 settings.game_boy_type	Game Boyの種類
 settings.game_folders	ゲームフォルダー
@@ -833,6 +883,7 @@ settings.help.a_number_that_tells_rooms_apart	複数の人がホストしてい�
 settings.help.a_soft_glow_beside_the_picture	黒帯の代わりに映像の横へやわらかい光。1が薄く10が明るい。
 settings.help.a_tap_on_the_game_opens	タップでメニューを開きます。START + SELECTでも開けます。
 settings.help.a_vita_on_the_same_wi	同じWi-FiのVitaがセーブデータとステートをコピーできます。
+settings.help.accurate_gambatte_closer_to_a_real	高精度: Gambatte。実機のGame Boyに近く、重めです。通信プレイ、カメラ、枠は使えません。次のゲームから。
 settings.help.adds_the_handheld_screen_s_grid	携帯機の画面のドットの格子を加えます。
 settings.help.advanced_the_joiner_types_the_host	上級: 参加側がホストのアドレスを入力します。
 settings.help.also_widens_rotating_3d_tracks_sprites	回転する3Dコースも広がります。スプライトが入ることも。
@@ -855,6 +906,7 @@ settings.help.brighter_text_and_clearer_edges_in	アプリとプレーヤーの�
 settings.help.busy_moments_show_every_second_frame	負荷が高いときは1フレームおきに均等表示。速度は保ちます。
 settings.help.busy_moments_skip_a_frame_game	負荷が高いときはフレームを飛ばし、速度は保ちます。
 settings.help.busy_moments_slow_the_game_and	負荷が高いときはゲームと音が遅くなります。
+settings.help.cannot_write_the_psvshell_profile	PSVshellのプロファイルを書き込めません
 settings.help.choose_just_this_game_to_give	「このゲームのみ」でこのゲーム専用の見た目にできます。
 settings.help.circle_is_a_and_confirms_in	{o}がAで、メニューでは決定になります。{x}がBです。
 settings.help.coloured_stripes_like_a_crt_tube	CRTのような色の縞。少し暗くなります。1が薄く、10が濃い。
@@ -893,10 +945,13 @@ settings.help.how_large_the_game_is_drawn	ゲームを描く大きさ。3倍が�
 settings.help.how_much_sunlight_the_cartridge_s	カートリッジの太陽センサーが受ける日光の量。
 settings.help.how_strongly_a_turn_or_a	回転や傾きの感じ方の強さ。
 settings.help.how_this_game_links_link_cable	このゲームの通信方法: 通信ケーブルかワイヤレスアダプター。
+settings.help.measured_mhz	実測: %u MHz%s
+settings.help.measured_not_known	実測: 不明
 settings.help.mmpx_at_twice_its_size_crisp	MMPXで2倍。くっきりしたドット絵で、負荷は軽め。
 settings.help.more_of_the_map_beside_the	対応ゲームで、映像の横にマップをさらに表示。
 settings.help.muted_and_dark_as_on_the	初代GBAのバックライトなしの画面のように、くすんで暗く。
 settings.help.muted_as_on_a_gba_s	GBAの画面のようにくすんだ色。ドット絵本来の色合い。
+settings.help.needs_an_overclock_plugin_such_as	PSVshellなどのオーバークロックプラグインが必要です
 settings.help.no_marks_over_the_game_unlocks	ゲーム上に印を出しません。解除の通知は表示されます。
 settings.help.no_router_the_two_vitas_connect	ルーターなし: 2台のVitaが直接つながります。
 settings.help.no_states_rewind_or_cheats_from	ステート、巻き戻し、チートは使えません。次のゲームから。
@@ -909,6 +964,7 @@ settings.help.play_this_game_with_a_friend	フレンドとこのゲームを遊�
 settings.help.put_a_png_in_ux0_data	ux0:data/GBAdhoc/overlays/のPNGでゲームに枠を付けます。
 settings.help.redraws_curves_and_diagonals_smoothly_the	曲線と斜線をなめらかに描き直します。最も負荷が高いです。
 settings.help.rest_on_a_game_in_the	ホームで選んだままにすると、直前10秒のプレイが流れます。
+settings.help.restart_the_app_to_apply	。アプリを再起動すると反映されます
 settings.help.retroarch_s_files_are_left_alone	RetroArchのファイルには触れません。書き出しでコピー。
 settings.help.retry_missing_box_art_and_title	足りないパッケージ画像とタイトル画面をWi-Fiで再取得。
 settings.help.rounds_stair_steps_only_light_adds	階段状のギザギザだけを丸めます。軽く、色は増えません。
@@ -927,6 +983,7 @@ settings.help.smoothed_at_four_times_its_size	4倍に拡大してなめらかに
 settings.help.smoothed_at_three_times_its_size	3倍に拡大してなめらかに。より精細ですが負荷も増えます。
 settings.help.smoothed_at_twice_the_game_s	ゲームの2倍に拡大してなめらかにし、画面に合わせます。
 settings.help.soft_every_pixel_blends_into_the	ソフト: 画素が隣の画素となじみます。
+settings.help.standard_the_usual_core_fast_with	標準: いつものコア。高速で、通信プレイ、カメラ、スーパーゲームボーイの枠が使えます。次のゲームから。
 settings.help.states_rewind_and_cheats_allowed	ステート、巻き戻し、チートを使えます。
 settings.help.super_game_boy_games_in_the	Super Game Boy対応ゲームを付属の枠で表示 (SGB)。
 settings.help.swap_it_if_turning_or_tilting	回転や傾きが逆に感じるときは切り替えてください。
@@ -950,6 +1007,7 @@ settings.help.the_small_link_status_in_the	ゲームの隅に出る小さな通�
 settings.help.the_vita_s_own_ps_start	Vita本体のPS + STARTでスクリーンショットを撮れます。
 settings.help.the_wonderswan_s_75_frames_a	WonderSwanの毎秒75フレームを混ぜ、スクロールをなめらかに。
 settings.help.this_game_s_achievements_and_what	このゲームの実績と、それぞれの条件。
+settings.help.this_game_s_own_choice_next_start	このゲーム専用。「設定」はゲームプレイ行に従います。次回のゲーム起動から。
 settings.help.this_game_s_own_choice_settings	このゲーム専用。「設定」はゲームプレイ行に従います。
 settings.help.this_game_s_own_choice_settings_2	このゲーム専用の設定。「設定」は操作の行に従います。
 settings.help.tiles_over_your_game_a_list	ゲームの上にタイル、画像付きの一覧、または画像を全画面で。
@@ -959,6 +1017,7 @@ settings.help.turn_the_vita_left_for_vertical	縦画面のシーンではVitaを
 settings.help.type_your_friend_s_room_code	フレンドのルームコードを入力。相手のゲームを探して起動。
 settings.help.vertical_scenes_upright_on_a_level	縦画面のシーンは水平なVitaで正立。方向キーも回ります。
 settings.help.what_fills_the_wide_view_s	ワイドビュー (オン時) の余白を埋めるもの。
+settings.help.what_the_camera_sees_camera_png	カメラが映すもの: データフォルダのcamera.png。
 settings.help.what_the_camera_sees_the_vita	カメラが映すもの: Vitaの背面カメラ。
 settings.help.what_the_camera_sees_the_vita_2	カメラが映すもの: Vitaの前面カメラ。
 settings.help.whether_the_app_is_using_the	4つ目のCPUコアの使用状況 (CapUnlockerプラグインが必要)。
@@ -966,10 +1025,12 @@ settings.help.which_button_does_what_and_the	どのボタンが何をするか�
 settings.help.which_vita_screen_this_is_oled	Vitaの画面の種類。OLEDは色を少しやわらげます。全機種共通。
 settings.help.x_a_copy_retroarch_can_use	{x}: RetroArchが探す場所に、使えるコピーを作ります。
 settings.help.x_a_picture_of_your_own	{x}: 一覧で選んだゲームのカバーに、自分の画像を設定します。
+settings.help.x_a_plain_sav_beside_the_game	{x}: ゲームの隣に普通の.savを作ります (mGBA、SameBoyなど)。
 settings.help.x_add_a_folder_ux0_roms	{x}: フォルダー (ux0:ROMS/GBA) を追加、または選んで削除。
 settings.help.x_check_now_off_no_check	{x}: 今すぐ確認。オフ: 頼まない限り確認しません。
 settings.help.x_check_now_once_a_day	{x}: 今すぐ確認。1日1回GitHubで新版を確認します。
 settings.help.x_type_a_folder_ux0_pictures	{x}: 保存先 (例 ux0:pictures/VitAdhoc)。空欄: screenshots/
+settings.help.your_picture_from_overlays_over_the	overlays/の画像をゲームに重ねます (gba.png、gb.png、gbc.png、またはゲーム名)。
 settings.help.your_retroachievements_org_account	retroachievements.orgのアカウント。
 settings.help.zapper_touch_the_screen_to_aim	Zapper: 画面をタッチして狙い、撃ちます。次回の起動から。
 settings.high_contrast	ハイコントラスト
@@ -1025,6 +1086,7 @@ settings.this_game	このゲーム
 settings.two_players	2人プレイ
 settings.value.444_mhz_standard	444 MHz (標準)
 settings.value.500_mhz_fast	500 MHz (高速)
+settings.value.accurate	高精度
 settings.value.all_games	%sのすべて
 settings.value.as_held_at_the_start	開始時の向き
 settings.value.as_the_vita	 (Vita準拠)
@@ -1036,7 +1098,10 @@ settings.value.circle_is_a	{o}がA
 settings.value.classic_lcd_tint	昔のLCDの色合い
 settings.value.controller	コントローラー
 settings.value.cross_is_a	{x}がA
+settings.value.custom	カスタム
 settings.value.daily	毎日
+settings.value.dark	ダーク
+settings.value.default	標準
 settings.value.ff_button	早送りボタン (%s)
 settings.value.file_name	ファイル名
 settings.value.follows_the_clock	時計に従う
@@ -1049,18 +1114,24 @@ settings.value.gb_gbc_only	GB / GBCのみ
 settings.value.gb_only	GBのみ
 settings.value.gba_link_cable_only	GBA通信ケーブルのみ
 settings.value.greyscale	グレースケール
+settings.value.hidden	非表示
+settings.value.home	ホーム
 settings.value.host_or_join	ホストか参加
 settings.value.host_saves_and_states_on	%sでセーブデータとステートをホスト
+settings.value.in_use	使用中
 settings.value.just_this_game	このゲームのみ
 settings.value.large	大
 settings.value.last_played_first	最近遊んだ順
 settings.value.lcd_pch_2000	LCD (PCH-2000)
+settings.value.light	ライト
+settings.value.marquee	マーキー
 settings.value.min	%d分
 settings.value.most_played_first	よく遊ぶ順
 settings.value.no_game	ゲームなし
 settings.value.none_shade	なし (濃淡)
 settings.value.normal	標準
 settings.value.normal_pitch	、通常の音程
+settings.value.not_available	使用不可
 settings.value.not_checking	確認しない
 settings.value.ntsc_colours	NTSCの色
 settings.value.of	%u / %u
@@ -1074,11 +1145,17 @@ settings.value.on_from_the_next_game	オン (次のゲームから)
 settings.value.on_l_r_select	オン (L + R + SELECT)
 settings.value.on_none_in_overlays	オン - overlays/に何もありません
 settings.value.only_roms	roms/のみ
+settings.value.plain_sav	普通の.sav
+settings.value.reversed	反転
 settings.value.scan_now	今すぐスキャン
+settings.value.set	設定済み
 settings.value.settings	設定
+settings.value.shelf	シェルフ
+settings.value.shown	表示
 settings.value.sign_in	サインイン
 settings.value.signing_in	サインイン中...
 settings.value.smooth_50_hz	なめらか50 Hz
+settings.value.standard	標準
 settings.value.the_one_on	%sのもの
 settings.value.this_game	このゲーム
 settings.value.true_50_hz	本来の50 Hz
@@ -1158,6 +1235,7 @@ share.save_file_2	セーブデータ
 share.save_file_3	セーブデータ
 share.save_file_replaced_yours	セーブデータを置き換えました
 share.save_file_saved	セーブデータを保存しました
+share.save_only	セーブ
 share.save_state_many	セーブ  -  ステート%d件%s
 share.save_state_one	セーブ  -  ステート%d件%s
 share.saved_to_your_slot	自分のスロット%dに保存しました
@@ -1200,6 +1278,7 @@ share.theirs_you_have_none	相手 %s   自分は未所持
 share.theirs_yours	相手 %s   自分 %s
 share.there_are_no_saves_or_states	共有できるセーブデータやステートがまだありません。
 share.they_share_some_for_the_other	他の機種のものが共有されています。
+share.took_save_only	セーブデータ
 share.took_save_state_many	セーブデータとステート%d件
 share.took_save_state_one	セーブデータとステート%d件
 share.took_state_many	ステート%d件
@@ -1267,6 +1346,7 @@ snes.you_start_the_room	自分がルームを開始
 toast.a_plain_file	通常のファイル
 toast.a_player	プレイヤー
 toast.a_player_left	プレイヤーが%sを退出しました
+toast.accurate_core_can_t_run_this_cartridge	高精度コアはこのカートリッジを動かせません: 標準を使います
 toast.achievement	実績: %s
 toast.achievements_sent	実績を送信しました
 toast.achievements_unavailable	実績を利用できません: %s
@@ -1274,6 +1354,7 @@ toast.achievements_will_be_sent_when_back	オンラインに戻ると実績を�
 toast.already_checking_for_updates	すでに更新を確認中です
 toast.already_linked_disconnect_first	すでに通信中です。先に切断してください。
 toast.audio_output_unavailable	音声出力を利用できません
+toast.camera_png_not_found_using_a_test	camera.pngがありません: テスト画像を使います
 toast.cannot_load_a_state_during_a	通信中はステートをロードできません
 toast.cannot_save_a_state_during_a	通信中はステートをセーブできません
 toast.checking_for_updates	更新を確認中...
@@ -1286,6 +1367,7 @@ toast.controller_2_drives_the_partner_s	コントローラー2が相手のゲー
 toast.could_not_continue_starting_from_the	続けられません: セーブデータから開始します
 toast.could_not_load_state	ステート%dをロードできませんでした
 toast.could_not_sign_in_will_try	サインインできません。再試行します
+toast.could_not_write_gb_override_txt	gb_override.txtを書き込めません
 toast.disconnected	切断しました
 toast.eight_folders_is_the_most	フォルダーは8個までです
 toast.emulation_fault_game_was_reset	エミュレーションエラー - ゲームをリセットしました
@@ -1317,6 +1399,7 @@ toast.link_lost_the_other_vita_is	通信が切れました: 相手のVitaがい�
 toast.link_lost_the_other_vita_is_2	通信が切れました: 相手のVitaがいません。ゲームは続きます。
 toast.link_lost_the_other_vita_is_3	通信が切れました: 相手のVitaがいません。何も保存されていません。
 toast.link_lost_the_other_vita_is_4	通信が切れました: 相手のVitaがいません。
+toast.link_play_uses_the_standard_gb_core	通信プレイは標準のGame Boyコアを使います
 toast.load_undone	ロードを取り消しました
 toast.looking_again_for_missing_covers	未取得のカバーを再検索中
 toast.mastered	マスター: %s
@@ -1327,6 +1410,7 @@ toast.mystery_gift_listening	ミステリーギフト待ち受け中
 toast.mystery_gift_off	ミステリーギフトをオフにしました
 toast.no_achievements_for_this_game_yet	このゲームの実績はまだありません
 toast.no_answer	応答なし
+toast.no_camera_using_camera_png_or_a	カメラなし: camera.pngかテスト画像を使います
 toast.no_folder_with_that_name_on	その名前のフォルダーはカードにありません
 toast.no_motion_reading_to_set_level	水平を設定するモーション値がありません
 toast.no_network_to_check_with	確認に使えるネットワークがありません
@@ -1346,6 +1430,10 @@ toast.printed_saved_to_prints	印刷: prints/に保存しました
 toast.retroachievements	RetroAchievements: %s
 toast.retroachievements_does_not_know_this_version	RetroAchievementsはこのバージョンを認識しません
 toast.retroachievements_please_sign_in_again	RetroAchievements: もう一度サインインしてください
+toast.rewind_failed	巻き戻しに失敗しました
+toast.rewind_is_off_while_games_are_linked	通信中は巻き戻しできません
+toast.rewind_is_switched_off_settings	巻き戻しはオフです (設定)
+toast.rewind_not_enough_memory_for_it	巻き戻し: メモリが足りません
 toast.rom_path_is_too_long	ROMのパスが長すぎます
 toast.save_failed	セーブに失敗しました
 toast.save_type_is_used_the_next	セーブタイプは次回のゲーム起動から使われます
@@ -1374,6 +1462,7 @@ toast.stop_the_two_player_game_on	先にこのVitaの2人プレイを止めて�
 toast.stopped_hosting	%sのホストを停止しました
 toast.submitted	送信しました: %s
 toast.that_folder_can_t_be_used	そのフォルダーは使えません
+toast.that_state_is_from_the_other_gb_core_starting	別のコアのステートです: セーブデータから開始します
 toast.that_state_s_second_game_is	そのステートの2つ目のゲームは別のカートリッジです
 toast.the_camera_stopped	カメラが停止しました
 toast.the_card_is_slow_showing_what	カードが遅いため、見つかったものを表示します
@@ -1401,6 +1490,9 @@ toast.the_save_could_not_be_exported	セーブデータを書き出せません�
 toast.the_second_game_s_old_save	2つ目のゲームの元のセーブデータをバックアップできず、置き換えていません
 toast.the_second_game_s_save_could	2つ目のゲームのセーブデータを書き込めず、元のものを残しました
 toast.the_second_game_s_save_could_2	2つ目のゲームのセーブデータを書き込めませんでした
+toast.this_is_as_far_back_as_rewind	これ以上は巻き戻せません
+toast.this_state_is_from_the_other_gb_core	別のGame Boyコアのステートです
+toast.two_cart_play_uses_the_standard_gb_core	2本のカートリッジでは標準のコアを使います
 toast.vertical_the_d_pad_turns_with	縦持ち: 方向キーも映像と一緒に回ります。L = A、R = B
 toast.vertical_turn_the_vita_left_l	縦持ち: Vitaを左に回します。L = A、R = B
 toast.video	映像: %s
@@ -1462,6 +1554,8 @@ ui.hardcore_mode_states_cannot_be_loaded	ハードコアモード: ステート�
 ui.hold	長押し
 ui.hold_1_5_s	1.5秒長押し
 ui.hold_fires_for_as_long_as	長押し: ボタンを押している間ずっと連打します。
+ui.hold_tag	長押し
+ui.host_title	ホスト
 ui.hosting	ホスト中
 ui.hosting_2	ホスト中
 ui.hosting_waiting	%sをホスト中、待機中
@@ -1522,6 +1616,7 @@ ui.paused_for_link_play	通信プレイのため一時停止中
 ui.pick_a_game	ゲームを選択
 ui.play_together	一緒に遊ぶ
 ui.player_name	プレイヤー名
+ui.press	押して...
 ui.press_a_button_for	押すボタン:
 ui.press_a_button_or_combo_for	押すボタンまたは組み合わせ:
 ui.press_any_button_to_return_to	いずれかのボタンでLiveAreaに戻ります。
@@ -1541,7 +1636,10 @@ ui.resume	再開
 ui.retroachievements_password	RetroAchievementsのパスワード
 ui.retroachievements_user_name	RetroAchievementsのユーザー名
 ui.returning_to_game_list	ゲーム一覧に戻っています...
+ui.rewind_chip	<< 巻き戻し %s
+ui.rewind_chip_oldest	<< %s (最古)
 ui.rom_path_is_too_long	ROMのパスが長すぎます
+ui.save_badge	セーブ
 ui.save_clip	クリップを保存
 ui.save_present	セーブあり
 ui.save_states	ステート
@@ -1575,6 +1673,7 @@ ui.slot_could_not_be_locked	スロット%dをロックできませんでした
 ui.slot_could_not_be_saved	スロット%dをセーブできませんでした
 ui.slot_could_not_be_undone	スロット%dを元に戻せませんでした
 ui.slot_deleted	スロット%dを削除しました
+ui.slot_empty	空き
 ui.slot_is_as_it_was_before	スロット%dはセーブ前の状態です
 ui.slot_is_empty_again	スロット%dは再び空です
 ui.slot_is_locked	スロット%dはロックされています
@@ -1582,8 +1681,12 @@ ui.slot_is_locked_l_unlocks_it	スロット%dはロック中: Lで解除
 ui.slot_locked	スロット%dをロックしました
 ui.slot_not_deleted	スロット%dは削除されていません
 ui.slot_of	スロット%d / %d  -  %s%s
+ui.slot_old	旧形式
 ui.slot_saved	スロット%dにセーブしました
+ui.slot_state_saved	保存済み
 ui.slot_unlocked	スロット%dのロックを解除しました
+ui.smoothing_is_lighter_to_keep_full	全速を保つためスムージングを軽くしています。
+ui.smoothing_is_off_to_keep_full_speed	全速を保つためスムージングをオフにしています。
 ui.some_paths_were_too_long_and	長すぎるパスがあり、スキップしました。
 ui.some_rom_folders_were_skipped	一部のROMフォルダーをスキップしました
 ui.sq_star	{sq} お気に入りに追加
@@ -1591,6 +1694,8 @@ ui.sq_unstar	{sq} お気に入りから外す
 ui.srm	%.*s.srm
 ui.start_select_hold_opens_the_menu	START+SELECT (長押し) でメニュー  -  HOMEはシステム用
 ui.start_settings	START 設定
+ui.status_hosting	ホスト中
+ui.status_linked	通信中
 ui.the_file_is_over_kb_showing	ファイルが%d KBを超えています: 最初の%u件のチートを表示
 ui.the_game_s_wireless_mode	ゲームのワイヤレスモード
 ui.the_games_you_have_not_started	まだ始めていないゲームがここに出ます
@@ -1618,6 +1723,8 @@ ui.undo_the_save_in_slot_x	スロット%dのセーブを元に戻しますか?  
 ui.undo_x_the_save_in_slot	元に戻しますか?      {x} スロット%dのセーブ     {sq} 最後のロード     {o} 残す
 ui.up_dn_slot	UP/DN: スロット
 ui.up_dn_slot_sq_delete	UP/DN: スロット   {sq}: 削除
+ui.verb_exit	終了
+ui.verb_quit	終了
 ui.was_is_now_blank_disabled	%sは%sでした  -  %sは空欄になりました (無効)
 ui.wireless_adapter	ワイヤレスアダプター
 ui.x_delete_o_keep	{x}: 削除   {o}: 残す

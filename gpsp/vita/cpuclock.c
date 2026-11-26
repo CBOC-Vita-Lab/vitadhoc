@@ -1,5 +1,6 @@
 /* cpuclock.c -- see cpuclock.h. */
 #include "cpuclock.h"
+#include "i18n.h"
 #include "plat.h"
 #include "fe_evt.h"
 
@@ -383,14 +384,14 @@ const char *cpuclk_note(void)
    static char s[128];
    /* One short line (the help line is about 56 characters wide) */
    if (g_fast && !g_granted && !g_plugin)
-      return "Needs an overclock plugin such as PSVshell";
+      return tr("settings.help.needs_an_overclock_plugin_such_as");
    if (g_fast && g_nowrite)
-      return "Cannot write the PSVshell profile";
+      return tr("settings.help.cannot_write_the_psvshell_profile");
    if (g_measured)
-      snprintf(s, sizeof(s), "Measured: %u MHz%s", g_measured,
+      snprintf(s, sizeof(s), tr("settings.help.measured_mhz"), g_measured,
                g_fast && g_wrote_now && g_measured < 480
-                  ? ". Restart the app to apply" : "");
+                  ? tr("settings.help.restart_the_app_to_apply") : "");
    else
-      snprintf(s, sizeof(s), "Measured: not known");
+      snprintf(s, sizeof(s), "%s", tr("settings.help.measured_not_known"));
    return s;
 }

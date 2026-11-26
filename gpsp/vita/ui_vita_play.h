@@ -197,7 +197,7 @@ static int play_status_line(char *out, size_t cap, int conn,
    if (n->wifi == UI_WIFI_CONNECTED)
    {
       char ssid[40];
-      vw_clip(ssid, sizeof(ssid), n->ssid[0] ? n->ssid : "connected", 170);
+      vw_clip(ssid, sizeof(ssid), n->ssid[0] ? n->ssid : tr("play.connected"), 170);
       snprintf(out, cap, "%s: %s   %s", conn_name(conn), ssid, n->ip);
       return 1;
    }
@@ -496,8 +496,8 @@ static ui_action play_session(unsigned edges, const char *session_info)
       }
       else if (g_link.rtt_ms >= 0)
          snprintf(q, sizeof(q), tr("play.ms_round_trip_2"),
-                  conn_name(conn), g_link.rtt_ms < 40 ? "quick"
-                  : g_link.rtt_ms < 120 ? "fine" : tr("play.slow_expect_delay"),
+                  conn_name(conn), g_link.rtt_ms < 40 ? tr("play.quick")
+                  : g_link.rtt_ms < 120 ? tr("play.fine") : tr("play.slow_expect_delay"),
                   g_link.rtt_ms);
       else
          snprintf(q, sizeof(q), "%s", conn_name(conn));
@@ -505,8 +505,8 @@ static ui_action play_session(unsigned edges, const char *session_info)
       x = 22 + vid_text_w(q) + 12;
       if (g_link.signal_pct >= 0)
       {
-         vid_text(x, y, "signal", C_DIM);
-         vw_signal(x + vid_text_w("signal") + 6, y + 1, g_link.signal_pct);
+         vid_text(x, y, tr("play.signal"), C_DIM);
+         vw_signal(x + vid_text_w(tr("play.signal")) + 6, y + 1, g_link.signal_pct);
       }
       y += FE_FONT_H + 6;
    }
@@ -729,7 +729,7 @@ static ui_action screen_play_page(unsigned edges, int session_active,
          break;
       case PL_MGIFT:
          vw_row(i, y, 440, sel, 1, tr("play.mystery_gift"),
-                mgift_ui_active() ? "listening" : tr("play.from_a_phone"));
+                mgift_ui_active() ? tr("play.listening_value") : tr("play.from_a_phone"));
          break;
       default:
          vw_row(i, y, 440, sel, 1, tr("play.how_to_play_together"), NULL);
@@ -818,7 +818,7 @@ static void join_decide(const ui_room *r, join_verdict *v)
    int gba = g_pcfg.console == FE_CONSOLE_GBA;
    memset(v, 0, sizeof(*v));
    v->ok = 1;
-   snprintf(rl, sizeof(rl), ROOM_LABEL_WORD " %d", r->number);
+   snprintf(rl, sizeof(rl), tr("link.room"), r->number);
    vw_clip(t, sizeof(t), join_title(r), 150);
 #define JOIN_NO(short_, ...) \
    do { v->ok = 0; snprintf(v->why, sizeof(v->why), "%s", short_); \
@@ -855,7 +855,7 @@ static void join_decide(const ui_room *r, join_verdict *v)
       JOIN_NO(tr("play.a_different_game"), tr("play.is_playing_open_the_same_game")
 , rl, t);
    else if (r->max_players > 0 && r->players >= r->max_players)
-      JOIN_NO("full", tr("play.is_full_a_room_takes_players"), rl,
+      JOIN_NO(tr("play.full"), tr("play.is_full_a_room_takes_players"), rl,
               r->max_players);
    else if (!r->open)
       JOIN_NO(tr("play.already_playing"), tr("play.is_in_the_middle_of_a"), rl);
@@ -1512,7 +1512,7 @@ static void local_pick(unsigned edges, const ui_local_state *ls)
       int chosen = i ? (ls->partner_game && !strcmp(ls->partner_game, nm))
                      : !ls->partner_game;
       vw_row(i, y, 440, sel, 1, nm,
-             chosen ? "chosen" : i ? NULL : tr("play.a_copy_or_a_second_save"));
+             chosen ? tr("play.chosen") : i ? NULL : tr("play.a_copy_or_a_second_save"));
    }
    if (total > LP_ROWS)
    {
@@ -1681,7 +1681,7 @@ static ui_action screen_local(unsigned edges)
             /* two pads: nobody's buttons move, the view does */
             vw_row(i, y, 440, sel, 1, ls.have_pad2
                    ? tr("play.swap_sound_and_large_picture") : tr("play.swap_controlled_game"),
-                   ls.controlled ? "now: the partner's" : "now: yours");
+                   ls.controlled ? tr("play.now_the_partner_s") : tr("play.now_yours"));
             break;
          case LA_LAYOUT:
             vw_row(i, y, 440, sel, 1, tr("play.layout"),
@@ -1692,7 +1692,7 @@ static ui_action screen_local(unsigned edges)
          case LA_TOUCH:
             vw_row(i, y, 440, sel, 1, tr("play.player_2_on_the_touch_screen"),
                    g_pcfg.local_touch2 ? (ls.have_pad2 ? tr("play.on_pad_in_use")
-                                                       : "on") : "off");
+                                                       : tr("play.on")) : tr("play.off"));
             break;
          case LA_STOP:
             vw_row(i, y, 440, sel, 1, tr("play.stop"), tr("play.your_game_carries_on_alone"));
@@ -1734,7 +1734,7 @@ static ui_action screen_local(unsigned edges)
              : layout_name(g_pcfg.local_layout));
       vw_row(4, 88 + 4 * VW_PITCH, 440, g_cursor == 4, 1,
              tr("play.player_2_on_the_touch_screen"),
-             g_pcfg.local_touch2 ? "on" : "off");
+             g_pcfg.local_touch2 ? tr("play.on") : tr("play.off"));
       vw_wrap(22, 214, 436,
               g_play_pending ? tr("play.starting_the_second_game")
               : !ls.available ? (ls.why_not && ls.why_not[0] ? ls.why_not
@@ -1913,7 +1913,7 @@ static ui_action screen_mgift(unsigned edges)
 
    ov_backdrop(OV_SCRIM);
    vw_head(tr("play.firered_leafgreen_and_emerald_from_a"), tr("play.mystery_gift_2"));
-   ov_status_right(running ? tr("play.listening") : "OFF");
+   ov_status_right(running ? tr("play.listening") : tr("play.status_off"));
    play_status_draw(68, UI_CONN_WIFI, play_net(0));
    vw_line(22, 84, 436, l1 && l1[0] ? l1 : tr("play.not_listening"), C_VALUE);
    if (l2 && l2[0])

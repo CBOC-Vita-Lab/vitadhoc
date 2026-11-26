@@ -1,6 +1,6 @@
 /* play_log.c: a full table makes room by forgetting the game played longest
  * ago (5,000 games played, the newest 2,048 kept).  gcc -I vita
- * -Ifrontend-common vita/tests/playlog/test_play_log.c vita/play_log.c */
+ * -Ifrontend-common vita/tests/playlog/test_play_log.c vita/play_log.c vita/i18n.c */
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>

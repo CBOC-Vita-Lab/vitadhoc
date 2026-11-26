@@ -268,7 +268,7 @@ STEPS = [
          "quick", {"gpsp", "cover"}, inputs=["gpsp/"], requires=CC),
     Step("play-log", "play log: the ring of recent games and its file (test_play_log.c)",
          "mkdir -p {out}/bin && gcc -Wall -Wextra -I vita -I frontend-common "
-         "vita/tests/playlog/test_play_log.c vita/play_log.c -o {out}/bin/play-log && {out}/bin/play-log",
+         "vita/tests/playlog/test_play_log.c vita/play_log.c vita/i18n.c -o {out}/bin/play-log && {out}/bin/play-log",
          "quick", {"gpsp", "save"}, inputs=["gpsp/"], cwd="gpsp", requires=CC),
     Step("update-ver", "update check: version compare and the release JSON (test_update_ver.c)",
          "mkdir -p {out}/bin && gcc -Wall -Wextra -Werror -fsanitize=address,undefined -I vita "

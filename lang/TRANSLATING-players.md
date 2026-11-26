@@ -36,6 +36,12 @@ shows in English) but do not leave one empty.
   and the English shows.
 - A line is at most 4096 characters, a file at most 1 MiB.
 
+### Checking
+
+`python3 tools/i18n/check_catalogues.py` checks the file against `pk_en.txt` (keys, order, conversions, line
+breaks, encoding). `PK_TEST_LANG=<code> ./build/unit_tests shipped_catalogue` (in `playerkit/`) draws every menu page
+in it at Normal and Large and fails on text off the screen or over other text, or a character no font has.
+
 ### Dates
 
 A state's date is day, month name, year (`3 Oct 2026`). The month names are `states.jan` to `states.dec`.

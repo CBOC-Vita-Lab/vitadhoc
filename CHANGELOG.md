@@ -346,8 +346,14 @@ and in emulators; none of it has run on a real Vita yet (see
   Italian, Brazilian Portuguese, Japanese and Simplified Chinese. Pick one in
   Settings > Interface > Language, or leave it on Automatic to follow the Vita
   system language. The texts are plain files in `lang/` in the package, so a
-  fix or a new translation needs no new build. (The first release carries the
-  English text and the machinery; translations follow.)
+  fix or a new translation needs no new build. The seven translations are
+  machine translations, checked for fit on every page but still waiting for
+  native speakers (`lang/REVIEW-NEEDED.md`); corrections are welcome.
+- Dates read the way each language writes them (`3 oct 2026`, `2026年10月3日`),
+  the Game Boy core row and its messages, the Settings values (On/Off,
+  Theme, Game list look...), the rewind chip, the room pill and the "played
+  3 days ago" line are translated too. Section titles keep their accents in
+  sentence case (`Paramètres`).
 
 **Names in every alphabet**
 
@@ -368,7 +374,7 @@ and in emulators; none of it has run on a real Vita yet (see
   `lang/TRANSLATING-players.md`); a text a file lacks shows in English, and
   the log stays English. Long translations wrap or end in an ellipsis rather
   than shrink; every screen was checked with a test language 35% longer than
-  English. No translation ships yet: the catalogues are for translators.
+  English. The seven translations ship with them (`lang/pk_<code>.txt`).
 - **Japanese and Chinese text works everywhere**: every text path (menus,
   toasts, help lines, paragraphs, the in-game menu, both players) draws kana,
   kanji and hanzi from the bundled fonts, and a Simplified Chinese interface

@@ -92,7 +92,22 @@ Dates (state slots, the file lists) are written as day, month name, year: `3 Oct
 The month names are the keys `ui.jan` to `ui.dec`. The key `ui.date_order` is not shown: set it
 to `dmy` (3 Oct 2026), `mdy` (Oct 3, 2026) or `ymd` (2026 Oct 3) to match the language.
 Nothing else is allowed in it. Add a "month" or "day" word to the month names if the
-language needs one (for example `10月`).
+language needs one (for example `10月`): with `ymd` and month names ending in 月 the date
+reads `2026年10月3日`.
+
+## Checking your file
+
+- `python3 tools/i18n/check_catalogues.py` checks every catalogue against English (keys,
+  order, printf conversions, button glyphs, `\n` count, UTF-8 without BOM, LF). It runs in
+  the gate (`i18n-catalogues`). A main-app text may add a button glyph where English names
+  the button in words ("Circle is A"); it may not drop one.
+- On the PC twin: `VAD_LANG=<code> python3 app_tests.py x86 --only language,text_large,cjk_text`
+  walks Settings, the in-game menu, Save states, Play together, Cheats, the home screen, the
+  game's own Settings, Button mapping and the Play together pages in your file, at Normal and
+  Large, against English. The players: `PK_TEST_LANG=<code> ./build/unit_tests shipped_catalogue`
+  in `playerkit/` (after `make build/unit_tests`).
+- A hint line that does not fit leaves out its last hints (the twin's audit says so); make it
+  shorter instead. Words that native speakers should check are in `REVIEW-NEEDED.md`.
 
 ## Fragments
 

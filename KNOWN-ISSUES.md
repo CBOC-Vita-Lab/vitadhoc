@@ -44,11 +44,16 @@ response, No sprite flicker.
 - **The Button test** shows the WonderSwan's buttons for a game held
   sideways only.
 - **Interface languages are new and checked on the PC test twin only.**
-  Traditional Chinese reads the simplified text. Dates and numbers are not
-  localised. Plurals have two forms only (one, many). The players (Super NES,
-  Sega and the others) have their own text and do not follow the app language
-  yet. A language longer than English can still wrap or cut a text with an
-  ellipsis where the page has no room; `language=xx-long` finds most of these.
+  The seven translations (Spanish, French, German, Italian, Brazilian
+  Portuguese, Japanese, Simplified Chinese) are machine translations awaiting
+  review by native speakers; the words each translator flagged are listed in
+  `lang/REVIEW-NEEDED.md`. Traditional Chinese reads the simplified text.
+  Numbers are not localised. Plurals have two forms only (one, many). Some
+  texts stay English: button names (START, SELECT, UP, REAR TL...), a few
+  messages of rarely seen screens (RetroArch save sync notes, the crash-loop
+  notice, Share game data errors), and the log. A language longer than
+  English can still wrap or cut a text with an ellipsis where the page has no
+  room; a hint line that does not fit leaves out its last hints.
 - **Text size Large does not reach every page of the app yet.** It applies to
   the home screen, the console list, the in-game menu (its two-word card
   names go on two lines), Settings, Save states, Cheats (with Add a code and

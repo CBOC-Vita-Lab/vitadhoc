@@ -840,4 +840,12 @@ English, Español, Français, Deutsch, Italiano, Português (Brasil),
 - `language=xx-long` is a test language (English about 35% longer, with
   accents) used to check that no text overflows. It is not offered in the menu.
 - The app's log lines stay English in every language.
+- Seven translations ship (machine translated, awaiting native review:
+  `lang/REVIEW-NEEDED.md`), for the app and for the Super NES and Sega
+  players. Dates follow the language (`3 oct 2026`, `2026年10月3日`).
+- A hint line too wide for the screen closes its gaps and then leaves out
+  its last hints (Back first); the text never shrinks.
+- `tools/i18n/check_catalogues.py` (gate step `i18n-catalogues`) checks every
+  catalogue against English: keys, order, printf forms, button glyphs, line
+  breaks and encoding.
 - Checked on the PC test twin only (host); not yet seen on a Vita.

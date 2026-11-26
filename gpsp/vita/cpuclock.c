@@ -299,13 +299,16 @@ static void profile_remove(void)
 
 /* ---- the clock ---- */
 
-const char *cpuclk_note(void);
+static const char *note_in(const char *(*t)(const char *), char *s, size_t n);
 static void measure(const char *when)
 {
    g_measured = plat_arm_mhz_measured();
    fe_evt("clocks: the ARM core measures %u MHz (the system reports %u) %s",
           g_measured, plat_arm_mhz(), when);
-   fe_evt("clocks: note=\"%s\"", cpuclk_note());
+   {
+      char en[128];
+      fe_evt("clocks: note=\"%s\"", note_in(tr_en, en, sizeof(en)));   /* the log stays English */
+   }
 }
 
 static void request(int fast)
@@ -379,19 +382,25 @@ void cpuclk_tick(void)
    measure("8 s in");
 }
 
+/* The note in a language: tr (the interface's) or tr_en (the log's). */
+static const char *note_in(const char *(*t)(const char *), char *s, size_t n)
+{
+   /* One short line (the help line is about 56 characters wide) */
+   if (g_fast && !g_granted && !g_plugin)
+      return t("settings.help.needs_an_overclock_plugin_such_as");
+   if (g_fast && g_nowrite)
+      return t("settings.help.cannot_write_the_psvshell_profile");
+   if (g_measured)
+      snprintf(s, n, t("settings.help.measured_mhz"), g_measured,
+               g_fast && g_wrote_now && g_measured < 480
+                  ? t("settings.help.restart_the_app_to_apply") : "");
+   else
+      snprintf(s, n, "%s", t("settings.help.measured_not_known"));
+   return s;
+}
+
 const char *cpuclk_note(void)
 {
    static char s[128];
-   /* One short line (the help line is about 56 characters wide) */
-   if (g_fast && !g_granted && !g_plugin)
-      return tr("settings.help.needs_an_overclock_plugin_such_as");
-   if (g_fast && g_nowrite)
-      return tr("settings.help.cannot_write_the_psvshell_profile");
-   if (g_measured)
-      snprintf(s, sizeof(s), tr("settings.help.measured_mhz"), g_measured,
-               g_fast && g_wrote_now && g_measured < 480
-                  ? tr("settings.help.restart_the_app_to_apply") : "");
-   else
-      snprintf(s, sizeof(s), "%s", tr("settings.help.measured_not_known"));
-   return s;
+   return note_in(tr, s, sizeof(s));
 }

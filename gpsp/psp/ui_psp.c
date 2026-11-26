@@ -1579,9 +1579,49 @@ static void page_header(const char *title, const char *right)
                (HDR_H - FE_FONT_H) / 2, right, C_VALUE);
 }
 
+#ifdef VITA
+/* A hint line wider than the screen (a long translation): the hints keep their
+ * size and their words.  First the gaps between hints close to two spaces
+ * (still a gap: the touch layer splits there), then the Circle hint goes (the
+ * console's own Back, the one every page has), then the last hints, until it
+ * fits.  English and the shipped catalogues fit as they are. */
+static const char *footer_fit(const char *hint, char *buf, size_t cap)
+{
+   const int room = VID_SCR_W - 16;
+   size_t i, o = 0;
+   char *p;
+   if (vid_text_w(hint) <= room)
+      return hint;
+   for (i = 0; hint[i] && o + 1 < cap; i++)
+   {
+      if (hint[i] == ' ' && i >= 2 && hint[i - 1] == ' ' && hint[i - 2] == ' ')
+         continue;
+      buf[o++] = hint[i];
+   }
+   buf[o] = 0;
+   p = strstr(buf, "  " VID_GLYPH_O);
+   if (vid_text_w(buf) > room && p)
+   {
+      char *e = strstr(p + 2, "  ");
+      memmove(p, e ? e : p + strlen(p), strlen(e ? e : p + strlen(p)) + 1);
+   }
+   while (vid_text_w(buf) > room && (p = strrchr(buf, ' ')) != NULL)
+   {
+      char *q = p;
+      while (q > buf && !(q[0] == ' ' && q[-1] == ' '))
+         q--;
+      if (q == buf)
+         break;
+      q[-1] = 0;                       /* the last hint off */
+   }
+   return buf;
+}
+#endif
+
 static void footer(const char *hint)
 {
 #ifdef VITA
+   char fit[256];
    /* Text size Large: a hint line wider than the screen keeps the Normal size
     * rather than run off its sides */
    if (vid_text_scope_large() && vid_text_w(hint) > VID_SCR_W - 16)
@@ -1591,6 +1631,7 @@ static void footer(const char *hint)
       vid_text_scope(1);
       return;
    }
+   hint = footer_fit(hint, fit, sizeof(fit));
    if (g_pcfg.theme != 1)
    {
       /* no bar: the hints sit on a ramp out of the bottom edge */

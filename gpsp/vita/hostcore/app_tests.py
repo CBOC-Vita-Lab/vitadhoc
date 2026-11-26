@@ -7417,7 +7417,7 @@ def t_language(S):
     def norm(r):
         # not compared: counters of the log writer, the frame the host reached, and the home's pill layout (it
         # chooses the console's long or short name by the width its neighbours' words leave)
-        keep = [l for l in r.log if l.startswith("EVT ") and not re.match(r"EVT (menu_log|hm_pill) ", l)]
+        keep = [l for l in r.log if l.startswith("EVT ") and not re.match(r"EVT (menu_log|hm_pill|mem_layout|clip_save) ", l)]
         # the numbers of timing counters (frames reached, bytes written, microseconds) are not text
         noise = r"\s*\b(frames?|ticks|bytes|kept|skipped|enc_us_\w+|shown|vc_\w+|presents|write_\w+|total_\w+|emu|us|ms|ts_us|stat_us|dropped|ring_hi|pending|guard_waits|rc|produced|repeated|pictures|gate_waits|timeouts|emu_ms|wall_ms|drift_ms|draw_work_us|present_wait_us)=\S+"
         return [re.sub(noise, "", l.replace(r.root, "ROOT")) for l in keep]
@@ -7456,7 +7456,11 @@ def t_language(S):
                 bad[shot] = (off[:2], over[:2])
         S.check(not bad, "%s in %s: nothing more off the screen or overlapping than in English (%s)" % (tag, "the long test language" if code == "xx-long" else code, dict(list(bad.items())[:3]) or "all fit"))
         a, b = norm(re_), norm(rp)
-        S.check(a == b, "%s: the log lines are the ones English writes (%s)" % (tag, next(((x, y) for x, y in zip(a, b) if x != y), (len(a), len(b)))))
+        # a line the log writer cut ("~" at its end) is cut where the run's own folder name puts it: the part both hold
+        cut = lambda x, y: x == y or ((x.endswith("~") or y.endswith("~")) and
+                                      x.rstrip("~")[:min(len(x), len(y)) - 1] == y.rstrip("~")[:min(len(x), len(y)) - 1])
+        S.check(len(a) == len(b) and all(cut(x, y) for x, y in zip(a, b)),
+                "%s: the log lines are the ones English writes (%s)" % (tag, next(((x, y) for x, y in zip(a, b) if not cut(x, y)), (len(a), len(b)))))
         shown = [l for l in (re_.err + rp.err).splitlines() if "i18n: key shown" in l]
         S.check(not shown, "%s: no text key shown in place of its words (%s)" % (tag, sorted(set(shown))[:3]))
         return re_, rp

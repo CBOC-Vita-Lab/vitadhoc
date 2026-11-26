@@ -7303,16 +7303,33 @@ def text_misfits(boxes):
     return off, over
 
 
+def vad_lang():
+    """The shipped catalogue the language tests walk instead of their own (VAD_LANG=<code>, as display.ini's
+    language= takes it); None when unset.  An unknown code stops the run: a typo must not pass as English."""
+    code = os.environ.get("VAD_LANG", "").strip()
+    if not code:
+        return None
+    if not os.path.exists(os.path.join(HERE, "..", "..", "..", "lang", code + ".txt")):
+        raise SystemExit("VAD_LANG=%s: there is no lang/%s.txt" % (code, code))
+    return code
+
+
 def t_text_large(S):
     """Text size Large in the app: Settings, Save states, Cheats (with Add a code and Search memory) and the Play
     together page hold the larger lines; Button mapping, Button test, Cover picture, the other Play together pages
     and the plain list view keep Normal (KNOWN-ISSUES).  Every row of Settings is visited at Large: no string leaves
-    the screen and none is drawn over another."""
+    the screen and none is drawn over another.  VAD_LANG=<code> (es, fr, de, it, pt-BR, ja, zh-Hans) walks it all in
+    that language's catalogue (lang/<code>.txt)."""
+    code = vad_lang()
     def walk(tag, ini, script, **kw):
+        if code:
+            tag += "_" + code
         bx = os.path.join(S.outdir, tag + ".boxes")
         if os.path.exists(bx):
             os.remove(bx)
         extra = dict(kw.pop("extra", None) or {})
+        if code:
+            ini = "language=%s\n" % code + ini
         if ini:
             extra["display.ini"] = ini
         r = S.run(tag, script, extra=extra or None, env={"GBADHOC_TEXT_BOXES": bx}, **kw)
@@ -7394,7 +7411,9 @@ def t_language(S):
     third longer, with accents) walks Settings, the in-game menu, Save states, Cheats and Play together: no text off the
     screen or over other text beyond what English has, and the app's log lines are the very ones English writes.  A
     catalogue (a test one in a scratch app folder) shows at once through the Language row, Automatic follows the
-    system's language, a damaged catalogue and a missing one are English, and display.ini keeps its other keys."""
+    system's language, a damaged catalogue and a missing one are English, and display.ini keeps its other keys.
+    VAD_LANG=<code> walks the pages in that shipped catalogue (lang/<code>.txt) instead of the pseudo-locale."""
+    code = vad_lang() or "xx-long"
     def norm(r):
         # not compared: counters of the log writer, the frame the host reached, and the home's pill layout (it
         # chooses the console's long or short name by the width its neighbours' words leave)
@@ -7428,14 +7447,14 @@ def t_language(S):
         if os.environ.get("LANG_PAGES") and tag not in os.environ["LANG_PAGES"].split(","):
             return None, None             # (a developer's shortcut: LANG_PAGES=settings_game,home)
         re_, be = walk("lang_%s_en" % tag, "", script, **kw)
-        rp, bp = walk("lang_%s_long" % tag, "language=xx-long\n", script, **kw)
+        rp, bp = walk("lang_%s_%s" % (tag, "long" if code == "xx-long" else code), "language=%s\n" % code, script, **kw)
         bad = {}
         for shot in shots:
             off, over = text_misfits(bp.get(shot, []))
             offe, overe = text_misfits(be.get(shot, []))
             if not bp.get(shot) or len(off) > len(offe) or len(over) > len(overe):
                 bad[shot] = (off[:2], over[:2])
-        S.check(not bad, "%s in the long test language: nothing more off the screen or overlapping than in English (%s)" % (tag, dict(list(bad.items())[:3]) or "all fit"))
+        S.check(not bad, "%s in %s: nothing more off the screen or overlapping than in English (%s)" % (tag, "the long test language" if code == "xx-long" else code, dict(list(bad.items())[:3]) or "all fit"))
         a, b = norm(re_), norm(rp)
         S.check(a == b, "%s: the log lines are the ones English writes (%s)" % (tag, next(((x, y) for x, y in zip(a, b) if x != y), (len(a), len(b)))))
         shown = [l for l in (re_.err + rp.err).splitlines() if "i18n: key shown" in l]
@@ -7523,9 +7542,11 @@ def t_cjk_text(S):
     scratch app folder and the language chosen in display.ini.  Settings (every row), the in-game menu, Save
     states, Play together, Cheats, the home and the Play together pages are walked; against English: nothing more
     off the screen or over other text (the text-box recorder), no character cut in half and no stray byte (the
-    twin's audit), no glyph missing (no '?' for a character the CJK font has), no text key shown."""
+    twin's audit), no glyph missing (no '?' for a character the CJK font has), no text key shown.  VAD_LANG=<code>
+    runs the same audit on that shipped catalogue (lang/<code>.txt, any language) instead of the test ones."""
     import tempfile
-    langs = {"ja": ("ja", "language=ja\n"), "zh": ("zh-Hans", "language=zh-Hans\n")}
+    code = vad_lang()
+    langs = {code: (code, "language=%s\n" % code)} if code else {"ja": ("ja", "language=ja\n"), "zh": ("zh-Hans", "language=zh-Hans\n")}
     app = tempfile.mkdtemp(prefix="vad-cjk-")
     try:
         assets = os.path.join(HERE, "..", "assets")
@@ -7533,8 +7554,11 @@ def t_cjk_text(S):
             if n != "lang":
                 os.symlink(os.path.abspath(os.path.join(assets, n)), os.path.join(app, n))
         os.makedirs(os.path.join(app, "lang"))
-        for code in ("ja", "zh-Hans"):
-            shutil.copy(os.path.join(HERE, "testlang", code + ".txt"), os.path.join(app, "lang", code + ".txt"))
+        if code:
+            shutil.copy(os.path.join(HERE, "..", "..", "..", "lang", code + ".txt"), os.path.join(app, "lang", code + ".txt"))
+        else:
+            for c in ("ja", "zh-Hans"):
+                shutil.copy(os.path.join(HERE, "testlang", c + ".txt"), os.path.join(app, "lang", c + ".txt"))
 
         def walk(tag, ini, script, **kw):
             bx = os.path.join(S.outdir, tag + ".boxes")

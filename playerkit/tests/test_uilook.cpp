@@ -497,3 +497,59 @@ TEST(menu_every_page_fits_in_japanese_and_chinese)
 	}
 	pk_glyphs_set_region(PK_REGION_JP);
 }
+
+/* ---- a shipped catalogue (lang/pk_<code>.txt): PK_TEST_LANG=<code> (es fr de it pt-BR ja zh-Hans) --------------------
+ * The same pages as above in a real translation, against English: nothing more off the screen or over other text, and
+ * every character of the catalogue has a glyph (Inter for Latin, the CJK files of the language for the rest). Not set:
+ * nothing runs (the catalogues are checked one language at a time, see docs/TESTING.md). */
+TEST(menu_every_page_fits_in_a_shipped_catalogue)
+{
+	const char *code = getenv("PK_TEST_LANG");
+	if (!code || !*code) return;
+	const int lang = lang_index(code);
+	CHECK(lang != LANG_AUTO && lang != LANG_EN && lang != LANG_PSEUDO);
+	const std::string path = std::string("../lang/pk_") + code + ".txt";
+	FILE *f = fopen(path.c_str(), "rb");
+	CHECK(f != 0);
+	if (!f) return;
+	std::string cat;
+	char buf[4096];
+	size_t n;
+	while ((n = fread(buf, 1, sizeof buf, f)) > 0) cat.append(buf, n);
+	fclose(f);
+	pk_glyphs_set_dir("../gpsp/vita/assets");
+	const int region = lang == LANG_ZHS ? PK_REGION_SC : PK_REGION_JP;
+	pk_glyphs_set_region(region);
+	pk_gfont *fonts[4] = { pk_gfont_file(PK_FONT_FILE_LATIN), pk_gfont_file(PK_FONT_FILE_LATIN_B),
+	                       pk_gfont_file(region == PK_REGION_SC ? PK_FONT_FILE_CJK_SC : PK_FONT_FILE_CJK), pk_gfont_file(PK_FONT_FILE_CJK) };
+	int missing = 0;
+	for (const char *p = cat.c_str(); *p;) {
+		int k;
+		uint32_t cp = pk_u8_next(p, &k);
+		p += k;
+		if (cp < 0x80 || pk_glyph_invisible(cp)) continue;
+		if (!pk_gfont_has(fonts[0], cp) && !pk_gfont_has(fonts[2], cp) && !pk_gfont_has(fonts[3], cp)) { missing++; fprintf(stderr, "    %s: no glyph for U+%04X\n", code, (unsigned) cp); }
+	}
+	CHECK_EQ(missing, 0);
+	CHECK_EQ(i18n_use_text(cat.data(), cat.size(), lang) > 500, true);
+	g_catalogue_lang = lang;
+	for (int large = 0; large < 2; large++) {
+		g_catalogue = 0;
+		const std::vector<Audit> en = audit_pages(LANG_EN, large);
+		g_catalogue = &cat;
+		const std::vector<Audit> tl = audit_pages(LANG_EN, large);
+		g_catalogue = 0;
+		CHECK_EQ((int) en.size(), (int) tl.size());
+		int worse = 0, off = 0;
+		for (size_t i = 0; i < en.size() && i < tl.size(); i++) {
+			if (en[i].off_screen == 0 && tl[i].off_screen > 0) { off++; fprintf(stderr, "    %s large=%d shot %d: %d glyphs off screen\n", code, large, (int) i, tl[i].off_screen); }
+			if (tl[i].overlaps > en[i].overlaps) { worse++; fprintf(stderr, "    %s large=%d shot %d: %d overlaps (English %d)\n", code, large, (int) i, tl[i].overlaps, en[i].overlaps); }
+			CHECK(tl[i].glyphs > 0);
+		}
+		fprintf(stderr, "    %s large=%d: %d pages, %d off screen, %d with more overlaps than English\n", code, large, (int) tl.size(), off, worse);
+		CHECK_EQ(off, 0);
+		CHECK_EQ(worse, 0);
+	}
+	i18n_use(LANG_EN, 1);
+	pk_glyphs_set_region(PK_REGION_JP);
+}

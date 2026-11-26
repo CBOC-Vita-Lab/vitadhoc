@@ -415,6 +415,8 @@ local.touch_sound	toque  (som)
 local.write_incomplete	gravação incompleta
 local.your_game	seu jogo
 local.your_game_playing	seu jogo  (jogando)
+look.auto	Auto (%s)
+look.auto_eased	Auto (%s, suave)
 menu.back_to_the_game	Voltar ao jogo
 menu.cheats	Cheats
 menu.cheats_2	Cheats: %s
@@ -775,6 +777,19 @@ ra.no_achievements_to_show	Nenhuma conquista para mostrar.
 ra.of_achievements	%u de %u conquistas%s
 ra.pts	%u / %u   %u / %u pts
 ra.rank_of	Posição %u de %u
+search.1_byte	1 byte
+search.2_bytes	2 bytes
+search.2_bytes_any_address	2 bytes, qualquer endereço
+search.4_bytes	4 bytes
+search.4_bytes_any_address	4 bytes, qualquer endereço
+search.changed	Mudou
+search.decreased	Diminuiu
+search.equal_to	Igual a
+search.greater_than	Maior que
+search.increased	Aumentou
+search.less_than	Menor que
+search.not_equal_to	Diferente de
+search.unchanged	Não mudou
 settings.a_and_b_buttons	Botões A e B
 settings.about	SOBRE
 settings.account	Conta
@@ -1427,6 +1442,7 @@ ui.controls	CONTROLES
 ui.copy_them_to	Copie-os para %s
 ui.copy_them_to_2	Copie-os para:
 ui.counted_in_game_frames_so_fast	Contado em quadros do jogo, então o avanço rápido também acelera.
+ui.date_order	dmy
 ui.dec	Dez
 ui.delete_slot	Apagar o Slot %d?
 ui.delete_slot_x_delete_o_keep	Apagar o Slot %d?      {x} apagar     {o} manter

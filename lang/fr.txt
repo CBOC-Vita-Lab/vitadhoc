@@ -415,6 +415,8 @@ local.touch_sound	toucher  (son)
 local.write_incomplete	écriture incomplète
 local.your_game	ton jeu
 local.your_game_playing	ton jeu  (en cours)
+look.auto	Auto (%s)
+look.auto_eased	Auto (%s, adouci)
 menu.back_to_the_game	Retour au jeu
 menu.cheats	Codes de triche
 menu.cheats_2	Codes de triche : %s
@@ -1440,6 +1442,7 @@ ui.controls	COMMANDES
 ui.copy_them_to	Copie-les dans %s
 ui.copy_them_to_2	Copie-les dans :
 ui.counted_in_game_frames_so_fast	Compté en images de jeu : l'avance rapide l'accélère aussi.
+ui.date_order	dmy
 ui.dec	Déc
 ui.delete_slot	Supprimer l'emplacement %d ?
 ui.delete_slot_x_delete_o_keep	Supprimer l'emplacement %d ?      {x} supprimer     {o} garder

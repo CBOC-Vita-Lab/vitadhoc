@@ -415,6 +415,8 @@ local.touch_sound	タッチ  (音声)
 local.write_incomplete	書き込みが不完全です
 local.your_game	自分のゲーム
 local.your_game_playing	自分のゲーム  (操作中)
+look.auto	自動 (%s)
+look.auto_eased	自動 (%s、ゆるめ)
 menu.back_to_the_game	ゲームに戻る
 menu.cheats	チート
 menu.cheats_2	チート: %s
@@ -775,6 +777,19 @@ ra.no_achievements_to_show	表示できる実績がありません。
 ra.of_achievements	実績 %u / %u%s
 ra.pts	%u / %u   %u / %u pts
 ra.rank_of	%u位 / %u人
+search.1_byte	1バイト
+search.2_bytes	2バイト
+search.2_bytes_any_address	2バイト、すべてのアドレス
+search.4_bytes	4バイト
+search.4_bytes_any_address	4バイト、すべてのアドレス
+search.changed	変化した
+search.decreased	減った
+search.equal_to	等しい
+search.greater_than	より大きい
+search.increased	増えた
+search.less_than	より小さい
+search.not_equal_to	等しくない
+search.unchanged	変化なし
 settings.a_and_b_buttons	AボタンとBボタン
 settings.about	情報
 settings.account	アカウント
@@ -1427,6 +1442,7 @@ ui.controls	操作
 ui.copy_them_to	%sにコピーしてください
 ui.copy_them_to_2	コピー先:
 ui.counted_in_game_frames_so_fast	ゲームのフレームで数えるため、早送りでも速くなります。
+ui.date_order	ymd
 ui.dec	12月
 ui.delete_slot	スロット%dを削除しますか?
 ui.delete_slot_x_delete_o_keep	スロット%dを削除しますか?      {x} 削除     {o} 残す

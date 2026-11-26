@@ -1046,6 +1046,7 @@ states.apr	abr
 states.aug	ago
 # context: on-screen text
 states.could_not_save_the_state	No se pudo guardar el estado: %s
+states.date_order	dmy
 # context: on-screen text
 states.dec	dic
 # context: on-screen text

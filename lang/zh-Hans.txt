@@ -415,6 +415,8 @@ local.touch_sound	触摸（声音）
 local.write_incomplete	写入不完整
 local.your_game	你的游戏
 local.your_game_playing	你的游戏（游玩中）
+look.auto	自动（%s）
+look.auto_eased	自动（%s，缓和）
 menu.back_to_the_game	返回游戏
 menu.cheats	金手指
 menu.cheats_2	金手指：%s
@@ -775,6 +777,19 @@ ra.no_achievements_to_show	没有可显示的成就。
 ra.of_achievements	%u / %u 个成就%s
 ra.pts	%u / %u   %u / %u 分
 ra.rank_of	排名 %u / %u
+search.1_byte	1 字节
+search.2_bytes	2 字节
+search.2_bytes_any_address	2 字节，任意地址
+search.4_bytes	4 字节
+search.4_bytes_any_address	4 字节，任意地址
+search.changed	已变化
+search.decreased	已减小
+search.equal_to	等于
+search.greater_than	大于
+search.increased	已增大
+search.less_than	小于
+search.not_equal_to	不等于
+search.unchanged	未变化
 settings.a_and_b_buttons	A 和 B 键
 settings.about	关于
 settings.account	账号
@@ -1427,6 +1442,7 @@ ui.controls	操作
 ui.copy_them_to	请复制到 %s
 ui.copy_them_to_2	请复制到：
 ui.counted_in_game_frames_so_fast	按游戏帧计算，所以快进也会加快它。
+ui.date_order	ymd
 ui.dec	12月
 ui.delete_slot	删除存档位 %d？
 ui.delete_slot_x_delete_o_keep	删除存档位 %d？      {x} 删除     {o} 保留

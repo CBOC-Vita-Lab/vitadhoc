@@ -415,6 +415,8 @@ local.touch_sound	Touch  (Ton)
 local.write_incomplete	Schreiben unvollständig
 local.your_game	dein Spiel
 local.your_game_playing	dein Spiel  (spielt)
+look.auto	Auto (%s)
+look.auto_eased	Auto (%s, sanft)
 menu.back_to_the_game	Zurück zum Spiel
 menu.cheats	Cheats
 menu.cheats_2	Cheats: %s
@@ -775,6 +777,19 @@ ra.no_achievements_to_show	Keine Erfolge zum Anzeigen.
 ra.of_achievements	%u von %u Erfolgen%s
 ra.pts	%u / %u   %u / %u Pkt.
 ra.rank_of	Rang %u von %u
+search.1_byte	1 Byte
+search.2_bytes	2 Byte
+search.2_bytes_any_address	2 Byte, beliebige Adresse
+search.4_bytes	4 Byte
+search.4_bytes_any_address	4 Byte, beliebige Adresse
+search.changed	Geändert
+search.decreased	Gesunken
+search.equal_to	Gleich
+search.greater_than	Größer als
+search.increased	Gestiegen
+search.less_than	Kleiner als
+search.not_equal_to	Ungleich
+search.unchanged	Unverändert
 settings.a_and_b_buttons	A- und B-Taste
 settings.about	INFO
 settings.account	Konto
@@ -1427,6 +1442,7 @@ ui.controls	STEUERUNG
 ui.copy_them_to	Kopiere sie nach %s
 ui.copy_them_to_2	Kopiere sie nach:
 ui.counted_in_game_frames_so_fast	In Spiel-Frames gezählt, daher beschleunigt Vorspulen es auch.
+ui.date_order	dmy
 ui.dec	Dez
 ui.delete_slot	Slot %d löschen?
 ui.delete_slot_x_delete_o_keep	Slot %d löschen?      {x} Löschen     {o} Behalten

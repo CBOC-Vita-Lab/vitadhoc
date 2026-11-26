@@ -832,6 +832,8 @@ local.write_incomplete	escritura incompleta
 local.your_game	tu juego
 # context: local_vita.c, link_local_present
 local.your_game_playing	tu juego  (jugando)
+look.auto	Auto (%s)
+look.auto_eased	Auto (%s, suave)
 # context: snprintf in ui_vita_menu.h, cc_says
 menu.back_to_the_game	Volver al juego
 # context: ui_vita_menu.h
@@ -2882,6 +2884,7 @@ ui.copy_them_to	Cópialos en %s
 ui.copy_them_to_2	Cópialos en:
 # context: ui_psp.c, ctl_fixed_row
 ui.counted_in_game_frames_so_fast	Se cuenta en fotogramas de juego, así que el avance rápido también lo acelera.
+ui.date_order	dmy
 # context: ui_psp.c, ov_stamp
 ui.dec	dic
 # context: snprintf in ui_psp.c, browser_state_panel

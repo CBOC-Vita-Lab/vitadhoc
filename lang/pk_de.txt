@@ -522,6 +522,7 @@ speed.unlimited_smooth	>> Unbegrenzt flüssig
 states.apr	Apr
 states.aug	Aug
 states.could_not_save_the_state	Savestate nicht gespeichert: %s
+states.date_order	dmy
 states.dec	Dez
 states.feb	Feb
 states.jan	Jan

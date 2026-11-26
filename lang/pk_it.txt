@@ -522,6 +522,7 @@ speed.unlimited_smooth	>> Illimitata fluida
 states.apr	Apr
 states.aug	Ago
 states.could_not_save_the_state	Impossibile salvare lo stato: %s
+states.date_order	dmy
 states.dec	Dic
 states.feb	Feb
 states.jan	Gen

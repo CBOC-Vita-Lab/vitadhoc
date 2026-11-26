@@ -522,6 +522,7 @@ speed.unlimited_smooth	>> Illimité fluide
 states.apr	Avr
 states.aug	Aoû
 states.could_not_save_the_state	État non sauvegardé : %s
+states.date_order	dmy
 states.dec	Déc
 states.feb	Fév
 states.jan	Jan

@@ -522,6 +522,7 @@ speed.unlimited_smooth	>> Ilimitado suave
 states.apr	Abr
 states.aug	Ago
 states.could_not_save_the_state	Não foi possível salvar o estado: %s
+states.date_order	dmy
 states.dec	Dez
 states.feb	Fev
 states.jan	Jan

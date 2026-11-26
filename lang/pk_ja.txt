@@ -522,6 +522,7 @@ speed.unlimited_smooth	>> 無制限なめらか
 states.apr	4月
 states.aug	8月
 states.could_not_save_the_state	ステートをセーブできませんでした: %s
+states.date_order	ymd
 states.dec	12月
 states.feb	2月
 states.jan	1月

@@ -32,6 +32,14 @@ void operator delete(void *p) noexcept { free(p); }
 void operator delete[](void *p) noexcept { free(p); }
 void operator delete(void *p, size_t) noexcept { free(p); }
 void operator delete[](void *p, size_t) noexcept { free(p); }
+/* The nothrow forms too (Gambatte allocates with new (std::nothrow)): the
+ * C++ runtime's own nothrow new wraps a try/catch and so pulls in its whole
+ * exception runtime, whose weak pthread and unwinder hooks the link check
+ * (Makefile WEAK_OK) rightly refuses. */
+void *operator new(size_t n, const std::nothrow_t &) noexcept { return malloc(n ? n : 1); }
+void *operator new[](size_t n, const std::nothrow_t &) noexcept { return malloc(n ? n : 1); }
+void operator delete(void *p, const std::nothrow_t &) noexcept { free(p); }
+void operator delete[](void *p, const std::nothrow_t &) noexcept { free(p); }
 
 /* the largest picture: the NES wide view, 256 + 2 x 96 columns by 240 */
 #define HO_PIX_BYTES (448u * 240u * 2u)

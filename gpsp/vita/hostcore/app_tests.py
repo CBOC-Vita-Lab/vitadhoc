@@ -7421,7 +7421,7 @@ def t_language(S):
     def norm(r):
         # not compared: counters of the log writer, the frame the host reached, and the home's pill layout (it
         # chooses the console's long or short name by the width its neighbours' words leave)
-        keep = [l for l in r.log if l.startswith("EVT ") and not re.match(r"EVT (menu_log|hm_pill|mem_layout|clip_save) ", l)]
+        keep = [l for l in r.log if l.startswith("EVT ") and not re.match(r"EVT (menu_log|hm_pill|mem_layout|clip_save|home_upload_budget) ", l)]
         # the numbers of timing counters (frames reached, bytes written, microseconds) are not text
         noise = r"\s*\b(frames?|ticks|bytes|kept|skipped|enc_us_\w+|shown|vc_\w+|presents|write_\w+|total_\w+|emu|us|ms|ts_us|stat_us|dropped|ring_hi|pending|guard_waits|rc|produced|repeated|pictures|gate_waits|timeouts|emu_ms|wall_ms|drift_ms|draw_work_us|present_wait_us)=\S+"
         return [re.sub(noise, "", l.replace(r.root, "ROOT")) for l in keep]

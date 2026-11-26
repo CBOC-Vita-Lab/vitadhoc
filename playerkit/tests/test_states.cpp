@@ -2,6 +2,8 @@
 #include "pk_test.h"
 #include "harness.h"
 #include "pk_states.h"
+#include "pk_i18n.h"
+#include <string.h>
 #include <stdlib.h>
 #include <time.h>
 #include <string>
@@ -312,6 +314,19 @@ TEST(states_stamp_text)
 	setenv("TZ", "UTC-2", 1);
 	tzset();
 	CHECK_STR(stamp_text(1791037920), "3 Oct 2026, 16:32");
+	/* the language's date order; Japanese and Chinese month names (10月) take 年 and 日 */
+	{
+		const char *ymd = "states.date_order\tymd\nstates.oct\t10\xe6\x9c\x88\n";
+		CHECK_EQ(pk::i18n_use_text(ymd, strlen(ymd)), 2);
+		CHECK_STR(stamp_text(1791037920), "2026\xe5\xb9\xb4" "10\xe6\x9c\x88" "3\xe6\x97\xa5, 16:32");
+		const char *mdy = "states.date_order\tmdy\nstates.oct\tOkt\n";
+		CHECK_EQ(pk::i18n_use_text(mdy, strlen(mdy)), 2);
+		CHECK_STR(stamp_text(1791037920), "Okt 3, 2026, 16:32");
+		const char *ymd2 = "states.date_order\tymd\n";
+		CHECK_EQ(pk::i18n_use_text(ymd2, strlen(ymd2)), 1);
+		CHECK_STR(stamp_text(1791037920), "2026 Oct 3, 16:32");
+		pk::i18n_use(pk::LANG_EN, 1);
+	}
 	if (oldtz) setenv("TZ", saved.c_str(), 1); else unsetenv("TZ");
 	tzset();
 }

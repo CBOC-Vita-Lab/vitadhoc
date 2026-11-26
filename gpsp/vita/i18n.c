@@ -539,7 +539,14 @@ void i18n_date(char *out, size_t n, int year, int mon, int day)
    if (!strcmp(o, "mdy"))
       snprintf(out, n, "%s %d, %d", m, day, year);
    else if (!strcmp(o, "ymd"))
-      snprintf(out, n, "%d %s %d", year, m, day);
+   {
+      size_t ml = strlen(m);
+      /* Japanese and Chinese month names end in 月: "2026年10月3日" */
+      if (ml >= 3 && !strcmp(m + ml - 3, "\xe6\x9c\x88"))
+         snprintf(out, n, "%d\xe5\xb9\xb4%s%d\xe6\x97\xa5", year, m, day);
+      else
+         snprintf(out, n, "%d %s %d", year, m, day);
+   }
    else
       snprintf(out, n, "%d %s %d", day, m, year);
 }

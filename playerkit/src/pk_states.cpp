@@ -124,7 +124,12 @@ static std::string date_text(int y, int m, int d)
 	const char *o = tr("states.date_order");
 	const char *mn = tr(mon[m - 1]);
 	if (!strcmp(o, "mdy")) return strf("%s %d, %d", mn, d, y);
-	if (!strcmp(o, "ymd")) return strf("%d %s %d", y, mn, d);
+	if (!strcmp(o, "ymd")) {
+		size_t ml = strlen(mn);
+		/* Japanese and Chinese month names end in 月: "2026年10月3日" */
+		if (ml >= 3 && !strcmp(mn + ml - 3, "\xe6\x9c\x88")) return strf("%d\xe5\xb9\xb4%s%d\xe6\x97\xa5", y, mn, d);
+		return strf("%d %s %d", y, mn, d);
+	}
 	return strf("%d %s %d", d, mn, y);
 }
 

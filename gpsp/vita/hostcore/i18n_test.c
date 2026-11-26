@@ -89,6 +89,24 @@ int main(int argc, char **argv)
          !strcmp(tr("settings.about"), "Auto") && i18n_refused_count() == 1);
    free(h);
 
+   /* dates in the language's order; Japanese and Chinese month names (10月) take 年 and 日 */
+   {
+      char d[64];
+      static const char ymd[] = "ui.date_order\tymd\nui.oct\t10\xe6\x9c\x88\n";
+      static const char mdy[] = "ui.date_order\tmdy\nui.oct\tOkt\n";
+      i18n_date(d, sizeof(d), 2026, 10, 3);
+      CHECK(!strcmp(d, "3 Oct 2026"));
+      put("ja", ymd, sizeof(ymd) - 1);
+      CHECK(i18n_use(I18N_JA, 1) == I18N_JA);
+      i18n_date(d, sizeof(d), 2026, 10, 3);
+      CHECK(!strcmp(d, "2026\xe5\xb9\xb4" "10\xe6\x9c\x88" "3\xe6\x97\xa5"));
+      put("de", mdy, sizeof(mdy) - 1);
+      CHECK(i18n_use(I18N_DE, 1) == I18N_DE);
+      i18n_date(d, sizeof(d), 2026, 10, 3);
+      CHECK(!strcmp(d, "Okt 3, 2026"));
+      CHECK(i18n_use(I18N_EN, 1) == I18N_EN);
+   }
+
    /* Automatic follows the system's language; a language with no catalogue is English */
    CHECK(i18n_use(I18N_AUTO, 3) == I18N_ES);                           /* the Vita's Spanish */
    CHECK(i18n_use(I18N_AUTO, 8) == I18N_EN);                           /* Russian: no catalogue */

@@ -146,6 +146,14 @@ static inline const char *room_make(int kind, int num, const char *code,
    return out;
 }
 
+/* In the app the word is the interface language's (i18n.h, key link.room) when
+ * i18n.h came first; the tools' tests have the English word. */
+#ifdef GBADHOC_I18N_H
+#define ROOM_LABEL_FMT tr("link.room")
+#else
+#define ROOM_LABEL_FMT ROOM_LABEL_WORD " %d"
+#endif
+
 /* `group` -> "Room N" (no leading zero) into buf; returns buf.  Every kind
  * of room is "Room N": the mode and the game are columns of their own. */
 static inline const char *room_label(const char *group, char *buf, size_t n)
@@ -156,7 +164,7 @@ static inline const char *room_label(const char *group, char *buf, size_t n)
    if (!group)
       group = "";
    if (room_parse(group, &num, NULL) != ROOM_OTHER)
-      snprintf(buf, n, ROOM_LABEL_WORD " %d", num);
+      snprintf(buf, n, ROOM_LABEL_FMT, num);
    else
       /* An adhocctl group name is at most 8 bytes. */
       snprintf(buf, n, "%.8s", group);

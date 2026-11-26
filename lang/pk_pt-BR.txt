@@ -415,7 +415,7 @@ player.could_not_continue	Não foi possível continuar: %s
 player.could_not_continue_the_resume_point	Não foi possível continuar: o ponto de retomada não serve para este jogo
 player.could_not_save_the_screen_settings	Não foi possível salvar os ajustes de tela
 player.draws_each_picture_on_its_own	Desenha cada imagem em uma thread própria, então opções de imagem pesadas não deixam o jogo lento. Desligue se a imagem tiver problemas.
-player.european_games_run_at_50_hz	Jogos europeus rodam a 50 Hz. O 50 Hz suave os joga na velocidade real e uniformiza a imagem: um refresh em seis mostra a mistura de dois quadros. O 50 Hz real repete um quadro em seis; o 60 Hz rápido os roda 20 % fora do ritmo, como em uma tela de 60 Hz.
+player.european_games_run_at_50_hz	Jogos europeus rodam a 50 Hz. O 50 Hz suave os joga na velocidade real e uniformiza a imagem: um refresh em seis mostra a mistura de dois quadros. O 50 Hz real repete um quadro em seis; o 60 Hz rápido os roda 20 % mais rápido, como em uma tela de 60 Hz.
 player.fast_60_hz	60 Hz rápido
 player.game_not_started_err	Não foi possível iniciar este jogo: %s
 player.hardcore_mode_the_game_starts_from	Modo Hardcore: o jogo começa do início

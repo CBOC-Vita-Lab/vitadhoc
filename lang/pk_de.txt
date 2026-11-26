@@ -415,7 +415,7 @@ player.could_not_continue	Weiter nicht möglich: %s
 player.could_not_continue_the_resume_point	Weiter nicht möglich: Der Fortsetzungspunkt passt nicht zu diesem Spiel
 player.could_not_save_the_screen_settings	Bildschirmeinstellungen nicht gespeichert
 player.draws_each_picture_on_its_own	Zeichnet jedes Bild in einem eigenen Thread, sodass aufwendige Bildoptionen das Spiel nicht bremsen. Schalte es aus, falls das Bild je Probleme macht.
-player.european_games_run_at_50_hz	Europäische Spiele laufen mit 50 Hz. Weiches 50 Hz spielt sie im echten Tempo und glättet das Bild: Jeder sechste Refresh zeigt eine Mischung aus zwei Frames. Echtes 50 Hz zeigt jeden sechsten Frame doppelt; Schnelles 60 Hz lässt sie 20 % flotter laufen, wie auf einem 60-Hz-Schirm.
+player.european_games_run_at_50_hz	Europäische Spiele laufen mit 50 Hz. Weiches 50 Hz spielt sie im echten Tempo und glättet das Bild: Jeder sechste Refresh zeigt eine Mischung aus zwei Frames. Echtes 50 Hz zeigt jeden sechsten Frame doppelt; Schnelles 60 Hz lässt sie 20 % schneller laufen, wie auf einem 60-Hz-Bildschirm.
 player.fast_60_hz	Schnelles 60 Hz
 player.game_not_started_err	Dieses Spiel ließ sich nicht starten: %s
 player.hardcore_mode_the_game_starts_from	Hardcore-Modus: Das Spiel startet von vorn

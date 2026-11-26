@@ -415,7 +415,7 @@ player.could_not_continue	続けられません: %s
 player.could_not_continue_the_resume_point	続けられません: 再開地点がこのゲームに合いません
 player.could_not_save_the_screen_settings	画面設定を保存できませんでした
 player.draws_each_picture_on_its_own	映像を別のスレッドで描画するため、重い映像オプションでもゲームは遅くなりません。映像に不具合が出たときはオフにしてください。
-player.european_games_run_at_50_hz	欧州のゲームは50 Hzで動きます。なめらか50 Hzは本来の速度を保ち映像を整えます: 6回に1回、2フレームを混ぜて表示します。本来の50 Hzは6フレームに1回同じフレームを再表示します。高速60 Hzは60 Hz画面のように動かします (20 % faster)。
+player.european_games_run_at_50_hz	欧州のゲームは50 Hzで動きます。なめらか50 Hzは本来の速度を保ち映像を整えます: 6回に1回、2フレームを混ぜて表示します。本来の50 Hzは6フレームに1回同じフレームを再表示します。高速60 Hzは60 Hz画面と同じく20％速く動かします。
 player.fast_60_hz	高速60 Hz
 player.game_not_started_err	このゲームを起動できませんでした: %s
 player.hardcore_mode_the_game_starts_from	ハードコアモード: ゲームを最初から始めます

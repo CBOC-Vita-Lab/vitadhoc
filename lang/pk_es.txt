@@ -833,7 +833,7 @@ player.could_not_save_the_screen_settings	No se pudieron guardar los ajustes de 
 # context: on-screen text
 player.draws_each_picture_on_its_own	Dibuja cada imagen en su propio hilo, así que las opciones de imagen exigentes no frenan el juego. Desactívalo si la imagen falla alguna vez.
 # context: on-screen text
-player.european_games_run_at_50_hz	Los juegos europeos van a 50 Hz. 50 Hz suave los juega a su velocidad real y uniformiza la imagen: una de cada seis actualizaciones mezcla dos fotogramas. 50 Hz real repite un fotograma de cada seis; 60 Hz rápido los acelera un 20 % frente al original, como en una pantalla de 60 Hz.
+player.european_games_run_at_50_hz	Los juegos europeos van a 50 Hz. 50 Hz suave los juega a su velocidad real y uniformiza la imagen: una de cada seis actualizaciones mezcla dos fotogramas. 50 Hz real repite un fotograma de cada seis; 60 Hz rápido los hace ir un 20 % más rápido, como en una pantalla de 60 Hz.
 # context: on-screen text
 player.fast_60_hz	60 Hz rápido
 # context: notice kept for the app; %s is the core's own message (English)

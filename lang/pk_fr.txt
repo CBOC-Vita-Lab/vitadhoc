@@ -415,7 +415,7 @@ player.could_not_continue	Reprise impossible : %s
 player.could_not_continue_the_resume_point	Reprise impossible : le point de reprise ne convient pas à ce jeu
 player.could_not_save_the_screen_settings	Réglages d'écran non enregistrés
 player.draws_each_picture_on_its_own	Dessine chaque image sur son propre thread : les effets lourds ne ralentissent pas le jeu. Désactive si l'image se comporte mal.
-player.european_games_run_at_50_hz	Les jeux européens tournent à 50 Hz. Le 50 Hz lissé les joue à leur vitesse réelle et égalise l'image : un rafraîchissement sur six mélange deux images. Le vrai 50 Hz répète une image sur six ; 60 Hz rapide les accélère de 20 % façon écran 60 Hz.
+player.european_games_run_at_50_hz	Les jeux européens tournent à 50 Hz. Le 50 Hz lissé les joue à leur vitesse réelle et égalise l'image : un rafraîchissement sur six mélange deux images. Le vrai 50 Hz répète une image sur six ; le 60 Hz rapide les accélère de 20 % comme sur un écran 60 Hz.
 player.fast_60_hz	60 Hz rapide
 player.game_not_started_err	Ce jeu n'a pas pu être lancé : %s
 player.hardcore_mode_the_game_starts_from	Mode Hardcore : le jeu repart du début

@@ -415,7 +415,7 @@ player.could_not_continue	Impossibile continuare: %s
 player.could_not_continue_the_resume_point	Impossibile continuare: il punto di ripresa non è adatto a questo gioco
 player.could_not_save_the_screen_settings	Impossibile salvare le impostazioni dello schermo
 player.draws_each_picture_on_its_own	Disegna ogni immagine su un thread proprio, così le opzioni grafiche pesanti non rallentano il gioco. Metti off se l'immagine dà problemi.
-player.european_games_run_at_50_hz	I giochi europei girano a 50 Hz. 50 Hz fluido li fa girare alla velocità reale e uniforma l'immagine: un aggiornamento su sei mostra un misto di due frame. 50 Hz reale mostra di nuovo un frame su sei; 60 Hz rapido li accelera del 20 % fino a 60 Hz, come su uno schermo a 60 Hz.
+player.european_games_run_at_50_hz	I giochi europei girano a 50 Hz. 50 Hz fluido li fa girare alla velocità reale e uniforma l'immagine: un aggiornamento su sei mostra un misto di due frame. 50 Hz reale mostra di nuovo un frame su sei; 60 Hz rapido li fa andare il 20 % più veloci, come su uno schermo a 60 Hz.
 player.fast_60_hz	60 Hz rapido
 player.game_not_started_err	Impossibile avviare questo gioco: %s
 player.hardcore_mode_the_game_starts_from	Modalità Hardcore: il gioco riparte dall'inizio

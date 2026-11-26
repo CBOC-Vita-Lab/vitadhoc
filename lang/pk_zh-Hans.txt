@@ -415,7 +415,7 @@ player.could_not_continue	无法继续：%s
 player.could_not_continue_the_resume_point	无法继续：续玩点与此游戏不符
 player.could_not_save_the_screen_settings	无法保存屏幕设置
 player.draws_each_picture_on_its_own	在独立线程中绘制每幅画面，因此复杂的画面选项不会拖慢游戏。如果画面出现异常，请关闭它。
-player.european_games_run_at_50_hz	欧洲游戏以 50 Hz 运行。平滑 50 Hz 以其真实速度运行并让画面更均匀：每六次刷新有一次显示两帧的混合。真实 50 Hz 每六帧重复显示一帧；快速 60 Hz 则像在 60 Hz 屏幕上那样运行（20 % faster）。
+player.european_games_run_at_50_hz	欧洲游戏以 50 Hz 运行。平滑 50 Hz 以其真实速度运行并让画面更均匀：每六次刷新有一次显示两帧的混合。真实 50 Hz 每六帧重复显示一帧；快速 60 Hz 则像在 60 Hz 屏幕上那样快 20％。
 player.fast_60_hz	快速 60 Hz
 player.game_not_started_err	无法启动此游戏：%s
 player.hardcore_mode_the_game_starts_from	硬核模式：游戏从头开始

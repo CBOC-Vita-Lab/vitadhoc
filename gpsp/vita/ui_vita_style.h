@@ -210,23 +210,35 @@ static float hm_hints_w(const int *icons, const char *const *words, int n)
 }
 
 /* "SAVE STATES" -> "Save states": the old pages' titles, in the new
- * sentence case. */
+ * sentence case.  Whole characters: an accented capital after the first
+ * letter becomes small too ("PARAMÈTRES" -> "Paramètres", pk_u8_lower). */
 static void hm_sentence(char *out, size_t cap, const char *s)
 {
-   size_t i;
+   size_t o = 0;
    int first = 1;
-   for (i = 0; s[i] && i + 1 < cap; i++)
+   while (*s && o + 1 < cap)
    {
-      char c = s[i];
-      if (c >= 'A' && c <= 'Z' && !first)
-         c = (char)(c - 'A' + 'a');
-      if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))
+      int n;
+      uint32_t cp = pk_u8_next(s, &n);
+      char b[4];
+      int k;
+      if (cp >= PK_U8_RAW)                 /* a stray byte: as it is */
+      {
+         out[o++] = *s++;
+         continue;
+      }
+      if (!first)
+         cp = pk_u8_lower(cp);
+      if (pk_u8_is_latin_letter(cp))
          first = 0;
-      out[i] = c;
+      k = pk_u8_put(cp, b);
+      if (o + (size_t)k >= cap)
+         break;                            /* no room for the whole character */
+      memcpy(out + o, b, (size_t)k);
+      o += (size_t)k;
+      s += n;
    }
-   out[i] = '\0';
-   if (i + 1 >= cap)
-      pk_u8_clip(out, i);          /* (a cap that fell inside a character) */
+   out[o] = '\0';
 }
 
 #endif /* UI_VITA_STYLE_H */

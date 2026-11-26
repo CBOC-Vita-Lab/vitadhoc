@@ -280,6 +280,33 @@ static inline size_t pk_u8_count(const char *s)
    return n;
 }
 
+/* The small letter of a capital in ASCII, Latin-1 Supplement and Latin
+ * Extended-A ("È" -> "è", "Œ" -> "œ", "Ÿ" -> "ÿ"); any other code point
+ * comes back as it is.  (Sentence case of titles: "PARAMÈTRES" -> "Paramètres".) */
+static inline uint32_t pk_u8_lower(uint32_t cp)
+{
+   if (cp >= 'A' && cp <= 'Z')
+      return cp + 32;
+   if (cp >= 0xC0 && cp <= 0xDE && cp != 0xD7)       /* À..Þ, not × */
+      return cp + 32;
+   if (cp == 0x130)                                  /* İ */
+      return 'i';
+   if (cp == 0x178)                                  /* Ÿ */
+      return 0xFF;
+   if ((cp >= 0x100 && cp <= 0x137) || (cp >= 0x14A && cp <= 0x177))
+      return (cp & 1) ? cp : cp + 1;                 /* capitals on even code points */
+   if ((cp >= 0x139 && cp <= 0x148) || (cp >= 0x179 && cp <= 0x17E))
+      return (cp & 1) ? cp + 1 : cp;                 /* capitals on odd code points */
+   return cp;
+}
+
+/* 1 for a letter of ASCII, Latin-1 Supplement or Latin Extended-A/B. */
+static inline int pk_u8_is_latin_letter(uint32_t cp)
+{
+   return (cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') ||
+          (cp >= 0xC0 && cp <= 0x24F && cp != 0xD7 && cp != 0xF7);
+}
+
 #ifdef __cplusplus
 }
 #endif

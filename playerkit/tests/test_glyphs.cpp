@@ -218,6 +218,25 @@ TEST(text_without_the_font_files_degrades_to_question_marks)
 
 /* ---- Japanese and Chinese in every text path ---------------------------------------------------------------- */
 
+TEST(utf8_lower_latin_capitals)
+{
+	CHECK_EQ((int) pk_u8_lower('A'), 'a');
+	CHECK_EQ((int) pk_u8_lower('z'), 'z');
+	CHECK_EQ((int) pk_u8_lower(0xC8), 0xE8);                    /* È -> è */
+	CHECK_EQ((int) pk_u8_lower(0xC9), 0xE9);                    /* É -> é */
+	CHECK_EQ((int) pk_u8_lower(0xD6), 0xF6);                    /* Ö -> ö */
+	CHECK_EQ((int) pk_u8_lower(0xD7), 0xD7);                    /* × stays */
+	CHECK_EQ((int) pk_u8_lower(0xDF), 0xDF);                    /* ß has no capital here */
+	CHECK_EQ((int) pk_u8_lower(0x152), 0x153);                  /* Œ -> œ */
+	CHECK_EQ((int) pk_u8_lower(0x153), 0x153);
+	CHECK_EQ((int) pk_u8_lower(0x141), 0x142);                  /* Ł -> ł */
+	CHECK_EQ((int) pk_u8_lower(0x17D), 0x17E);                  /* Ž -> ž */
+	CHECK_EQ((int) pk_u8_lower(0x178), 0xFF);                   /* Ÿ -> ÿ */
+	CHECK_EQ((int) pk_u8_lower(0x130), 'i');                    /* İ */
+	CHECK_EQ((int) pk_u8_lower(0x30A2), 0x30A2);                /* ア: no case */
+	CHECK(pk_u8_is_latin_letter(0xC8) && pk_u8_is_latin_letter('q') && !pk_u8_is_latin_letter(0xD7) && !pk_u8_is_latin_letter(' '));
+}
+
 TEST(cjk_line_break_rules)
 {
 	CHECK(!pk_u8_can_break('a', 'b'));                         /* never inside a Latin word */

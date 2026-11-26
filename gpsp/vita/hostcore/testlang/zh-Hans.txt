@@ -88,3 +88,4 @@ ui.press_sq_on_a_game_to	在游戏上按 {sq} 可加星标
 ui.quit	退出
 ui.resume	继续
 ui.settings	设置
+hint.x_type_sq_delete_l_keyboard	{x} 输入   {sq} 删除   L 键盘   SELECT 名称   {tri} 保存   {o} 返回

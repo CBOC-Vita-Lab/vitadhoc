@@ -88,3 +88,4 @@ ui.press_sq_on_a_game_to	ゲームで {sq} を押すとお気に入りにでき�
 ui.quit	終了
 ui.resume	再開
 ui.settings	設定
+hint.x_type_sq_delete_l_keyboard	{x} 入力   {sq} 削除   L キーボード   SELECT 名前   {tri} 保存   {o} 戻る

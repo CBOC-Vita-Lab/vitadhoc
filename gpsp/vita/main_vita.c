@@ -2971,6 +2971,7 @@ static int rom_from_launch(char *out, size_t cap)
 }
 
 /* autoboot.txt: the first game of this run, started without the list. */
+static int g_autoboot_slot;   /* autoboot.txt's "slot=N" line, 0 none */
 static int rom_from_autoboot(char *out, size_t cap)
 {
    char path[APP_PATH_CAP], line[APP_PATH_CAP];
@@ -2983,6 +2984,19 @@ static int rom_from_autoboot(char *out, size_t cap)
       return -1;
    if (!fgets(line, sizeof(line), f))
       line[0] = '\0';
+   /* an optional second line "slot=N" (1..9) opens that save state as soon
+    * as the game runs, as a state picked on the shelf does: unattended
+    * measurements start at a chosen moment of a game (tools/vita-matrix) */
+   {
+      char l2[32];
+      g_autoboot_slot = 0;
+      if (fgets(l2, sizeof(l2), f) && !strncmp(l2, "slot=", 5))
+      {
+         int s = atoi(l2 + 5);
+         if (s >= 1 && s <= PSP_STATE_SLOT_COUNT)
+            g_autoboot_slot = s;
+      }
+   }
    fclose(f);
    n = strlen(line);
    while (n && isspace((unsigned char)line[n - 1]))
@@ -7922,7 +7936,8 @@ int main(int argc, char **argv)
                rom_from_autoboot(rom_path, sizeof(rom_path)) == 0)
       {
          console = console_for(rom_path);
-         fe_evt("autoboot rom=%s", rom_path);
+         slot = g_autoboot_slot;
+         fe_evt("autoboot rom=%s slot=%d", rom_path, slot);
       }
       else
       {

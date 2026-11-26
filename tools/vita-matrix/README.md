@@ -88,3 +88,11 @@ the others. Add a column or a key name there.
 `python3 tools/vita-matrix/test_matrix.py` (plain Python, no network or emulator):
 the playlist parser, every column, and the restore logic for files that existed,
 files that did not, a failing entry, Ctrl-C, and `--restore` after a killed run.
+
+### Starting from a save state
+
+`autoboot.txt` takes an optional second line `slot=N` (1 to 9): the game opens that
+save state as soon as it runs, so a measurement can start at a battle or a busy
+scene instead of the title. The state is the game's own (`states/<console>/<bucket>/<name>.st<N-1>`),
+so a test copy of a game needs its states copied under the test copy's name.
+

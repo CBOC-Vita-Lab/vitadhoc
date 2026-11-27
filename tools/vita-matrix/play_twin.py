@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """play.py GAME ROMFILE "script" [--from N] [--save N] [--every F] [--frames F]
-Twin play session in /root/vad/play/GAME/root. Starts from checkpoint N (a copy of a
+Twin play session in $PLAY_DIR/GAME/root. Starts from checkpoint N (a copy of a
 quick save), runs the script (plat_host syntax, frames relative to start), takes a
 screenshot every F frames, quick-saves at the end (SELECT+L) and keeps it as checkpoint --save."""
 import argparse, glob, os, shutil, subprocess, sys, zlib
-X = "os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../gpsp/vita/hostcore/build/x86/gbadhoc_host")"
+X = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../gpsp/vita/hostcore/build/x86/gbadhoc_host")
 ap = argparse.ArgumentParser()
 ap.add_argument("game"); ap.add_argument("rom"); ap.add_argument("script")
 ap.add_argument("--from", dest="frm", type=int, default=0)

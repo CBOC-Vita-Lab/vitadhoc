@@ -22,10 +22,12 @@
 #                   memory and heap arrangement
 #
 # VARIABLES
-#   VERSION=4.1.1        the GBAdhoc release the core started from; written to
-#                        PARAM.SFO (APP_VER)
+#   VERSION=4.1.1        the GBAdhoc release the core started from
 #   CORE_VERSION=...     what the log, link compatibility and RetroAchievements
 #                        report as the core: VERSION plus the 4.5.0 fixes taken in
+#   APP_VER=02.00        PARAM.SFO version (NN.NN), decoupled from VERSION and
+#                        CORE_VERSION so LiveArea/VitaShell/VitaDB show 2.00
+#                        while link compatibility stays intact
 #   TITLE_ID=GBAD00001   the bubble's id (4 letters + 5 digits)
 #   ARM_FAR_STUBS=1      build the core with -DARM_FAR_STUBS (arm/: stubs
 #                        reached through veneers instead of a 24-bit bl)
@@ -124,7 +126,7 @@ APP_DEFS += -DNP_TARGET_VITA
 # gate's variable) so a shell can set it once.
 MBEDTLS ?= $(or $(MBEDTLS_VITA),$(GATE_MBEDTLS_VITA))
 ifneq ($(strip $(MBEDTLS)),)
-APP_DEFS += -DNP_HAVE_MBEDTLS -I$(MBEDTLS)/include
+NET_MBEDTLS_FLAGS := -DNP_HAVE_MBEDTLS -I$(MBEDTLS)/include
 MBEDTLS_LIBS := -L$(MBEDTLS)/lib -lmbedtls -lmbedx509 -lmbedcrypto
 else ifneq ($(filter vpk $(VPK),$(MAKECMDGOALS)),)
 $(error make vpk needs MBEDTLS=<prefix>: python3 tools/online/build-mbedtls.py --target vita --work DIR, then MBEDTLS=DIR/mbedtls/vita (or export MBEDTLS_VITA=that prefix); docs/BUILDING.md, Mbed TLS)
@@ -155,8 +157,15 @@ endif
 # bytes shorter than the library's). Their public header (np_https.h) keeps every enum 4 bytes wide, so the rest of
 # the app, built with the default, sees the same layout.
 NET_ENUM_FLAGS := -fno-short-enums
+NET_STAMP := $(B)/.netflags
+$(NET_STAMP): FORCE
+	@mkdir -p $(dir $@)
+	@printf '%s\n' $(call shq,$(NET_ENUM_FLAGS) | $(NET_MBEDTLS_FLAGS)) > $@.new
+	@cmp -s $@.new $@ || cp $@.new $@
+	@rm -f $@.new
 $(B)/app/nethttps/np_https.o $(B)/app/nethttps/np_https_sys.o $(B)/app/nethttps/np_https_tls_mbedtls.o: \
-  APP_FILE_FLAGS := $(NET_ENUM_FLAGS)
+  APP_FILE_FLAGS := $(NET_ENUM_FLAGS) $(NET_MBEDTLS_FLAGS)
+$(B)/app/nethttps/np_https.o $(B)/app/nethttps/np_https_sys.o $(B)/app/nethttps/np_https_tls_mbedtls.o: $(NET_STAMP)
 # The upscaler's per-pixel loops (Scale2x/3x, the picture's preparation):
 # -O3 for this object only (a third fewer instructions in epx_rows on the
 # host twin); the rest of the app stays -O2.
@@ -306,9 +315,9 @@ $(VELF): $(ELF) $(B)/elfpad.o
 $(SELF): $(VELF)
 	$(VITASDK)/bin/vita-make-fself $(if $(filter 1,$(UNSAFE)),,-s) -c $< $@
 
-# APP_VER is NN.NN.  3.5.0 -> 03.50; a third component is the second digit
-# of the minor field.
-APP_VER := $(shell echo $(VERSION) | awk -F. '{ printf "%02d.%d%d", $$1, $$2, $$3 }')
+# APP_VER is NN.NN (shown in LiveArea, VitaShell and VitaDB), decoupled from
+# VERSION and CORE_VERSION (4.1.1+4.5.0fixes) so link compatibility stays intact.
+APP_VER ?= 02.00
 $(SFO): Makefile $(APP_STAMP)
 	@mkdir -p $(dir $@)
 	$(VITASDK)/bin/vita-mksfoex -s TITLE_ID=$(TITLE_ID) -s APP_VER=$(APP_VER) \

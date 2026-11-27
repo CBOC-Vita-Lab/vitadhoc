@@ -33,16 +33,17 @@ response, No sprite flicker.
   tolerance is a six-pixel target. A tap does not open the menu in a Zapper
   game: use Start + Select. If a game that uses the Zapper is not in the core's
   database, set Settings > This game > Port 2 to Zapper.
-- **The rear touch panel** (main app and players) has no hold time or grip
-  area: the Vita's grips can touch it. Where its halves meet comes from the
-  report range other Vita software uses (y 108 to 889), not from a measurement
-  on a console. It is Off until you turn it on, and
-  nothing is bound to a corner until you bind it. On the WonderSwan a corner
-  can press the buttons the Vita's own buttons press (it follows the game's
-  turn: the d-pad is the Y buttons in an upright game), not a WonderSwan
-  button by name.
-- **The Button test** shows the WonderSwan's buttons for a game held
-  sideways only.
+- **The rear touch panel** across all eleven consoles (the main app `eboot.bin`,
+  `snes.bin` and `md.bin`) applies a 12% outer edge grip inset and ~8% center
+  crosshair deadzone to reject resting hands on the Vita's grips and midline
+  flutter. Where the halves meet comes from the report range other Vita
+  software uses (y 108 to 889), not from a measurement on a console. The panel
+  is Off until you turn it on, and nothing is bound to a corner until you bind
+  it. On the WonderSwan, a corner bound to a game button follows the game's turn
+  using consistent physical buttons (`Circle = A`, `Cross = B`, raw unswapped on
+  Asian Vitas).
+- **The Button test** shows the WonderSwan's sideways buttons only (`X1`–`X4`
+  on D-pad, `Circle = A`, `Cross = B`, `Start`).
 - **Interface languages are new and checked on the PC test twin only.**
   The seven translations (Spanish, French, German, Italian, Brazilian
   Portuguese, Japanese, Simplified Chinese) are machine translations awaiting
@@ -118,9 +119,10 @@ sharing).
 - **A GBA cable link between two different games sends a whole cartridge once**
   (up to 32 MB); over the relay that is slow. It is kept in the cache for
   later sessions.
-- **Two players (NES, WonderSwan, Super NES, Genesis / Mega Drive, Master
+- **Two players (NES, WonderSwan, Super NES, Genesis / Mega Drive, Sega CD, Master
   System, SG-1000)** runs one shared game on both Vitas, so both need the very
-  same game file (a patched copy does not match an unpatched one). The
+  same game file (a patched copy does not match an unpatched one; Sega CD Two
+  players is single-disc `.cue`/`.iso`/`.chd` only, not `.m3u`). The
   WonderSwan's own link cable is not emulated, the Game Gear has no two-player
   mode, and the Super NES and Sega consoles have no Nearby (ad hoc) option.
   Both Vitas need VitAdhoc 2.0.
@@ -163,10 +165,19 @@ sharing).
   budget of 84 % of the display's refresh (about 14 ms) less the time the main
   thread spends on a refresh besides emulating (never slower than 2x), and
   from measured frame costs, not from a Vita. Keep sound is listed for 2x and
-  3x only, as the Unlimited choices are silent. The players
-  have no Enhanced 4x in Image quality (no 4x scaler), and their Rewind length
-  is Short (about 30 s) or Medium (about a minute); the app's rewind has no
-  length row yet.
+  3x only, as the Unlimited choices are silent. Super NES and Mega Drive / Sega
+  CD omit Enhanced 3x and 4x in Image quality (`224 × 3 = 672` exceeds the
+  scaler texture height), while Master System, Game Gear and SG-1000 keep
+  Enhanced 3x (if Pixel-perfect + Wide view on Master System or SG-1000 exceeds
+  the `1024 × 576` scaled texture budget, it steps down automatically to
+  xBR 2x). Their Rewind length is Short (about 30 s) or Medium
+  (about a minute); the app's rewind has no length row yet. Note that while
+  `snes.bin` and `md.bin` now include an in-game Achievements viewer
+  (`Settings > Achievements`), Light theme & Tap screen for menu synced via
+  `display.ini`, and mappable PNG Screenshots, RetroAchievements sign-in and
+  Hardcore toggles stay in the main app's Settings. Right-stick Rewind is
+  enabled by default across all eleven consoles (right stick left, or
+  `Select + Square`).
 - **Quick response** shows what you press one frame sooner by working out the
   next frame ahead; the game runs exactly the same and states, rewind and saves
   are unaffected. It costs about twice a plain frame (1.2 to 1.7 times on the
@@ -315,8 +326,10 @@ sharing).
   off in a linked game and with the wide view's split capture.
 - **Players 3 and 4** need the Super Multitap (Auto turns it on for games
   known to use it) and extra controllers, not tried on a real Vita yet.
-- The Super NES and Sega players have no RetroAchievements settings: sign in and
-  choose Hardcore in the app.
+- RetroAchievements sign-in and Hardcore settings live in the main app's
+  Settings and apply to the Super NES and Sega players; both players include an
+  in-game **Achievements** viewer (`Settings > Achievements`) during
+  single-player play.
 
 ## NES And Famicom
 
@@ -349,7 +362,9 @@ sharing).
 - **Buttons.** Held sideways, a game's second cross is not on a button (the
   right stick fast-forwards and rewinds). Upright, the d-pad and the four face
   buttons are the two crosses, L is A and R is B. Button mapping does not apply
-  to WonderSwan games.
+  to WonderSwan games; WonderSwan reads raw unswapped physical buttons (`Circle = A`,
+  `Cross = B`) even on Asian Vitas so pad, rear touch corners and Button test
+  agree.
 - **Cheats** are RAM codes (`AAAAA:VV`, hex) from the game's `.cht` file in
   `ux0:data/GBAdhoc/cheats/` or typed on the Cheats page. The ready-made list
   has a single game; use RetroArch's `.cht` files for the rest.
@@ -390,13 +405,14 @@ Game Boy), and the oam_bug sprite-memory corruption tests are not emulated (3 of
   with two 16 MB games at once. A full trade between versions has not been
   played through.
 - **Mystery Gift** from a phone, all the way into the game's save.
-- **Collections and playlists:** matching a RetroArch playlist item by
-  checksum uses the bundled No-Intro names, so a hack or a game the database
-  does not know is matched by path or file name only; compressed (rzip)
+- **Collections and playlists:** matching a RetroArch or Emu4Vita++ playlist
+  item by checksum uses the bundled No-Intro names, so a hack or a game the
+  database does not know is matched by path or file name (including entries
+  inside `.zip#` and `.7z#`); compressed (rzip) playlists and unsupported-system
   playlists are skipped, and there is no "Two players" view because no bundled
   data has a player count. Limits: 24 collections, 4,096 games in them, 16
-  playlists. Tested on the PC build; the Vita's folders (`uma0:` included) and
-  the on-screen keyboard have not been used on a console.
+  playlists. Tested on the PC build; the Vita's folders (`uma0:`, `imc0:`,
+  `ur0:` included) and the on-screen keyboard have not been used on a console.
 - **Save clip** (the in-game menu's card) and the **update check** are untested on a Vita. The clip's file and the check's
   parsing were checked on the PC test build, the check against a fake server
   only: GitHub itself was never asked. Whether GitHub's certificate chain ends
@@ -432,13 +448,18 @@ Game Boy), and the oam_bug sprite-memory corruption tests are not emulated (3 of
   while its clock ran ahead can see the date go backwards once; the clock then
   waits until the real time catches up. Save type and Clock (RTC) can only be
   changed inside a running game, and apply the next time it starts.
-- **Wide view** for the GBA is made for Pokemon Emerald and its siblings. In
-  other games the edges can miss people or weather. Games without a profile are
-  never stretched.
+- **Wide view** for the GBA defaults to `On + any game` (with `Soft edges`),
+  while dedicated profiles target Pokemon Emerald and its siblings. In other
+  games Mode 7 / background-cache expansion can occasionally misdraw edge
+  tiles, sprites or weather: turn Wide view `Off` (or switch to `On` for
+  profiled games only) in that game's Settings if its edges look wrong. Games
+  without profile or expansion data stay pillarboxed/soft-edged and are never
+  stretched.
 - Some cheats need their "Enable Code (Must Be On)" entry first; a few code
   types are marked unsupported. Cheats switch off while linked and in Hardcore.
-- Search memory looks at work RAM only (not cartridge save RAM or banked Game
-  Boy Color RAM), at unsigned whole numbers of 1, 2 or 4 bytes on aligned
+- Search memory looks at work RAM only (not cartridge save RAM; Game Boy Color
+  searches banked work RAM banks 2–7 at `0x10000`–`0x15FFF` as well as
+  `C000`–`DFFF` and high RAM), at unsigned whole numbers of 1, 2 or 4 bytes on aligned
   addresses (the Game Boy, NES, WonderSwan, Super NES and Master System
   family also have "2 bytes, any address" and "4 bytes, any address"; the
   Game Boy Advance and the Mega Drive do not, their words are always aligned);

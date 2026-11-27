@@ -1,6 +1,6 @@
 # Features And Settings
 
-VitAdhoc combines GB, GBC, GBA, Super NES, NES, WonderSwan and Sega (Genesis / Mega Drive, Master System, Game Gear, SG-1000) emulation with a Vita-native library,
+VitAdhoc brings eleven consoles — GB, GBC, GBA, Super NES, NES, WonderSwan, Genesis / Mega Drive, Sega CD, Master System, Game Gear and SG-1000 — together with a Vita-native library,
 display pipeline, touch input and motion controls. This is the detailed guide;
 start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 [Play Together](../PLAY-TOGETHER.md) for a specific task.
@@ -18,7 +18,7 @@ start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 | WonderSwan / Color | Beetle WonderSwan (Mednafen) inside the app (GPL-2.0-or-later); 224 x 144 at 75.47 frames a second, blended into each 59.94 Hz refresh; horizontal and vertical games |
 | Sega Genesis / Mega Drive, Master System, Game Gear, SG-1000 | Genesis Plus GX in its own program (`md.bin`, non-commercial licence), one player for the four consoles; the app's library, Starred, Recent, play time, Continue, ten state slots, cheats from the bundled database, RetroArch save import and crash protection work as for the Super NES; saves are `Game.srm` beside the game |
 | Rendering | GXM/libvita2d; GBA render worker and CPU upscaling workers |
-| Input | Buttons, sticks, front touch, rear touch (four corners as mappable inputs), NES Zapper on the touch screen, motion sensors; mappings, turbo settings and a Button test page |
+| Input | Buttons, sticks (`Left stick` D-pad / Custom / Off, right-stick fast forward & rewind on by default), front touch, rear touch (four corners as mappable inputs with a 12% grip inset and ~8% center deadzone), NES Zapper on the touch screen, motion sensors; mappings, turbo settings and a Button test page |
 | Sega CD / Mega CD | The same Sega player (`md.bin`) with Genesis Plus GX's disc code, libchdr and tremor; your own Sega CD BIOS is needed (not included); `.cue`+`.bin`, `.iso`, `.chd`, and `.m3u` lists for games on several discs (the list is the game in the library, its discs are hidden, and the in-game menu's Change disc opens the tray, swaps the disc and closes it; saves and saved moments belong to the list's name); all Genesis features, two players, RetroAchievements; saves are `Game.srm` (backup RAM + RAM cartridge, 512 KB by default, or none with Off; the cartridges of the other sizes you tried are kept in the same file); disc reading and CHD decoding (LZMA, zlib, zstd, FLAC) run on a read-ahead thread; a disc whose region has no BIOS shows a notice, not a silent fallback |
 | Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.nes`, `.fds`, `.unf`, `.unif`, `.ws`, `.wsc`, `.pc2`, `.md`, `.gen`, `.smd`, `.sms`, `.gg`, `.sg`, `.cue`, `.chd`, `.iso`, `.m3u` (and `.bin` when it is a Genesis image); supported stored/deflated `.zip` entries and `.7z` archives (LZMA, LZMA2, BCJ, BCJ2, Delta) with a game up to 32 MiB |
 | Library | Up to 2,048 games per console; folders scanned two levels deep |
@@ -59,15 +59,17 @@ RetroAchievements data) says how many players a game has, and it is not guessed.
 
 **RetroArch and Emu4Vita++ playlists.** The `.lpl` files in
 `ux0:data/retroarch/playlists` and `ux0:data/EMU4VITAPLUS/playlists` (and the
-same folders on `uma0:`) are read when the list opens and shown as read-only
-collections named after the file. An item is matched to a game by its path,
+same folders on `uma0:`, `imc0:` and `ur0:`) are read when the list opens and
+shown as read-only collections named after the file (both JSON and legacy
+6-line `.lpl` formats are read). An item is matched to a game by its path,
 then by its file name (a path from another machine still finds the game, and so
-does the name inside a `.zip#`), then by its checksum: the item's CRC32 is
-looked up in the bundled No-Intro table and its name compared with the game's
-file name, so no game file is read. VitAdhoc never writes to RetroArch's or
-Emu4Vita++'s files. Not read: compressed (rzip) playlists, files past 8 MB (the
-items before that are used), more than 16 playlists, 4,096 items to a playlist
-or 8,192 in all.
+does the name inside a `.zip#` or `.7z#`), then by its checksum: the item's CRC32
+is looked up in the bundled No-Intro table and its name compared with the game's
+file name, so no game file is read. Playlists for unsupported systems (such as
+arcade or PS1) are filtered out automatically, and VitAdhoc never writes to
+RetroArch's or Emu4Vita++'s files. Not read: compressed (rzip) playlists, files
+past 8 MB (the items before that are used), more than 16 playlists, 4,096 items
+to a playlist or 8,192 in all.
 
 **Settings > Library > Game names** chooses what the list calls a game: "Game
 title" (the default) cuts the bracketed tags, so `Quest (Hack v2).gba` reads
@@ -107,12 +109,11 @@ states from other emulators are not portable battery saves. Import size is
 limited to 256 KiB and compatibility still depends on the save layout.
 
 **Undo and lock.** On the state page, R undoes: the save just made over the
-slot (its `.bak`, one per slot, written before the new state replaces it) or
-the last load (the game is captured into a hidden `Game.st0.undo` before every
-load). L locks a slot (a `.lock` flag file; a padlock shows on its card): a
+slot (its `.bak`, or `.undo` in the players, written before the new state replaces it) or
+the last load (the game is captured into `Game.st0.undo` or `Game.undo` before every
+load). L locks a slot (a `.lock` flag file; `[LOCK]` / padlock shows on its card): a
 locked slot is not overwritten or deleted, quick save included. State files are
-written to a temporary name and renamed. The SNES player has the same wording
-and files (`playerkit/src/pk_states`).
+written to a temporary name and safely promoted (with `.old` two-step backup on Vita FAT32). Both the Super NES and Sega players share the same wording, L/R shortcuts and `.lock` / `.undo` files (`playerkit/src/pk_states.cpp`).
 
 State menus show five entries at a time and scroll through all ten. Quick
 save/load (Select + L / Select + R) uses slot 1. State sharing remains limited to five slots
@@ -206,9 +207,13 @@ New in 1.4:
   15 games for 3000 frames each). On shows the full margin; Off is the plain
   picture.
 - **Image quality** is the main app's one row (Auto, Original, Enhanced 2x,
-  Enhanced 3x, MMPX 2x; no 4x scaler in a player, so Enhanced 4x is not
-  offered). Auto eases the scaler and the hi-res and interlace blends only
-  when a game cannot hold 60; a choice made by hand is never eased.
+  MMPX 2x; Enhanced 3x and 4x are omitted on Super NES because `224 × 3 = 672`
+  exceeds the `512`-line scaler texture). Auto eases the scaler and the hi-res
+  and interlace blends only when a game cannot hold 60; a choice made by hand
+  is never eased. (In the Sega player, Master System, Game Gear and SG-1000
+  also offer Enhanced 3x — automatically stepping down to Enhanced 2x when
+  Pixel-perfect + Wide view exceeds the `1024 × 576` texture budget — while
+  Mega Drive and Sega CD offer up to Enhanced 2x.)
 - **Cheats** and ten state slots with pictures, from Snes9x's post-1.63 fixes;
   a new audio pacer keeps the sound even.
 - **Rewind** (Short about 30 s or Medium about a minute, sound off), **fast forward**
@@ -242,8 +247,10 @@ sides are filled with the game's own picture only where it is proven (its
 name tables, what the scroll has shown, a learned map of the level kept in
 `ux0:data/GBAdhoc/nes/wide/`), otherwise they fade. Auto shows the plain
 picture while nothing is known at the sides. The picture keeps one scale for
-both directions. In the SNES player, wide view works the same way and is
-described under Super NES.
+both directions. NES Wide View (`424 × 224` / `424 × 240`) supports full 2x
+CPU upscaling (`xBRZ 2x`, `Scale2x`, `MMPX 2x`; `UP_MAX_W = 448`) and crisp
+Sharp Bilinear (`1344 × 720` render target). In the SNES player, wide view works
+the same way and is described under Super NES.
 
 ## Steady pacing
 
@@ -330,17 +337,24 @@ between xBRZ 2x and sharp bilinear on the ladder and can be picked by hand.
 on a line are drawn instead of blinking; the game's own flags keep the hardware's limit, so nothing but the picture changes. Frames
 that are not drawn (fast forward, Steady pacing's half mode) leave the game exactly as drawn ones do.
 
-Each is its own console in the list (alphabetical by name). Folders: see
-[Install](../INSTALL.md); every folder directly inside `ux0:ROMS/` is scanned
-and the file ending picks the console (`.md`, `.gen`, `.smd`, `.sms`, `.gg`,
-`.sg`; `.bin` only when it is a Genesis image, zips too). Names, box art and
-descriptions come from the game database by checksum (an `.smd` file's header
-is removed before its checksum is taken) or by name. Cheats: the bundled
-`cheats.db` entries for the game are handed to the player as a RetroArch
-`.cht` file (Genesis `AAAAAA:VVVV`, others `AAAA:VV`). Starting a game writes
-`launch/<console>.ini`; the player writes `launch/session.txt` back when it
-ends (play time, Continue). Two crashes in a row start the next launch with the
-safe picture settings. Saves import from and export to RetroArch's
+Each is its own console in the list (alphabetical by name), with aligned console
+accents. Folders: see [Install](../INSTALL.md); every folder directly inside
+`ux0:ROMS/` is scanned and the file ending picks the console (`.md`, `.gen`,
+`.smd`, `.sms`, `.gg`, `.sg`; `.bin` only when it is a Genesis image, zips too).
+Names, box art and descriptions come from the game database by checksum (an
+`.smd` file's 512-byte header is removed and 16 KiB blocks are deinterleaved
+before its checksum or Two-players transfer is taken) or by name. Game Gear
+composes its LCD colour correction and Screen profile (`OLED` / `LCD` / `PS TV`)
+in a single LUT pass, and Mega Drive region switches update frame pacing in
+place without stopping the draw thread. Both the Super NES and Sega players
+now expose an in-game **Achievements** page (`Settings > Achievements`), sync
+**Light theme** and **Tap screen for menu** via `display.ini`, and support
+mappable PNG **Screenshots** (`ux0:data/GBAdhoc/screenshots/`). Cheats: the
+bundled `cheats.db` entries for the game are handed to the player as a
+RetroArch `.cht` file (Genesis `AAAAAA:VVVV`, others `AAAA:VV`). Starting a
+game writes `launch/<console>.ini`; the player writes `launch/session.txt` back
+when it ends (play time, Continue). Two crashes in a row start the next launch
+with the safe picture settings. Saves import from and export to RetroArch's
 Genesis Plus GX, PicoDrive, BlastEm and SMS Plus GX folders. Settings rows that
 only the GBA and Game Boy cores have are hidden for these games.
 
@@ -360,9 +374,10 @@ end, which RetroArch ignores).
   Vita turned on its side (Vertical play: Turn the Vita). The picture and
   the buttons change in the same frame; the first time, a hint shows the
   layout. Rotation: Auto, Horizontal or Vertical is kept per game.
-- **Buttons.** Sideways: d-pad, Circle = A, Cross = B, Start. Upright: the
-  d-pad is the game's cross turned with the picture, the face buttons its
-  second cross, L = A, R = B.
+- **Buttons.** Sideways: d-pad, Circle = A, Cross = B (using raw unswapped Vita
+  pad inputs even when Circle is Vita Enter, matching rear touch and Button
+  test), Start. Upright: the d-pad is the game's cross turned with the picture,
+  the face buttons its second cross, L = A, R = B.
 - **75 frames a second on a 60 Hz screen.** Each refresh runs the one or two
   console frames it covers and shows their blend, weighted by time
   (Settings > Display > Smooth 75 Hz motion, on by default), so scrolling
@@ -375,10 +390,10 @@ end, which RetroArch ignores).
 ## Cheats on every console
 
 The Cheats page works the same for every console: the list for the game (from
-the bundled database for GBA, GB, GBC and NES games and one WonderSwan game, or the game's `.cht` file in
+the bundled database for GBA, GB, GBC, NES, WonderSwan and the Sega consoles, or the game's `.cht` file in
 `ux0:data/GBAdhoc/cheats/` in RetroArch's format), codes typed by hand with
-a name, a switch per code, delete, and the choices kept per game. Codes are
-off during a link session and in RetroAchievements Hardcore. Formats: GBA
+a name, a switch per code (`Cross`), add (`Triangle`), delete (`Square`), and
+the choices kept per game. Codes are off during a link session and in RetroAchievements Hardcore. Formats: GBA
 (GameShark, Action Replay, CodeBreaker, raw), GB/GBC (GameShark, Game Genie),
 NES (Game Genie 6 or 8 letters, Pro Action Replay, `AAAA:VV`, `AAAA?CC:VV`),
 WonderSwan (`AAAAA:VV`: a RAM address, 00000-0FFFF the console's memory,
@@ -422,8 +437,9 @@ consoles whose codes poke one byte a 2 or 4 byte result is several pokes
 joined by `+`. It searches the work RAM a typed code can reach (GBA IWRAM and
 EWRAM; Game Boy C000-DFFF and the top RAM; NES 0000-07FF; WonderSwan system
 RAM; Super NES $7E0000-$7FFFFF; Genesis $FF0000-$FFFFFF; the 8 bit Sega
-consoles $C000-$DFFF), through the same memory maps RetroAchievements uses;
-cartridge (save) RAM and banked Game Boy Color RAM are not searched. It is off
+consoles $C000-$DFFF), through the same memory maps RetroAchievements uses (including Game Boy Color
+work RAM banks 2–7 at `0x10000`–`0x15FFF`, generating `92..97` GameShark
+codes); cartridge (save) RAM is not searched. It is off
 while linked and in RetroAchievements Hardcore, with the same messages as the
 Cheats page, and it says so on the Game Boy's one-console two-player mode,
 where the game's memory cannot be read. A suspended Cheats page no longer
@@ -471,14 +487,16 @@ the original Pokemon Emerald family, not every game with a similar name.
 ROM hacks can change the layout or rendering enough to break a profile.
 The [performance report](PERFORMANCE.md) includes Pokemon Unbound measurements.
 
-NES and Super NES have their own wide view (described under those consoles);
-GBA, GB, GBC and WonderSwan fill the screen's height. For GBA, by default
-Wide view is on only for games that have a profile; every other
-game is shown at the console's own shape (240 x 160 at 816 x 544) with bars,
-never stretched. Where a profiled game has nothing more to show (a menu), the
-default is black bars; **Wide view: menus** can fade the picture's edges or
-stretch it instead. Wide view leaves the game's save unchanged. Turn it off
-for a game whose edges are incorrect.
+NES, Super NES and the Sega consoles have their own wide view (described under
+those consoles); GBA, GB, GBC and WonderSwan fill the screen's height. For GBA,
+by default Wide view is `On + any game` (`WIDE_AUTO`) with
+**Wide view: menus** set to `Soft edges`, so the GBA catalogue gets full-width
+Wide view out of the box; `Off`, `On` (only for games that have a profile),
+`On + 3D tracks` and `On + any game` are selectable in Settings > Display > Wide
+view. Games without profile or expansion data stay at the console's own shape
+(240 x 160 at 816 x 544) with bars or soft edges, never stretched. Turn Wide
+view off for a game whose edges are incorrect; it leaves the game's save
+unchanged.
 
 ### Borders, Overlays And Screenshots
 
@@ -488,8 +506,10 @@ PNG screen overlays are separate: put a transparent image in
 console-wide fallback. A 960 x 544 image matches the output; other sizes up
 to 1024 x 1024 stretch to fit.
 
-**Screen, CRT mask, Text size and High contrast** (the same words in the app and both
-players; one global setting each, stored in `display.ini` beside `config.ini`):
+**Screen, CRT mask, Text size, High contrast, Theme (Light / Dark) and Tap screen
+for menu** (the same words in the app and both players; `screen`, `text_size`,
+`contrast`, `language`, `theme` and `tap_menu` are synced globally across all
+eleven consoles in `display.ini` beside `config.ini`):
 
 - **Screen: Auto / OLED (PCH-1000) / LCD (PCH-2000) / PS TV** is a mild colour
   correction folded into the colour table (no extra pass). Exact transform on
@@ -498,8 +518,8 @@ players; one global setting each, stored in `display.ini` beside `config.ini`):
   `c = Y + 0.92 (c - Y)`, clamp, then `c = c^1.06`, back to RGB565. Black and white stay put. The
   numbers are estimates chosen to be mild, not measured. Auto = PS TV when
   running on a PS TV, otherwise LCD (there is no reliable way to read the
-  handheld model). GBA screen colours are applied first and the profile after,
-  in one table.
+  handheld model). GBA screen colours and Game Gear LCD colours are applied
+  first and the Screen profile after, in one table.
 - **CRT mask 0 to 10** (off by default) draws an aperture-grille stripe
   pattern (R, G, B columns) as one extra multiplied quad. The column width is
   the picture's pixel scale divided by 3 (rounded, 1 to 8 screen pixels); the
@@ -524,10 +544,12 @@ players; one global setting each, stored in `display.ini` beside `config.ini`):
 
 **Settings > Display > Screen overlay** controls overlays. **Scanlines** and **LCD grid**
 are separate rows, each 0 (off, the default) to 10. Screenshots use
-**Settings > Interface > Screenshot folder**, or the default
-`ux0:data/GBAdhoc/screenshots/`. The L + R + Select chord is off until
-**Settings > Controls > Screenshot button combo** turns it on; the Vita's own
-PS + Start always works.
+**Settings > Interface > Screenshot folder** (or `vita.ini screenshots=`), or
+the default `ux0:data/GBAdhoc/screenshots/`, in both the main app and the Super
+NES and Sega players. In the app, the L + R + Select chord is off until
+**Settings > Controls > Screenshot button combo** turns it on (or Button
+mapping assigns Screenshot); in the Super NES and Sega players, Screenshot is
+mappable in Button mapping; the Vita's own PS + Start always works.
 
 ### Save Clip
 
@@ -691,12 +713,15 @@ toast, and the live value of a leaderboard attempt (Hardcore). Rich presence
 is sent with the 30-second ping and logged.
 Achievement processing pauses during link play (a two-player game, local or
 online, on every console) and resets progress after state loading, rewind or
-link sessions. The Super NES and Sega players do not even look the game up when
-it starts as a linked game, and Hardcore restrictions are not in force there:
-nothing can be earned and nothing is refused until the game is started on its
-own. This is a decision, not a gap: achievements are measured on one machine,
-a linked game runs two. Network retries do not establish
-that every offline unlock has been accepted by the service.
+link sessions. Sign-in and Hardcore switches live in the main app's Settings,
+and both the Super NES and Sega players include an in-game **Achievements**
+page (`Settings > Achievements`) during single-player play. The Super NES and
+Sega players do not even look the game up when it starts as a linked game, and
+Hardcore restrictions are not in force there: nothing can be earned and nothing
+is refused until the game is started on its own. This is a decision, not a gap:
+achievements are measured on one machine, a linked game runs two. Network
+retries do not establish that every offline unlock has been accepted by the
+service.
 
 For sign-in troubleshooting, see [Known Issues](../KNOWN-ISSUES.md).
 
@@ -708,10 +733,12 @@ Boktai. **Settings > This game** selects motion or right-stick input, strength,
 direction and a level calibration. Physical direction and sensitivity need
 game-specific checking; do not assume all cartridges use the same axes.
 
-Controls can be remapped. Turbo A/B variants support hold or toggle and
-10, 15 or 30 presses per second; they rest during link play and reset when a
-menu opens or a state loads. The menu shortcut remains reachable. See
-[Controls](../CONTROLS.md) for the defaults and two-player input switching.
+Controls can be remapped. **Settings > Controls > Left stick** (`D-pad` /
+`Custom` / `Off`) and **Rewind with right stick** (on by default across all
+eleven consoles) can be changed in Settings. Turbo A/B variants support hold or
+toggle and 10, 15 or 30 presses per second; they rest during link play and
+reset when a menu opens or a state loads. The menu shortcut remains reachable.
+See [Controls](../CONTROLS.md) for the defaults and two-player input switching.
 
 **Rear touch panel** (2.0, Settings > Controls, Off by default; the same row in
 the Super NES and Sega players): the panel is read in two halves both ways, so
@@ -724,9 +751,13 @@ game's `games/<ROM>.ini`) overrides the global `rear_touch` of `config.ini`.
 While it is Off the panel is not read at all, also not while Button mapping
 waits for a button (fingers rest on the back): turn it on first to bind a
 corner. The menus do not take a corner as a press. The panel reports y from
-108 to 889 (x 0 to 1919), so the halves meet at x = 960, y = 499, in the app
-and in the players. There is no hold time or grip area. On the WonderSwan, whose buttons are the Vita's own, a corner
-bound to a game button presses the WonderSwan button that button's own key presses.
+108 to 889 (x 0 to 1919), so the halves meet at x = 960, y = 499. Across all
+eleven consoles (`ctl_rear_zones` in the main app, and matching zone mapping
+in `snes.bin` and `md.bin`), a 12% outer edge grip inset and ~8% center
+crosshair deadzone reject resting hands on the Vita's rear grips and edge
+jitter. On the WonderSwan, physical `Circle = A` and `Cross = B` (raw unswapped
+Vita buttons) stay consistent across the pad, rear touch corners and Button
+test.
 
 **NES Zapper** (2.0): FCEUmm's game database (the core's own, the same list the
 libretro core uses) says which games have a Zapper and on which port; for them,
@@ -759,7 +790,7 @@ names are for a game held sideways.
 | GBA Link Cable | Two Vitas; each can play a different GBA game (Ruby with Sapphire): the partner's game crosses once, is checked and is kept in a cache; Same Wi-Fi, Online or Nearby (ad hoc) |
 | GBA Wireless Adapter | Supported Wireless Adapter games; Same Wi-Fi, Online or Nearby |
 | GB / GBC cable | Each Vita can play a different cartridge, and a `.gb` game can pair with a `.gbc` game; a cartridge the other Vita does not have is sent in memory for the session; Same Wi-Fi, Online or Nearby |
-| Two players (NES, WonderSwan, SNES, Genesis / Mega Drive, Master System, SG-1000) | Two Vitas share one game: the host is player 1, the joiner player 2. Both need the same game file. Same Wi-Fi or Online (NES and WonderSwan also Nearby). The Game Gear has no two-player mode. See [Play Together](../PLAY-TOGETHER.md) |
+| Two players (NES, WonderSwan, SNES, Genesis / Mega Drive, Sega CD, Master System, SG-1000) | Two Vitas share one game: the host is player 1, the joiner player 2. Both need the same game file (single-disc `.cue`/`.iso`/`.chd` for Sega CD; `.m3u` lists are single-player). Same Wi-Fi or Online (NES and WonderSwan also Nearby). The Game Gear has no two-player mode. See [Play Together](../PLAY-TOGETHER.md) |
 | Online (2.0) | A five-character room code links two Vitas anywhere: direct link first, a Cloudflare relay when needed; no router settings, no accounts. See [Online Play](ONLINE.md) |
 | Two players on one Vita | Side-by-side handhelds; switch control or use a supported distinct second pad |
 | Save/state sharing | Same Wi-Fi or Online; first five state slots; receiver should retain backups |
@@ -767,7 +798,7 @@ names are for a game held sideways.
 
 ### Two players on two Vitas (2.0)
 
-NES, WonderSwan, Super NES, Genesis / Mega Drive, Master System and SG-1000
+NES, WonderSwan, Super NES, Genesis / Mega Drive, Sega CD (single-disc), Master System and SG-1000
 games can be played by two Vitas at once, over Same Wi-Fi or Online. Both Vitas run one shared game: the host plays player 1
 and the joiner plays player 2. Both need the very same game file. Only the
 buttons cross the link, so it needs little bandwidth.
@@ -785,7 +816,10 @@ buttons cross the link, so it needs little bandwidth.
   NES or the Sega consoles.
 - Save states, cheats, rewind and fast forward are off while linked. On NES
   and WonderSwan the joiner plays the host's game: the joiner's own game and
-  save come back as they were when the link ends.
+  save come back as they were when the link ends. When a link partner disconnects
+  unexpectedly (`FE_GBLINK_E_PEER_LOST` / `LE_PEER_LOST`), the host preserves
+  its live gameplay progress (while still rolling back on state desync), and the
+  guest rolls back cleanly.
 
 Vita-to-PSP, Bluetooth as a Vita-to-Vita transport, three/four players and
 single-cartridge multiboot are not supported. Hosting by typed address (the

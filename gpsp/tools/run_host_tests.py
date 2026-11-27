@@ -678,7 +678,7 @@ def suites(env: Env, baseline: Path | None):
           # survives a save and a load.
           "gcc -std=gnu99 -DVITA -O1 -g -Wall -Wextra -Werror -Wno-format-truncation "
           "-fsanitize=address,undefined -Ivita -Ipsp -Ifrontend-common "
-          "-Ilibretro/libretro-common/include -I. "
+          "-I../playerkit/src -Ilibretro/libretro-common/include -I. "
           "-o /tmp/t_config_migrate tools/tests/test_config_migrate.c "
           "psp/config_psp.c psp/ctl_map.c frontend-common/fe_util.c "
           "-Wl,--unresolved-symbols=ignore-all && "

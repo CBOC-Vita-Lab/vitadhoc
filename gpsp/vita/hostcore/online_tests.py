@@ -1361,8 +1361,8 @@ def snes_online(T, name, nat, relay, con="snes", lib=False):
     T.check(ka.get("link.punch_key") and ka.get("link.punch_key") == kb.get("link.punch_key") and
             ka.get("link.compat") == kb.get("link.compat"), "both carry the same punch key and pad compat word")
     hs = ra.evt("link_snes_session")
-    T.check(hs and hs[-1].get("how") == "measured" and int(ka.get("link.delay", "0")) >= 3,
-            "A: the host's input delay was measured (%s, link.delay %s)" % (hs and hs[-1]["_"], ka.get("link.delay")))
+    T.check(hs and hs[-1].get("how") == "auto" and int(ka.get("link.delay", "0")) == 0,
+            "A: Auto delay < 1 uses 0 input delay (%s, link.delay %s)" % (hs and hs[-1]["_"], ka.get("link.delay")))
     if relay:
         T.check(ka.get("link.relay_addr") and ka.get("link.relay_addr") == kb.get("link.relay_peer") and
                 kb.get("link.relay_addr") == ka.get("link.relay_peer") and ka.get("link.relay_user"),

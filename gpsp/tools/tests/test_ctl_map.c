@@ -945,25 +945,30 @@ static void test_rear(void)
    unsigned mask;
    const char *ini = "/tmp/t_ctl_rear.ini";
 
-   /* the zones: left/right at x = 960, top/bottom at y = 499, the middle of
-    * the 108..889 the panel reports (the players' split) */
-   x[0] = 0;   y[0] = 108; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_TL);
-   x[0] = 959; y[0] = 498; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_TL);
-   x[0] = 960; y[0] = 498; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_TR);
-   x[0] = 959; y[0] = 499; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_BL);
-   x[0] = 960; y[0] = 499; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_BR);
+   /* the zones: 12% outer grip inset keeps resting fingers quiet and ~8% center
+    * deadzone avoids quadrant flutter (ctl_map.c ctl_rear_zones). */
+   x[0] = 0;    y[0] = 108; CHECK(ctl_rear_zones(x, y, 1) == 0);
+   x[0] = 229;  y[0] = 250; CHECK(ctl_rear_zones(x, y, 1) == 0);
+   x[0] = 230;  y[0] = 201; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_TL);
+   x[0] = 884;  y[0] = 467; CHECK(ctl_rear_zones(x, y, 1) == 0);
+   x[0] = 883;  y[0] = 468; CHECK(ctl_rear_zones(x, y, 1) == 0);
+   x[0] = 883;  y[0] = 467; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_TL);
+   x[0] = 1036; y[0] = 467; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_TR);
+   x[0] = 883;  y[0] = 530; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_BL);
+   x[0] = 1036; y[0] = 530; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_BR);
    /* the two halves are the same height */
    CHECK(CTL_REAR_MID_Y - CTL_REAR_Y0 == CTL_REAR_Y1 + 1 - CTL_REAR_MID_Y);
-   x[0] = 1919; y[0] = 889; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_BR);
+   x[0] = 1919; y[0] = 889; CHECK(ctl_rear_zones(x, y, 1) == 0);
+   x[0] = 1689; y[0] = 796; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_BR);
    CHECK(ctl_rear_zones(x, y, 0) == 0);
    CHECK(ctl_rear_zones(NULL, NULL, 2) == 0);
    /* two fingers light two corners; the same corner twice lights it once */
-   x[0] = 100; y[0] = 100; x[1] = 1800; y[1] = 800;
+   x[0] = 300; y[0] = 250; x[1] = 1600; y[1] = 750;
    CHECK(ctl_rear_zones(x, y, 2) == (CTL_REAR_TL | CTL_REAR_BR));
-   x[1] = 200; y[1] = 200;
+   x[1] = 350; y[1] = 300;
    CHECK(ctl_rear_zones(x, y, 2) == CTL_REAR_TL);
    /* only the panel's four report slots are read */
-   x[0] = 1; x[1] = 1; x[2] = 1; x[3] = 1; y[0] = 1; y[1] = 1; y[2] = 1; y[3] = 1;
+   x[0] = 300; x[1] = 300; x[2] = 300; x[3] = 300; y[0] = 250; y[1] = 250; y[2] = 250; y[3] = 250;
    CHECK(ctl_rear_zones(x, y, 9) == CTL_REAR_TL);
    CHECK(ctl_popcount(CTL_REAR_ALL) == 4);
    CHECK((CTL_REAR_ALL & (CTL_BUTTONS | CTL_STICK_ALL)) == 0);

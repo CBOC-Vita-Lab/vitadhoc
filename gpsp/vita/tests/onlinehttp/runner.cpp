@@ -372,7 +372,7 @@ static void t_errors(const char *base)
       {"E429D", ONLINE_E_BUSY, 429, 9, 0, 0},
       {"E429S", ONLINE_E_RATE, 429, 1, 0, 0},
       {"E401", ONLINE_E_TOKEN, 401, 0, 0, 0},
-      {"E403", ONLINE_E_RELAY, 403, 0, 0, 0},
+      {"E403", ONLINE_E_RELAY_WAIT, 403, 0, 0, 0},
       {"E502", ONLINE_E_RELAY, 502, 0, 0, 0},
       {"E400", ONLINE_E_BAD, 400, 0, 0, 0},
       {"E400V", ONLINE_E_BAD, 400, 0, 0, 0},
@@ -571,9 +571,8 @@ static void load_test_root(void)
 }
 
 #ifdef NP_HAVE_MBEDTLS
-/* Whose roots are whose (np_https_roots.h only_host): each bundled root, served as a one-certificate chain, is an anchor for
- * api.github.com or for every other host, never for both.  (A root is no server certificate, so every verdict here is a refusal;
- * the question is only whether "not trusted" is among the reasons.) */
+/* Whose roots are whose (np_https_roots.h only_host): all twelve bundled
+ * roots carry only_host = 0 so every bundled root anchors every host. */
 static void t_scope(void)
 {
    char why[80] = "";
@@ -598,11 +597,11 @@ static void t_scope(void)
                  other = bn && !(raw_other & MBEDTLS_X509_BADCERT_NOT_TRUSTED);
       const bool mine = r.only_host != NULL;
       own += mine;
-      snprintf(name, sizeof name, "%s: an anchor for %s", r.name, mine ? "api.github.com and nobody else" : "every host but api.github.com");
-      check(gh == mine && room == !mine && other == !mine && (!mine || !strcmp(r.only_host, "api.github.com")), name,
+      snprintf(name, sizeof name, "%s: an anchor for every host", r.name);
+      check(!mine && gh && room && other, name,
             "github %d room %d other %d", gh, room, other);
    }
-   check(own == 4 && NP_HTTPS_ROOT_COUNT == 12, "four roots are the update check's own, eight are the room service's", "%d of %d", own,
+   check(own == 0 && NP_HTTPS_ROOT_COUNT == 12, "all twelve roots apply to every host (only_host = 0)", "%d of %d", own,
          NP_HTTPS_ROOT_COUNT);
 }
 #endif

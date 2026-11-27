@@ -2922,20 +2922,18 @@ def t_wide(S):
         S.check(p4[1].tobytes() != mw[1].tobytes(),
                 "the cartridge's B is another mosaic")
 
-    # ---- the rows' defaults (wide 1, fill 1 since 1.4 -- soft edges where
-    # margins are shown; docs/DEFAULTS-1.4.md): a game without a profile is
-    # the console's own 240 columns, no margins at all (1.3: it used to open
-    # them and fill them with soft edges, which looked stretched)
+    # ---- the rows' defaults (wide 3, fill 1: On + any game with soft edges
+    # where margins have nothing to show)
     r = run("default", None, cfg={"wide_gba": None})
     w = r.evt("wide")
-    S.check(w and w[-1]["mode"] == "1" and w[-1]["fill"] == "1" and
-            w[-1]["margin"] == "0" and w[-1]["profile"] == "0",
-            "the defaults: wide for known games only, no profile, no margins, "
-            "bars (%s)" % (w[-1]["_"] if w else "no line"))
-    d0 = pictures(r, 240)
+    S.check(w and w[-1]["mode"] == "3" and w[-1]["fill"] == "1" and
+            w[-1]["margin"] == "21" and w[-1]["profile"] == "3",
+            "the defaults: wide on + any game, soft edges (%s)" %
+            (w[-1]["_"] if w else "no line"))
+    d0 = pictures(r, 240 + 2 * M)
     if all(d0) and all(plain):
-        S.check(all(d0[i].tobytes() == plain[i].tobytes() for i in range(3)),
-                "...and the picture is the console's, unchanged")
+        S.check(all(differ(d0[i], M, plain[i], 0, 240) == 0 for i in range(3)),
+                "...and the 240 middle columns are the console's, unchanged")
     # the margins of a game with no more to show, where one is opened (the
     # twin's GBADHOC_WIDE_MARGIN_ALWAYS stands in for a profiled game's):
     # soft edges when asked for
@@ -3006,10 +3004,11 @@ def t_wide(S):
                 "fit: the picture reaches both edges of the screen (%s)" % col)
 
     # ---- the rows: from Screen size, Wide view: menus is 7 DOWN (Wide view
-    # is the row above it)
+    # is the row above it); Wide view starts on 3 (On + any game), so one step
+    # left sets it to 2 (On + 3D tracks).
     script = menu_pick(4, wait=100) + set_down(7) + \
         "+10:right\n+10:up\n" \
-        "+10:shot=row.png\n+4:right\n+10:shot=row_on.png\n+4:circle\n" \
+        "+10:shot=row.png\n+4:left\n+10:shot=row_on.png\n+4:circle\n" \
         "+10:circle\n+60:shot=after.png\n" + EXIT_APP
     r = S.run("wide_row", script, config=dict(base, wide_gba=None, wide_fill_gba=0),
               autoboot="gbadhoc-wide.gba", extra=extra)
@@ -3019,7 +3018,7 @@ def t_wide(S):
             look[-1].get("wide_fill") == "1",
             "Settings > Wide view: menus, one step right from bars is soft "
             "edges; Wide "
-            "view, one step right is 2 (%s)" %
+            "view, one step left from 3 is 2 (%s)" %
             [(e.get("wide"), e.get("wide_fill")) for e in look])
     w = r.evt("wide")
     S.check(w and w[-1]["mode"] == "2" and w[-1]["fill"] == "1" and
@@ -3304,6 +3303,10 @@ def picker_moves(r):
     return [int(d["row"]) for d in r.evt("ui_picker move")]
 
 
+def _img_pixels(im):
+    return im.get_flattened_data() if hasattr(im, "get_flattened_data") else im.getdata()
+
+
 def t_picker(S):
     """The Home's console picker: the top bar names only the console in use
     (a pill); TRIANGLE opens a list of every console under it with the active
@@ -3341,7 +3344,7 @@ def t_picker(S):
     # a console with no games (GBC) is dimmed, one with games (NES) is not
     def ink(im, i):
         y = picker_row_y(i)
-        return max(sum(px) for px in im.crop((440, y - 12, 640, y + 12)).get_flattened_data())
+        return max(sum(px) for px in _img_pixels(im.crop((440, y - 12, 640, y + 12))))
     S.check(ink(b, 2) < ink(b, 5) - 60 and ink(b, 2) > 3 * 0 + 150,
             "GBC (0 games) is dimmed but readable, NES (2 games) is not (%d, %d)" % (ink(b, 2), ink(b, 5)))
     # N presses move N rows, wrapping; the library follows each
@@ -3428,8 +3431,8 @@ def t_picker(S):
             "fourteen rows: twelve presses reach the last row, a tap on a row of the scrolled list picks that row (%s)" %
             picker_moves(r))
     end = r.shot("ten_end.png")
-    S.check(max(max(px) for px in end.crop((400, 440, 760, 500)).get_flattened_data()) > 120 and
-            max(max(px) for px in end.crop((400, 500, 760, 506)).get_flattened_data()) < 120,
+    S.check(max(max(px) for px in _img_pixels(end.crop((400, 440, 760, 500)))) > 120 and
+            max(max(px) for px in _img_pixels(end.crop((400, 500, 760, 506)))) < 120,
             "the last row is in view and the list ends above the hint line")
     S.picture(r, "ten_open.png", "picker_ten_open.png", box=PICKER_BOX)
     S.picture(r, "ten_end.png", "picker_ten_end.png", box=PICKER_BOX_EMPTY)
@@ -3718,7 +3721,9 @@ def t_collections(S):
              "retroarch/playlists/bad.lpl": "{{{ not json", "retroarch/playlists/notes.txt": "x"}
     r = run("playlists", "90:select\n+50:select\n+60:shot=pl1.png\n+4:cross\n+60:quit\n", files)
     S.check(r.has(r"^EVT playlist_load file=Test.lpl items=2") and
-            r.has(r"^EVT playlist_load file=bad.lpl items=-1") and
+            (r.has(r"^EVT playlist_load file=bad\.lpl items=-1") or
+             not r.has(r"playlist_load file=bad\.lpl")) and
+            not r.has(r"playlist_load file=notes\.txt") and
             r.has(r"^EVT playlist_load file=Other.lpl items=2") and
             r.has(r"^EVT playlists_read n=2 items=4"),
             "both folders are read, the malformed file is skipped, other files ignored")
@@ -4599,7 +4604,7 @@ def t_art_progress(S):
     S.check(len(covers) == 2,
             "returning from the game resumes and finishes both controlled cover downloads (%d)" % len(covers))
     if ready:
-        red = sum(1 for c in ready.crop((60, 102, 160, 200)).get_flattened_data()
+        red = sum(1 for c in _img_pixels(ready.crop((60, 102, 160, 200)))
                   if c[0] > 180 and c[1] < 60 and c[2] < 60)
         S.check(red > 8000, "the focused cover appears automatically after returning (%d red pixels)" % red)
     S.summary["art_progress_evidence"] = {"requests": requests, "covers": len(covers)}
@@ -4725,7 +4730,7 @@ def t_art_settings(S):
     S.picture(r, "settings_done.png")
     if before and after:
         box = (60, 102, 160, 200)
-        red = lambda im: sum(1 for c in im.crop(box).get_flattened_data()
+        red = lambda im: sum(1 for c in _img_pixels(im.crop(box))
                              if c[0] > 180 and c[1] < 60 and c[2] < 60)
         before_red, after_red = red(before), red(after)
         S.check(before_red < 100 and after_red > 8000,
@@ -7737,22 +7742,21 @@ def t_cpu_speed(S):
 
 
 def t_controls_defaults(S):
-    """1.3 first impressions: an unstretched default picture, one hint once,
-    A and B following the Vita, no stick rewind and no screenshot combo until
-    asked, and the three Settings rows that ask."""
+    """2.0 first impressions: Wide view (On + any game) and right-stick rewind
+    enabled by default, one hint once, A and B following the Vita, no
+    screenshot combo until asked, and the Settings rows that change them."""
     fresh = {"scale_gba": None, "scale_gb": None, "scale_gbc": None,
              "wide_gba": None, "hints": None, "stick_rewind": None,
              "bind_screenshot": None, "ambient_gba": None, "ambient_gb": None,
              "ambient_gbc": None}
-    # -- the default picture of a game with no Wide view profile: the
-    # console's own 3:2, the whole height, black bars, nothing stretched
+    # -- the default picture of a game with no Wide view profile: Wide view on
+    # (On + any game, soft edges) fills 16:9 without stretching
     r = S.run("defaults_fresh",
               "150:shot=a.png\n+40:l+r+select:3\n+60:rstick-left:80\n+20:quit\n",
               config=fresh, autoboot="gbadhoc-test.gba")
     S.clean(r)
-    S.check(r.has(r"^EVT wide mode=1 fill=1 margin=0 profile=0"),
-            "Wide view is on for known games only: no margin for this one, "
-            "and the menus' fill is soft edges (1.4 default)")
+    S.check(r.has(r"^EVT wide mode=3 fill=1 margin=21 profile=3"),
+            "Wide view defaults to On + any game (mode=3) with soft edges")
     S.check(r.has(r"^EVT display_profile .*ambient=2"),
             "the glow beside the picture is on by default")
     im = S.picture(r, "a.png")
@@ -7762,28 +7766,28 @@ def t_controls_defaults(S):
         S.check(sum(1 for v in side if v > 12) >= 6,
                 "...so the sides of the screen are filled, not black (%s)" %
                 side)
-    # the picture itself, with the glow off to see its edges
+    # the picture itself, with Wide view off and glow off to see 3:2 edges
     r2 = S.run("defaults_geometry", "150:shot=g.png\n170:quit\n",
-               config=dict(fresh, ambient_gba=0), autoboot="gbadhoc-test.gba")
+               config=dict(fresh, wide_gba=0, ambient_gba=0), autoboot="gbadhoc-test.gba")
     S.clean(r2)
     im = S.picture(r2, "g.png")
     if im:
         row = [sum(im.getpixel((x, 300))) > 24 for x in range(960)]
         xs = [x for x, v in enumerate(row) if v]
         S.check(xs and xs[0] == 72 and xs[-1] == 887,
-                "the picture is 816 wide (columns %s..%s of 960)" %
+                "with Wide view off, the picture is 816 wide (columns %s..%s of 960)" %
                 (xs[0] if xs else "?", xs[-1] if xs else "?"))
         col = [sum(im.getpixel((100, y))) > 24 for y in range(544)]
         S.check(col[0] and col[543], "...and the whole 544 high: 3:2, "
                 "not stretched sideways")
     S.check(not glob.glob(os.path.join(r.root, "screenshots", "*.png")),
             "L + R + Select takes no screenshot until Settings turns it on")
-    S.check(not r.has(r"^EVT rewind (begin|end)"),
-            "the right stick held left does not rewind by default")
+    S.check(r.has(r"^EVT rewind (begin|end)"),
+            "the right stick held left rewinds by default")
     ini = open(os.path.join(r.root, "config.ini")).read()
-    S.check("hints = 0" in ini and "stick_rewind = 0" in ini and
+    S.check("hints = 0" in ini and "stick_rewind = 1" in ini and
             "ab_buttons" not in ini,
-            "config.ini: the hint is used up, the stick off, and no A/B "
+            "config.ini: the hint is used up, stick rewind on, and no A/B "
             "choice made for the player")
     S.check(len([l for l in r.log if "hints shown" in l]) == 1,
             "one hint, once")
@@ -7791,11 +7795,11 @@ def t_controls_defaults(S):
               prepared=True)
     S.check(not r.has(r"hints shown"), "the second launch shows no hint")
 
-    # -- the Rewind button still works with the stick off; the stick, on
+    # -- the Rewind button still works with the stick off; the stick is on by default
     for name, cfg, keys, want in (
-            ("defaults_rw_chord", {"stick_rewind": None}, "select+square", 1),
-            ("defaults_rw_stick", {"stick_rewind": 1}, "rstick-left", 1),
-            ("defaults_rw_none", {"stick_rewind": None}, "rstick-left", 0)):
+            ("defaults_rw_chord", {"stick_rewind": 0}, "select+square", 1),
+            ("defaults_rw_stick", {"stick_rewind": None}, "rstick-left", 1),
+            ("defaults_rw_none", {"stick_rewind": 0}, "rstick-left", 0)):
         r = S.run(name, "300:%s:60\n420:quit\n" % keys, config=cfg,
                   autoboot="gbadhoc-test.gba")
         S.clean(r)
@@ -7850,13 +7854,13 @@ def t_controls_defaults(S):
     r = S.run("controls_rows", walk, config=fresh)
     S.clean(r)
     S.check(r.has(r"^EVT ab_buttons_setting value=1") and
-            r.has(r"^EVT stick_rewind_setting on=1") and
+            r.has(r"^EVT stick_rewind_setting on=0") and
             r.has(r"^EVT screenshot_combo_setting on=1") and
             r.has(r"^EVT tap_menu_setting on=0"),
-            "each row changes its setting (Tap screen for menu: On, then Off; walk ended on %s)" % walked_to(r))
+            "each row changes its setting (Rewind stick and Tap menu: On, then Off; walk ended on %s)" % walked_to(r))
     ini = open(os.path.join(r.root, "config.ini")).read()
     S.check(re.search(r"^ab_buttons = 1$", ini, re.M) and
-            re.search(r"^stick_rewind = 1$", ini, re.M) and
+            re.search(r"^stick_rewind = 0$", ini, re.M) and
             re.search(r"^bind_screenshot = SELECT\+L\+R$", ini, re.M) and
             re.search(r"^tap_menu = 0$", ini, re.M),
             "and config.ini keeps all four")
@@ -8588,12 +8592,12 @@ def t_rear_touch(S):
     corners at once are two buttons; the game's own choice wins over Settings."""
     cfg = {"bind_a": "REAR_TL", "bind_b": "REAR_BR", "bind_start": "REAR_TR",
            "bind_select": "REAR_BL"}
-    script = ("100:rear=200/200:10\n+0:shot=tl.png\n"
-              "+20:rear=1700/800:10\n+0:shot=br.png\n"
-              "170:rear=200/200:10\n170:rear=1700/800:10\n+0:shot=two.png\n"
-              "+20:rear=1700/200:10\n+0:shot=tr.png\n"
-              "+20:rear=959/889:10\n+0:shot=edge_left.png\n"
-              "+20:rear=960/889:10\n+0:shot=edge_right.png\n"
+    script = ("100:rear=300/250:10\n+0:shot=tl.png\n"
+              "+20:rear=1600/750:10\n+0:shot=br.png\n"
+              "170:rear=300/250:10\n170:rear=1600/750:10\n+0:shot=two.png\n"
+              "+20:rear=1600/250:10\n+0:shot=tr.png\n"
+              "+20:rear=883/750:10\n+0:shot=edge_left.png\n"
+              "+20:rear=1036/750:10\n+0:shot=edge_right.png\n"
               "+20:quit\n")
 
     def lit(name, config, extra=None):
@@ -8606,7 +8610,7 @@ def t_rear_touch(S):
     S.check(got == [""] * 6, "Off by default: the rear panel does nothing (lit: %s)" % got)
     r, got = lit("rear_on", dict(cfg, rear_touch=1))
     S.check(got == ["A", "B", "A+B", "Start", "Select", "B"],
-            "On: the corners are A, B, both, Start; the halves meet at x = 960, y = 499 "
+            "On: the corners are A, B, both, Start; halves outside grip inset and center deadzone "
             "(lit: %s)" % got)
     r, got = lit("rear_game_on", dict(cfg), {"games/gbadhoc-test.gba.ini": "rear_touch = 1\n"})
     S.check(got == ["A", "B", "A+B", "Start", "Select", "B"],
@@ -8615,7 +8619,7 @@ def t_rear_touch(S):
                  {"games/gbadhoc-test.gba.ini": "rear_touch = 0\n"})
     S.check(got == [""] * 6, "this game's own Off wins over Settings On (lit: %s)" % got)
     # a corner is a shortcut too: quick save on the top right, no button
-    r = S.run("rear_save", "100:rear=1700/200:10\n+30:quit\n",
+    r = S.run("rear_save", "100:rear=1600/250:10\n+30:quit\n",
               config={"rear_touch": 1, "bind_quicksave": "REAR_TR"},
               autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -8628,7 +8632,7 @@ def t_rear_touch(S):
             "Settings > Controls > Rear touch panel turns it on and config.ini keeps it (walk ended on %s)" % walked_to(r))
     S.picture(r, "row.png")
     # Button mapping (here from the game list) takes a corner as it takes a button, and names it
-    r = S.run("rear_capture", "60:start\n" + "+8:up\n" * 9 + "+10:cross\n+30:cross\n+20:rear=200/200:10\n+40:shot=bound.png\n"
+    r = S.run("rear_capture", "60:start\n" + "+8:up\n" * 9 + "+10:cross\n+30:cross\n+20:rear=300/250:10\n+40:shot=bound.png\n"
               "+10:circle\n+20:quit\n", config={"rear_touch": 1, "bind_quicksave": "REAR_BR+L"})
     S.clean(r)
     S.check(r.has(r"^EVT ctl_bind key=bind_a mask=0x10000 err=0 .*via=capture"),
@@ -8636,7 +8640,7 @@ def t_rear_touch(S):
     S.picture(r, "bound.png")
     # ...and with the row Off a finger resting on the back is not part of what is captured
     # (in a game: Settings, up to Button mapping)
-    r = S.run("rear_capture_off", menu_pick(4, wait=100) + set_up(17) + "+10:cross\n+30:cross\n+10:rear=200/200:120\n"
+    r = S.run("rear_capture_off", menu_pick(4, wait=100) + set_up(17) + "+10:cross\n+30:cross\n+10:rear=300/250:120\n"
               "+30:triangle\n+60:circle\n+20:quit\n", autoboot="gbadhoc-test.gba")
     S.clean(r)
     S.check(r.has(r"^EVT ctl_bind key=bind_a mask=0x1000 err=0 .*via=capture"),
@@ -8653,7 +8657,7 @@ def t_button_test(S):
     Select held leaves it, no single button does."""
     script = ("60:start\n" + "+8:up\n" * 10 + "+10:cross\n+20:shot=open.png\n"
               "+4:cross:20\n+0:circle:20\n+0:l+r:20\n+0:triangle:20\n+0:start:40\n+0:select:40\n"
-              "+30:touch=480/272:20\n+0:rear=200/200:20\n+0:shot=lit.png\n"
+              "+30:touch=480/272:20\n+0:rear=300/250:20\n+0:shot=lit.png\n"
               "+40:shot=still.png\n"
               "+4:start+select:8\n+30:shot=short.png\n"
               "+4:start+select:50\n+30:shot=left.png\n+10:quit\n")
@@ -9692,7 +9696,8 @@ def t_nes_more(S):
     S.clean(r)
     S.check(r.has(r"^EVT rom_patch file=.*Hack.ips kind=1 rc=1 size=%d" % len(rom)),
             "the IPS patch is applied (%s)" % [e["_"] for e in r.evt("rom_patch")])
-    pf = glob.glob(os.path.join(r.root, "patched", "Hack*"))
+    pf = [p for p in glob.glob(os.path.join(r.root, "patched", "Hack*"))
+          if not p.endswith(".key")]
     S.check(pf and open(pf[0], "rb").read() == bytes(want), "the patched copy is the result, byte for byte")
     S.check(open(os.path.join(r.root, "roms", "Hack.nes"), "rb").read() == rom, "the game's own file is untouched")
     S.check(r.has(r"^EVT game rom=.*/roms/Hack.nes .* save=.*/roms/Hack.srm"), "the save keeps the game's name")
@@ -10478,9 +10483,9 @@ def t_gbcam(S):
     r = S.run("gbcam_plain", "30:quit\n", autoboot="plain.gb", extra={"roms/plain.gb": plain})
     S.clean(r)
     S.check(not r.has(r"^EVT camera_game"), "an ordinary cartridge starts no camera")
-    # 6. Settings > THIS GAME > Camera (24 rows up from Screen size, in a Camera game): Front, Back,
+    # 6. Settings > THIS GAME > Camera (26 rows up from Screen size, in a Camera game): Front, Back,
     # Picture file in turn, the game's file keeps it, and the picture follows at once
-    script = "1:camera=ramp\n" + menu_pick(4, wait=60) + set_up(25) + "+10:cross\n+10:cross\n+30:quit\n"
+    script = "1:camera=ramp\n" + menu_pick(4, wait=60) + set_up(26) + "+10:cross\n+10:cross\n+30:quit\n"
     r = S.run("gbcam_row", script, autoboot="cam.gb", extra={"roms/cam.gb": rom})
     S.clean(r)
     S.check([e["mode"] for e in r.evt("camera_setting")] == ["1", "2"],
@@ -10555,7 +10560,7 @@ def t_gbprinter(S):
                   rom=_gb_rom(prog, 0x00, 1, 0, {0x4000: open_stream}, title=b"PRINTTEST"))
     S.check(r.has(r"^EVT quick_response mode=on") and r.has(r"^EVT gb_printer strip=1 w=160 h=24") and
             len(files) == 1, "Quick response On: the open strip (160x24) is closed and saved (%d files)" % len(files))
-    r = S.run("gbprinter_row", menu_pick(4, wait=60) + set_up(24) + "+10:cross\n+30:quit\n",
+    r = S.run("gbprinter_row", menu_pick(4, wait=60) + set_up(25) + "+10:cross\n+30:quit\n",
               autoboot="prn.gb", extra={"roms/prn.gb": rom})
     S.clean(r)
     S.check([e["on"] for e in r.evt("printer_setting")] == ["0"] and

@@ -365,6 +365,7 @@ typedef struct scn
    int guest_gives_state;          /* the guest (wrongly) passes a state */
    int corrupt_guest_at;           /* desync: flip a byte of the guest's machine */
    int host_fails_at;              /* the host's run_frame fails */
+   int peer_lost_at;               /* drop the link cleanly while running */
    int bat_quiet_after;
    int expect_done;                /* 1 both DONE, 0 both not DONE */
    int expect_ran;                 /* the machines started */
@@ -405,9 +406,13 @@ static void run_scenario(const scn_t *sc)
 {
    int i;
    unsigned running_asked = 0;
+   int peer_dropped = 0;
    uint64_t t_end = 0;
    fe_gblink_stats st[2];
    int state[2];
+   int err0 = FE_GBLINK_OK, err1 = FE_GBLINK_OK;
+   toy_state live_host_s;
+   uint8_t live_host_bat[BAT_N];
    memset(C, 0, sizeof(C));
    scenario = sc->name;
    evt_desync = evt_failed = 0;
@@ -503,7 +508,14 @@ static void run_scenario(const scn_t *sc)
       if (!running_asked && state[0] == FE_GBLINK_RUNNING && state[1] == FE_GBLINK_RUNNING)
       {
          fe_gblink_get_stats(C[0].s, &st[0]);
-         if (st[0].frames[0] >= sc->frames)
+         if (sc->peer_lost_at && !peer_dropped &&
+             st[0].frames[0] >= (unsigned)sc->peer_lost_at)
+         {
+            fe_gblink_peer(C[0].s, 0);
+            fe_gblink_peer(C[1].s, 0);
+            peer_dropped = 1;
+         }
+         else if (!sc->peer_lost_at && st[0].frames[0] >= sc->frames)
          {
             fe_gblink_request_end(C[sc->guest_ends ? 1 : 0].s);
             running_asked = 1;
@@ -613,7 +625,11 @@ static void run_scenario(const scn_t *sc)
             "no frame ran (%u/%u)", T[0].runs, T[1].runs);
    }
    /* ---- end of session: both sessions destroyed, then each console's own
-    * game must be back ---- */
+    * game must be back (or kept for host on clean peer_lost) ---- */
+   err0 = fe_gblink_error(C[0].s);
+   err1 = fe_gblink_error(C[1].s);
+   memcpy(&live_host_s, &T[0].s, STATE_N);
+   memcpy(live_host_bat, T[0].bat, BAT_N);
    for (i = 0; i < 2; i++)
    {
       fe_gblink_destroy(C[i].s);
@@ -632,10 +648,24 @@ static void run_scenario(const scn_t *sc)
    }
    else if (sc->expect_ran || T[0].runs || T[1].runs)
    {
-      /* a failed session: BOTH machines are back on their own games */
-      CHECK(!memcmp(&T[0].s, C[0].state0, STATE_N) &&
-            !memcmp(T[0].bat, C[0].bat0, BAT_N),
-            "the host's own game is back after a failed session");
+      if (sc->peer_lost_at)
+      {
+         CHECK(err0 == FE_GBLINK_E_PEER_LOST && err1 == FE_GBLINK_E_PEER_LOST,
+               "peer_lost errors recorded (%d/%d)", err0, err1);
+         CHECK(T[0].runs >= (unsigned)sc->peer_lost_at &&
+               !memcmp(&T[0].s, &live_host_s, STATE_N) &&
+               !memcmp(T[0].bat, live_host_bat, BAT_N) &&
+               T[0].s.frame == 1234u + T[0].runs,
+               "host keeps live gameplay state after peer lost (frame %u, runs %u)",
+               T[0].s.frame, T[0].runs);
+      }
+      else
+      {
+         /* a failed session: BOTH machines are back on their own games */
+         CHECK(!memcmp(&T[0].s, C[0].state0, STATE_N) &&
+               !memcmp(T[0].bat, C[0].bat0, BAT_N),
+               "the host's own game is back after a failed session");
+      }
       CHECK(!memcmp(&T[1].s, C[1].state0, STATE_N) &&
             !memcmp(T[1].bat, C[1].bat0, BAT_N),
             "the guest's own game is back after a failed session");
@@ -711,6 +741,9 @@ static const scn_t SC[] = {
      .expect_done = 1, .expect_ran = 1 },
    { .name = "desync_detected", .frames = 2000, .delay = 4, .hash_every = 60,
      .net = { .lat = 1 }, .corrupt_guest_at = 1234 + 400, .expect_done = 0,
+     .expect_ran = 1 },
+   { .name = "peer_lost", .frames = 2000, .delay = 4, .hash_every = 60,
+     .net = { .lat = 1 }, .peer_lost_at = 300, .expect_done = 0,
      .expect_ran = 1 },
    { .name = "host_machine_fails", .frames = 2000, .delay = 4, .hash_every = 60,
      .net = { .lat = 1 }, .host_fails_at = 200, .expect_done = 0, .expect_ran = 1 },

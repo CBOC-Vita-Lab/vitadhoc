@@ -56,19 +56,23 @@ Every component of the main app and how it fits GPL-2.0 (the combined work):
 | Gambatte (2.0) | GPL-2.0 only | yes: it is why the whole is GPL-2.0 |
 | FCEUmm (NES) | GPL-2.0-or-later | yes |
 | Beetle WonderSwan | GPL-2.0-or-later | yes |
-| CPU xBRZ (`third_party/xbrz`) | GPL, no version named in the files; used under version 2 | yes, as version 2 |
-| Mbed TLS | Apache-2.0 OR GPL-2.0-or-later; used under GPL-2.0-or-later | yes, by that choice |
+| CPU xBRZ (`gpsp/vita/third_party/xbrz`) | GPL (`gnu.org/licenses/gpl.html`, no explicit version named in the files; used under version 2) | yes, as version 2 (`snes.bin` and `md.bin` never link it) |
+| Mbed TLS 3.6.8 | Apache-2.0 OR GPL-2.0-or-later; used under GPL-2.0-or-later | yes, by that choice |
 | mGBA cheat engine | MPL-2.0 | yes (MPL-2.0 allows combining with GPL) |
 | Blip_Buffer (in Beetle) | LGPL-2.1-or-later | yes |
-| libvita2d, stb, rcheevos, libretro-common, SameBoy palette data, xBR | MIT / Expat | yes |
+| LZMA SDK (`gpsp/vita/third_party/lzma`, 2.0) | Public domain (Igor Pavlov) | yes |
+| libvita2d, stb, rcheevos, libretro-common, SameBoy palette data, MMPX | MIT / Expat / Public domain | yes |
 | Newlib, GCC runtime (libgcc, GPL-3.0-or-later with the Runtime Library Exception) | BSD-style / GPL-3 with exception | yes: the exception covers the runtime linked into a GPL-2.0 program |
-| Fonts (Inter, Outfit: OFL), databases, art | their own licences, shipped as data | not linked code |
+| Fonts (Inter, Outfit, Noto Sans CJK: OFL), databases, art | their own licences, shipped as data | not linked code |
 | `gpsp/psp/font_8x16.c`, `gpsp/psp/me` | GPL-2.0-only / unclear | not linked into the Vita build |
 
 `snes.bin` and `md.bin` are separate programs and keep their own licences
-(sections below). This table describes the main app only; the CPU xBRZ row is
-a reading of a header that names no version (its author's later releases name
-version 3), so that reading stays a small, recorded risk.
+(sections below). This table describes the main app (`eboot.bin`) only; the CPU
+xBRZ row is a reading of headers (`xbrz.h`, `xbrz.cpp`) that name no explicit
+GPL version and point to `gnu.org/licenses/gpl.html` (its author's later
+releases name version 3), so that reading stays a small, recorded risk. Neither
+`snes.bin` nor `md.bin` links `xbrz.cpp`; they use Hyllian's MIT `xBR-lv2` and
+`MMPX` MIT in `playerkit/src/pk_scale.cpp`.
 
 ## The Two-Player Link of the Players
 
@@ -99,7 +103,11 @@ the game's path and it starts VitAdhoc again when you quit.
 - The Snes9x core in `snes/core` keeps the Snes9x licence (`snes/core/LICENSE`,
   shipped as `licenses/Snes9x-LICENSE.txt`). It allows non-commercial use and
   changes only and is not GPL-compatible, which is why it is its own program.
-- Our frontend in `snes/frontend`, `snes/vita` and `snes/twin` is MIT.
+- Our frontend in `snes/frontend`, `snes/vita` and `snes/twin`, plus
+  `playerkit/` and `widekit/`, is MIT. Vendored third-party components in
+  `snes/frontend/third_party/` are permissive (`libvita2d` MIT, `stb` including
+  `stb_image.h` / `stb_image_write.h` / `stb_truetype.h` MIT / Public Domain,
+  `Inter` font SIL OFL 1.1).
 - Because the package contains Snes9x, VitAdhoc must stay free of charge and
   must not be sold, bundled in a commercial product or used to promote one.
 - [SNES notice](notices/SNES-Snes9x.md) and `snes/core/PROVENANCE.md` (the
@@ -108,10 +116,11 @@ the game's path and it starts VitAdhoc again when you quit.
 
 ## The Sega Player (Genesis Plus GX)
 
-Genesis / Mega Drive, Master System, Game Gear and SG-1000 games run in
-`md.bin`, a second separate program in the same VPK, built only from `md/`,
-`playerkit/` and `widekit/` (plus the dual-licensed files named in this
-document) and started and left the same way as `snes.bin`.
+Genesis / Mega Drive, Sega CD / Mega CD, Master System, Game Gear and SG-1000
+games run in `md.bin`, a second separate program in the same VPK, built only
+from `md/`, `playerkit/`, `widekit/`, `snes/frontend/third_party/` (`libvita2d`
+MIT, `stb` MIT / Public Domain) and the dual-licensed files named in this
+document, and started and left the same way as `snes.bin`.
 
 - The Genesis Plus GX core in `md/core` keeps its own licence
   (`md/core/LICENSE.txt`, shipped as `licenses/GenesisPlusGX-LICENSE.txt`). It
@@ -119,7 +128,14 @@ document) and started and left the same way as `snes.bin`.
   is why it is its own program. The same file carries the notices of the parts
   it includes (Nuked OPN2 and OPLL and blip_buf under LGPL-2.1, the MAME-derived
   sound and Z80 cores, Musashi).
-- Our frontend in `md/frontend`, `md/vita` and `md/twin` is MIT.
+- Sega CD disc readers (`md/core/cd_hw/libchdr` and `md/core/sound/tremor`):
+  `libchdr` (BSD-3-Clause) with `zstd` (BSD-3-Clause), `LZMA SDK` (Public
+  Domain), `zlib` (zlib licence), `dr_flac` (Public Domain / MIT-0) and `Tremor`
+  (BSD-3-Clause), shipped in `licenses/SegaCD-disc-readers.txt`.
+- Our frontend in `md/frontend`, `md/vita` and `md/twin` is MIT (except the
+  Sega CD tray open/close/swap helper lines in `md/frontend/host.c` derived
+  from Genesis Plus GX's libretro port, which remain under the Genesis Plus GX
+  non-commercial licence).
 - Because the package contains Genesis Plus GX, the same condition as for
   Snes9x applies a second time: VitAdhoc must stay free of charge and must not
   be sold, bundled in a commercial product or used to promote one.
@@ -136,8 +152,7 @@ stay in `licenses/MbedTLS-LICENSE.txt`. It is built from a pinned upstream
 checkout, unpatched (pin in
 `gpsp/vita/deps/lock.json`) and is not stored in the repository. Apache-2.0 is
 not compatible with GPL-2.0-only, so this relies on the "or later" and on the
-choice Mbed TLS offers: if the Snes9x player or any other separate program
-ever linked it, that would need its own check (the SNES player does not).
+choice Mbed TLS offers: neither `snes.bin` nor `md.bin` links Mbed TLS.
 The HTTPS client, the NAT layer and the room service are the project owner's
 own code. Cloudflare's STUN and TURN are services, not code. No legal opinion
 has been obtained.
@@ -147,24 +162,25 @@ has been obtained.
 `gpsp/vita/ra_vita.c`, `ra_vita.h`, `ra_http.c`, `ra_http.h` and
 `ui_vita_ra.h` are the project's own code (written for VitAdhoc, none of it
 from GBAdhoc or another project) and carry `SPDX-License-Identifier: MIT OR
-GPL-2.0-or-later`, so the SNES and Genesis players can link them. They build
-on rcheevos (MIT, `gpsp/vita/third_party/rcheevos`). `ra_roots.h` is generated
+GPL-2.0-or-later`, so the SNES and Sega players can link `ra_http.c` and
+`ra_roots.h` under MIT alongside `playerkit/src/pk_ra.cpp` (MIT) and
+`rcheevos` (`gpsp/vita/third_party/rcheevos`, MIT). `ra_roots.h` is generated
 by our own script (`gpsp/vita/tools/ra_roots.py`, dual-licensed like the rest of
 these files, so the file's wrapper and its SPDX line are covered by the grant); the
 PEM certificates inside it are the CAs' public root certificates, taken from the
 Mozilla root store as packaged by Debian, and are not ours to license (see
-`notices/THIRD-PARTY.md`). Dependencies on GPL-only
-gpsp files that remain, and that a separate player must replace with its own
-small shims: `frontend-common/fe_evt.h` (logging), `frontend-common/fe_host.h`
-(`fe_host_ra_read`, memory reads), `frontend-common/fe_console.h`,
-`psp/osd_psp.h` (toasts and the indicator overlay), `vita/cheats_vita.h`
-and `vita/plat.h` (threads, time).
+`notices/THIRD-PARTY.md`). `snes.bin` and `md.bin` link no GPL-only `gpsp/`
+files (`check-ra` and `check-links` verify that `ra_vita.c`, `fe_evt.h`,
+`fe_host.h`, `fe_console.h`, `osd_psp.h`, `cheats_vita.h` and `plat.h` stay
+excluded from the separate players).
 
 ## Release Status
 
-Version 1.0's VPK is built from the source in this repository, which sits
-beside it. The experimental GPU xBRZ shader, whose historical upstream
-revision was never recorded and whose GPL-3.0 notice could not be combined with
-Gambatte, was removed from the main app (see above).
-Neither the root license nor individual source headers have been replaced with
-a blanket GPL-3.0 declaration.
+The Version 2.0 VPK (`eboot.bin`, `snes.bin` and `md.bin`) is built from the
+source in this repository, which sits beside it. The experimental GPU xBRZ
+shader, whose historical upstream revision was never recorded and whose GPL-3.0
+notice could not be combined with Gambatte, was removed from the main app in
+2.0 (see above). Build-time checks (`check-licence`, `check-links`, `check-ra`)
+in `snes/vita/Makefile` and `md/vita/Makefile` enforce separation between GPL
+and non-commercial binaries. Neither the root license nor individual source
+headers have been replaced with a blanket GPL-3.0 declaration.

@@ -48,17 +48,24 @@ that is what we are going for. See [Known Issues](KNOWN-ISSUES.md).
 **Picture and play**
 
 - **Quick response** shows a button press one frame sooner, with the game
-  running exactly as without it. Game Boy, Game Boy Color, NES, WonderSwan and
-  the Sega consoles have it (Settings, and per game); it is on Auto where a
-  frame is cheap enough and off in linked and online play. Not offered for
-  Game Boy Advance or the Super NES: see [Known Issues](KNOWN-ISSUES.md).
-- **Names in every alphabet.** Japanese, Korean, accented Latin, Greek and
-  Cyrillic names show as written in the app and in the Super NES and Sega
-  menus, instead of `?`.
+  running exactly as without it. Game Boy, Game Boy Color, NES, WonderSwan,
+  Super NES and the Sega consoles have it (Settings, and per game); it is on
+  Auto where a frame is cheap enough and off in linked and online play. Not
+  offered for Game Boy Advance: see [Known Issues](KNOWN-ISSUES.md).
+- **Names in every alphabet.** Japanese, Korean, fullwidth forms, accented
+  Latin, Greek and Cyrillic names (plus Simplified Chinese GB 2312 hanzi) show
+  as written in the app and in the Super NES and Sega menus, instead of `?`.
 
-- **Wide view for the Sega consoles,** as on the NES and Super NES. The picture fills the Vita's full width:
-  pixel exact in the middle, with the sides showing more of the level you have
-  seen, or a soft continuation of the edge. Never a guessed tile.
+- **Wide view across the library:** GBA Wide view defaults to `On + any game`
+  with Soft edges so the catalogue gets full-width play out of the box (turn it
+  off per game if edges misbehave). On NES, Super NES and the Sega consoles,
+  the real picture stays pixel exact in the middle, with the sides showing more
+  of the level you have seen or a soft continuation of the edge (never a guessed
+  tile). NES Wide View (`424×224`/`240`) supports full 2x upscaling (`xBRZ 2x`,
+  `Scale2x`, `MMPX 2x`) and Sharp Bilinear (`1344×720` render target), Master
+  System and SG-1000 automatically step `xBR 3x` down to `xBR 2x` when needed
+  within the `1024×576` scaler budget, and Game Gear composes LCD and Screen
+  colour profiles in a single LUT pass.
 - **Smooth 50 Hz for European games** removes the hitch PAL games had on the
   60 Hz screen. The game still runs at its true speed.
 - **The same looks everywhere:** Ambient glow, Scanlines, LCD grid and LCD
@@ -66,10 +73,33 @@ that is what we are going for. See [Known Issues](KNOWN-ISSUES.md).
   for original Game Boy games.
 - **Super FX games run on a much faster exact core** (Doom, Stunt Race FX),
   aiming to animate closer to the real console.
-- **A console picker:** Triangle drops a list of every console with its game
-  count; Circle cancels. **Undo and lock for save states** on every console.
-- **Your library, quicker:** the home screen appears at once, even on a big
-  card in a slow adapter, and more games find their cover.
+- **A console picker & full PlayerKit menu parity:** Triangle drops a list of
+  every console with its game count; Circle cancels. **Undo and lock for save
+  states** (`L` lock/unlock, persisted `R` undo for both loads and overwrites),
+  **unified Cheats buttons** (`Triangle` = Add, `Square` = Delete), **Start**
+  to resume the Super NES and Sega pause menus, **Right-stick Rewind** enabled
+  by default across all eleven consoles, **`Settings > Controls > Left stick`**
+  (`D-pad` / `Custom` / `Off`), an in-game **Achievements** viewer, synced
+  **Light theme** & **Tap screen for menu** via `display.ini`, and mappable PNG
+  **Screenshots** in the Super NES and Sega players across all eight languages.
+- **Your library, quicker and smarter:** the home screen appears at once, even
+  on a big card in a slow adapter; cover lookup handles `.zip`/`.7z` entries,
+  GoodTools tags and ROM hack protection; RetroArch and Emu4Vita++ `.lpl`
+  playlists support 6-line and archive formats and filter out unsupported
+  systems; rear touch uses a unified 12% outer edge grip inset + center
+  deadzone across all eleven consoles; and WonderSwan keeps unswapped physical
+  buttons (`Circle = A, Cross = B`) even on Asian Vitas.
+- **Core, online and FAT32 hardening:** Online 2.0 adds STUN fallback, TURN
+  and worker budget hardening, an in-app cartridge picker for mismatched
+  link-cable games, and host gameplay-progress preservation if a link partner
+  disconnects; GBA ARMv7/Thumb-2 dynarec (7th cached guest register `r10`,
+  `ubfx`/`cbnz` fast-path stubs, ARM literal pool folding, single-instruction
+  Thumb `NEG` and IWRAM `POP`/`LDMIA sp` fastpath), Super NES Mode 7, Sega
+  VDP/FM/CD read-ahead, `.smd` netplay normalization, in-place Mega Drive
+  region timing updates, Gambatte zero-initialized savestates, NES and
+  WonderSwan cores carry exact scheduling and memory refinements; and saves and
+  archives use safe two-step `.old` file replacement on Vita FAT32 (`APP_VER`
+  `02.00` in LiveArea).
 
 **Install or update**
 

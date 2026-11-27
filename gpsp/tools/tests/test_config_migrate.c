@@ -8,7 +8,8 @@
  *      improvements is ON (1.3.1 has no smooth_handoff, steady_pacing, core4, nes_wide, ws_blend),
  *      and where 2.0-rc1's file says the player turned one off, it stays off;
  *   3. saving and loading again changes none of it, and the player's lines are still in the file.
- * gcc -DVITA -I vita -I psp -I frontend-common -I libretro/libretro-common/include -I .
+ * gcc -DVITA -I vita -I psp -I frontend-common -I ../playerkit/src
+ *     -I libretro/libretro-common/include -I .
  *     tools/tests/test_config_migrate.c psp/config_psp.c psp/ctl_map.c frontend-common/fe_util.c
  *     -Wl,--unresolved-symbols=ignore-all  (run from gpsp/ with the fixture path as argument) */
 #include <stdarg.h>
@@ -27,6 +28,14 @@ void fe_log(const char *fmt, ...) { (void)fmt; }
 const char *vid_scale_name(int m) { (void)m; return "t"; }
 const char *vid_filter_name(int m) { (void)m; return "t"; }
 const char *pspcompat_user_name(void) { return "Player"; }
+int pspcompat_system_lang(void) { return 1; }
+const char *plat_app_dir(void) { return "."; }
+void i18n_dir(const char *d) { (void)d; }
+void i18n_use(int l, int sys) { (void)l; (void)sys; }
+int i18n_current(void) { return 1; }
+int i18n_index(const char *code) { (void)code; return 0; }
+const char *const i18n_code[10] = { "auto", "en", "es", "fr", "de", "it", "pt-BR", "ja", "zh-Hans", "xx-long" };
+void vglyph_region(int sc) { (void)sc; }
 static int g_direct;                    /* vita.ini's direct connection (Internet) switch */
 int ui_host_link_direct(void) { return g_direct; }
 
@@ -110,6 +119,7 @@ int main(int argc, char **argv)
    if (argc < 3) { fprintf(stderr, "usage: %s config-1.3.1.ini config-2.0-rc1.ini\n", argv[0]); return 2; }
    for (i = 0; i < 2; i++) {
       char work[64], *text, *after;
+      unlink("/tmp/display.ini");
       snprintf(work, sizeof(work), "/tmp/cfg-migrate-%d-%d.ini", (int)getpid(), i);
       text = slurp(argv[1 + i]);
       CHECK(text != NULL, "fixture %s", argv[1 + i]);
@@ -158,11 +168,13 @@ int main(int argc, char **argv)
       }
       free(text);
       unlink(work);
+      unlink("/tmp/display.ini");
    }
    /* 2.0: the looks became rows (docs/LOOKS.md).  Each old form migrates, once, and the new keys win. */
    {
       const char *w = "/tmp/cfg-looks-migrate.ini";
       FILE *f;
+      unlink("/tmp/display.ini");
       /* a 1.x file: the grid and scanline FILTERS (with vita.ini's one strength), the three-way ambient, blend on/off */
       f = fopen(w, "wb");
       fputs("filter_gba = 3\nfilter_gb = 6\nfilter_gbc = 2\nambient_gba = 0\nambient_gb = 1\nambient_gbc = 2\n"

@@ -2031,6 +2031,7 @@ static void sc_creds_errors(void)
    CHECK(count_req(ONLINE_OP_RELAY) == 1);       /* beside the punch it is asked once, not nagged */
    online_stop();
 
+   /* 503 ONLINE_E_RELAY: fails fast in 2 tries */
    world();
    S.inj[ONLINE_OP_RELAY].err = ONLINE_E_RELAY;
    S.inj[ONLINE_OP_RELAY].http = 503;
@@ -2039,9 +2040,23 @@ static void sc_creds_errors(void)
    start();
    script_host("203.0.113.2:40002", "", 0, 0);
    online_join(&g_tr, "K7M2Q", &me);
-   /* a refused credential request is asked again every 3 s, 12 times (the service gives them once both members
-    * have polled), so the fallback gives up after about 36 s, not 20 */
+   CHECK(run_to(ON_FAILED, 15000));
+   CHECK(count_req(ONLINE_OP_RELAY) == 2);
+   online_get(&v);
+   CHECK(v.fail == ONLINE_FAIL_UNREACHABLE);
+   online_stop();
+
+   /* 403 ONLINE_E_RELAY_WAIT: asks again every 3 s, 12 times (~36 s) */
+   world();
+   S.inj[ONLINE_OP_RELAY].err = ONLINE_E_RELAY_WAIT;
+   S.inj[ONLINE_OP_RELAY].http = 403;
+   S.inj[ONLINE_OP_RELAY].count = -1;
+   N.punch_after_ms = -1;
+   start();
+   script_host("203.0.113.2:40002", "", 0, 0);
+   online_join(&g_tr, "K7M2Q", &me);
    CHECK(run_to(ON_FAILED, 60000));
+   CHECK(count_req(ONLINE_OP_RELAY) == 12);
    online_get(&v);
    CHECK(v.fail == ONLINE_FAIL_UNREACHABLE);
    online_stop();

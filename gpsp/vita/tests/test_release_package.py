@@ -25,20 +25,38 @@ else:
     PINNED = False
 RUNTIME_SHA256 = "43f037b19c37ef0647ab637289c0e065ab2d60cd3aa60a9103af2a4896b3df8b"  # version 1.3.1
 SNES_SHA256 = "19f4adb8c0d99c0793757cba92632dbf7f406bfc27f73eab0d61a15d339f92b4"  # version 1.3.1
+MD_SHA256 = None  # version 1.3.1 (pinned by tools/pin-release.py at 2.0 release)
 NOTICES = {"licenses/GPL-2.0.txt", "licenses/MPL-2.0.txt", "licenses/Inter-OFL.txt",
-           "licenses/Outfit-OFL.txt", "licenses/CC-BY-SA-4.0.txt", "notices/THIRD-PARTY.md",
+           "licenses/Outfit-OFL.txt", "licenses/NotoSansCJK-OFL.txt",
+           "licenses/CC-BY-SA-4.0.txt", "notices/THIRD-PARTY.md",
            "notices/WIKIPEDIA-ATTRIBUTION.md", "licenses/GPL-3.0.txt",
            "licenses/CPU-xBRZ-notice.txt",
            "licenses/vita2d-MIT.txt", "licenses/stb.txt",
+           "licenses/MMPX-MIT.txt", "licenses/xBR-MIT.txt",
+           "licenses/SameBoy-Expat.txt", "licenses/CBOC-tools-MIT.txt",
            "licenses/VitaSDK-Headers-MIT.txt", "licenses/Newlib-Notices.txt",
            "licenses/GCC-Runtime-Exception.txt", "notices/VitaSDK-build-lock.json",
+           "notices/GB-Gambatte.md", "licenses/Gambatte-GPL-2.0.txt",
            "notices/SNES-Snes9x.md", "notices/NES-FCEUmm.md",
            "licenses/FCEUmm-GPL-2.0.txt", "licenses/libretro-common-MIT.txt",
            "notices/WSWAN-Beetle.md", "licenses/Beetle-WonderSwan-GPL-2.0.txt",
+           "notices/MD-GenesisPlusGX.md", "licenses/GenesisPlusGX-LICENSE.txt",
+           "licenses/SegaCD-disc-readers.txt", "licenses/MbedTLS-LICENSE.txt",
            "licenses/LGPL-2.1.txt"}
-# The SNES player's licence travels in the package under these names.
+# The SNES and Sega players' licences and provenances travel in the package under these names.
 SNES_NOTICES = {"licenses/Snes9x-LICENSE.txt": "snes/core/LICENSE",
                 "licenses/Snes9x-PROVENANCE.md": "snes/core/PROVENANCE.md"}
+MD_NOTICES = {"licenses/GenesisPlusGX-PROVENANCE.md": "md/core/PROVENANCE.md"}
+PACKED_FONTS = ("cjkfont.otf", "cjkfont-sc.otf", "latinfont.ttf", "latinfont-sb.ttf")
+FORBIDDEN_SUFFIXES = {".gba", ".gb", ".gbc", ".sfc", ".smc", ".nes", ".fds", ".unf",
+                      ".unif", ".ws", ".wsc", ".pc2", ".md", ".gen", ".smd", ".sms",
+                      ".gg", ".sg", ".sc", ".chd", ".iso", ".cue", ".68k", ".m3u",
+                      ".sav", ".srm"}
+FORBIDDEN_BIOS_NAMES = {"gba_bios.bin", "bios_cd_u.bin", "bios_cd_e.bin", "bios_cd_j.bin",
+                        "us_scd1_9210.bin", "us_scd2_9303.bin",
+                        "eu_mcd1_9210.bin", "eu_mcd2_9303.bin",
+                        "jp_mcd1_9111.bin", "jp_mcd1_9112.bin", "jp_mcd2_921222.bin",
+                        "segacd_bios_us.bin", "megacd_bios_eu.bin", "megacd_bios_jp.bin"}
 
 
 class ReleasePackageTests(unittest.TestCase):
@@ -53,10 +71,19 @@ class ReleasePackageTests(unittest.TestCase):
         for name in NOTICES:
             with self.subTest(name=name):
                 self.assertTrue((ROOT / name).is_file())
-        for name in ("Inter-OFL.txt", "Outfit-OFL.txt"):
+        for source in (*SNES_NOTICES.values(), *MD_NOTICES.values(),
+                       "md/core/LICENSE.txt",
+                       "gpsp/gbcore/gambatte/COPYING",
+                       "gpsp/gbcore/gambatte/PROVENANCE.md"):
+            with self.subTest(source=source):
+                self.assertTrue((ROOT / source).is_file())
+        for name in ("Inter-OFL.txt", "Outfit-OFL.txt", "NotoSansCJK-OFL.txt"):
             self.assertIn("SIL OPEN FONT LICENSE", (ROOT / "licenses" / name).read_text())
         for name in ("Inter-Regular.ttf", "Inter-SemiBold.ttf", "Outfit-Medium.ttf", "Outfit-SemiBold.ttf"):
             self.assertTrue((ROOT / "gpsp/assets/fonts" / name).is_file())
+        for name in PACKED_FONTS:
+            with self.subTest(font=name):
+                self.assertTrue((VITA / "assets" / name).is_file())
 
     def test_vendored_runtime_notices_are_preserved(self):
         for component, notice in (("vita2d", "vita2d-MIT.txt"), ("stb", "stb.txt")):
@@ -68,11 +95,16 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertTrue(target.is_file())
         header = (VITA / "third_party/xbrz/xbrz.h").read_text().split("\n\n", 1)[0] + "\n"
         self.assertEqual(target.read_text(), header)
+        self.assertTrue((ROOT / "licenses/GenesisPlusGX-LICENSE.txt").read_bytes().startswith(
+            (ROOT / "md/core/LICENSE.txt").read_bytes()))
+        self.assertTrue((ROOT / "licenses/Gambatte-GPL-2.0.txt").read_bytes().endswith(
+            (ROOT / "gpsp/gbcore/gambatte/COPYING").read_bytes()))
 
     def test_distribution_is_bios_and_rom_free_and_paths_are_unique(self):
         if not PINNED and not VPK.is_file():
             self.skipTest("no VPK built here (make -C gpsp/vita vpk); RELEASE_VPK for a release")
         self.assertTrue(VPK.is_file(), "Assemble the candidate before package acceptance")
+        allowed_md = {n for n in (NOTICES | set(SNES_NOTICES) | set(MD_NOTICES)) if n.lower().endswith(".md")}
         with zipfile.ZipFile(VPK) as package:
             self.assertIsNone(package.testzip())
             names = package.namelist()
@@ -81,10 +113,9 @@ class ReleasePackageTests(unittest.TestCase):
                 self.assertFalse(name.startswith("/"))
                 self.assertNotIn("..", PurePosixPath(name).parts)
                 self.assertNotIn("\\", name)
-                self.assertNotIn(PurePosixPath(name).suffix.lower(),
-                                 {".gba", ".gb", ".gbc", ".sfc", ".smc", ".nes", ".fds", ".unf",
-                                  ".unif", ".ws", ".wsc", ".pc2", ".sav", ".srm"})
-                self.assertNotEqual(PurePosixPath(name).name.lower(), "gba_bios.bin")
+                if name not in allowed_md:
+                    self.assertNotIn(PurePosixPath(name).suffix.lower(), FORBIDDEN_SUFFIXES)
+                self.assertNotIn(PurePosixPath(name).name.lower(), FORBIDDEN_BIOS_NAMES)
             self.assertTrue(NOTICES.issubset(names))
             for name in NOTICES:
                 with self.subTest(notice=name):
@@ -92,12 +123,18 @@ class ReleasePackageTests(unittest.TestCase):
             if PINNED:
                 self.assertEqual(hashlib.sha256(package.read("eboot.bin")).hexdigest(), RUNTIME_SHA256)
                 self.assertEqual(hashlib.sha256(package.read("snes.bin")).hexdigest(), SNES_SHA256)
+                self.assertIsNotNone(MD_SHA256, "Pin md.bin with tools/pin-release.py before release")
+                self.assertEqual(hashlib.sha256(package.read("md.bin")).hexdigest(), MD_SHA256)
             else:
                 self.assertIn("eboot.bin", names)
                 self.assertIn("snes.bin", names)
-            for name, source in SNES_NOTICES.items():
+                self.assertIn("md.bin", names)
+            for name, source in (*SNES_NOTICES.items(), *MD_NOTICES.items()):
                 with self.subTest(notice=name):
                     self.assertEqual(package.read(name), (ROOT / source).read_bytes())
+            for name in PACKED_FONTS:
+                with self.subTest(font=name):
+                    self.assertEqual(package.read(name), (VITA / "assets" / name).read_bytes())
             self.assertEqual(package.read("gamedb.txt"), (VITA / "assets/gamedb.txt").read_bytes())
             self.assertEqual(package.read("cheats.db"), (VITA / "assets/cheats.db").read_bytes())
             # one interface-language catalogue per file in lang/, byte for byte
@@ -123,6 +160,7 @@ class ReleasePackageTests(unittest.TestCase):
             key = data[keys + key:data.index(b"\0", keys + key)].decode()
             fields[key] = data[values + offset:values + offset + size].rstrip(b"\0")
         self.assertEqual(fields["TITLE_ID"], b"GBAD00001")
+        self.assertEqual(fields["APP_VER"], b"02.00")
 
 
 if __name__ == "__main__":

@@ -37,21 +37,28 @@ are what we built and aim for, not measured results.
 - **Two players on every two-player console.** GBA and Game Boy link cables,
   plus Two players for NES, WonderSwan, Super NES, Genesis / Mega Drive, Sega CD,
   Master System and SG-1000, over Wi-Fi or online.
-- **Full-width wide view for the Sega consoles,** as on the NES and Super NES:
-  the real picture in the middle, more of your level beside it.
+- **Full-width wide view across the library:** GBA Wide view defaults to
+  `On + any game` with Soft edges, and NES, Super NES and the Sega consoles
+  show the real picture in the middle with more of your level beside it.
 - **A better-looking picture everywhere.** Smoothing upscalers (xBRZ, MMPX,
-  xBR), Ambient glow, Scanlines, LCD grid and LCD ghosting with 0 to 10
+  xBR; including 2x smoothing and Sharp Bilinear on NES Wide View, automatic
+  xBR 3x to 2x fallback on 8-bit Sega, and Game Gear LCD/Screen colour LUT
+  composition), Ambient glow, Scanlines, LCD grid and LCD ghosting with 0 to 10
   strengths, and real Game Boy Color palettes for original Game Boy games.
 - **Smoother motion.** Smooth 50 Hz removes the hitch in European games, no
-  sprite flicker on the 8-bit Sega consoles, and a much faster exact Super FX
-  core for Doom and Stunt Race FX.
+  sprite flicker on the 8-bit Sega consoles, GBA ARMv7 dynarec & core/threading
+  optimisations across consoles, and a much faster exact Super FX core for Doom
+  and Stunt Race FX.
 - **Quick response** shows a button press one frame sooner on Game Boy, Game
   Boy Color, NES, WonderSwan, the Sega consoles and the Super NES (not on Game
   Boy Advance: see [Known Issues](KNOWN-ISSUES.md)).
 - **Names in every alphabet:** Japanese, Korean, Greek, Cyrillic and accented
   names show as written.
-- **A console picker, undo and lock for save states,** and a home screen that
-  appears at once, even on a big card.
+- **A console picker, undo and lock for save states, and unified menus:** Light
+  theme, Tap screen for menu, Achievements viewer and PNG screenshots in the
+  Super NES and Sega players too, right-stick rewind enabled by default across
+  all eleven consoles, 12% rear grip inset across all consoles, and a home
+  screen that appears at once, even on a big card.
 
 Full list in the [changelog](CHANGELOG.md).
 
@@ -96,11 +103,13 @@ settings stay where they are. See the [full install guide](INSTALL.md).
 
 | Button | Default action |
 | --- | --- |
-| Cross / Circle | A / B (Circle is A on a Vita whose Enter button is Circle, or in Settings) |
-| Hold Start + Select, or tap the game | Open the menu |
-| Square | Fast forward |
-| Select + Square | Rewind (right stick left too) |
+| Cross / Circle | A / B (Circle is A on a Vita whose Enter button is Circle, or in Settings; WonderSwan always uses physical Circle = A, Cross = B) |
+| Hold Start + Select, or tap the game | Open the menu (`Start` resumes in Super NES and Sega) |
+| Square | Fast forward (right stick right too) |
+| Select + Square | Rewind (right stick left too, on by default across all eleven consoles) |
 | Select + L / Select + R | Quick save / quick load |
+| L / R (Save states page) | Lock or unlock slot / Undo last load or overwrite |
+| Triangle / Square (Cheats page) | Add a cheat / Delete a custom cheat (`Start` searches memory in the app) |
 | Triangle (home screen) | Console list |
 | Start (home screen) | Settings, including RetroAchievements |
 

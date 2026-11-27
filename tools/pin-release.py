@@ -25,6 +25,7 @@ EARLIER_RUNTIMES = [
     "29a82a3716664c1616e404702fe46ca0460d59e8242a5dfcbca63f3a87b2a6c8",  # 1.1
     "3e107b77447ef26961de846a32b0cf90e9cafe55dcc56329efaa75424e0b4074",  # 1.2
     "336fcffbfc49e14a1a377c68e01d1ece8112fbe66e11730cc89a6ddfb5374b09",  # 1.3
+    "43f037b19c37ef0647ab637289c0e065ab2d60cd3aa60a9103af2a4896b3df8b",  # 1.3.1
 ]
 
 
@@ -52,6 +53,7 @@ def main():
     with zipfile.ZipFile(vpk) as z:
         runtime = sha(z.read("eboot.bin"))
         snes = sha(z.read("snes.bin")) if "snes.bin" in z.namelist() else None
+        md = sha(z.read("md.bin")) if "md.bin" in z.namelist() else None
     package = sha(data)
 
     # Text edits, not a JSON rewrite: the file keeps its hand-made layout.
@@ -87,6 +89,13 @@ def main():
             text = sub_once(text, r"^\| SNES player \(`snes.bin`\) \| .* \|$", line, "SOURCE.md snes")
         else:
             text = sub_once(text, r"^(\| Runtime \(`eboot.bin`\) \| .* \|)$", r"\1\n" + line, "SOURCE.md snes")
+    if md:
+        line = "| Sega player (`md.bin`) | SHA-256 `%s` |" % md
+        if "| Sega player (`md.bin`) |" in text:
+            text = sub_once(text, r"^\| Sega player \(`md.bin`\) \| .* \|$", line, "SOURCE.md md")
+        else:
+            anchor = r"^(\| SNES player \(`snes.bin`\) \| .* \|)$" if snes else r"^(\| Runtime \(`eboot.bin`\) \| .* \|)$"
+            text = sub_once(text, anchor, r"\1\n" + line, "SOURCE.md md")
     text = sub_once(text, r"GIT_VERSION=\d+\.\d+(\.\d+)?`", "GIT_VERSION=%s`" % version, "SOURCE.md build command")
     path.write_text(text)
 
@@ -100,6 +109,13 @@ def main():
             text = sub_once(text, r'^SNES_SHA256 = "[0-9a-f]{64}"  # version .*$', line, "snes pin")
         else:
             text = sub_once(text, r'^(RUNTIME_SHA256 = .*)$', r"\1\n" + line, "snes pin")
+    if md:
+        line = 'MD_SHA256 = "%s"  # version %s' % (md, version)
+        if "MD_SHA256 = " in text:
+            text = sub_once(text, r'^MD_SHA256 = (?:None|"[0-9a-f]{64}")  # version .*$', line, "md pin")
+        else:
+            anchor = r'^(SNES_SHA256 = .*)$' if snes else r'^(RUNTIME_SHA256 = .*)$'
+            text = sub_once(text, anchor, r"\1\n" + line, "md pin")
     path.write_text(text)
 
     path = ROOT / ("release-notes-%s.md" % version)
@@ -109,8 +125,9 @@ def main():
                         "release notes hash")
         path.write_text(text)
 
-    print("VitAdhoc %s: package %s, runtime %s%s" % (version, package, runtime,
-          ", snes " + snes if snes else ""))
+    print("VitAdhoc %s: package %s, runtime %s%s%s" % (version, package, runtime,
+          ", snes " + snes if snes else "",
+          ", md " + md if md else ""))
     print("Now run: python3 tools/update-checksums.py")
 
 

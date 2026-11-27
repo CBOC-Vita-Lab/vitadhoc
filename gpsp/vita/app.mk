@@ -160,13 +160,16 @@ app_obj = $(B)/app/$(subst ../,,$(patsubst ./%,%,$(basename $(1)))).o
 
 # Third-party code is not ours to lint; the PSP UI is compiled with the
 # warnings its own Makefile uses.
-APP_QUIET := %/stb_impl.c %/stb_impl_vita.c
+APP_QUIET := %/stb_impl.c %/stb_impl_vita.c %/xbrz.cpp
 UI_WARN   := -Wno-unused-parameter -Wno-missing-field-initializers \
              -Wno-format-truncation
-# xBRZ (third_party/xbrz) is C++: no exceptions, no RTTI, nothing of
-# libstdc++ at link time (it needs none), and not ours to lint either.
-APP_CXX_FLAGS := -x c++ -std=gnu++14 -O3 -fno-math-errno -fno-exceptions -fno-rtti -w
-app_file_flags = $(if $(filter %.cpp,$(1)),$(APP_CXX_FLAGS),$(if $(or $(filter $(APP_QUIET),$(1)),$(call in_vita2d,$(1)),$(call in_rcheevos,$(1))),-w,$(if $(filter $(UI_SRCS) $(UI_GXM_SRCS),$(1)),$(UI_WARN))))
+# C++ files (playerkit glue, online_http, nethttps, xbrz_c): no exceptions,
+# no RTTI, nothing of libstdc++ at link time.  Only third-party xbrz.cpp is
+# silenced (-w via APP_QUIET); targeted flags keep macOS Clang, GCC's
+# cert_detail format-truncation, and no-TLS nethttps stubs warning-free.
+APP_CXX_FLAGS := -x c++ -std=gnu++14 -O3 -fno-math-errno -fno-exceptions -fno-rtti
+app_cxx_extra = $(if $(filter $(APP_QUIET),$(1)), -w)$(if $(filter macos,$(HOST_OS)),$(if $(filter %/look_glue.cpp,$(1)), -Wno-unused-private-field))$(if $(filter %/np_https.cpp,$(1)), -Wno-format-truncation)$(if $(strip $(MBEDTLS)),,$(if $(filter %/np_https.cpp %/np_https_sys.cpp,$(1)), -Wno-unused-function -Wno-unused-variable))
+app_file_flags = $(if $(filter %.cpp,$(1)),$(APP_CXX_FLAGS)$(call app_cxx_extra,$(1)),$(if $(or $(filter $(APP_QUIET),$(1)),$(call in_vita2d,$(1)),$(call in_rcheevos,$(1))),-w,$(if $(filter $(UI_SRCS) $(UI_GXM_SRCS),$(1)),$(UI_WARN))))
 
 # The includer defines CC and APP_FLAGS, then:
 #     $(foreach s,$(APP_ALL_xxx),$(eval $(call APP_RULE,$(s))))
@@ -174,5 +177,5 @@ app_file_flags = $(if $(filter %.cpp,$(1)),$(APP_CXX_FLAGS),$(if $(or $(filter $
 define APP_RULE
 $(call app_obj,$(1)): $(1) $$(APP_STAMP)
 	@mkdir -p $$(dir $$@)
-	$$(CC) $$(APP_FLAGS) $(call app_file_flags,$(1)) $$(APP_FILE_FLAGS) -c -o $$@ $$<
+	$$(CC) $(if $(filter %.cpp,$(1)),$$(filter-out -std=gnu11,$$(APP_FLAGS)),$$(APP_FLAGS)) $(call app_file_flags,$(1)) $$(APP_FILE_FLAGS) -c -o $$@ $$<
 endef

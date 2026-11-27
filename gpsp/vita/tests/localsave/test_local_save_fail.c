@@ -19,6 +19,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include "../../local_vita.c"
+#include "../../i18n.c"
 
 static char evt[8192], toast[256];
 void fe_evt(const char *f, ...)
@@ -31,7 +32,13 @@ void fe_evt(const char *f, ...)
    vsnprintf(evt + n, sizeof(evt) - n, f, ap);
    va_end(ap);
 }
-void osd_toast(const char *s, ...) { snprintf(toast, sizeof(toast), "%s", s); }
+void osd_toast(const char *s, ...)
+{
+   va_list ap;
+   va_start(ap, s);
+   vsnprintf(toast, sizeof(toast), s, ap);
+   va_end(ap);
+}
 
 #define SZ 16384
 static char dir[128], sav[200], bak[220], tmpn[220];

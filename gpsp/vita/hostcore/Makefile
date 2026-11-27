@@ -195,7 +195,7 @@ APP_FLAGS := $(CORE_ARCH_FLAGS) -O2 -g -Wall -Wextra -Wno-format-security -std=g
              $(APP_DEFS) -DPSPCOMPAT_PLAT \
              $(if $(filter 1,$(GBA_LINK)),-DGBA_LINK) \
              -DGBADHOC_VERSION=\"$(HOST_VERSION)\" \
-             -DHOST_APP_DIR=\"$(abspath $(V)/assets)\" \
+             '-DHOST_APP_DIR="$(abspath $(V)/assets)"' \
              $(APP_INC_FLAGS) $(FE_INC) $(ND_DEFS)
 APP_ALL   := $(APP_ALL_HOST)
 # No recompiler: the symbols the frontend names from cpu_threaded.c (interp_stub.c).

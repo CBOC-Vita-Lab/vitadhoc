@@ -21,6 +21,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifdef __vita__
+#include <psp2/kernel/threadmgr.h>
+#else
+#include <pthread.h>
+#endif
 
 #include "wide.h"
 #include "widecap.h"
@@ -68,9 +73,26 @@ static uint64_t now_us(void)
 enum { RUNG_N = 4, WORK_FLOOR = 12, PAD_FADE = 12 };
 
 struct SpinLock {
-	std::atomic_flag f = ATOMIC_FLAG_INIT;
-	void lock() { while (f.test_and_set(std::memory_order_acquire)) {} }
-	void unlock() { f.clear(std::memory_order_release); }
+#ifdef __vita__
+	SceKernelLwMutexWork m __attribute__((aligned(8)));
+	SpinLock()
+	{
+#ifdef SCE_KERNEL_LW_MUTEX_ATTR_TH_PRIO
+		sceKernelCreateLwMutex(&m, "wide_lk", SCE_KERNEL_LW_MUTEX_ATTR_TH_PRIO, 0, NULL);
+#else
+		sceKernelCreateLwMutex(&m, "wide_lk", 0, 0, NULL);
+#endif
+	}
+	~SpinLock() { sceKernelDeleteLwMutex(&m); }
+	void lock() { sceKernelLockLwMutex(&m, 1, NULL); }
+	void unlock() { sceKernelUnlockLwMutex(&m, 1); }
+#else
+	pthread_mutex_t m;
+	SpinLock() { pthread_mutex_init(&m, NULL); }
+	~SpinLock() { pthread_mutex_destroy(&m); }
+	void lock() { pthread_mutex_lock(&m); }
+	void unlock() { pthread_mutex_unlock(&m); }
+#endif
 };
 
 /* hash of a tile's graphics, valid while the 32 byte VRAM units under it were not written */
@@ -104,9 +126,11 @@ struct Layer {
  * margin, i = mh - 1 - d for distance d from the picture), px[pass][y][1][i] is column m + 256 + i (i = d). Only the rows and passes
  * the line says it drew are copied; compose never reads the others. */
 enum { SNAP_N = 5, SS_FREE = 0, SS_FILLING = 1, SS_FILLED = 2, SS_TAKEN = 3, SS_COMPOSING = 4 };
+static inline uint64_t snap_pack(uint32_t serial, uint32_t state) { return ((uint64_t) serial << 32) | (uint64_t) state; }
+static inline uint32_t snap_state(uint64_t v) { return (uint32_t) (v & 0xFFFFFFFFu); }
+static inline uint32_t snap_serial(uint64_t v) { return (uint32_t) (v >> 32); }
 struct Snap {
-	std::atomic<uint32_t> state;
-	uint32_t serial;
+	std::atomic<uint64_t> ss;        /* (serial << 32) | state: updated atomically to prevent serial/state ABA */
 	int h, m, mh, ok, wide_hint, co;   /* co: a centre only frame (no margin passes: the ambient frame is all there is) */
 	uint32_t clock, epoch;
 	struct SWideLine line[SW_ROWS];
@@ -898,17 +922,18 @@ static Snap *pool_claim(void)
 {
 	for (int pass = 0; pass < 3; pass++) {
 		Snap *best = NULL;
+		uint64_t best_ss = 0;
+		const uint32_t want = pass == 0 ? SS_FREE : pass == 1 ? SS_FILLED : SS_TAKEN;
 		for (int i = 0; i < SNAP_N; i++) {
 			Snap *s = A.snap[i];
 			if (!s) continue;
-			const uint32_t st = s->state.load(std::memory_order_acquire);
-			const uint32_t want = pass == 0 ? SS_FREE : pass == 1 ? SS_FILLED : SS_TAKEN;
-			if (st != want) continue;
-			if (!best || (int32_t) (s->serial - best->serial) < 0) best = s;
+			const uint64_t cur = s->ss.load(std::memory_order_acquire);
+			if (snap_state(cur) != want) continue;
+			if (!best || (int32_t) (snap_serial(cur) - snap_serial(best_ss)) < 0) { best = s; best_ss = cur; }
 		}
 		if (!best) continue;
-		uint32_t exp = pass == 0 ? SS_FREE : pass == 1 ? SS_FILLED : SS_TAKEN;
-		if (best->state.compare_exchange_strong(exp, SS_FILLING, std::memory_order_acq_rel)) {
+		uint64_t exp = best_ss;
+		if (best->ss.compare_exchange_strong(exp, snap_pack(snap_serial(best_ss), SS_FILLING), std::memory_order_acq_rel)) {
 			if (pass) A.dropped.fetch_add(1);
 			return best;
 		}
@@ -1798,8 +1823,8 @@ static void on_frame(const SWideView *v, void *)
 		const uint64_t c0 = now_us();
 		capture(v, sn);
 		cap_time(now_us() - c0);
-		sn->serial = A.snap_serial.fetch_add(1) + 1;
-		sn->state.store(SS_FILLED, std::memory_order_release);
+		const uint32_t ser = A.snap_serial.fetch_add(1) + 1;
+		sn->ss.store(snap_pack(ser, SS_FILLED), std::memory_order_release);
 		return;
 	}
 	if (!A.own) A.own = snap_alloc();
@@ -1823,7 +1848,7 @@ static void pool_reset(void)
 	/* callers hold A.lk (no compose runs) and the hook is quiet (S9xWideSet synced the PPU thread, or it is about to be) */
 	for (int i = 0; i < SNAP_N; i++) {
 		if (!A.snap[i]) A.snap[i] = snap_alloc();
-		if (A.snap[i]) A.snap[i]->state.store(SS_FREE);
+		if (A.snap[i]) A.snap[i]->ss.store(snap_pack(0, SS_FREE), std::memory_order_release);
 	}
 }
 
@@ -1881,15 +1906,19 @@ int snes_wide_snap_take(snes_wide_snap **out, unsigned *serial, int *widenable)
 	if (!A.split.load(std::memory_order_acquire)) return 0;
 	for (;;) {
 		Snap *best = NULL;
+		uint64_t best_ss = 0;
 		for (int i = 0; i < SNAP_N; i++) {
 			Snap *s = A.snap[i];
-			if (s && s->state.load(std::memory_order_acquire) == SS_FILLED && (!best || (int32_t) (s->serial - best->serial) < 0)) best = s;
+			if (!s) continue;
+			const uint64_t cur = s->ss.load(std::memory_order_acquire);
+			if (snap_state(cur) == SS_FILLED && (!best || (int32_t) (snap_serial(cur) - snap_serial(best_ss)) < 0)) { best = s; best_ss = cur; }
 		}
 		if (!best) return 0;
-		uint32_t exp = SS_FILLED;
-		if (!best->state.compare_exchange_strong(exp, SS_TAKEN, std::memory_order_acq_rel)) continue;
+		uint64_t exp = best_ss;
+		const uint32_t ser = snap_serial(best_ss);
+		if (!best->ss.compare_exchange_strong(exp, snap_pack(ser, SS_TAKEN), std::memory_order_acq_rel)) continue;
 		*out = (snes_wide_snap *) best;
-		*serial = best->serial;
+		*serial = ser;
 		if (widenable) *widenable = best->wide_hint;
 		return 1;
 	}
@@ -1898,8 +1927,9 @@ int snes_wide_snap_take(snes_wide_snap **out, unsigned *serial, int *widenable)
 void snes_wide_snap_release(snes_wide_snap *h, unsigned serial)
 {
 	Snap *s = (Snap *) h;
-	uint32_t exp = SS_TAKEN;
-	if (s && s->serial == serial) s->state.compare_exchange_strong(exp, SS_FREE, std::memory_order_acq_rel);
+	if (!s) return;
+	uint64_t exp = snap_pack(serial, SS_TAKEN);
+	s->ss.compare_exchange_strong(exp, snap_pack(serial, SS_FREE), std::memory_order_acq_rel);
 }
 
 /* compose a taken frame: 1 = the picture (valid until the third next compose), 0 = this frame is not widened (the adapter counted it), -1 = the
@@ -1908,24 +1938,26 @@ int snes_wide_compose(snes_wide_snap *h, unsigned serial, const uint16_t **rgb, 
 {
 	Snap *sn = (Snap *) h;
 	if (!sn) return -1;
-	uint32_t exp = SS_TAKEN;
-	if (sn->serial != serial || !sn->state.compare_exchange_strong(exp, SS_COMPOSING, std::memory_order_acq_rel)) return -1;
 	int r = 0;
 	A.lk.lock();
-	if (A.on) {
-		run(sn);
-		Out *o = &A.out[(A.wr.load(std::memory_order_acquire) - 1) % NOUT];
-		if (st) *st = o->st;
-		if (o->avail && o->px) {
-			if (rgb) *rgb = o->px;
-			if (width) *width = o->st.width;
-			if (height) *height = o->st.height;
-			if (pitch_px) *pitch_px = o->st.width;
-			r = 1;
-		}
-	} else r = -1;
+	if (!A.on) { A.lk.unlock(); return -1; }
+	uint64_t exp = snap_pack(serial, SS_TAKEN);
+	if (!sn->ss.compare_exchange_strong(exp, snap_pack(serial, SS_COMPOSING), std::memory_order_acq_rel)) {
+		A.lk.unlock();
+		return -1;
+	}
+	run(sn);
+	Out *o = &A.out[(A.wr.load(std::memory_order_acquire) - 1) % NOUT];
+	if (st) *st = o->st;
+	if (o->avail && o->px) {
+		if (rgb) *rgb = o->px;
+		if (width) *width = o->st.width;
+		if (height) *height = o->st.height;
+		if (pitch_px) *pitch_px = o->st.width;
+		r = 1;
+	}
+	sn->ss.store(snap_pack(serial, SS_FREE), std::memory_order_release);
 	A.lk.unlock();
-	sn->state.store(SS_FREE, std::memory_order_release);
 	return r;
 }
 

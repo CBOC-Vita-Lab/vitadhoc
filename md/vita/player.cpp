@@ -9,11 +9,51 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <algorithm>
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STBI_WRITE_NO_STDIO
+#define STB_IMAGE_WRITE_STATIC
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#include "stb_image_write.h"
+#pragma GCC diagnostic pop
 
 namespace mdp {
 
 using namespace pk;
+
+static void shot_png_push(void *ctx, void *data, int size)
+{
+	if (!ctx || !data || size <= 0) return;
+	std::vector<uint8_t> *out = (std::vector<uint8_t> *) ctx;
+	const uint8_t *p = (const uint8_t *) data;
+	out->insert(out->end(), p, p + size);
+}
+
+static void shot_split_time(int64_t t, int *yr, int *mo, int *dy, int *hr, int *mn, int *sc)
+{
+#ifdef __vita__
+	int64_t days = t / 86400, rem = t % 86400;
+	if (rem < 0) { rem += 86400; days--; }
+	int64_t z = days + 719468, era = (z >= 0 ? z : z - 146096) / 146097, doe = z - era * 146097;
+	int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365, y = yoe + era * 400;
+	int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
+	int64_t d = doy - (153 * mp + 2) / 5 + 1, m = mp < 10 ? mp + 3 : mp - 9;
+	if (m <= 2) y++;
+	*yr = (int) y; *mo = (int) m; *dy = (int) d;
+	*hr = (int) (rem / 3600); *mn = (int) ((rem % 3600) / 60); *sc = (int) (rem % 60);
+#else
+	time_t tt = (time_t) t;
+	struct tm tmv;
+	memset(&tmv, 0, sizeof tmv);
+	localtime_r(&tt, &tmv);
+	*yr = tmv.tm_year + 1900; *mo = tmv.tm_mon + 1; *dy = tmv.tm_mday;
+	*hr = tmv.tm_hour; *mn = tmv.tm_min; *sc = tmv.tm_sec;
+#endif
+}
 
 /* ---- the writer queue ------------------------------------------------------ */
 
@@ -343,6 +383,27 @@ void MdPlayer::run_writer_job(WriterJob *j)
 		j->result = cht_file_.write(j->path, (const uint8_t *) j->text.data(), j->text.size());
 		if (j->result) j->path2 = cht_file_.why();
 		break;
+	case WriterJob::SHOT: {
+		j->result = 1;
+		if (j->shot_w > 0 && j->shot_h > 0 && !j->bytes.empty() && make_dirs(j->path)) {
+			std::vector<uint8_t> png;
+			stbi_write_png_to_func(shot_png_push, &png, j->shot_w, j->shot_h, 3, j->bytes.data(), j->shot_w * 3);
+			if (!png.empty()) {
+				std::string dst;
+				for (int n = 1; n < 100; n++) {
+					std::string cand = n == 1 ? path_join(j->path, j->text + ".png")
+					                          : path_join(j->path, strf("%s-%d.png", j->text.c_str(), n));
+					if (!file_exists(cand)) { dst = cand; break; }
+				}
+				if (!dst.empty()) {
+					j->path2 = dst;
+					WriteResult w = atomic_write(dst, png.data(), png.size(), EXISTS_NO);
+					j->result = (w == W_OK) ? 0 : (100 + (int) w);
+				}
+			}
+		}
+		break;
+	}
 	}
 }
 
@@ -391,6 +452,11 @@ void MdPlayer::poll_writer()
 			cheats_busy_ = false;
 			if (j->result) { notice(trf("md.cheat_list_not_saved", j->path2.c_str()), NOTICE_ERROR); cheats_.save(cht_file_); }
 			logf("cheat list written rc=%d\n", j->result);
+			break;
+		case WriterJob::SHOT:
+			if (j->result == 0) notice("Screenshot saved", NOTICE_OK);
+			else notice("Screenshot could not be saved", NOTICE_ERROR);
+			logf("screenshot %s (%s rc=%d)\n", j->result == 0 ? "saved" : "FAILED", j->path2.c_str(), j->result);
 			break;
 		}
 		delete j;
@@ -501,6 +567,8 @@ void MdPlayer::apply_overrides()
 	if (req_.overrides.count("text_size")) ui_.text_large = lower(req_.overrides.find("text_size")->second) == "large" ? 1 : 0;
 	if (req_.overrides.count("language")) { const int l = pk::lang_index(req_.overrides.find("language")->second.c_str()); ui_.language = l >= pk::LANG_CHOICES ? pk::LANG_AUTO : l; pk::i18n_use(l, system_lang_); }
 	if (req_.overrides.count("contrast")) { const std::string w = lower(req_.overrides.find("contrast")->second); ui_.contrast = w == "on" || w == "1" ? 1 : 0; }
+	if (req_.overrides.count("theme")) { const std::string w = lower(req_.overrides.find("theme")->second); ui_.theme = w == "light" || w == "1" ? 1 : 0; }
+	if (req_.overrides.count("tap_menu")) { const std::string w = lower(req_.overrides.find("tap_menu")->second); ui_.tap_menu = (w == "off" || w == "0" || w == "no" || w == "false") ? 0 : 1; }
 	if ((v = req_.override_int("pixel_square", -1)) >= 0) ps_.pixel_sq = v ? 1 : 0;
 	if ((v = req_.override_int("wide_view", -1)) >= 0) ps_.wide = clampi(v, 0, 2);
 	if (req_.overrides.count("wide_view")) { std::string w = lower(req_.overrides.find("wide_view")->second); if (w == "auto") ps_.wide = 0; else if (w == "on") ps_.wide = 1; else if (w == "off") ps_.wide = 2; }
@@ -565,6 +633,8 @@ void MdPlayer::sync_menu_values()
 	menu_.set_value(ROW_PIC_SCREEN, ui_.screen);
 	menu_.set_value(ROW_UI_TEXT, ui_.text_large);
 	menu_.set_value(ROW_UI_CONTRAST, ui_.contrast);
+	menu_.set_value(ROW_UI_THEME, ui_.theme);
+	menu_.set_value(ROW_UI_TAPMENU, ui_.tap_menu);
 	menu_.set_value(ROW_UI_LANGUAGE, ui_.language);
 	menu_.set_value(ROW_PIC_APPLY, ps_.use_game ? 1 : 0);
 	menu_.set_value(ROW_SMS_BORDER, sms_border_);
@@ -592,7 +662,9 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	StartResult res;
 	init_shared();
 	root_ = root;
-	ui_ = pk::uiprefs_load(root_);          /* Screen, Text size, High contrast, Language: the same file as the app's Settings */
+	Ini disp;
+	disp.load(pk::uiprefs_path(root_));
+	ui_ = pk::uiprefs_parse(disp);          /* Screen, Text size, High contrast, Theme, Tap screen, Language */
 	pk::i18n_use(ui_.language, system_lang_);      /* the texts of everything below (fatal screens too) */
 
 	/* 1. what to run: the launch file (md, sms, gg or sg: the one that names the argument's game, else the newest), else the argument */
@@ -616,6 +688,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 		if (req_.newer_version) logf("launch file is from a newer VitAdhoc (version %d): reading what this player knows\n", req_.version);
 		for (size_t i = 0; i < req_.warnings.size(); i++) logf("launch file: %s\n", req_.warnings[i].c_str());
 	}
+	if (!disp.has("tap_menu") && have_launch_ && !req_.tap_menu) ui_.tap_menu = 0;
 	req_.console = console_;
 	scd_ = console_ == "scd";
 	system_ = console_ == "gg" ? MD_SYS_GG : console_ == "sms" ? MD_SYS_SMS : console_ == "sg" ? MD_SYS_SG : MD_SYS_MD;
@@ -778,12 +851,31 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 			md_host_cd_header(id.data(), 2048);
 			for (int i = 0; i < 4; i++) { id[2048 + i] = (uint8_t) (crc >> (8 * i)); id[2052 + i] = (uint8_t) (bc >> (8 * i)); }
 			if (atomic_write(lp, id.data(), id.size()) == W_OK) link_rom_ = lp;
-		} else
-		if (req_.patch_path.empty()) link_rom_ = rom_;
-		else {
-			make_dirs(path_join(root, "launch"));
-			std::string lp = path_join(path_join(root, "launch"), "link_rom.bin");
-			if (atomic_write(lp, romb.data(), romb.size()) == W_OK) link_rom_ = lp;
+		} else {
+			const bool hdr512 = romb.size() >= 1024 && (romb.size() % 1024 == 512) &&
+			                    memcmp(romb.data() + 0x100, "SEGA", 4) != 0;
+			if (req_.patch_path.empty() && !hdr512) link_rom_ = rom_;
+			else {
+				make_dirs(path_join(root, "launch"));
+				std::string lp = path_join(path_join(root, "launch"), "link_rom.bin");
+				const size_t off = hdr512 ? 512 : 0;
+				const size_t n = romb.size() - off;
+				if (hdr512 && system_ == MD_SYS_MD) {
+					/* match md/core/loadrom.c: strip 512 B header and deinterleave 16 KiB .smd blocks */
+					std::vector<uint8_t> flat(romb.begin() + off, romb.end());
+					uint8_t blk[0x4000];
+					for (size_t b = 0; b + 0x4000 <= flat.size(); b += 0x4000) {
+						memcpy(blk, flat.data() + b, 0x4000);
+						for (size_t i = 0; i < 0x2000; i++) {
+							flat[b + i * 2 + 0] = blk[0x2000 + i];
+							flat[b + i * 2 + 1] = blk[i];
+						}
+					}
+					if (atomic_write(lp, flat.data(), flat.size()) == W_OK) link_rom_ = lp;
+				} else if (atomic_write(lp, romb.data() + off, n) == W_OK) {
+					link_rom_ = lp;
+				}
+			}
 		}
 		logf("link: role=%s mode=%s identity file %s (%s)\n", req_.link.role.c_str(), req_.link.mode.c_str(), link_rom_.c_str(),
 		     link_rom_ == rom_ ? "the game file" : "a copy of the image the core runs");
@@ -841,16 +933,25 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	cfg.game_name = req_.game_name.empty() ? game_ : req_.game_name;
 	cfg.console_label = scd_ ? "Sega CD" : system_ == MD_SYS_MD ? "Mega Drive" : system_ == MD_SYS_SMS ? "Master System" : system_ == MD_SYS_GG ? "Game Gear" : "SG-1000";
 	cfg.caps = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_WIDE | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_CRT | CAP_GLOW |
-	           CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT | CAP_CHEAT_SEARCH | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_REWIND | extra_caps_;
+	           CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT | CAP_CHEAT_SEARCH | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_REWIND |
+	           CAP_RA | CAP_SHOT | extra_caps_;
 	cfg.enter_is_cross = req_.enter_is_cross;
 	cfg.players = model->players;
 	cfg.system_lang = system_lang_;
 	cfg.play_together_reason = system_ == MD_SYS_GG ? "md.a_game_gear_game_has_one_2" : "player.start_it_from_the_game_list";
-	cfg.accent = system_ == MD_SYS_MD ? 0x2E7DFF : system_ == MD_SYS_GG ? 0xE0B020 : 0xE04A3A;
+	cfg.accent = scd_ ? 0xC8E03C
+	           : system_ == MD_SYS_MD ? 0x4FA3FF
+	           : system_ == MD_SYS_SMS ? 0xF2557F
+	           : system_ == MD_SYS_GG ? 0xB57CFF
+	           : 0xFF9B3D;
 	menu_.configure(cfg, this, states_);
 	menu_.attach_input(&mapper_, store_, model, &profile_);
 	menu_.set_choices_allowed(ROW_PIC_SHAPE, (1u << 0) | (1u << 2) | (1u << 3) | (1u << 4));   /* one "Fit" (index 0, the main app's word): it already fills the height */
-	menu_.set_choices_allowed(ROW_PIC_QUALITY, ((1u << IMGQ_COUNT) - 1) & ~(1u << IMGQ_ENHANCED_4X));   /* no 4x scaler in a player */
+	{
+		unsigned qmask = ((1u << IMGQ_COUNT) - 1) & ~(1u << IMGQ_ENHANCED_4X);   /* no 4x scaler in a player */
+		if (system_ == MD_SYS_MD) qmask &= ~(1u << IMGQ_ENHANCED_3X);            /* 224*3=672 > SC_H=576 on Mega Drive / Sega CD */
+		menu_.set_choices_allowed(ROW_PIC_QUALITY, qmask);
+	}
 	{
 		std::vector<std::string> px, onoff, border, lcd, pad, region, fm, ym, palv, filt;
 		px.push_back("md.console"); px.push_back("input.square");
@@ -931,7 +1032,8 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	speed_.set_host(&glue_);
 	speed_start();
 	ra_update();
-	states_->resume_mark(pf_->now_us() / 1000);
+	now_ms_ = pf_->now_us() / 1000;
+	states_->resume_mark(now_ms_);
 	res.ok = true;
 	return res;
 }
@@ -939,30 +1041,82 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 void MdPlayer::apply_start_mode()
 {
 	if (linked()) return;      /* a linked game starts from power-on and from the host's game, never from a resume point or slot */
-	std::vector<uint8_t> d;
+	if (req_.start != START_CONTINUE && req_.start != START_SLOT) return;
+	now_ms_ = pf_->now_us() / 1000;
+	if (ra_.hardcore_pending()) {
+		start_deferred_ = true;
+		logf("hardcore: start mode (%d) deferred while achievements resolve\n", (int) req_.start);
+		return;
+	}
+	perform_start_mode();
+}
+
+void MdPlayer::perform_start_mode()
+{
+	if (linked()) return;
 	if ((req_.start == START_CONTINUE || req_.start == START_SLOT) && ra_.hardcore_blocks()) {
-		notice(tr("player.hardcore_mode_the_game_starts_from"), NOTICE_INFO);
+		notice(PK_RA_NO_STATE, NOTICE_INFO);
+		ra_toast_until_ = now_ms_ + 2200;
 		logf("hardcore: the start from a saved state is refused\n");
 		return;
 	}
+	std::vector<uint8_t> d;
 	if (req_.start == START_CONTINUE) {
-		if (!states_->resume_present()) { notice(tr("player.no_point_to_continue_from_the"), NOTICE_INFO); return; }
+		if (!states_->resume_present()) { notice(tr("player.no_point_to_continue_from_the"), NOTICE_INFO); ra_toast_until_ = now_ms_ + 2200; return; }
 		States::PatchMatch pm = states_->resume_patch(req_.patch_key);
 		if (pm == States::PATCH_DIFFERENT || (pm == States::PATCH_UNKNOWN && !req_.patch_key.empty())) {
 			notice(tr("player.the_resume_point_was_made_with"), NOTICE_INFO);
+			ra_toast_until_ = now_ms_ + 2200;
 			return;
 		}
 		StateStatus st = states_->load_resume(d);
-		if (st != ST_OK) { notice(trf("player.could_not_continue", state_status_text(st)), NOTICE_ERROR); return; }
-		if (!restore_state(d.data(), d.size())) { notice(tr("player.could_not_continue_the_resume_point"), NOTICE_ERROR); return; }
+		if (st != ST_OK) { notice(trf("player.could_not_continue", state_status_text(st)), NOTICE_ERROR); ra_toast_until_ = now_ms_ + 5000; return; }
+		if (!restore_state(d.data(), d.size())) { notice(tr("player.could_not_continue_the_resume_point"), NOTICE_ERROR); ra_toast_until_ = now_ms_ + 5000; return; }
 		logf("continued from the resume point\n");
 	} else if (req_.start == START_SLOT) {
 		StateStatus st = states_->load(req_.slot, d);
-		if (st != ST_OK) { notice(strf(tr("player.slot"), req_.slot, state_status_text(st)), st == ST_EMPTY ? NOTICE_INFO : NOTICE_ERROR); return; }
-		if (!restore_state(d.data(), d.size())) { notice(strf(tr("player.slot_could_not_be_loaded_this"), req_.slot), NOTICE_ERROR); return; }
+		if (st != ST_OK) { notice(strf(tr("player.slot"), req_.slot, state_status_text(st)), st == ST_EMPTY ? NOTICE_INFO : NOTICE_ERROR); ra_toast_until_ = now_ms_ + (st == ST_EMPTY ? 2200 : 5000); return; }
+		if (!restore_state(d.data(), d.size())) { notice(strf(tr("player.slot_could_not_be_loaded_this"), req_.slot), NOTICE_ERROR); ra_toast_until_ = now_ms_ + 5000; return; }
 		session_.note_state_touched(req_.slot);
 		notice(strf(tr("menu.state_loaded_from_slot"), req_.slot), NOTICE_OK);
+		ra_toast_until_ = now_ms_ + 2200;
 	}
+}
+
+void MdPlayer::take_screenshot()
+{
+	Frame f;
+	if (!current_frame(&f) || !f.valid()) {
+		notice("Screenshot could not be saved", NOTICE_ERROR);
+		return;
+	}
+	std::string dir;
+	std::map<std::string, std::string>::const_iterator it = req_.unknown.find("shot_dir");
+	if (it != req_.unknown.end()) dir = trim(it->second);
+	while (dir.size() > 1 && (dir[dir.size() - 1] == '/' || dir[dir.size() - 1] == '\\') && dir[dir.size() - 2] != ':')
+		dir.erase(dir.size() - 1);
+	if (dir.empty()) dir = path_join(root_, "screenshots");
+	int yr = 1970, mo = 1, dy = 1, hr = 0, mn = 0, sc = 0;
+	shot_split_time(pk::now_unix(), &yr, &mo, &dy, &hr, &mn, &sc);
+	WriterJob *j = new WriterJob;
+	j->kind = WriterJob::SHOT;
+	j->shot_w = f.w;
+	j->shot_h = f.h;
+	j->path = dir;
+	j->text = strf("%s-%04d%02d%02d-%02d%02d%02d", game_.c_str(), yr, mo, dy, hr, mn, sc);
+	j->bytes.resize((size_t) f.w * (size_t) f.h * 3);
+	for (int y = 0; y < f.h; y++) {
+		const uint16_t *src = (const uint16_t *) ((const uint8_t *) f.px + (size_t) y * (size_t) f.pitch_bytes);
+		uint8_t *dst = &j->bytes[(size_t) y * (size_t) f.w * 3];
+		for (int x = 0; x < f.w; x++, dst += 3) {
+			const unsigned v = src[x];
+			const unsigned r = (v >> 11) & 31, g = (v >> 5) & 63, b = v & 31;
+			dst[0] = (uint8_t) ((r << 3) | (r >> 2));
+			dst[1] = (uint8_t) ((g << 2) | (g >> 4));
+			dst[2] = (uint8_t) ((b << 3) | (b >> 2));
+		}
+	}
+	post(j);
 }
 
 /* ---- per frame ------------------------------------------------------------------- */
@@ -973,7 +1127,8 @@ bool MdPlayer::input(const PadSample pads[MAX_PLAYERS], bool tapped, uint64_t no
 	for (int i = 0; i < MAX_PLAYERS; i++) last_pads_[i] = pads[i];
 	mapper_.update(pads, now_ms, frame, &in_);
 	speed_.input(in_.fired);
-	if (in_.menu || (tapped && req_.tap_menu)) return true;   /* the chords always open it; a tap only when the app's "Tap screen for menu" is on */
+	if (in_.fired & FIRE_SHOT) take_screenshot();
+	if (in_.menu || (tapped && ui_.tap_menu)) return true;   /* the chords always open it; a tap only when "Tap screen for menu" is on */
 	if (linked()) {
 		/* the session sets both pads of its one machine; this console's player is pad 1 only, no quick save or load */
 		link_pad_ = in_.pad[0] & 0xFFFu;
@@ -1103,11 +1258,16 @@ void MdPlayer::ra_pump() { if (ra_.up()) ra_.pump(); }
 void MdPlayer::ra_update()
 {
 	const bool b = ra_.hardcore_blocks();
-	if (b == ra_blocks_) return;
-	ra_blocks_ = b;
-	speed_.set_rewind_locked(b, PK_RA_NO_REWIND);
-	cheats_apply();
-	logf("hardcore: %s\n", b ? "in force: no rewind, no cheats, no state loads" : "not in force");
+	if (b != ra_blocks_) {
+		ra_blocks_ = b;
+		speed_.set_rewind_locked(b, PK_RA_NO_REWIND);
+		cheats_apply();
+		logf("hardcore: %s\n", b ? "in force: no rewind, no cheats, no state loads" : "not in force");
+	}
+	if (start_deferred_ && !ra_.hardcore_pending()) {
+		start_deferred_ = false;
+		perform_start_mode();
+	}
 }
 
 const char *MdPlayer::state_load_refused() { return ra_.hardcore_blocks() ? PK_RA_NO_STATE : 0; }
@@ -1164,6 +1324,7 @@ void MdPlayer::disc_tick()
 	if (disc_phase_ == 1) {
 		char err[160];
 		if (md_host_cd_swap(disc_want_, err, sizeof err) == 0) {
+			speed_.state_changed();
 			logf("change disc: disc %d in the drive\n", disc_want_ + 1);
 		} else {
 			logf("change disc: disc %d could not be read: %s\n", disc_want_ + 1, err);
@@ -1220,6 +1381,12 @@ std::string MdPlayer::pace_line()
 
 void MdPlayer::quick_save()
 {
+	if (states_->is_locked(1)) {
+		SaveReport rep;
+		rep.status = ST_LOCKED;
+		notice(rep.text(), NOTICE_ERROR, true);
+		return;
+	}
 	std::vector<uint8_t> d;
 	if (!capture_state(d)) { notice(tr("menu.could_not_save_the_state_the"), NOTICE_ERROR); return; }
 	Frame f;
@@ -1286,7 +1453,7 @@ void MdPlayer::after_frame(uint64_t now_us)
 	poll_writer();
 	srm_watch(now_us);
 	/* the resume point: every 2 minutes, and soon after the game saved (at most every 30 s) */
-	if (!resume_busy_ && !linked()) {
+	if (!start_deferred_ && !resume_busy_ && !linked()) {
 		bool after_save = resume_after_srm_at_ && now_us >= resume_after_srm_at_ && states_->resume_due(now_ms_, 30000);
 		if (after_save || states_->resume_due(now_ms_, 120000)) { resume_after_srm_at_ = 0; resume_post(false); }
 	}
@@ -1527,7 +1694,6 @@ void MdPlayer::open_menu(int player)
 	menu_srm_pending_ = md_host_sram_dirty() != 0;
 	pacer_.reset(PACE_FULL);
 	look_save(false);
-	look_.reset_window();
 }
 
 void MdPlayer::menu_drawn()
@@ -1546,7 +1712,6 @@ MenuEvent MdPlayer::menu_update(const MenuInput &in)
 		if (settings_dirty_) settings_queue_save();
 		srm_recheck_ = true;
 		pacer_.reset(PACE_FULL);
-		look_.reset_window();
 		look_safe_point(LOOK_SAFE_MENU);
 		if (ev == MENU_RESET_DONE) notice(tr("player.the_game_was_reset"), NOTICE_INFO);
 	}
@@ -1611,10 +1776,13 @@ void MdPlayer::on_change(int row, int v)
 	case ROW_PIC_GLOW: ps_.glow = clampi(v, 0, 10); g_changed |= CH_GLOW; break;
 	case ROW_PIC_CRT: ps_.crt = clampi(v, 0, 10); g_changed |= CH_CRT; break;
 	case ROW_PIC_SCREEN: case ROW_UI_TEXT: case ROW_UI_CONTRAST: case ROW_UI_LANGUAGE:
+	case ROW_UI_THEME: case ROW_UI_TAPMENU:
 		/* shared by every console and the app: display.ini, written at once (a few bytes) */
 		if (row == ROW_PIC_SCREEN) ui_.screen = pk_screen_clamp(v);
 		else if (row == ROW_UI_LANGUAGE) ui_.language = clampi(v, 0, pk::LANG_CHOICES - 1);      /* the menu switched the texts already */
 		else if (row == ROW_UI_TEXT) ui_.text_large = v ? 1 : 0;
+		else if (row == ROW_UI_THEME) ui_.theme = v ? 1 : 0;
+		else if (row == ROW_UI_TAPMENU) ui_.tap_menu = v ? 1 : 0;
 		else ui_.contrast = v ? 1 : 0;
 		ui_serial_++;
 		if (!pk::uiprefs_save(root_, ui_)) notice(tr("player.could_not_save_the_screen_settings"), NOTICE_ERROR, false);
@@ -1703,6 +1871,42 @@ void MdPlayer::on_state_touched(int slot) { session_.note_state_touched(slot); }
 void MdPlayer::on_controls_changed(WriteResult rc)
 {
 	if (rc != W_OK) { logf("controls NOT saved: %s\n", write_result_text(rc, true)); session_.note_notice(trf("menu.controls_save_failed", write_result_text(rc))); }
+}
+
+void MdPlayer::list_achievements(std::vector<MenuAchievement> &out, std::string *summary)
+{
+	out.clear();
+	if (summary) summary->clear();
+	if (!ra_.up()) {
+		if (summary) *summary = tr("Not signed in");
+		return;
+	}
+	if (ra_.game_state() == 0) {
+		if (summary) *summary = tr("Loading...");
+		return;
+	}
+	std::vector<RaAchievement> ra;
+	if (ra_.game_state() < 0 || !ra_.list_achievements(ra) || ra.empty()) {
+		if (summary) *summary = tr("ra.no_achievements_for_this_game_yet");
+		return;
+	}
+	out.reserve(ra.size());
+	for (size_t i = 0; i < ra.size(); i++) {
+		MenuAchievement a;
+		a.title = ra[i].title;
+		a.desc = ra[i].desc;
+		a.points = ra[i].points;
+		a.unlocked = ra[i].unlocked;
+		a.hardcore = ra[i].hardcore;
+		a.progress = ra[i].progress;
+		out.push_back(a);
+	}
+	if (summary) {
+		std::string prog = strf(tr(ra_.hardcore_active() ? "ra.progress_hardcore" : "ra.progress"),
+		                        ra_.unlocked(), ra_.total());
+		if (!ra_.game_title().empty()) *summary = ra_.game_title() + " - " + prog;
+		else *summary = prog;
+	}
 }
 
 bool MdPlayer::queue_state_write(StateJob &job)

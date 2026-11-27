@@ -14,8 +14,8 @@ void pic_defaults(pic_settings *s)
 	s->scan = 0;
 	s->grid = 0;
 	s->crt = 0;
-	s->hires_blend = 0;
-	s->interlace_blend = 0;
+	s->hires_blend = 1;
+	s->interlace_blend = 1;
 	s->multitap = 0; /* 0 auto, 1 on, 2 off */
 	s->use_game = 0;
 	s->wide = 0;

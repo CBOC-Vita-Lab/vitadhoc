@@ -89,6 +89,8 @@ static struct {
 	uint8_t *state_scratch;
 	/* run-ahead (md_host_run_frame_ahead) */
 	uint8_t *ahead_state, *ahead_sram;
+	unsigned ahead_sram_gen;
+	int ahead_sram_valid;
 	int ahead_debug_tail;                /* md_host_ahead_debug_tail: steps 2 and 3 only */
 	int ahead_quiet;                     /* the frame being run is the look-ahead one: its sound is dropped */
 	unsigned long ahead_frames, ahead_sram_undone;
@@ -1210,7 +1212,14 @@ int md_host_run_frame_ahead(void (*shown)(void *user), void *user)
 	}
 	wide_list_cut(wide_n0, wide_all0);
 	if (state_save_to(G.ahead_state, G.state_size, 0) != G.state_size) return 1;      /* cannot happen (the size was measured); the real frame stands */
-	if (G.cd) cd_save_ahead(G.ahead_sram, 0);
+	const unsigned cd_gen0 = md_cd_save_gen;
+	if (G.cd) {
+		if (!G.ahead_sram_valid || G.ahead_sram_gen != cd_gen0) {
+			cd_save_ahead(G.ahead_sram, 0);
+			G.ahead_sram_gen = cd_gen0;
+			G.ahead_sram_valid = 1;
+		}
+	}
 	else if (sram.on) memcpy(G.ahead_sram, sram.sram, SRAM_BYTES);     /* (the state holds the sprite list of the next first line, the FIFO flag, the PSG's queued deltas, ...) */
 
 	/* 2. the frame after it with the same buttons: drawn, silent */
@@ -1224,7 +1233,12 @@ int md_host_run_frame_ahead(void (*shown)(void *user), void *user)
 	if (state_load_from(G.ahead_state, G.state_size, 0) != 0) { G.ahead_quiet = 0; return 2; }     /* cannot happen: the state is our own */
 	G.ahead_quiet = 0;
 	wide_list_cut(wide_n1, wide_all1);
-	if (G.cd) { if (cd_save_ahead(G.ahead_sram, 1)) G.ahead_sram_undone++; }
+	if (G.cd) {
+		if (md_cd_save_gen != cd_gen0) {
+			if (cd_save_ahead(G.ahead_sram, 1)) G.ahead_sram_undone++;
+			G.ahead_sram_gen = md_cd_save_gen;
+		}
+	}
 	else if (sram.on && memcmp(G.ahead_sram, sram.sram, SRAM_BYTES)) { memcpy(sram.sram, G.ahead_sram, SRAM_BYTES); G.ahead_sram_undone++; }
 	/* what md_host_video / md_host_video_info describe is the picture in the buffer, the look-ahead one */
 	G.vi = vi; G.vwidth = vwidth; G.vheight = vheight; G.vwoffset = vwoffset; G.bmdoffset = bmdoffset; G.vdar = vdar;
@@ -1515,18 +1529,19 @@ static int state_load_from(const uint8_t *buf, size_t n, int check_crc)
 	used = get32(buf + 12);
 	if (used == 0 || used > payload_cap || used > G.state_payload_cap) return 3;
 	if (check_crc && get32(buf + n - STATE_TRAILER) != (uint32_t)crc32(0, buf, (unsigned)(n - STATE_TRAILER))) return 3;
+	int switched_disc = 0, prev_disc = g_disc_cur;
 	if (G.cd && (int)((get32(buf + 8) >> 8) & 0xFFu) != g_disc_cur) {      /* the state was made with another disc in the drive: it goes in first (once the state is known to be whole: a damaged file does not change the disc) */
 		const int d = (int)((get32(buf + 8) >> 8) & 0xFFu);
-		const int prev = g_disc_cur;
 		if (d >= g_disc_n) return 3;
-		if (cd_put_disc(d, NULL, 0)) { cd_put_disc(prev, NULL, 0); return 3; }      /* its disc is gone: the one that was in goes back, the drive is not left empty */
+		if (cd_put_disc(d, NULL, 0)) { cd_put_disc(prev_disc, NULL, 0); return 3; }      /* its disc is gone: the one that was in goes back, the drive is not left empty */
+		switched_disc = 1;
 	}
 	memcpy(G.state_scratch, buf + STATE_HDR, used);      /* the core wants a writable buffer */
 	/* run-ahead's own load keeps the picture just drawn, the pattern cache and the palette tables (the core then marks only the patterns
 	 * whose VRAM differs); every other load starts from cleared buffers as before */
 	fast_savestates = G.ahead_quiet ? 1 : 0;
 	state_load_notes = 0;
-	if (!state_load(G.state_scratch)) { fast_savestates = 0; return 3; }
+	if (!state_load(G.state_scratch)) { fast_savestates = 0; if (switched_disc) cd_put_disc(prev_disc, NULL, 0); return 3; }
 	fast_savestates = 0;
 	if (state_load_notes) logf_(state_load_notes & 2 ? "state load: a program counter in a page with no memory behind it was reset to 0 (sub CPU or main CPU)" : "state load: the main CPU's program counter in a page with no memory behind it was reset to 0");
 	if (!G.ahead_quiet) G.ring_r = G.ring_w = G.ring_n = 0;      /* run-ahead goes back to a moment whose sound is already in the ring */

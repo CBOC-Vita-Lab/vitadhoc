@@ -57,12 +57,13 @@ public:
 
 /* One piece of work for the writer thread. */
 struct WriterJob {
-	enum Kind { SRM = 1, STATE, RESUME, SETTINGS, LOG, WIDEMAP, LOOKMEM } kind;
+	enum Kind { SRM = 1, STATE, RESUME, SETTINGS, LOG, WIDEMAP, LOOKMEM, SHOT } kind;
 	pk::StateJob state;
 	std::vector<uint8_t> bytes;
 	std::string text;
 	pic_settings ps;
 	std::string path, path2;
+	int shot_w = 0, shot_h = 0;
 	int result = 0;
 	pk::SaveReport rep;
 	bool remove_file = false;      /* LOOKMEM: delete `path` instead of writing `text` */
@@ -191,6 +192,7 @@ public:
 	bool menu_open() const { return menu_.is_open(); }
 	/* returns MENU_GAME_LIST / MENU_EXIT when the player chose to leave */
 	pk::MenuEvent menu_update(const pk::MenuInput &in);
+	void menu_prepare(pk::Gfx *g) { menu_.prepare_textures(g); }
 	void menu_draw(pk::Gfx *g, pk::Text *t) { menu_.draw(g, t); }
 	void menu_drawn();      /* the menu's first frame is on screen: now the battery RAM may be written */
 	pk::Menu &menu() { return menu_; }
@@ -294,6 +296,7 @@ public:
 	bool delete_cheat(int index);
 	bool queue_state_write(pk::StateJob &job);
 	void wait_state_writes() { wait_writer(); }
+	void list_achievements(std::vector<pk::MenuAchievement> &out, std::string *summary);
 
 private:
 	void post(WriterJob *j);
@@ -306,6 +309,8 @@ private:
 	bool srm_post();
 	void srm_result(int r, const char *how, uint64_t now_us);
 	void resume_post(bool sync);
+	void perform_start_mode();
+	void take_screenshot();
 	void quick_save();
 	void quick_load();
 	void notice(const std::string &t, pk::NoticeKind k, bool report_to_app = false);
@@ -363,6 +368,7 @@ private:
 	bool search_ask_ = false;                 /* ask_search_value: the keyboard is for a number */
 	std::string search_title_;
 	bool ra_blocks_ = false;               /* Hardcore is in force (or not known yet): no rewind, no cheats, no state loads */
+	bool start_deferred_ = false;
 	uint64_t ra_toast_until_ = 0;
 	void ra_begin(const uint8_t *rom, size_t n);
 	void ra_update();

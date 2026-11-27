@@ -34,7 +34,7 @@ PK  := ../../playerkit
 WK  := ../../widekit
 INC := -I$(WK)/include -I$(CORE) -I$(CORE)/apu -I$(CORE)/apu/bapu -I$(FE) -I$(FE)/third_party/stb -I$(V2D)/include -I$(PK)/src -I$(PK)/vita
 OPT ?= -O3
-CXXFLAGS := -MMD -MP $(CPUFLAGS) $(OPT) -g -std=gnu++14 -w -fno-strict-aliasing -fno-rtti $(CORE_DEFS) $(INC)
+CXXFLAGS := -MMD -MP $(CPUFLAGS) $(OPT) -g -std=gnu++14 -w -fno-strict-aliasing -fno-rtti -fno-exceptions $(CORE_DEFS) $(INC)
 CFLAGS   := -MMD -MP $(CPUFLAGS) -O2 -g -w -DVITA2D_NO_PGF -D__vita__ -I$(V2D)/include
 # RetroAchievements (playerkit/ra.mk): pk_ra, the rcheevos client and ra_http.c: MIT code only (check-ra says so)
 RA_GP     := ../../gpsp/vita

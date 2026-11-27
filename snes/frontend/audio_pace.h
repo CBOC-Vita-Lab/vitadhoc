@@ -124,7 +124,7 @@ private:
 	/* audio thread state */
 	bool primed_, in_pause_;
 	double frac_, ema_, integ_ppm_, base_, ratio_;
-	bool slow_;
+	bool slow_, fast_;
 	double target_ms_;
 	uint64_t calm_frames_;
 	int fadein_left_, tail_left_, xfade_left_, pause_left_;

@@ -73,7 +73,7 @@ $(B)/pl/%.o: $(FE)/%.cpp $(wildcard $(FE)/*.h) $(wildcard $(PK)/src/*.h)
 	$(CXX) -O2 -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I$(PK)/src -c -o $@ $<
 $(B)/pl/%.o: ../vita/%.cpp $(wildcard ../vita/*.h) $(wildcard $(FE)/*.h) $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)/pl
-	$(CXX) -O2 -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../vita -I$(PK)/src -c -o $@ $<
+	$(CXX) -O2 -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../vita -I$(PK)/src -I../../snes/frontend/third_party/stb -c -o $@ $<
 $(B)/pl/%.o: %.cpp twin_threads.h $(wildcard ../vita/*.h) $(wildcard $(FE)/*.h) $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)/pl
 	$(CXX) -O2 -std=gnu++14 -Wall $(CPUF) -I$(FE) -I../core -I../vita -I$(PK)/src -I$(PK)/tests -c -o $@ $<

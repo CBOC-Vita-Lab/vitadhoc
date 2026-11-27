@@ -216,14 +216,38 @@ const unsigned short *pic_lcd_table(void)
 	if (t) return t;
 	unsigned short *n = (unsigned short *) malloc(65536 * sizeof *n);
 	if (!n) return 0;
+	/* Precompute monotonic inverse-power thresholds (94 powf calls instead of 196,608) with exact fallback near boundaries. */
+	float thr5[31], thr6[63];
+	const float inv = 1.0f / 1.1f;
+	for (int k = 0; k < 31; k++) {
+		const float y = ((k + 0.5f) / 31.0f - 0.05f) / 0.93f;
+		thr5[k] = y <= 0.0f ? -1.0f : (y >= 1.0f ? 2.0f : powf(y, inv));
+	}
+	for (int k = 0; k < 63; k++) {
+		const float y = ((k + 0.5f) / 63.0f - 0.05f) / 0.93f;
+		thr6[k] = y <= 0.0f ? -1.0f : (y >= 1.0f ? 2.0f : powf(y, inv));
+	}
+	auto quant = [](float x, const float *thr, int maxq) -> int {
+		if (x <= 0.0f) return (int) (0.05f * maxq + 0.5f);
+		int lo = 0, hi = maxq;
+		while (lo < hi) {
+			const int mid = (lo + hi) >> 1;
+			if (x < thr[mid]) hi = mid;
+			else lo = mid + 1;
+		}
+		if ((lo > 0 && fabsf(x - thr[lo - 1]) < 1e-4f) || (lo < maxq && fabsf(x - thr[lo]) < 1e-4f)) {
+			const float o = 0.05f + 0.93f * powf(x, 1.1f);
+			int q = (int) (o * maxq + 0.5f);
+			return q < 0 ? 0 : q > maxq ? maxq : q;
+		}
+		return lo;
+	};
 	for (unsigned v = 0; v < 65536; v++) {
 		float r = ((v >> 11) & 31) / 31.0f, g = ((v >> 5) & 63) / 63.0f, b = (v & 31) / 31.0f;
 		/* the Game Gear's STN screen: blacks sit at a dark grey, colours lose some saturation, gamma a little high */
 		const float y = 0.299f * r + 0.587f * g + 0.114f * b;
 		r = y + (r - y) * 0.85f; g = y + (g - y) * 0.85f; b = y + (b - y) * 0.85f;
-		r = 0.05f + 0.93f * powf(r, 1.1f); g = 0.05f + 0.93f * powf(g, 1.1f); b = 0.05f + 0.93f * powf(b, 1.1f);
-		int R = (int) (r * 31.0f + 0.5f), G = (int) (g * 63.0f + 0.5f), B = (int) (b * 31.0f + 0.5f);
-		R = R < 0 ? 0 : R > 31 ? 31 : R; G = G < 0 ? 0 : G > 63 ? 63 : G; B = B < 0 ? 0 : B > 31 ? 31 : B;
+		const int R = quant(r, thr5, 31), G = quant(g, thr6, 63), B = quant(b, thr5, 31);
 		n[v] = (unsigned short) ((R << 11) | (G << 5) | B);
 	}
 	t = n;

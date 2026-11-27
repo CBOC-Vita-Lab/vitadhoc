@@ -17,8 +17,15 @@ static const double kIclamp = 4000.0;            /* ... limited to +-4000 ppm */
 static const double kTargetMs0 = 70.0, kTargetMin = 50.0, kTargetMax = 140.0;
 static const double kUnderrunUpMs = 20.0, kCalmDownMs = 5.0, kCalmSeconds = 30.0;
 static const double kSlowEnter = 0.985, kSlowLeave = 0.995, kSlowFloor = 0.5;
+static const double kFastEnter = 1.03, kFastLeave = 1.015, kFastCeil = 1.35;
 static const double kTrimFactor = 3.0;           /* fill above this many targets is trimmed back to one */
 static const double kLegacyTargetMs = 60.0;
+
+static inline int16_t round16(double v)
+{
+	int iv = (int) (v >= 0.0 ? v + 0.5 : v - 0.5);
+	return (int16_t) (iv < -32768 ? -32768 : (iv > 32767 ? 32767 : iv));
+}
 
 void Pacer::Window::reset()
 {
@@ -30,7 +37,7 @@ void Pacer::Window::reset()
 
 Pacer::Pacer()
     : mask_(0), w_(0), r_(0), paused_(false), speed_(1.0), legacy_ratio_(1.0), in_total_(0), dropped_total_(0),
-      primed_(false), in_pause_(false), frac_(0), ema_(0), integ_ppm_(0), base_(1.0), ratio_(1.0), slow_(false),
+      primed_(false), in_pause_(false), frac_(0), ema_(0), integ_ppm_(0), base_(1.0), ratio_(1.0), slow_(false), fast_(false),
       target_ms_(kTargetMs0), calm_frames_(0), fadein_left_(0), tail_left_(0), xfade_left_(0), pause_left_(0),
       xa_pos_(0), xa_frac_(0), out_total_(0), ur_total_(0), trims_total_(0), in_underrun_legacy_(false),
       req_(false), ready_(false), ur_total_pub_(0), ev_index_(0), ev_ema_(0), ev_target_(0), ev_ratio_(0),
@@ -54,7 +61,7 @@ void Pacer::init(const Config &cfg)
 	primed_ = in_pause_ = false;
 	frac_ = ema_ = integ_ppm_ = 0;
 	base_ = ratio_ = 1.0;
-	slow_ = false;
+	slow_ = fast_ = false;
 	target_ms_ = cfg.legacy ? kLegacyTargetMs : kTargetMs0;
 	calm_frames_ = 0;
 	fadein_left_ = tail_left_ = xfade_left_ = pause_left_ = 0;
@@ -267,6 +274,10 @@ void Pacer::render_new(int16_t *out)
 			in_pause_ = true;
 			primed_ = false;
 			fadein_left_ = xfade_left_ = 0;
+			integ_ppm_ = 0;
+			slow_ = fast_ = false;
+			base_ = ratio_ = 1.0;
+			speed_.store(1.0, std::memory_order_relaxed);
 			r_.store(w, std::memory_order_release);    /* stale audio is not played after the resume */
 			return;
 		}
@@ -287,6 +298,9 @@ void Pacer::render_new(int16_t *out)
 			ema_ = fill;
 			frac_ = 0;
 			xfade_left_ = 0;
+			integ_ppm_ = 0;
+			slow_ = fast_ = false;
+			base_ = ratio_ = 1.0;
 		} else {
 			for (; pos < G; pos++) out[pos * 2] = out[pos * 2 + 1] = 0;
 			last_[0] = last_[1] = 0;
@@ -312,9 +326,13 @@ void Pacer::render_new(int16_t *out)
 			trims_total_++; win_.trims++;
 		}
 		double sp = speed_.load(std::memory_order_relaxed);
-		if (!slow_ && sp < kSlowEnter) slow_ = true;
+		if (!slow_ && sp < kSlowEnter) { slow_ = true; fast_ = false; }
 		else if (slow_ && sp > kSlowLeave) slow_ = false;
-		base_ = slow_ ? (sp > kSlowFloor ? sp : kSlowFloor) : 1.0;
+		if (!fast_ && sp > kFastEnter) { fast_ = true; slow_ = false; }
+		else if (fast_ && sp < kFastLeave) fast_ = false;
+		if (slow_) base_ = sp > kSlowFloor ? sp : kSlowFloor;
+		else if (fast_) base_ = sp < kFastCeil ? sp : kFastCeil;
+		else base_ = 1.0;
 		const double err = (ema_ - tgt) / tgt;     /* >0: too full, consume faster */
 		const double p = clampd(err * cfg_.kp_ppm, -kPclamp, kPclamp);
 		integ_ppm_ = clampd(integ_ppm_ + err * cfg_.ki_ppm_per_grain, -kIclamp, kIclamp);
@@ -330,6 +348,10 @@ void Pacer::render_new(int16_t *out)
 			last_[0] = last_[1] = 0;
 			primed_ = false;
 			fadein_left_ = xfade_left_ = 0;
+			integ_ppm_ = 0;
+			slow_ = fast_ = false;
+			base_ = ratio_ = 1.0;
+			speed_.store(1.0, std::memory_order_relaxed);
 			r_.store(w_.load(std::memory_order_acquire), std::memory_order_release);
 			return;
 		}
@@ -389,8 +411,8 @@ void Pacer::render_new(int16_t *out)
 			l *= g; rr *= g;
 			pause_left_--;
 		}
-		out[pos * 2] = (int16_t) lrint(l);
-		out[pos * 2 + 1] = (int16_t) lrint(rr);
+		out[pos * 2] = round16(l);
+		out[pos * 2 + 1] = round16(rr);
 		last_[0] = out[pos * 2]; last_[1] = out[pos * 2 + 1];
 		frac_ += step;
 		const unsigned adv = (unsigned) frac_;

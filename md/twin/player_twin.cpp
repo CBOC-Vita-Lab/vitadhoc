@@ -527,7 +527,7 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 	rig.press(PH_CIRCLE);
 	rig.settle(4);
 	rig.snap("states_undo_offered");
-	EXPECT(rig.press(PH_SELECT) == MENU_RESUME);           /* undo the load */
+	EXPECT(rig.press(PH_R) == MENU_RESUME);                /* undo the load */
 	std::vector<uint8_t> after_undo;
 	pl->capture_state(after_undo);
 	EXPECT(after_undo == moved);
@@ -571,7 +571,7 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 		rig.go_row("Scanlines");
 		rig.press(PH_RIGHT);
 		EXPECT(pl->picture().scan == 5);
-		/* Image quality steps through Auto, Original, Enhanced 2x, Enhanced 3x, MMPX 2x (the main app's names; no 4x scaler here) */
+		/* Image quality steps through Auto, Original, Enhanced 2x, (Enhanced 3x on SMS/GG/SG only), MMPX 2x */
 		rig.go_row("Image quality");
 		EXPECT(pl->menu().value(ROW_PIC_QUALITY) == IMGQ_AUTO);
 		EXPECT(pl->menu().row_value_text(pl->menu().cursor()) == "Auto");
@@ -579,9 +579,11 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 		EXPECT(pl->picture().scaler == SCALER_OFF && pl->menu().value(ROW_PIC_QUALITY) == IMGQ_ORIGINAL);
 		rig.press(PH_RIGHT);
 		EXPECT(pl->picture().scaler == SCALER_XBR2 && pl->menu().row_value_text(pl->menu().cursor()) == "Enhanced 2x");
-		rig.press(PH_RIGHT);
-		EXPECT(pl->picture().scaler == SCALER_XBR3 && pl->menu().row_value_text(pl->menu().cursor()) == "Enhanced 3x");
-		rig.snap("picture_scaler_xbr3");
+		if (!md) {
+			rig.press(PH_RIGHT);
+			EXPECT(pl->picture().scaler == SCALER_XBR3 && pl->menu().row_value_text(pl->menu().cursor()) == "Enhanced 3x");
+			rig.snap("picture_scaler_xbr3");
+		}
 		rig.press(PH_RIGHT);
 		EXPECT(pl->picture().scaler == SCALER_MMPX2 && pl->menu().row_value_text(pl->menu().cursor()) == "MMPX 2x");
 		/* Video filter: bilinear while Original switches the quality to Auto (as in the app); under Original it shows sharp bilinear */
@@ -875,7 +877,17 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 		p2->wait_writer();
 		r2.run(1);
 		EXPECT(p2->notices().text() == "State saved to slot 1");
-		EXPECT(read_bytes(bucket(root, s2.console, game) + ".st0").size() == md_host_state_size());
+		const std::vector<uint8_t> locked_st0 = read_bytes(bucket(root, s2.console, game) + ".st0");
+		EXPECT(locked_st0.size() == md_host_state_size());
+		EXPECT(p2->states()->set_lock(1, true));
+		r2.game_frame(PH_SELECT);
+		r2.game_frame(PH_SELECT | PH_L);
+		r2.run(2);
+		p2->wait_writer();
+		r2.run(1);
+		EXPECT(p2->notices().text().find("locked") != std::string::npos);
+		EXPECT(read_bytes(bucket(root, s2.console, game) + ".st0") == locked_st0);
+		EXPECT(p2->states()->set_lock(1, false));
 		r2.snap("quicksave_notice");
 		p2->finish(EXIT_NORMAL);
 		r2.pf.stop_thread();
@@ -1749,9 +1761,102 @@ static int run_ra_test(const std::string &con, const char *rom, const std::strin
 		const std::string log = s.rig.pf.log_text;
 		EXPECT(log.find("tok-1") == std::string::npos);                           /* the token is never logged */
 		EXPECT(log.find("ra: ra_unlock id=1001") != std::string::npos);
+		{
+			std::vector<MenuAchievement> achs;
+			std::string sum;
+			s.pl->list_achievements(achs, &sum);
+			EXPECT(achs.size() == 2 && !sum.empty());
+			EXPECT(sum.find("1 of 2") != std::string::npos);
+			s.pl->open_menu(0);
+			s.rig.settle(2);
+			s.pl->menu().goto_page(Menu::PAGE_RA);
+			s.rig.settle(2);
+			EXPECT(s.pl->menu().row_count() == 2);
+		}
 		s.end();
 		std::vector<uint8_t> lg = read_bytes(root + "/" + con + "/log.txt");
 		EXPECT(std::string(lg.begin(), lg.end()).find("tok-1") == std::string::npos);
+	}
+
+	/* ---- Hardcore autoload deferral + UI prefs + PNG screenshot ---- */
+	{
+		const std::string root_src = work + "/ra_defer_src_" + con;
+		std::vector<uint8_t> st1;
+		{
+			Sess s(work + "/shots");
+			EXPECT(s.start(root_src, con, rom, ""));
+			s.rig.run(45);
+			EXPECT(s.pl->capture_state(st1));
+		}
+		auto seed_slot1 = [&](const std::string &root) {
+			StateLayout l;
+			l.root = root; l.console = con; l.name = path_stem(rom);
+			States st(l);
+			return st.save(1, st1.data(), st1.size(), Frame()).status == ST_OK;
+		};
+		/* 1) known achievements + Hardcore: defers until resolved, then refuses with PK_RA_NO_STATE */
+		{
+			const std::string root = work + "/ra_defer_hc_" + con;
+			EXPECT(account(root, 1));
+			EXPECT(seed_slot1(root));
+			std::vector<std::string> seen;
+			Sess s(work + "/shots");
+			EXPECT(s.start(root, con, rom, "start=slot\nslot=1\n", srv.url()));
+			EXPECT(frames_until(s, [&] { return s.pl->ra().game_state() != 0; }, &seen, 800));
+			EXPECT(s.pl->ra().hardcore_active());
+			s.rig.run(2);
+			if (s.pl->notices().active()) seen.push_back(s.pl->notices().text());
+			EXPECT(seen_has(seen, "states cannot be loaded"));
+			EXPECT(!seen_has(seen, "State loaded from slot 1"));
+		}
+		/* 2) unknown game + Hardcore: defers until resolved, then performs deferred slot load */
+		{
+			pk_test::FakeRa other;
+			other.md5 = "00000000000000000000000000000000";
+			EXPECT(other.start());
+			const std::string root = work + "/ra_defer_ok_" + con;
+			EXPECT(account(root, 1));
+			EXPECT(seed_slot1(root));
+			std::vector<std::string> seen;
+			Sess s(work + "/shots");
+			EXPECT(s.start(root, con, rom, "start=slot\nslot=1\n", other.url()));
+			EXPECT(frames_until(s, [&] { return seen_has(seen, "State loaded from slot 1"); }, &seen, 800));
+			EXPECT(s.pl->ra().game_state() == -1 && !s.pl->ra().hardcore_blocks());
+		}
+		/* 3) ROW_UI_THEME, ROW_UI_TAPMENU, launch tap_menu=0, and FIRE_SHOT PNG export */
+		{
+			const std::string root = work + "/ui_shot_" + con;
+			const std::string shot_dir = work + "/custom_shots_" + con;
+			make_dirs(root + "/controls");
+			EXPECT(write_text(root + "/controls/" + con + ".ini", "bind_screenshot = select+down\n"));
+			Sess s(work + "/shots");
+			EXPECT(s.start(root, con, rom, "tap_menu=0\nshot_dir=" + shot_dir + "\n"));
+			EXPECT(s.pl->ui().tap_menu == 0 && s.pl->ui().theme == 0);
+			EXPECT(s.pl->menu().value(ROW_UI_THEME) == 0 && s.pl->menu().value(ROW_UI_TAPMENU) == 0);
+			s.rig.run(3);
+			EXPECT(!s.rig.game_frame(0, 0, true));
+			s.pl->on_change(ROW_UI_THEME, 1);
+			s.pl->on_change(ROW_UI_TAPMENU, 1);
+			const UiPrefs loaded = uiprefs_load(root);
+			EXPECT(loaded.theme == 1 && loaded.tap_menu == 1);
+			EXPECT(s.rig.game_frame(0, 0, true));
+			s.rig.game_frame(PH_SELECT);
+			s.rig.game_frame(PH_SELECT | PH_DOWN);
+			s.rig.game_frame(0);
+			s.pl->wait_writer();
+			s.rig.game_frame(0);
+			EXPECT(s.pl->notices().text() == "Screenshot saved");
+			std::vector<std::string> files;
+			EXPECT(list_dir(shot_dir, files));
+			std::string png_name;
+			for (size_t i = 0; i < files.size(); i++)
+				if (files[i].find(path_stem(rom) + "-") == 0 && ends_with_ci(files[i], ".png")) png_name = files[i];
+			EXPECT(!png_name.empty());
+			if (!png_name.empty()) {
+				std::vector<uint8_t> png = read_bytes(path_join(shot_dir, png_name));
+				EXPECT(png.size() > 64 && png[0] == 0x89 && png[1] == 'P' && png[2] == 'N' && png[3] == 'G');
+			}
+		}
 	}
 
 	/* ---- Hardcore: no rewind, no state loads, no cheats; fast forward stays; the unlock goes out as hardcore ---- */

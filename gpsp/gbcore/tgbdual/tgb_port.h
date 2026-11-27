@@ -44,6 +44,9 @@
 extern int pad_state;
 /* DMG palette as BGR555: BG[4], OBJ0[4], OBJ1[4].  Adapter. */
 extern word tgb_dmg_palette[12];
+/* Nonzero: tgb_dmg_palette holds Game Boy Color colours (a GBC palette for
+ * a DMG game), which lcd.c shows through the GBC LCD model.  Adapter. */
+extern int tgb_dmg_is_cgb;
 /* Nonzero (the default): CGB colours are shown through the Game Boy Color
  * LCD model (lcd.c, _cgb_lcd_table.h); zero: the raw 5-to-8-bit expansion.
  * Defined once in tgb_shared.c; set by gbcore_set_color_correction. */
@@ -58,6 +61,7 @@ void apu_rebase(int cpu_base);
 void apu_restore_clock(void);
 void apu_discard_audio(void);
 void apu_save_cpu_timing(byte *out); /* 36 bytes */
+void apu_save_wave_timing(byte *out); /* 12 bytes: the CPU-side channel 3 clock */
 void apu_save_timing(byte *out);     /* 256 reserved bytes */
 void apu_load_timing(const byte *in);
 void cpu_save_timer_timing(byte *out); /* 8 bytes, reserved native state 80..87 */
@@ -70,6 +74,9 @@ void gbe_reset(void);
 byte gbe_getTime(int type);
 void gbe_setTime(int type, byte dat);
 word gbe_getSensor(char x_y);
+/* Game Boy Camera: the frontend's 128x112 greyscale picture, NULL when it
+ * has published none (gbcore_set_camera_image; gbcam.h). */
+const unsigned char *gbe_getCameraImage(void);
 void gbe_setBibrate(char bibrate);
 /* Chooses DMG / SGB / CGB behaviour for the loaded cartridge (gb_reset). */
 void set_gb_type(void);

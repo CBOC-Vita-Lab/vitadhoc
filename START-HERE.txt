@@ -1,13 +1,18 @@
-VitAdhoc 1.3.1
-Game Boy Advance, Game Boy, Game Boy Color and Super NES for PS Vita
+VitAdhoc 2.0
+Game Boy Advance, Game Boy, Game Boy Color, NES, WonderSwan, Super NES,
+Genesis / Mega Drive, Sega CD, Master System, Game Gear and SG-1000 for
+PS Vita
 
 Thanks for trying VitAdhoc! Here's everything you need to get playing.
 
 
 What You Need
 - A PS Vita with HENkaku or Enso, and VitaShell
-- Your own .gba, .gb, .gbc, .sfc or .smc games
-- No BIOS needed: an open one is built in
+- Your own games: .gba, .gb, .gbc, .sfc, .smc, .nes, .ws, .wsc, or Sega
+  .md, .gen, .smd, .sms, .gg, .sg (zipped is fine); Sega CD discs .cue,
+  .chd, .iso
+- No BIOS needed for GBA: an open one is built in. Sega CD needs your own
+  Sega CD BIOS (see INSTALL.md)
 
 
 Easy Install
@@ -22,14 +27,13 @@ Manual Install
 2. Start VitAdhoc once. It creates ux0:data/GBAdhoc/
 3. Put your games in ux0:data/GBAdhoc/roms/
    (games already in ux0:ROMS/, any folder inside it, or RetroFlow's folders
-   are found by themselves)
-4. Start VitAdhoc again and pick a game.
+   are found by themselves, for example ux0:ROMS/MD, SMS, GG, SG-1000 or SegaCD)
+4. Start VitAdhoc again and pick a game. Triangle opens the console list.
 
 
 Updating
 Just install the new VPK over the old one. Your games, saves, states and
-settings stay where they are. 1.3 moves save states and thumbnails out of
-your game folders into ux0:data/GBAdhoc/ the first time each game is opened.
+settings stay where they are.
 
 
 Saves From Another Emulator
@@ -40,7 +44,8 @@ that game, as long as the game has no save here yet. Details: INSTALL.md.
 
 Have Fun
 - Hold Start + Select (or tap the screen) for the menu.
-- In a SNES game, hold L + R + Start for its menu.
+- Playing with a friend anywhere: Host a game, share the five-character
+  code, and your friend types it (see PLAY-TOGETHER.md). Both need 2.0.
 - Press Start on the home screen for Settings, including RetroAchievements.
 - Controls:       CONTROLS.md
 - Playing with a friend: PLAY-TOGETHER.md

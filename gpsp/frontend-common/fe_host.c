@@ -12,7 +12,11 @@
 #include "libretro.h"
 #include "../gbcore/gbcore.h"
 #include "../gbcore/gbcore_dual.h"
+#define GBADHOC_GBMUX 1   /* the NES machine answers the gb_core calls */
+#include "../nescore/gbcore_mux.h"
 #include "fe_gblink.h"
+#include "fe_gbprinter.h"
+#include "fe_padpair.h"
 #include "fe_linkprof.h"
 #include "../netdrv/gb_link.h"
 #include "netpacket_host.h"
@@ -22,6 +26,7 @@
 #ifdef GBA_LINK
 #include "fe_gbadual.h"
 #include <stdarg.h>
+#endif
 
 /* Measurement (Linux hosts only; nothing on a console): the CPU time of the
  * calling thread spent in fe_host_run_frame WITHOUT the frontend's video
@@ -45,6 +50,7 @@ static uint64_t cpu_now_ns(void)
 #else
 #define HOST_VIDEO(pix, w, h, pitch) host.video_frame((pix), (w), (h), (pitch))
 #endif
+#ifdef GBA_LINK
 static void gbadual_log(const char *fmt, ...)
 {
    char buf[320];
@@ -85,6 +91,10 @@ static unsigned hb_every = HEARTBEAT_INTERVAL;
 
 /* ---------------------------------------------------------------- state -- */
 
+/* ARMv7 SMP-safe acquire/release helpers (GCC/Clang C99/C11 intrinsics). */
+#define FE_LOAD_ACQ(x)     __atomic_load_n(&(x), __ATOMIC_ACQUIRE)
+#define FE_STORE_REL(x, v) __atomic_store_n(&(x), (v), __ATOMIC_RELEASE)
+
 static fe_host_config host;
 static gbcore_t *gb_core;
 /* A machine pair (host.gb_dual_rom): gb_core is then its slot 0. */
@@ -93,6 +103,12 @@ static uint16_t gb_dual_buttons;
 /* A GB/GBC session, single-player or linked: the GB paths below key on this,
  * not on gb_core, because a link session (gbl) runs with no single core. */
 static int gb_family;
+/* The NES / WonderSwan two-player link (fe_padpair.h) is an optional layer of
+ * the build: a frontend or test that links fe_host.c without fe_padpair.o
+ * simply cannot start one. */
+#pragma weak fe_padpair_machines
+#pragma weak fe_padpair_restored
+#pragma weak fe_padpair_keep_host
 /* The GB link session (fe_gblink.h), NULL when none. */
 static int save_recover_bak(const char *path);   /* below, with sram_load */
 static int state_file_exists(const char *path);
@@ -105,6 +121,14 @@ static int battery_load_failed;
 static fe_gblink *gbl;
 static int gbl_last;               /* last fe_gblink_step result */
 static int gbl_is_gba;             /* the session is the GBA cable mirror */
+/* The NES / WonderSwan two-player mirror (fe_padpair.h): the player's ONE
+ * machine runs the session, so gb_core is hidden (NULL) for its length and
+ * every `gb_family && !gb_core` rule that guards a link session (no states,
+ * no battery writes, no memory peeks) holds for it too.  pad_core is the
+ * machine meanwhile. */
+static int gbl_pad;
+static gbcore_t *pad_core;
+static const fe_gblink_machines *pad_v;
 static int gbl_ride_set;           /* Fast link: ack riding applied */
 static int gbl_primed;             /* autopilot had its power-on look */
 static uint8_t *gbl_prelink_state; /* the running game when the link began */
@@ -116,8 +140,8 @@ static int gbl_hold;               /* harness: single machine held for a link */
 #ifdef GBA_LINK
 static int gba_cable;
 static int gba_rom_sampled = 1;  /* fe_host_gba_cable_rom_sampled */
-static volatile int gba_sram_hold;
-static volatile int gba_sram_quiescing;
+static int gba_sram_hold;
+static int gba_sram_quiescing;
 static uint8_t *gba_prelink_sram;
 #define GBA_CABLE gba_cable
 #else
@@ -134,8 +158,8 @@ static int gb_save_crc_valid;
 static uint8_t *gb_io_buffer;
 static size_t gb_io_capacity, gb_io_size;
 static uint32_t gb_io_crc;
-static volatile int gb_io_req;       /* 1: gb_io_buffer is the writer's */
-static volatile int gb_io_failed;    /* the writer's last write failed */
+static int gb_io_req;       /* 1: gb_io_buffer is the writer's */
+static int gb_io_failed;    /* the writer's last write failed */
 static const fe_host_io *host_io;    /* defined with the GBA writer below */
 static unsigned frame_count;         /* likewise, with the frame loop */
 static uint32_t gb_seen_crc;         /* cart RAM at the previous check */
@@ -164,30 +188,57 @@ static int gb_skip_frame;   /* this frame's drawing was skipped (frameskip) */
 static int skip_override = -1;
 extern int frontend_skip_override __attribute__((weak));   /* libretro.c */
 
+/* The picture size of the running machine: 160x144 for a Game Boy, 256x224
+ * (an NTSC television's rows; 256x240 PAL) for the NES. */
+static unsigned gb_pic_w = 160, gb_pic_h = 144;
+
+/* Quick response (run-ahead by one frame; gb_ahead_frame below): the real frame's picture is not delivered (the look-ahead frame's is),
+ * the look-ahead frame's sound is dropped. */
+static int ahead_req;              /* fe_host_ahead_set: the next frame is to be run ahead */
+static int ahead_mute_video;       /* the frame being run is the real one: no picture goes out (not even "nothing new") */
+static int ahead_quiet;            /* the frame being run is the look-ahead one: its sound is dropped */
+static unsigned ahead_frames, ahead_fails;
+static int ahead_latched_off;      /* a restore failed: the machine would stay a frame ahead, so run-ahead stays off for the session */
+
 static void gb_video_frame(void *userdata, const gbcore_video_frame_t *frame)
 {
    (void)userdata;
+   if (ahead_mute_video)
+      return;
    if (gb_skip_frame)
    {
       /* Same contract as the GBA core's frameskip: NULL = nothing new. */
       frames_skipped++;
       if (host.video_frame)
-         HOST_VIDEO(NULL, 160, 144, last_pitch);
+         HOST_VIDEO(NULL, gb_pic_w, gb_pic_h, last_pitch);
       return;
    }
-   if (!frame || !frame->pixels || frame->width != 160 || frame->height != 144 ||
+   if (frame && frame->pixels &&
+       (host.console == FE_CONSOLE_WSWAN || host.console == FE_CONSOLE_NES) &&
+       (frame->width != gb_pic_w || frame->height != gb_pic_h))
+   {
+      /* the WonderSwan turns its picture (wscore.h), the NES widens it
+       * (nescore.h wide view): the size follows */
+      gb_pic_w = frame->width;
+      gb_pic_h = frame->height;
+      fe_evt("%s_picture w=%u h=%u", host.console == FE_CONSOLE_NES ? "nes" : "ws",
+             gb_pic_w, gb_pic_h);
+   }
+   if (!frame || !frame->pixels || frame->width != gb_pic_w || frame->height != gb_pic_h ||
        frame->pitch_bytes < frame->width * sizeof(uint16_t))
       return;
    last_frame = frame->pixels;
    last_pitch = frame->pitch_bytes;
    frames_rendered++;
    if (host.video_frame)
-      HOST_VIDEO(frame->pixels, 160, 144, last_pitch);
+      HOST_VIDEO(frame->pixels, gb_pic_w, gb_pic_h, last_pitch);
 }
 
 static void gb_audio_batch(void *userdata, const int16_t *samples, size_t frames)
 {
    (void)userdata;
+   if (ahead_quiet)
+      return;
    if (host.audio_frames)
       host.audio_frames(samples, frames);
 }
@@ -195,6 +246,7 @@ static void gb_audio_batch(void *userdata, const int16_t *samples, size_t frames
 /* The machine pair's buttons: the player's for slot 0, the same or none for
  * the headless partner (harness measurement; no network behind it). */
 static int gb_local_on;                    /* fe_host_gb_local_start */
+static int gb_core_notice;                 /* fe_host_gb_core_notice_take */
 static uint32_t (*gb_local_pad)(void);
 static uint16_t gb_buttons_from_retro(uint32_t pad);
 
@@ -475,23 +527,23 @@ static int gb_save_write(const uint8_t *data, size_t size, uint32_t crc)
  * file from here while it does: that would put two writers on one path. */
 static int gb_io_settle(void)
 {
-   const fe_host_io *io = host_io;
+   const fe_host_io *io = FE_LOAD_ACQ(host_io);
    int spins;
-   for (spins = 0; gb_io_req && io && spins < 4000; spins++)   /* ~4 s */
+   for (spins = 0; FE_LOAD_ACQ(gb_io_req) && io && spins < 4000; spins++)   /* ~4 s */
    {
       io->wake();
       io->yield();
    }
-   if (gb_io_req)
+   if (FE_LOAD_ACQ(gb_io_req))
    {
       fe_evt("gb_sram_sync_timeout");
       return -1;
    }
-   if (gb_io_failed)
+   if (FE_LOAD_ACQ(gb_io_failed))
    {
       /* Its CRC was recorded when it was handed over; the file never got
        * it, so the next write must not be skipped as "unchanged". */
-      gb_io_failed = 0;
+      FE_STORE_REL(gb_io_failed, 0);
       gb_save_crc_valid = 0;
    }
    return 0;
@@ -544,11 +596,11 @@ static int gb_save_flush_periodic(void)
    size_t size;
    uint32_t crc;
    int rc;
-   if (gb_io_req)
+   if (FE_LOAD_ACQ(gb_io_req))
       return 0;                     /* the previous write is still going */
-   if (gb_io_failed)
+   if (FE_LOAD_ACQ(gb_io_failed))
    {
-      gb_io_failed = 0;
+      FE_STORE_REL(gb_io_failed, 0);
       gb_save_crc_valid = 0;
    }
    rc = gb_save_snapshot(0, &size, &crc);
@@ -566,46 +618,46 @@ static int gb_save_flush_periodic(void)
       if (frame_count - gb_dirty_since < GB_SAVE_MAX_DELAY)
          return 0;                  /* still changing: wait for it to settle */
    }
-   gb_dirty_since = 0;
-   if (host_io && size > gb_io_capacity)
    {
-      uint8_t *b = (uint8_t *)realloc(gb_io_buffer, size);
-      if (b)
+      const fe_host_io *io = FE_LOAD_ACQ(host_io);
+      gb_dirty_since = 0;
+      if (io && size > gb_io_capacity)
       {
-         gb_io_buffer = b;
-         gb_io_capacity = size;
+         uint8_t *b = (uint8_t *)realloc(gb_io_buffer, size);
+         if (b)
+         {
+            gb_io_buffer = b;
+            gb_io_capacity = size;
+         }
       }
-   }
-   if (!host_io || size > gb_io_capacity)
-   {
-      /* No writer thread, or no memory for its copy: write here. */
-      if (gb_save_write(gb_save_buffer, size, crc) != 0)
-         return -1;
-      gb_save_crc = crc;
+      if (!io || size > gb_io_capacity)
+      {
+         /* No writer thread, or no memory for its copy: write here. */
+         if (gb_save_write(gb_save_buffer, size, crc) != 0)
+            return -1;
+         gb_save_crc = crc;
+         gb_save_crc_valid = 1;
+         return 1;
+      }
+      memcpy(gb_io_buffer, gb_save_buffer, size);
+      gb_io_size = size;
+      gb_io_crc = crc;
+      gb_save_crc = crc;               /* gb_io_failed undoes this */
       gb_save_crc_valid = 1;
+      FE_STORE_REL(gb_io_req, 1);
+      io->wake();
       return 1;
    }
-   memcpy(gb_io_buffer, gb_save_buffer, size);
-   gb_io_size = size;
-   gb_io_crc = crc;
-   gb_save_crc = crc;               /* gb_io_failed undoes this */
-   gb_save_crc_valid = 1;
-   __asm__ __volatile__("" ::: "memory");
-   gb_io_req = 1;
-   host_io->wake();
-   return 1;
 }
 
 /* Writer thread: the snapshot the emulation thread handed over. */
 static int gb_save_service_io(void)
 {
-   if (!gb_io_req)
+   if (!FE_LOAD_ACQ(gb_io_req))
       return 0;
-   __asm__ __volatile__("" ::: "memory");
    if (gb_save_write(gb_io_buffer, gb_io_size, gb_io_crc) != 0)
-      gb_io_failed = 1;
-   __asm__ __volatile__("" ::: "memory");
-   gb_io_req = 0;
+      FE_STORE_REL(gb_io_failed, 1);
+   FE_STORE_REL(gb_io_req, 0);
    return 1;
 }
 
@@ -891,6 +943,7 @@ static void gb_link_peer_event(void *userdata, uint8_t peer_id, int connected)
  * this endpoint at a byte boundary, never in the middle of a bit;
  * fe_np_pump() drains PSP ad-hoc RX on this emulation thread until the
  * paired byte arrives or the bounded wait expires. */
+static int gb_prn_serial(uint8_t outgoing, int internal_clock, uint8_t *received);
 static int gb_serial_transfer(void *userdata, uint8_t outgoing,
                               int internal_clock, uint8_t *received)
 {
@@ -898,8 +951,9 @@ static int gb_serial_transfer(void *userdata, uint8_t outgoing,
    uint64_t start_us;
    uint16_t transfer_id;
    (void)userdata;
-   if (!received || !fe_np_gb_peer_ready(&peer_id) ||
-       fe_np_gb_local_id(&local_id) == 0 || !gb_link_initialized ||
+   if (received && !fe_np_gb_peer_ready(&peer_id))
+      return gb_prn_serial(outgoing, internal_clock, received);  /* no partner: the printer */
+   if (!received || fe_np_gb_local_id(&local_id) == 0 || !gb_link_initialized ||
        gb_link.peer_id != peer_id || gb_link.local_id != local_id)
       return 0;
 
@@ -1133,9 +1187,9 @@ extern volatile uint32_t backup_write_gen __attribute__((weak));
  * fast-forward forever.  A new save re-arms it. */
 #define SRAM_FF_NUDGE_CAP         300
 
-static volatile uint32_t sram_disk_gen;  /* WRITER: gen whose bytes are on disk */
-static volatile uint32_t sram_scan_gen;  /* WRITER: gen read before its last scan */
-static volatile int sram_scan_gen_valid; /* WRITER: sram_scan_gen is meaningful */
+static uint32_t sram_disk_gen;  /* WRITER: gen whose bytes are on disk */
+static uint32_t sram_scan_gen;  /* WRITER: gen read before its last scan */
+static int sram_scan_gen_valid; /* WRITER: sram_scan_gen is meaningful */
 
 static int      ffn_enabled = 1;         /* harness A/B knob (sram_ff_nudge) */
 static uint32_t ffn_seen_gen;            /* EMU: last gen observed */
@@ -1176,7 +1230,7 @@ static uint64_t ffn_yield_us;            /* EMU: lifetime time asleep */
 
 static uint32_t sram_gen_now(void)
 {
-   return &backup_write_gen ? backup_write_gen : 0u;
+   return &backup_write_gen ? FE_LOAD_ACQ(backup_write_gen) : 0u;
 }
 
 /* Netpacket interface copy — unused in Phase 1, wired in Phase 3/4. */
@@ -1342,6 +1396,131 @@ static int host_sensor_on;
 extern uint32_t gpsp_sensor_kinds(void);
 extern void     gpsp_sensor_set(uint32_t reading);
 extern uint32_t gpsp_sensor_get(void);
+
+/* GAME BOY PRINTER and GAME BOY CAMERA (fe_host.h).  The printer answers the
+ * game's serial bytes when no link partner does; a strip it finishes waits
+ * here for the platform to take it. */
+static gbprn *gb_prn;                 /* made with the first byte */
+static int gb_prn_on = 1;
+static uint8_t *gb_prn_strip;         /* a finished strip, 1 byte a pixel */
+static int gb_prn_w, gb_prn_h;
+static unsigned gb_prn_count;         /* strips finished, for the log */
+
+static void gb_prn_done(void *user, const uint8_t *shades, int w, int h)
+{
+   uint8_t *c = (uint8_t *)malloc((size_t)w * (size_t)h);
+   (void)user;
+   if (!c)
+      return;
+   memcpy(c, shades, (size_t)w * (size_t)h);
+   free(gb_prn_strip);
+   gb_prn_strip = c;
+   gb_prn_w = w;
+   gb_prn_h = h;
+   gb_prn_count++;
+   fe_evt("gb_printer strip=%u w=%d h=%d", gb_prn_count, w, h);
+}
+
+static int gb_prn_serial(uint8_t outgoing, int internal_clock, uint8_t *received)
+{
+   /* (a link session whose partner is away for a moment stays a link) */
+   if (!gb_prn_on || !internal_clock || ahead_quiet || fe_np_session_active() ||
+       (host.console != FE_CONSOLE_GB && host.console != FE_CONSOLE_GBC))
+      return 0;
+   /* A game probing for a link partner sends something other than a packet
+    * header: it hears what an empty port gives (0xFF), as before. */
+   if ((!gb_prn || gb_prn->state == 0) && outgoing != 0x88)
+      return 0;
+   if (!gb_prn)
+   {
+      gb_prn = (gbprn *)calloc(1, sizeof(*gb_prn));
+      if (!gb_prn)
+         return 0;
+      gbprn_init(gb_prn, gb_prn_done, NULL);
+   }
+   *received = gbprn_byte(gb_prn, outgoing);
+   return 1;
+}
+
+static int gb_prn_active(void)
+{
+   return gb_prn &&
+          (gb_prn->state != 0 || gb_prn->buf_len != 0 ||
+           gb_prn->rows != 0 || gb_prn->busy_left != 0 ||
+           (gb_prn->status & (GBPRN_ST_BUSY | GBPRN_ST_READY)) != 0);
+}
+
+static void gb_prn_frame(void)
+{
+   if (gb_prn)
+      gbprn_frame(gb_prn);
+}
+
+static void gb_prn_end(void)
+{
+   if (gb_prn)
+   {
+      gbprn_flush(gb_prn);          /* a strip still open is finished */
+      gbprn_free(gb_prn);
+      free(gb_prn);
+      gb_prn = NULL;
+   }
+}
+
+void fe_host_gb_printer_set(int on)
+{
+   gb_prn_on = on ? 1 : 0;
+}
+
+const uint8_t *fe_host_gb_print_take(int *w, int *h)
+{
+   static uint8_t *held;
+   if (!gb_prn_strip)
+      return NULL;
+   free(held);
+   held = gb_prn_strip;
+   gb_prn_strip = NULL;
+   *w = gb_prn_w;
+   *h = gb_prn_h;
+   return held;
+}
+
+/* The four colours a print uses, lightest first: the game's own palette (a
+ * Game Boy game's colours as chosen in Settings), else grey. */
+void fe_host_gb_print_colours(uint32_t rgb[4])
+{
+   uint16_t pv[12];
+   int i;
+   static const uint32_t grey[4] = { 0xFFFFFF, 0xAAAAAA, 0x555555, 0x000000 };
+   for (i = 0; i < 4; i++)
+      rgb[i] = grey[i];
+   if (gb_core)
+   {
+      (void)gbcore_palette_preview((unsigned)host.gb_palette, pv);
+      for (i = 0; i < 4; i++)
+      {
+         unsigned v = pv[i], r = v >> 11, g = (v >> 5) & 0x3F, b = v & 0x1F;
+         rgb[i] = (((r << 3) | (r >> 2)) << 16) | (((g << 2) | (g >> 4)) << 8) |
+                  ((b << 3) | (b >> 2));
+      }
+   }
+}
+
+unsigned fe_host_gbcam_present(void)
+{
+   return gb_family && gb_core && !gb_dual && !gbl && gbcore_has_camera(gb_core);
+}
+
+void fe_host_gbcam_frame(const uint8_t *grey_128x112)
+{
+   if (fe_host_gbcam_present() && grey_128x112)
+      gbcore_set_camera_image(gb_core, grey_128x112);
+}
+
+unsigned fe_host_gbcam_requests(void)
+{
+   return fe_host_gbcam_present() ? gbcore_camera_requests(gb_core) : 0;
+}
 
 static int16_t input_state(unsigned port, unsigned device, unsigned index,
                            unsigned id)
@@ -1601,7 +1780,7 @@ static int sram_load(void)
    if (!p || !host.save_path)
       return 0;
    battery_load_failed = 1;
-   sram_have_blk = 0;
+   FE_STORE_REL(sram_have_blk, 0);
    if (save_recover_bak(host.save_path) < 0)
       goto failed;
 
@@ -1655,8 +1834,8 @@ static int sram_load(void)
    }
 
    /* Whatever the game has written so far is what was just loaded. */
-   sram_disk_gen = ffn_seen_gen = sram_gen_now();
-   sram_scan_gen_valid = 0;
+   FE_STORE_REL(sram_disk_gen, ffn_seen_gen = sram_gen_now());
+   FE_STORE_REL(sram_scan_gen_valid, 0);
    ffn_pending = 0;
    ffn_asked = 0;
    ffn_gave_up = 0;
@@ -1666,14 +1845,14 @@ static int sram_load(void)
     * exactly a 128 KiB image of what we just loaded — otherwise the first
     * flush must rewrite (and truncate) the whole thing before deltas mean
     * anything. */
-   sram_have_blk = 0;
+   FE_STORE_REL(sram_have_blk, 0);
    if (exact)
    {
       unsigned i;
       for (i = 0; i < SRAM_BLOCKS; i++)
          sram_blk_crc[i] = fe_crc32(0, (const uint8_t *)p + (size_t)i *
                                     SRAM_BLOCK, SRAM_BLOCK);
-      sram_have_blk = 1;
+      FE_STORE_REL(sram_have_blk, 1);
    }
    battery_load_failed = 0;
    return 0;
@@ -1912,6 +2091,11 @@ int fe_host_state_recover(const char *path)
 
 /* A writer may stream a stable snapshot in small blocks; it returns zero
  * only when all bytes reached stdio. This helper owns close and promotion. */
+/* Set by fe_host_state_save around a SLOT's write: the file it replaces is
+ * kept as <slot>.bak (the one undo of "Undo save"), an empty .bak marking a
+ * slot that held nothing.  Everything else (saves, Continue) keeps no copy. */
+static int state_keep_bak;
+
 static int state_file_replace_writer(const char *path,
                                      int (*write_image)(FILE *, void *),
                                      void *user)
@@ -1960,7 +2144,31 @@ static int state_file_replace_writer(const char *path,
        * or slot scan. Never overwrite it with an empty/new slot. */
       return -1;
    }
-   if (exists)
+   if (state_keep_bak)
+   {
+      /* The old file moves to .bak by one rename (atomic: the .bak is
+       * the whole previous state or the one before it, never half of
+       * either); a slot that was empty gets an empty marker. */
+      char bak[512];
+      if (snprintf(bak, sizeof(bak), "%s.bak", path) < (int)sizeof(bak))
+      {
+         (void)remove(bak);
+         if (exists)
+         {
+            if (rename(old, bak) != 0)
+               remove(old);
+         }
+         else
+         {
+            FILE *m = fopen(bak, "wb");
+            if (m)
+               fclose(m);
+         }
+      }
+      else if (exists)
+         remove(old);
+   }
+   else if (exists)
       remove(old);
    return 0;
 }
@@ -1983,9 +2191,159 @@ static int state_file_replace(const char *path, const void *data, size_t size)
    return state_file_replace_writer(path, state_file_write_image, &image);
 }
 
+/* ---- slot lock and undo (docs/FEATURES.md, Save states) ------------------ */
+
+static int path_is_slot(const char *path)
+{
+   size_t n = path ? strlen(path) : 0;
+   return n > 4 && path[n - 4] == '.' && (path[n - 3] | 0x20) == 's' &&
+          (path[n - 2] | 0x20) == 't' && path[n - 1] >= '0' && path[n - 1] <= '9';
+}
+
+static int side_path(char *out, size_t cap, const char *path, const char *ext)
+{
+   return snprintf(out, cap, "%s%s", path, ext) < (int)cap ? 0 : -1;
+}
+
+static int file_has(const char *path)
+{
+   struct stat st;
+   return stat(path, &st) == 0;
+}
+
+int fe_host_state_locked(const char *path)
+{
+   char l[520];
+   return path && side_path(l, sizeof(l), path, ".lock") == 0 && file_has(l);
+}
+
+int fe_host_state_set_lock(const char *path, int on)
+{
+   char l[520], t[528];
+   FILE *f;
+   if (!path || side_path(l, sizeof(l), path, ".lock") != 0)
+      return -1;
+   if (!on)
+   {
+      (void)remove(l);
+      fe_evt("state_lock file=%s on=0", path);
+      return file_has(l) ? -1 : 0;
+   }
+   snprintf(t, sizeof(t), "%s.tmp", l);
+   f = fopen(t, "wb");
+   if (!f)
+      return -1;
+   if (fputs("locked\n", f) < 0 || fclose(f) != 0 || rename(t, l) != 0)
+   {
+      remove(t);
+      return -1;
+   }
+   fe_evt("state_lock file=%s on=1", path);
+   return 0;
+}
+
+/* The companions (.thumb, .shot, .meta) follow the state in and out of
+ * .bak, so an undone slot shows its own picture again. */
+static const char *const state_side[] = { ".thumb", ".shot", ".meta" };
+
+void fe_host_state_keep_companions(const char *path)
+{
+   unsigned i;
+   char a[528], b[536];
+   for (i = 0; path && i < 3; i++)
+      if (side_path(a, sizeof(a), path, state_side[i]) == 0 &&
+          snprintf(b, sizeof(b), "%s.bak", a) < (int)sizeof(b))
+      {
+         (void)remove(b);
+         (void)rename(a, b);
+      }
+}
+
+/* A delete takes the undo copy with it (the slot asked "delete?"). */
+void fe_host_state_forget_undo(const char *path)
+{
+   unsigned i;
+   char a[528], b[536];
+   if (!path || side_path(a, sizeof(a), path, ".bak") != 0)
+      return;
+   (void)remove(a);
+   for (i = 0; i < 3; i++)
+      if (side_path(a, sizeof(a), path, state_side[i]) == 0 &&
+          snprintf(b, sizeof(b), "%s.bak", a) < (int)sizeof(b))
+         (void)remove(b);
+}
+
+int fe_host_state_undo_available(const char *path)
+{
+   char b[520];
+   return path && path_is_slot(path) &&
+          side_path(b, sizeof(b), path, ".bak") == 0 && file_has(b);
+}
+
+/* 0 = the slot is as it was before the last save; 1 = it was empty before
+ * it, and is again; -1 = nothing to undo; -2 = could not. */
+int fe_host_state_undo_save(const char *path)
+{
+   char bak[520], old[520], a[528], b[536];
+   struct stat st;
+   unsigned i;
+   int had_old = 0;
+   if (!fe_host_state_undo_available(path) ||
+       side_path(bak, sizeof(bak), path, ".bak") != 0 ||
+       side_path(old, sizeof(old), path, ".old") != 0 ||
+       stat(bak, &st) != 0)
+      return -1;
+   if (st.st_size == 0)
+   {
+      /* an empty marker: the slot held nothing before */
+      remove(path);
+      if (file_has(path))
+         return -2;
+      for (i = 0; i < 3; i++)
+         if (side_path(a, sizeof(a), path, state_side[i]) == 0)
+            remove(a);
+      fe_host_state_forget_undo(path);
+      fe_evt("state_undo_save file=%s now=empty", path);
+      return 1;
+   }
+   if (file_has(path))
+   {
+      (void)remove(old);
+      if (rename(path, old) != 0)
+         return -2;
+      had_old = 1;
+   }
+   if (rename(bak, path) != 0)
+   {
+      if (had_old)
+         (void)rename(old, path);
+      return -2;
+   }
+   if (had_old)
+      remove(old);
+   for (i = 0; i < 3; i++)
+      if (side_path(a, sizeof(a), path, state_side[i]) == 0 &&
+          snprintf(b, sizeof(b), "%s.bak", a) < (int)sizeof(b))
+      {
+         (void)remove(a);
+         (void)rename(b, a);
+      }
+   fe_evt("state_undo_save file=%s now=previous", path);
+   return 0;
+}
+
 int fe_host_state_save(const char *path)
 {
    size_t sz;
+
+   /* A locked slot is never written (Save states: L).  -1 would read as a
+    * card error, so the caller asks fe_host_state_locked first for its
+    * words; this is the guard behind it. */
+   if (path_is_slot(path) && fe_host_state_locked(path))
+   {
+      fe_evt("state_save file=%s FAILED reason=locked", path);
+      return -1;
+   }
 
    if (gb_family && !gb_core)
    {
@@ -2028,11 +2386,14 @@ int fe_host_state_save(const char *path)
          return -1;
       }
    }
+   state_keep_bak = path_is_slot(path);
    if (state_file_replace(path, state_buf, sz) != 0)
    {
+      state_keep_bak = 0;
       fe_evt("state_save file=%s FAILED reason=io", path);
       return -1;
    }
+   state_keep_bak = 0;
    fe_evt("state_save file=%s size=%u crc=%08x", path, (unsigned)sz,
           (unsigned)fe_crc32(0, state_buf, sz));
    return 0;
@@ -2149,7 +2510,7 @@ void *fe_host_battery_mem(size_t *size)
    if (gb_family)
       return NULL;
 #ifdef GBA_LINK
-   if (gba_sram_hold)
+   if (FE_LOAD_ACQ(gba_sram_hold))
       return NULL;      /* a GBA link session owns the battery image */
 #endif
    p = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
@@ -2168,7 +2529,7 @@ void fe_host_battery_changed(void)
    /* The core's own counter: it is what the fast-forward nudge and a rewind
     * buffer watch, and bumping it is what a write by the game does. */
    if (!gb_family && &backup_write_gen)
-      backup_write_gen++;
+      (void)__atomic_add_fetch(&backup_write_gen, 1, __ATOMIC_RELEASE);
 }
 
 /* ---- SRAM persistence (ADR-0020) ----------------------------------------
@@ -2231,12 +2592,12 @@ void fe_host_battery_changed(void)
 #define SBLK_WRITING  2
 
 static FILE    *sram_fp;            /* held open "r+b"; WRITER-owned */
-static volatile unsigned char sram_blk_state[SRAM_BLOCKS];
-static volatile int sram_full_req;  /* whole-image rewrite pending */
+static unsigned char sram_blk_state[SRAM_BLOCKS];
+static int sram_full_req;  /* whole-image rewrite pending */
 /* A delta write failed and its dirty set was discarded (sram_abandon_deltas):
  * the image in memory is NOT on disk and nothing is queued to put it there.
  * Cleared by the whole-image rewrite that makes the disk whole again. */
-static volatile int sram_retry_full;
+static int sram_retry_full;
 
 /* Harness only (sleep_sim_sav, sram_exit_retry): PPSSPP never suspends, so
  * the one thing a real sleep does to the save path -- kill the handle the
@@ -2254,7 +2615,7 @@ static int sram_exit_retry = 1;
 #define SRAM_EXIT_RETRY  1
 #endif
 /* 0 = none, 1 = periodic scan due, 2 = forced (write even if clean). */
-static volatile int sram_scan_req;
+static int sram_scan_req;
 static uint64_t sram_last_scan_us;  /* writer-owned scan cadence */
 
 static const fe_host_io *host_io;   /* NULL = ADR-0020 synchronous path */
@@ -2297,7 +2658,7 @@ static int sram_scan(int force_write);
 
 void fe_host_set_io(const fe_host_io *io)
 {
-   host_io = io;
+   FE_STORE_REL(host_io, io);
    if (io)
    {
       /* Start the writer's scan clock now, so the first sweep lands one
@@ -2311,7 +2672,7 @@ static unsigned sram_pending(void)
 {
    unsigned i, n = 0;
    for (i = 0; i < SRAM_BLOCKS; i++)
-      if (sram_blk_state[i] != SBLK_CLEAN)
+      if (FE_LOAD_ACQ(sram_blk_state[i]) != SBLK_CLEAN)
          n++;
    return n;
 }
@@ -2327,8 +2688,8 @@ static void sram_recover_interrupted_writes(void)
 {
    unsigned i;
    for (i = 0; i < SRAM_BLOCKS; i++)
-      if (sram_blk_state[i] == SBLK_WRITING)
-         sram_blk_state[i] = SBLK_DIRTY;
+      if (FE_LOAD_ACQ(sram_blk_state[i]) == SBLK_WRITING)
+         FE_STORE_REL(sram_blk_state[i], SBLK_DIRTY);
 }
 
 static void sram_close(void)
@@ -2364,11 +2725,11 @@ static void sram_abandon_deltas(const char *why)
    unsigned i;
    fe_log("sram_flush: %s — falling back to a full rewrite", why);
    sram_close();
-   sram_have_blk = 0;
+   FE_STORE_REL(sram_have_blk, 0);
    for (i = 0; i < SRAM_BLOCKS; i++)
-      sram_blk_state[i] = SBLK_CLEAN;
-   sram_full_req = 0;
-   sram_retry_full = 1;
+      FE_STORE_REL(sram_blk_state[i], SBLK_CLEAN);
+   FE_STORE_REL(sram_full_req, 0);
+   FE_STORE_REL(sram_retry_full, 1);
 }
 
 typedef struct
@@ -2418,6 +2779,56 @@ static int sram_write_full(const void *p)
    return 0;
 }
 
+/* A whole-image rewrite through the .tmp/.old swap, with the accounting the
+ * drain keeps.  Used for the first flush of a run and as the fall-back when a
+ * delta write fails.  On success every block is CLEAN and the on-disk image
+ * is a trustworthy baseline again. */
+static int sram_drain_full(const uint8_t *p)
+{
+   uint64_t t0 = host.time_us ? host.time_us() : 0, slice;
+   unsigned i;
+   if (sram_write_full(p) != 0)
+      return -1;
+   slice = (host.time_us ? host.time_us() : 0) - t0;
+   sram_run_us += slice;
+   sram_run_slices++;
+   if (slice > sram_run_slice_max)
+      sram_run_slice_max = slice;
+   if (slice > sram_run_blk_max)
+      sram_run_blk_max = slice;
+   for (i = 0; i < SRAM_BLOCKS; i++)
+      FE_STORE_REL(sram_blk_state[i], SBLK_CLEAN);
+   sram_run_bytes += FE_SRAM_SIZE;
+   sram_run_blocks = SRAM_BLOCKS;
+   sram_run_full = 1;
+   FE_STORE_REL(sram_have_blk, 1);
+   FE_STORE_REL(sram_full_req, 0);
+   FE_STORE_REL(sram_retry_full, 0);
+   return 0;
+}
+
+/* A delta write failed part-way.  The .sav is updated IN PLACE, so it may now
+ * hold some blocks new and some old, with no other copy of the old bytes --
+ * and the memory image, which has every change, is the only whole copy.  Put
+ * it on the card now through the safe writer (.tmp, then the old file moves
+ * to .old, then the new one moves in) instead of waiting for the next scan,
+ * so the torn file lives for as short a time as possible.  Costs nothing on
+ * a save that goes well; this runs only after a failure.  If this fails too
+ * (card full or gone) sram_retry_full stays set and the exit path and the
+ * next scan try again; the torn file is left exactly as it is. */
+static int sram_delta_failed(const uint8_t *p, const char *why)
+{
+   sram_abandon_deltas(why);
+   fe_evt("sram_delta_failed why=\"%s\" action=full_rewrite", why);
+   if (sram_drain_full(p) != 0)
+   {
+      fe_evt("sram_delta_failed full_rewrite=FAILED retry=pending");
+      return -1;
+   }
+   fe_evt("sram_delta_failed full_rewrite=ok");
+   return 0;
+}
+
 /* Write pending dirty blocks until the dirty set is empty or `budget_us` of
  * wall clock has been spent (0 = drain to completion — exit/menu paths).
  * Always writes at least one block when work is pending, so progress is
@@ -2438,30 +2849,10 @@ static int sram_drain(uint32_t budget_us)
     * to patch (first flush of a run, or after an I/O failure).  It happens
     * at most once per run and normally before any session is up — but it is
     * still 128 KiB, so it too runs here, on whichever thread is draining. */
-   if (sram_full_req)
+   if (FE_LOAD_ACQ(sram_full_req))
    {
-      t0 = host.time_us ? host.time_us() : 0;
-      if (sram_write_full(p) != 0)
-      {
+      if (sram_drain_full(p) != 0)
          return -1;
-      }
-      slice = (host.time_us ? host.time_us() : 0) - t0;
-      sram_run_us += slice;
-      sram_run_slices++;
-      if (slice > sram_run_slice_max)
-         sram_run_slice_max = slice;
-      if (slice > sram_run_blk_max)
-         sram_run_blk_max = slice;
-      for (i = 0; i < SRAM_BLOCKS; i++)
-      {
-         sram_blk_state[i] = SBLK_CLEAN;
-      }
-      sram_run_bytes += FE_SRAM_SIZE;
-      sram_run_blocks = SRAM_BLOCKS;
-      sram_run_full = 1;
-      sram_have_blk = 1;
-      sram_full_req = 0;
-      sram_retry_full = 0;
    }
    else if (!sram_pending())
       return 0;
@@ -2473,8 +2864,9 @@ static int sram_drain(uint32_t budget_us)
          sram_fp = fopen(host.save_path, "r+b");
          if (!sram_fp)
          {
-            sram_abandon_deltas("cannot reopen the .sav for update");
-            return -1;
+            if (sram_delta_failed(p, "cannot reopen the .sav for update") != 0)
+               return -1;
+            goto delta_done;
          }
       }
 
@@ -2482,12 +2874,14 @@ static int sram_drain(uint32_t budget_us)
       for (i = 0; i < SRAM_BLOCKS; i++)
       {
          uint64_t b0, bd;
-         if (sram_blk_state[i] != SBLK_DIRTY)
-            continue;
+         unsigned char expected = SBLK_DIRTY;
          /* Take the block, then copy it.  Anything the game writes from
           * here on re-raises DIRTY and the compare-and-clear below fails,
           * so the next pass comes back for it. */
-         sram_blk_state[i] = SBLK_WRITING;
+         if (!__atomic_compare_exchange_n(&sram_blk_state[i], &expected,
+                                          SBLK_WRITING, 0,
+                                          __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            continue;
          memcpy(sram_stage, p + (size_t)i * SRAM_BLOCK, SRAM_BLOCK);
 
          b0 = host.time_us ? host.time_us() : 0;
@@ -2496,8 +2890,9 @@ static int sram_drain(uint32_t budget_us)
              fwrite(sram_stage, 1, SRAM_BLOCK, sram_fp) != SRAM_BLOCK ||
              fflush(sram_fp) != 0)
          {
-            sram_abandon_deltas("seek/write/flush failed mid-update");
-            return -1;
+            if (sram_delta_failed(p, "seek/write/flush failed mid-update") != 0)
+               return -1;
+            goto delta_done;
          }
          bd = (host.time_us ? host.time_us() : 0) - b0;
          if (bd > sram_run_blk_max)
@@ -2505,8 +2900,10 @@ static int sram_drain(uint32_t budget_us)
 
          /* CRC the STAGED bytes — i.e. exactly what is now on disk. */
          sram_blk_crc[i] = fe_crc32(0, sram_stage, SRAM_BLOCK);
-         if (sram_blk_state[i] == SBLK_WRITING)
-            sram_blk_state[i] = SBLK_CLEAN;   /* still ours: it is clean */
+         expected = SBLK_WRITING;
+         (void)__atomic_compare_exchange_n(&sram_blk_state[i], &expected,
+                                           SBLK_CLEAN, 0,
+                                           __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE); /* still ours: it is clean */
          sram_run_bytes += SRAM_BLOCK;
          sram_run_blocks++;
 
@@ -2521,6 +2918,7 @@ static int sram_drain(uint32_t budget_us)
          sram_run_slice_max = slice;
    }
 
+delta_done:
    if (!sram_pending())
    {
       battery_written_note();
@@ -2580,12 +2978,12 @@ static int sram_drain(uint32_t budget_us)
 
 /* The writer thread's entry point.  No budget: nothing here is on a frame
  * path, so it drains everything it finds in one pass. */
-static volatile int sram_io_busy;
+static int sram_io_busy;
 static int sram_service_io_body(void)
 {
    uint64_t now = host.time_us ? host.time_us() : 0;
    unsigned before;
-   int req = sram_scan_req;
+   int req = FE_LOAD_ACQ(sram_scan_req);
 
    if (battery_load_failed)
       return 0;
@@ -2616,25 +3014,31 @@ static int sram_service_io_body(void)
           * become the generation that is later published as on disk
           * (review S5).  Whoever releases the hold asks for a scan. */
 #ifdef GBA_LINK
-         int held = gba_sram_hold;
+         int held = FE_LOAD_ACQ(gba_sram_hold);
 #else
          int held = 0;
 #endif
          (void)sram_scan(req == 2);
-         sram_scan_req = 0;      /* clear only after the scan has marked */
+         /* clear only after the scan has marked; preserve newer requests */
+         if (req)
+         {
+            int expected = req;
+            (void)__atomic_compare_exchange_n(&sram_scan_req, &expected, 0, 0,
+                                              __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+         }
 #ifdef GBA_LINK
-         held |= gba_sram_hold;
+         held |= FE_LOAD_ACQ(gba_sram_hold);
 #endif
          if (!held)
          {
-            sram_scan_gen = gen;
-            sram_scan_gen_valid = 1;
+            FE_STORE_REL(sram_scan_gen, gen);
+            FE_STORE_REL(sram_scan_gen_valid, 1);
          }
       }
    }
 
    before = sram_pending();
-   if (sram_full_req || before)
+   if (FE_LOAD_ACQ(sram_full_req) || before)
    {
       sram_run_threaded = 1;
       if (sram_drain(0) != 0)
@@ -2643,9 +3047,9 @@ static int sram_service_io_body(void)
    /* Everything the last scan asked for is on disk, and the on-disk image is
     * a trustworthy baseline (a failed write clears sram_have_blk until a
     * full rewrite succeeds): publish the generation that scan saw. */
-   if (sram_scan_gen_valid && sram_have_blk && !sram_full_req &&
-       !sram_pending())
-      sram_disk_gen = sram_scan_gen;
+   if (FE_LOAD_ACQ(sram_scan_gen_valid) && FE_LOAD_ACQ(sram_have_blk) &&
+       !FE_LOAD_ACQ(sram_full_req) && !sram_pending())
+      FE_STORE_REL(sram_disk_gen, FE_LOAD_ACQ(sram_scan_gen));
    { unsigned after = sram_pending();
      return (int)(before > after ? before - after : 0); }
 }
@@ -2653,9 +3057,9 @@ static int sram_service_io_body(void)
 int fe_host_sram_service_io(void)
 {
    int rc;
-   sram_io_busy = 1;
+   FE_STORE_REL(sram_io_busy, 1);
    rc = sram_service_io_body();
-   sram_io_busy = 0;
+   FE_STORE_REL(sram_io_busy, 0);
    return rc;
 }
 
@@ -2669,11 +3073,12 @@ void fe_host_sram_request_scan(void)
 {
    /* One read: this runs on the power callback's thread, and the main
     * thread clears host_io when it stops the writer (io_thread_stop). */
-   const fe_host_io *io = host_io;
+   const fe_host_io *io = FE_LOAD_ACQ(host_io);
+   int zero = 0;
    if (!io || gb_family || !host.save_path)
       return;
-   if (!sram_scan_req)
-      sram_scan_req = 1;
+   (void)__atomic_compare_exchange_n(&sram_scan_req, &zero, 1, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
    io->wake();
 }
 
@@ -2684,14 +3089,15 @@ void fe_host_sram_ff_nudge_enable(int on)
 
 int fe_host_sram_ff_nudge(int ff_active)
 {
+   const fe_host_io *io = FE_LOAD_ACQ(host_io);
    uint32_t gen, dgen;
    uint64_t now_us;
    int oldest_late, want_scan;
 
-   if (!host_io || gb_family || !&backup_write_gen || !host.save_path)
+   if (!io || gb_family || !&backup_write_gen || !host.save_path)
       return 0;
 
-   gen = backup_write_gen;
+   gen = FE_LOAD_ACQ(backup_write_gen);
    if (gen != ffn_seen_gen)
    {
       now_us = host.time_us ? host.time_us() : 0;
@@ -2719,7 +3125,7 @@ int fe_host_sram_ff_nudge(int ff_active)
    }
    if (!ffn_pending)
       return 0;
-   dgen = sram_disk_gen;
+   dgen = FE_LOAD_ACQ(sram_disk_gen);
    now_us = host.time_us ? host.time_us() : 0;
    if (dgen == gen)
    {
@@ -2752,7 +3158,7 @@ int fe_host_sram_ff_nudge(int ff_active)
    /* A link session owns the battery image and the writer looks at nothing
     * (gba_sram_hold): no request can be served, so none is made and main
     * does not sleep for one.  The release asks for the scan itself. */
-   if (gba_sram_hold)
+   if (FE_LOAD_ACQ(gba_sram_hold))
       return 0;
 #endif
    oldest_late = host.time_us &&
@@ -2809,10 +3215,14 @@ int fe_host_sram_ff_nudge(int ff_active)
     * schedules): ask for a scan now rather than at its 5 s cadence -- once
     * per request, not once per nudge.  Never downgrade a pending forced
     * request. */
-   want_scan = !sram_scan_gen_valid || !sram_have_blk ||
-               (int32_t)(sram_scan_gen - ffn_ask_gen) < 0;
-   if (want_scan && !sram_scan_req)
-      sram_scan_req = 1;
+   want_scan = !FE_LOAD_ACQ(sram_scan_gen_valid) || !FE_LOAD_ACQ(sram_have_blk) ||
+               (int32_t)(FE_LOAD_ACQ(sram_scan_gen) - ffn_ask_gen) < 0;
+   if (want_scan)
+   {
+      int zero = 0;
+      (void)__atomic_compare_exchange_n(&sram_scan_req, &zero, 1, 0,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+   }
    if (!ff_active)
    {
       /* Normal speed: ask, do not wait.  The writer is woken again every
@@ -2820,7 +3230,7 @@ int fe_host_sram_ff_nudge(int ff_active)
        * late write, a write that failed and needs the whole-image
        * rewrite). */
       ffn_next_frame = frame_count + SRAM_FF_SETTLE_FRAMES;
-      host_io->wake();
+      io->wake();
       return 0;
    }
    ffn_next_frame = frame_count + SRAM_FF_NUDGE_EVERY;
@@ -2828,8 +3238,8 @@ int fe_host_sram_ff_nudge(int ff_active)
    ffn_yields++;
    {
       uint64_t t0 = host.time_us ? host.time_us() : 0;
-      host_io->wake();
-      host_io->yield();
+      io->wake();
+      io->yield();
       if (t0)
          ffn_yield_us += host.time_us() - t0;
    }
@@ -2849,9 +3259,9 @@ void fe_host_sram_service(void)
          (void)gb_save_flush_periodic();
       return;
    }
-   if (host_io)
+   if (FE_LOAD_ACQ(host_io))
       return;              /* the writer thread owns the file (ADR-0025) */
-   if (sram_pending() || sram_full_req)
+   if (sram_pending() || FE_LOAD_ACQ(sram_full_req))
       sram_drain(SRAM_FLUSH_BUDGET_US);
 }
 
@@ -2862,6 +3272,7 @@ void fe_host_sram_service(void)
  * file with blocks still pending. */
 static int sram_sync_checked(void)
 {
+   const fe_host_io *io;
    if (battery_load_failed)
       return -1;
    if (gb_family)
@@ -2872,16 +3283,17 @@ static int sram_sync_checked(void)
        * needs no memory-stick write at all. */
       return gb_save_flush(0);
    }
-   if (!host_io)
+   io = FE_LOAD_ACQ(host_io);
+   if (!io)
    {
       /* Synchronous ownership means the async writer has stopped.  Recover
        * its interrupted block before draining; sram_drain deliberately only
        * takes DIRTY blocks, so leaving WRITING here would strand the save. */
       sram_recover_interrupted_writes();
-      if (sram_pending() || sram_full_req)
+      if (sram_pending() || FE_LOAD_ACQ(sram_full_req))
       {
          if (sram_drain(0) != 0)
-            sram_full_req = 1;   /* retry from a whole-image write */
+            FE_STORE_REL(sram_full_req, 1); /* retry from a whole-image write */
       }
       /* A FAILED DELTA WRITE MUST NOT END THE STORY HERE.
        *
@@ -2902,12 +3314,14 @@ static int sram_sync_checked(void)
        * So finish it now, with the rewrite the next scan would have asked
        * for: a fresh open of the path, the whole image.  One attempt; if
        * the stick really is gone there is nothing more to do from here. */
-      if ((sram_retry_full || sram_full_req) && SRAM_EXIT_RETRY)
+      if ((FE_LOAD_ACQ(sram_retry_full) || FE_LOAD_ACQ(sram_full_req)) &&
+          SRAM_EXIT_RETRY)
       {
-         sram_full_req = 1;
+         FE_STORE_REL(sram_full_req, 1);
          (void)sram_drain(0);
       }
-      return sram_pending() || sram_full_req || sram_retry_full ? -1 : 0;
+      return sram_pending() || FE_LOAD_ACQ(sram_full_req) ||
+             FE_LOAD_ACQ(sram_retry_full) ? -1 : 0;
    }
    /* Async: the writer thread owns the file, so we must not touch it — we
     * wake it and YIELD until it is done.  Yielding is load-bearing, not
@@ -2920,19 +3334,20 @@ static int sram_sync_checked(void)
     * then drains synchronously and cannot fail to complete. */
    {
       int spins;
-      host_io->wake();
+      io->wake();
       for (spins = 0; spins < SRAM_SYNC_MAX_SPINS; spins++)
       {
          /* A pending SCAN counts as outstanding work: a forced flush must
           * not return before the scan that decides what to write has even
           * run (ADR-0026). */
-         if (!sram_io_busy && !sram_scan_req && !sram_pending() && !sram_full_req)
-            return sram_retry_full ? -1 : 0;
-         host_io->yield();
+         if (!FE_LOAD_ACQ(sram_io_busy) && !FE_LOAD_ACQ(sram_scan_req) &&
+             !sram_pending() && !FE_LOAD_ACQ(sram_full_req))
+            return FE_LOAD_ACQ(sram_retry_full) ? -1 : 0;
+         io->yield();
       }
    }
    fe_evt("sram_sync_timeout blocks=%u full=%d scan=%d", sram_pending(),
-          sram_full_req, sram_scan_req);
+          FE_LOAD_ACQ(sram_full_req), FE_LOAD_ACQ(sram_scan_req));
    return -1;
 }
 
@@ -2967,7 +3382,7 @@ static int sram_scan(int force_write)
    if (!p || !host.save_path)
       return 0;
 #ifdef GBA_LINK
-   if (gba_sram_hold && !gba_sram_quiescing)
+   if (FE_LOAD_ACQ(gba_sram_hold) && !FE_LOAD_ACQ(gba_sram_quiescing))
       return 0;         /* a GBA link session owns the battery image */
 #endif
 
@@ -2992,7 +3407,7 @@ static int sram_scan(int force_write)
     * the save persisted (review S4).  A failed delta write invalidates the
     * per-block baseline (sram_have_blk): scan on, to schedule the full
     * rewrite that is the only way to re-establish it. */
-   if (!force_write && sram_have_blk)
+   if (!force_write && FE_LOAD_ACQ(sram_have_blk))
    {
       for (i = 0; i < SRAM_BLOCKS; i++)
          if (crc_now[i] != sram_blk_crc[i])
@@ -3005,16 +3420,16 @@ static int sram_scan(int force_write)
    }
 
    sram_run_crc = crc;
-   sram_run_threaded = host_io ? 1 : 0;
+   sram_run_threaded = FE_LOAD_ACQ(host_io) ? 1 : 0;
 
-   if (!sram_have_blk)
+   if (!FE_LOAD_ACQ(sram_have_blk))
    {
       /* No trustworthy on-disk image to patch: one full rewrite.  Requested
        * here, PERFORMED by whoever drains — so with a writer thread even
        * this 128 KiB pass is off the emulation thread. */
-      sram_full_req = 1;
+      FE_STORE_REL(sram_full_req, 1);
       for (i = 0; i < SRAM_BLOCKS; i++)
-         sram_blk_state[i] = SBLK_CLEAN;
+         FE_STORE_REL(sram_blk_state[i], SBLK_CLEAN);
    }
    else
    {
@@ -3023,12 +3438,12 @@ static int sram_scan(int force_write)
        * block that is genuinely clean is already CLEAN. */
       for (i = 0; i < SRAM_BLOCKS; i++)
          if (crc_now[i] != sram_blk_crc[i])
-            sram_blk_state[i] = SBLK_DIRTY;
+            FE_STORE_REL(sram_blk_state[i], SBLK_DIRTY);
       /* force_write means "write even when clean" (round-trip tests), and
        * that contract predates the dirty map — honour it literally. */
       if (force_write && !sram_pending())
          for (i = 0; i < SRAM_BLOCKS; i++)
-            sram_blk_state[i] = SBLK_DIRTY;
+            FE_STORE_REL(sram_blk_state[i], SBLK_DIRTY);
    }
 
    return 1;
@@ -3036,6 +3451,7 @@ static int sram_scan(int force_write)
 
 int fe_host_sram_flush(int force_write)
 {
+   const fe_host_io *io;
    if (battery_load_failed)
       return -1;
    if (gb_family)
@@ -3044,10 +3460,18 @@ int fe_host_sram_flush(int force_write)
     * places the request.  A forced flush additionally waits for the whole
     * cycle — scan, then drain — to finish before returning, which is what
     * exit and the round-trip tests depend on. */
-   if (host_io)
+   io = FE_LOAD_ACQ(host_io);
+   if (io)
    {
-      sram_scan_req = force_write ? 2 : 1;
-      host_io->wake();
+      if (force_write)
+         FE_STORE_REL(sram_scan_req, 2);
+      else
+      {
+         int zero = 0;
+         (void)__atomic_compare_exchange_n(&sram_scan_req, &zero, 1, 0,
+                                           __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+      }
+      io->wake();
       if (force_write)
          fe_host_sram_sync();
       return 1;
@@ -3056,7 +3480,7 @@ int fe_host_sram_flush(int force_write)
    /* Synchronous (desktop, or sram_thread=0): ADR-0020's behaviour exactly.
     * Finish anything already in flight before re-scanning, so a forced
     * flush is always complete when it returns. */
-   if (sram_pending() || sram_full_req)
+   if (sram_pending() || FE_LOAD_ACQ(sram_full_req))
       (void)sram_drain(0);
    if (!sram_scan(force_write))
       return 0;
@@ -3302,6 +3726,12 @@ static int gb_single_boot(void)
                            core_sample_rate ? core_sample_rate : 32768, &cb);
    if (!gb_core)
       return -1;
+   {
+      uint16_t pv[12];
+      fe_evt("gb_colours boot id=%d name=\"%s\" combo=%d", host.gb_palette,
+             gbcore_palette_name((unsigned)host.gb_palette),
+             gbcore_palette_preview((unsigned)host.gb_palette, pv));
+   }
    if (gb_save_load() != 0)
    {
       gbcore_shutdown(gb_core);
@@ -3748,34 +4178,38 @@ static int gba_session_mem_body(int up)
  * (gba_cable_start / gba_cable_close) is kept as it was. */
 static int gba_sram_hold_begin(void)
 {
-   int was = gba_sram_hold, rc;
+   int was = FE_LOAD_ACQ(gba_sram_hold), rc;
    if (was)
       return sram_sync_checked();
    /* The emulation thread is parked at its frame boundary. Finish the last
     * pre-link scan and write while its RAM is still live; only this phase
     * permits a scan under the hold. No session machine may start on failure. */
-   gba_sram_hold = 1;
-   gba_sram_quiescing = 1;
-   if (host_io)
-      sram_scan_req = 1;
+   FE_STORE_REL(gba_sram_quiescing, 1);
+   FE_STORE_REL(gba_sram_hold, 1);
+   if (FE_LOAD_ACQ(host_io))
+   {
+      int zero = 0;
+      (void)__atomic_compare_exchange_n(&sram_scan_req, &zero, 1, 0,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+   }
    else
       (void)sram_scan(0);
    rc = sram_sync_checked();
-   gba_sram_quiescing = 0;
+   FE_STORE_REL(gba_sram_quiescing, 0);
    if (rc == 0)
       rc = sram_sync_checked();
    if (rc != 0)
-      gba_sram_hold = was;
+      FE_STORE_REL(gba_sram_hold, was);
    return rc;
 }
 
 static int gba_session_mem(int up)
 {
-   int was = gba_sram_hold, rc;
+   int was = FE_LOAD_ACQ(gba_sram_hold), rc;
    if (gba_sram_hold_begin() != 0)
       return -3;
    rc = gba_session_mem_body(up);
-   gba_sram_hold = was;
+   FE_STORE_REL(gba_sram_hold, was);
    return rc;
 }
 
@@ -3876,7 +4310,7 @@ static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_s
    l.machines = m;
    l.core_mask = host.gba_core_mask;
    l.rom_sampled = gba_rom_sampled;
-   gba_sram_hold = 1;
+   FE_STORE_REL(gba_sram_hold, 1);
    gbl = fe_gblink_create(&p, &l);
    gbl_is_gba = gbl != NULL;
    gbl_ride_set = 0;
@@ -3887,7 +4321,7 @@ static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_s
    if (!gbl)
    {
       fe_evt("gblink_start FAILED reason=create");
-      gba_sram_hold = 0;
+      FE_STORE_REL(gba_sram_hold, 0);
       if (p.bulk_send && host.gb_bulk_enable)
          host.gb_bulk_enable(0);
       return -1;
@@ -3906,7 +4340,7 @@ static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_s
 
 static int gba_cable_start(int is_host, unsigned input_delay, int64_t rtc_seed)
 {
-   int was = gba_sram_hold, rc;
+   int was = FE_LOAD_ACQ(gba_sram_hold), rc;
    if (gbl)
       return -1;
 #ifdef REWIND
@@ -3919,12 +4353,274 @@ static int gba_cable_start(int is_host, unsigned input_delay, int64_t rtc_seed)
    }
    rc = gba_cable_start_body(is_host, input_delay, rtc_seed);
    if (rc != 0)
-      gba_sram_hold = was;
+      FE_STORE_REL(gba_sram_hold, was);
    return rc;
 }
 
 static int gba_cable_close(void);
 #endif
+
+/* ---- NES / WonderSwan two-player link (fe_padpair.h) ---------------------
+ *
+ * Both consoles run the player's ONE machine, the host's pad on port 1 and
+ * the guest's on port 2 (the WonderSwan's one pad takes both), in lockstep
+ * through the same fe_gblink as the cable sessions.  What the machine does
+ * is the frontend's here, because it is the frontend's machine:
+ *
+ *   - the host's state and battery start both consoles; the guest's own game
+ *     is set aside by fe_padpair and put back when the session ends, and the
+ *     guest never writes a battery file: gb_core is hidden for the session
+ *     (see gbl_pad), which switches off every writer and every state call;
+ *   - the options that change emulation are pinned by the mux
+ *     (gbmux_pad_pin) and the session clock is the host's;
+ *   - the same cartridge image on both consoles (HELLO's identity; there is
+ *     no partner cartridge), checked by fe_gblink: a different one is
+ *     refused as FE_GBLINK_E_ROM_MISSING.
+ *
+ * Drawing is the machine's own business: its video and audio callbacks are
+ * the single player's, one emulated frame at a time. */
+
+static void gblink_stats_evt(void);
+
+static int pad_m_run(void *u, uint16_t a, uint16_t b)
+{ return gbmux_pad_run((gbcore_t *)u, a, b); }
+static size_t pad_m_state_size(void *u) { return gbcore_state_size((gbcore_t *)u); }
+static int pad_m_state_save(void *u, void *buf, size_t n)
+{ return gbcore_state_save((gbcore_t *)u, buf, n) > 0 ? 0 : -1; }
+static int pad_m_state_load(void *u, const void *buf, size_t n)
+{ return gbcore_state_load((gbcore_t *)u, buf, n) == 0 ? 0 : -1; }
+static size_t pad_m_save_size(void *u) { return gbcore_save_ram_size((gbcore_t *)u); }
+static int pad_m_save_read(void *u, void *buf, size_t n)
+{ return gbcore_save_ram_read((gbcore_t *)u, buf, n) == 0 ? 0 : -1; }
+static int pad_m_save_write(void *u, const void *buf, size_t n)
+{ return gbcore_save_ram_write((gbcore_t *)u, buf, n) == 0 ? 0 : -1; }
+static void pad_m_clock(void *u, int64_t seed) { gbmux_pad_clock((gbcore_t *)u, seed); }
+static uint32_t pad_m_cart_crc(void *u) { return gbmux_pad_save_crc((gbcore_t *)u); }
+
+/* The host's own battery file at the agreed end: the same writer as the
+ * single player's (the file's extra bytes and its notes), no clock to move. */
+static int pad_commit(void *user, const void *image, size_t size)
+{
+   int rc;
+   (void)user;
+   if (!host.save_path || battery_load_failed)
+      return -1;
+   rc = gb_save_write((const uint8_t *)image, size,
+                      fe_crc32(0, image, size));
+   gb_save_crc_valid = 0;
+   fe_evt("gblink_save_commit size=%u crc=%08x ok=%d (pad)", (unsigned)size,
+          fe_crc32(0, image, size), rc == 0);
+   return rc;
+}
+
+/* Frames of the two-player session are bounded by what fe_gblink carries. */
+#define PAD_STATE_MAX (1024u * 1024u)
+
+static int pad_link_start(int is_host, unsigned input_delay, int64_t rtc_seed)
+{
+   fe_gblink_platform p;
+   fe_gblink_local l;
+   fe_pad_machine pm;
+   const fe_gblink_machines *m;
+   uint8_t *state = NULL, *save = NULL;
+   size_t sn, vn;
+   int other = gbmux_other_console(gb_core);
+
+   if (!&fe_padpair_machines || !gbmux_pad_ok(gb_core) || other < 0)
+      return -1;
+   sn = gbcore_state_size(gb_core);
+   vn = gbcore_save_ram_size(gb_core);
+   if (!sn || sn > PAD_STATE_MAX)
+   {
+      fe_evt("gblink_start FAILED reason=pad_state size=%u", (unsigned)sn);
+      return -1;
+   }
+   /* The player's battery as the game has it now, on the card: what this
+    * console keeps whatever the session does (a guest's is never written
+    * during it, a host's only at the agreed end). */
+   (void)gb_save_flush(0);
+   if (is_host)
+   {
+      state = (uint8_t *)malloc(sn);
+      save = vn ? (uint8_t *)malloc(vn) : NULL;
+      if (!state || (vn && !save) ||
+          gbcore_state_save(gb_core, state, sn) <= 0 ||
+          (vn && gbcore_save_ram_read(gb_core, save, vn) != 0))
+      {
+         fe_evt("gblink_start FAILED reason=pad_snapshot");
+         free(state);
+         free(save);
+         return -1;
+      }
+   }
+   memset(&pm, 0, sizeof(pm));
+   pm.user = gb_core;
+   pm.console = (uint8_t)other;
+   pm.rom_min = 0x40;
+   pm.rom_max = 16u * 1024u * 1024u;
+   pm.save_max = 1024u * 1024u;
+   pm.run_frame = pad_m_run;
+   pm.state_size = pad_m_state_size;
+   pm.state_save = pad_m_state_save;
+   pm.state_load = pad_m_state_load;
+   pm.save_size = pad_m_save_size;
+   pm.save_read = pad_m_save_read;
+   pm.save_write = pad_m_save_write;
+   pm.set_clock = pad_m_clock;
+   pm.cart_crc = pad_m_cart_crc;
+   m = fe_padpair_machines(&pm);
+   if (!m)
+   {
+      fe_evt("gblink_start FAILED reason=pad_machines");
+      free(state);
+      free(save);
+      return -1;
+   }
+   memset(&p, 0, sizeof(p));
+   memset(&l, 0, sizeof(l));
+   p.send = gbl_send;
+   p.max_payload = ND_MAX_PAYLOAD;
+   p.send_room = gbl_room;
+   p.bulk_per_step = gbl_bulk;
+   p.commit_save = pad_commit;
+   p.wait = host.gblink_wait ? gbl_wait : NULL;
+   p.nack = host.gblink_nack;
+   if (host.gb_bulk_send && host.gb_bulk_recv && host.gb_bulk_max &&
+       (!host.gb_bulk_enable || host.gb_bulk_enable(1) == 0))
+   {
+      p.bulk_send = gbl_bulk_send;
+      p.bulk_max = host.gb_bulk_max;
+      p.bulk_rate = host.gb_bulk_rate;
+      p.input_copies = host.gblink_input_copies;
+   }
+   fe_evt("gblink_lane bulk_max=%u rate=%u input_copies=%u",
+          (unsigned)p.bulk_max, p.bulk_rate, p.input_copies);
+   l.is_host = is_host;
+   l.rom_path = host.rom_path;
+   l.console = (fe_console_t)other;
+   /* the host's state and battery start both consoles; a guest brings none */
+   l.save = save;
+   l.save_size = save ? vn : 0;
+   l.state = state;
+   l.state_size = state ? sn : 0;
+   l.wallclock_now = rtc_seed ? rtc_seed
+                              : (int64_t)(host.wallclock ? host.wallclock()
+                                                         : time(NULL));
+   l.audio_rate = core_sample_rate;
+   l.input_delay = input_delay;
+   l.hash_interval = host.gblink_hash_every ? host.gblink_hash_every : 240;
+   l.machines = m;
+   l.rom_sampled = 0;           /* the very same image: the whole-file SHA-1 */
+   /* The machine stays; its options are pinned and gb_core is hidden. */
+   gbmux_pad_pin(gb_core, 1);
+   pad_core = gb_core;
+   gb_core = NULL;
+   gbl = fe_gblink_create(&p, &l);
+   free(state);
+   free(save);
+   if (!gbl)
+   {
+      fe_evt("gblink_start FAILED reason=create");
+      gb_core = pad_core;
+      pad_core = NULL;
+      gbmux_pad_pin(gb_core, 0);
+      if (p.bulk_send && host.gb_bulk_enable)
+         host.gb_bulk_enable(0);
+      return -1;
+   }
+   gbl_pad = 1;
+   pad_v = m;
+   gbl_last = FE_GBLINK_IDLE;
+   gbl_primed = 0;
+   fe_gblink_set_clock(gbl, host.time_us);
+   if (fe_np_gb_peer_ready(NULL))
+   {
+      unsigned i;
+      fe_gblink_peer(gbl, 1);
+      for (i = 0; i < gbl_early_n && gbl; i++)
+         fe_gblink_receive(gbl, gbl_early[i], gbl_early_len[i]);
+   }
+   gbl_early_n = 0;
+   fe_evt("gblink_pad start role=%s console=%d state=%u save=%u",
+          is_host ? "host" : "guest", other, (unsigned)sn, (unsigned)vn);
+   return 0;
+}
+
+/* The session is over (DONE or FAILED): what fe_padpair keeps -- the host's
+ * end state after an agreed end, everyone else's own game as it was -- is the
+ * machine, and the machine is the player's again.  A restore that failed
+ * boots the game from its battery file (which no session wrote). */
+static int pad_link_close(void)
+{
+   const fe_gblink_machines *v = pad_v;
+   fe_gblink_progress pr;
+   int ok, rc = 0, st = fe_gblink_state(gbl);
+   int err = fe_gblink_error(gbl);
+   int keep_host;
+   const char *how = "restored";
+
+   fe_gblink_get_progress(gbl, &pr);
+   keep_host = fe_gblink_local_slot(gbl) == 0 && pr.ran &&
+               (err == FE_GBLINK_E_PEER_LOST ||
+                (err == FE_GBLINK_E_PEER_ABORT &&
+                 pr.peer_reason == FE_GBLINK_E_PEER_LOST));
+
+   gblink_stats_evt();
+   fe_evt("gblink_close state=%d error=%s t_ms=%llu", st,
+          fe_gblink_error_text(err),
+          (unsigned long long)(host.time_us ? host.time_us() / 1000u : 0));
+   {
+      fe_gblink_stats ss;
+      fe_gblink_get_stats(gbl, &ss);
+      fe_evt("gblink_bulk_stats chunk=%u sent=%u resent=%u rx=%u dup=%u "
+             "bad=%u rate=%u", ss.bulk_chunk, ss.bulk_sent, ss.bulk_resent,
+             ss.bulk_rx, ss.bulk_dup, ss.bulk_bad, ss.bulk_rate);
+   }
+   if (keep_host && fe_padpair_keep_host)
+      fe_padpair_keep_host(v);
+   fe_gblink_destroy(gbl);        /* the machines' stop: the own game back */
+   gbl = NULL;
+   gbl_pad = 0;
+   ok = fe_padpair_restored ? fe_padpair_restored(v) : 0;
+   gb_core = pad_core;
+   pad_core = NULL;
+   pad_v = NULL;
+   gbmux_pad_pin(gb_core, 0);
+   gbl_sessions++;
+   gbl_hold = 0;
+   if (host.gb_bulk_enable)
+      host.gb_bulk_enable(0);
+   if (!ok)
+   {
+      fe_evt("gblink_resume FAILED pad_restore");
+      gbcore_shutdown(gb_core);
+      gb_core = NULL;
+      rc = gb_single_boot();
+      how = "restart";
+   }
+   else if (st == FE_GBLINK_DONE)
+      how = "live_end";
+   else if (keep_host)
+      how = "carry_on";
+   FE_EVT_ONLY(how);
+   fe_evt("gblink_resume how=%s rc=%d t_ms=%llu", how, rc,
+          (unsigned long long)(host.time_us ? host.time_us() / 1000u : 0));
+   return rc == 0 ? 0 : -3;
+}
+
+int fe_host_pad_ready(void)
+{
+   return gb_family && gb_core && !gbl && &fe_padpair_machines &&
+          gbmux_pad_ok(gb_core);
+}
+
+int fe_host_pad_game_id(char out[9])
+{
+   gbcore_t *c = gb_core ? gb_core : pad_core;
+   if (out)
+      out[0] = '\0';
+   return c && out ? gbmux_pad_game_id(c, out) : -1;
+}
 
 int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
 {
@@ -3936,7 +4632,11 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
    if (gba_cable)
       return gba_cable_start(is_host, input_delay, rtc_seed);
 #endif
-   if (!gb_family || gbl || !gb_core || gb_dual || fe_host_gb_local_active())
+   if (gb_family && !gbl && gb_core && !gb_dual && !fe_host_gb_local_active() &&
+       gbmux_other_console(gb_core) >= 0)
+      return pad_link_start(is_host, input_delay, rtc_seed);
+   if (!gb_family || gbl || !gb_core || gb_dual || fe_host_gb_local_active() ||
+       gbmux_other_console(gb_core) >= 0)
       return -1;
    /* This console's save, as the game has it now (and on disk). */
    gb_save_flush(1);
@@ -3950,11 +4650,17 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
          return -1;
       }
    }
-   /* A live link: the running game, as it stands at this frame boundary. */
+   /* A live link: the running game, as it stands at this frame boundary.  (Not from the Accurate core: its state is
+    * not the Standard core's, which runs the session; the game starts from its save and the player is told.) */
    free(gbl_prelink_state);
    gbl_prelink_state = NULL;
    gbl_prelink_state_n = 0;
-   if (host.gblink_live)
+   if (gbmux_is_gambatte(gb_core))
+   {
+      gb_core_notice = 2;
+      fe_evt("gb_core link=standard");
+   }
+   else if (host.gblink_live)
    {
       size_t sn = gbcore_state_size(gb_core);
       gbl_prelink_state = sn ? (uint8_t *)malloc(sn) : NULL;
@@ -3993,7 +4699,8 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
    l.is_host = is_host;
    l.rom_path = host.rom_path;
    l.console = host.console;
-   l.palette = (unsigned)host.gb_palette;
+   /* the peer runs our machine headless: the model, not the colours */
+   l.palette = (unsigned)GBCORE_PALETTE_WIRE((unsigned)host.gb_palette);
    l.save = save;
    l.save_size = n;
    l.wallclock_now = rtc_seed ? rtc_seed
@@ -4107,6 +4814,8 @@ int fe_host_gblink_close(void)
 {
    if (!gbl)
       return -1;
+   if (gbl_pad)
+      return pad_link_close();
 #ifdef GBA_LINK
    if (gba_cable)
    {
@@ -4164,6 +4873,13 @@ int fe_host_gblink_close(void)
       if (host.gb_bulk_enable)
          host.gb_bulk_enable(0);
       rc = gb_single_boot();
+      if (rc == 0 && state && gbmux_is_gambatte(gb_core))
+      {
+         /* the session's machine was TGB Dual's: the Accurate core goes on from the battery image (its states are another format) */
+         free(state);
+         state = NULL;
+         how = "from_save";
+      }
       if (rc == 0 && state)
       {
          rc = gbcore_state_load(gb_core, state, sn);
@@ -4214,9 +4930,9 @@ void fe_host_session_reset(void)
    /* The save writer's requests belong to the game that was just shut down
     * (its flush and sync have run, the writer thread is stopped): a rewrite
     * or scan still flagged must not be carried out on the next game. */
-   sram_full_req = 0;
-   sram_retry_full = 0;
-   sram_scan_req = 0;
+   FE_STORE_REL(sram_full_req, 0);
+   FE_STORE_REL(sram_retry_full, 0);
+   FE_STORE_REL(sram_scan_req, 0);
 }
 
 int fe_host_boot(const fe_host_config *cfg)
@@ -4250,14 +4966,23 @@ int fe_host_boot(const fe_host_config *cfg)
    gb_save_crc_valid = 0;
    gb_skip_frame = 0;
 
-   gb_family = host.console == FE_CONSOLE_GB || host.console == FE_CONSOLE_GBC;
+   gb_family = host.console == FE_CONSOLE_GB || host.console == FE_CONSOLE_GBC ||
+               host.console == FE_CONSOLE_NES || host.console == FE_CONSOLE_WSWAN;
+   gb_pic_w = 160;
+   gb_pic_h = 144;
    if (gb_family)
    {
       gbcore_callbacks_t callbacks;
-      char title[17] = "";
-      unsigned rate = 32768;
+      char title[33] = "";
+      const int other = host.console == FE_CONSOLE_NES || host.console == FE_CONSOLE_WSWAN;
+      unsigned rate = other ? 48000 : 32768;
       gbcore_set_color_correction(!host.gbc_raw_colors);
-      if (host.boot_status) host.boot_status("Preparing GB emulator");
+      gbmux_set_gb_accurate(host.gb_accurate && !host.gb_dual_rom && !host.gb_bench_headless);
+      gb_core_notice = 0;
+      if (host.boot_status)
+         host.boot_status(host.console == FE_CONSOLE_NES ? "Preparing NES emulator"
+                          : host.console == FE_CONSOLE_WSWAN ? "Preparing WonderSwan emulator"
+                          : "Preparing GB emulator");
       memset(&callbacks, 0, sizeof(callbacks));
       callbacks.video = gb_video_frame;
       callbacks.audio_batch = gb_audio_batch;
@@ -4267,7 +4992,7 @@ int fe_host_boot(const fe_host_config *cfg)
       fe_np_gb_set_peer_callback(gb_link_peer_event, NULL);
       /* Before create: the core takes its clock base and chooses DMG, SGB
        * or CGB behaviour (the palette decides SGB colours) as it boots. */
-      if (host.gb_dual_rom)
+      if (host.gb_dual_rom && !other)
       {
          /* The pair takes the cable: no ad-hoc byte link beside it. */
          gbdual_config_t dc;
@@ -4324,7 +5049,7 @@ int fe_host_boot(const fe_host_config *cfg)
          gbcore_set_palette((unsigned)host.gb_palette);
          gb_core = gbcore_create(host.rom_path, NULL, 0, host.console, rate,
                                  &callbacks);
-         if (gb_core && host.gb_bench_headless)
+         if (gb_core && host.gb_bench_headless && !gbmux_is_gambatte(gb_core))
          {
             /* Milestone-1 bench: the one machine as a link session's
              * partner machine runs -- no picture, no synthesis -- to
@@ -4333,18 +5058,42 @@ int fe_host_boot(const fe_host_config *cfg)
             fe_evt("gb_bench headless=1");
          }
       }
+      if (gb_core && gbmux_gb_fallback_take())
+      {
+         gb_core_notice = 1;
+         fe_evt("gb_core fallback=standard");
+      }
+      fe_evt("gb_core running=%s", gbmux_is_gambatte(gb_core) ? "accurate" : "standard");
       if (!gb_core)
       {
-         fe_log("gbcore_create FAILED for %s console=%d", host.rom_path,
-                (int)host.console);
+         fe_log("gbcore_create FAILED for %s console=%d%s%s", host.rom_path,
+                (int)host.console,
+                other ? ": " : "", other ? gbmux_error() : "");
+         if (host.console == FE_CONSOLE_NES)
+            fe_evt("nes_load_failed reason=%s", gbmux_error());
+         if (host.console == FE_CONSOLE_WSWAN)
+            fe_evt("ws_load_failed reason=%s", gbmux_error());
          return -1;
       }
       core_sample_rate = gbcore_sample_rate(gb_core);
       gbcore_rom_title(gb_core, title, sizeof(title));
+      if (other)
+      {
+         gb_pic_w = gbcore_frame_width(gb_core);
+         gb_pic_h = gbcore_frame_height(gb_core);
+      }
       fe_evt("gb_rom_loaded console=%s title=%s", host.console == FE_CONSOLE_GBC ?
-             "GBC" : "GB", title);
-      fe_evt("av_info fps=59.7275 rate=%u w=%u h=%u", core_sample_rate,
-             gbcore_frame_width(gb_core), gbcore_frame_height(gb_core));
+             "GBC" : host.console == FE_CONSOLE_NES ? "NES" :
+             host.console == FE_CONSOLE_WSWAN ? "WS" : "GB", title);
+      if (host.console == FE_CONSOLE_GB || host.console == FE_CONSOLE_GBC)
+      {
+         uint16_t pv[12];
+         fe_evt("gb_colours boot id=%d name=\"%s\" combo=%d", host.gb_palette,
+                gbcore_palette_name((unsigned)host.gb_palette),
+                gbcore_palette_preview((unsigned)host.gb_palette, pv));
+      }
+      fe_evt("av_info fps=%.4f rate=%u w=%u h=%u", gbmux_fps(gb_core),
+             core_sample_rate, gbcore_frame_width(gb_core), gbcore_frame_height(gb_core));
       if (host.boot_status) host.boot_status("Loading GB save");
       if (gb_save_load() != 0)
       {
@@ -4551,6 +5300,29 @@ void fe_host_gb_palette_set(int id)
 {
    host.gb_palette = id;
    gbcore_set_palette((unsigned)id);
+   {
+      uint16_t pv[12];
+      fe_evt("gb_colours set id=%d name=\"%s\" combo=%d", id,
+             gbcore_palette_name((unsigned)id),
+             gbcore_palette_preview((unsigned)id, pv));
+   }
+}
+
+int fe_host_gb_accurate_running(void)
+{
+   return gb_core && gbmux_is_gambatte(gb_core);
+}
+
+int fe_host_gb_core_notice_take(void)
+{
+   int n = gb_core_notice;
+   gb_core_notice = 0;
+   return n;
+}
+
+int fe_host_state_other_core_take(void)
+{
+   return gbmux_state_other_take();
 }
 
 int fe_host_gb_palette_count(void)
@@ -4561,6 +5333,11 @@ int fe_host_gb_palette_count(void)
 const char *fe_host_gb_palette_name(int id)
 {
    return gbcore_palette_name((unsigned)id);
+}
+
+int fe_host_gb_palette_preview(int id, uint16_t rgb565[12])
+{
+   return gbcore_palette_preview((unsigned)id, rgb565);
 }
 
 void fe_host_core_prof(unsigned *calls, uint32_t *total_us, uint32_t *max_us)
@@ -4922,7 +5699,7 @@ static void gblink_frame(uint64_t core_t0)
    if (gbl_last == FE_GBLINK_STALL && host.video_frame)
    {
       gbl_repeat = 1;
-      HOST_VIDEO(NULL, 160, 144, last_pitch);
+      HOST_VIDEO(NULL, gb_pic_w, gb_pic_h, last_pitch);
       gbl_repeat = 0;
    }
    if (gbl_last != FE_GBLINK_FRAME)
@@ -4950,6 +5727,79 @@ static void gblink_frame(uint64_t core_t0)
       fps_evt();
       core_prof_evt();
       gblink_stats_evt();
+   }
+}
+
+/* One display refresh of the NES / WonderSwan session.  While it sets up
+ * this is the cable sessions' step.  Once it runs, the refresh covers 1 or 2
+ * emulated frames (WonderSwan, 75.47 Hz), 1 (NES), or 0 now and then (a 50 Hz
+ * NES game on this display): each is one fe_gblink_step, which runs it when
+ * both players' keys for it are in; the picture is made when all of them
+ * have run.  The keys are sampled once for the refresh. */
+static void gblink_pad_frame(uint64_t core_t0)
+{
+   uint32_t pad = (host.input_bitmask ? host.input_bitmask() : 0) |
+                  injected_mask;
+   int st = fe_gblink_state(gbl), due, ran = 0, r = FE_GBLINK_IDLE;
+   uint16_t word;
+   gbl_drain_bulk();
+   gbl_waited_us = 0;
+   word = gbmux_pad_local(pad_core, gb_buttons_from_retro(pad));
+   if (st != FE_GBLINK_RUNNING && st != FE_GBLINK_ENDING)
+   {
+      gbl_last = fe_gblink_step(gbl, word);
+      if (st != fe_gblink_state(gbl))
+         gblink_stats_evt();
+      return;
+   }
+   due = gbmux_pad_due(pad_core);
+   while (ran < due)
+   {
+      r = fe_gblink_step(gbl, word);
+      if (r != FE_GBLINK_FRAME)
+         break;
+      ran++;
+   }
+   if (ran == due)
+   {
+      gbmux_pad_present(pad_core, ran);
+      gbl_last = due ? FE_GBLINK_FRAME : FE_GBLINK_IDLE;
+   }
+   else
+   {
+      gbl_last = r;
+      if (r == FE_GBLINK_STALL && host.video_frame)
+      {
+         /* the keys are late: the last picture again, the rest next time */
+         gbl_repeat = 1;
+         HOST_VIDEO(NULL, gb_pic_w, gb_pic_h, last_pitch);
+         gbl_repeat = 0;
+      }
+   }
+   if (st != fe_gblink_state(gbl))
+      gblink_stats_evt();
+   if (!ran)
+      return;
+   if (core_t0 && host.time_us)
+   {
+      uint32_t elapsed = (uint32_t)(host.time_us() - core_t0);
+      elapsed = elapsed > gbl_waited_us ? elapsed - gbl_waited_us : 0;
+      core_run_us_total += elapsed;
+      core_run_calls++;
+      if (elapsed > core_run_max_us) core_run_max_us = elapsed;
+      if (elapsed > core_win_max_us) core_win_max_us = elapsed;
+   }
+   while (ran--)
+   {
+      frame_count++;
+      if ((frame_count % hb_every) == 0)
+      {
+         fe_evt("heartbeat frames=%u t_us=%llu", frame_count,
+                (unsigned long long)(host.time_us ? host.time_us() : 0));
+         fps_evt();
+         core_prof_evt();
+         gblink_stats_evt();
+      }
    }
 }
 
@@ -5102,7 +5952,7 @@ static int gba_cable_close(void)
        * the hold is released, below. */
       memcpy(sram, bat, 0x20000);
       if (&backup_write_gen)
-         backup_write_gen++;
+         (void)__atomic_add_fetch(&backup_write_gen, 1, __ATOMIC_RELEASE);
    }
    free(state);
    free(bat);
@@ -5110,7 +5960,7 @@ static int gba_cable_close(void)
    free(gba_prelink_sram);
    gbl_prelink_state = NULL;
    gba_prelink_sram = NULL;
-   gba_sram_hold = 0;
+   FE_STORE_REL(gba_sram_hold, 0);
    fe_host_sram_request_scan();   /* the committed save goes to the stick now */
    FE_EVT_ONLY(how);
    fe_evt("gblink_resume how=%s rc=%d t_ms=%llu", how, rc,
@@ -6750,30 +7600,37 @@ static int rw_denied_now;
 static uint32_t rw_flush_engage_max_us;
 static int rw_flush_help(int engage)
 {
+   const fe_host_io *io = FE_LOAD_ACQ(host_io);
+   uint32_t gen;
    uint64_t t0;
-   if (!host_io || gb_family || !&backup_write_gen || !host.save_path)
+   if (!io || gb_family || !&backup_write_gen || !host.save_path)
       return 0;
-   if (sram_disk_gen == backup_write_gen)
+   gen = FE_LOAD_ACQ(backup_write_gen);
+   if (FE_LOAD_ACQ(sram_disk_gen) == gen)
       return 0;
-   if (!sram_scan_gen_valid || sram_scan_gen != backup_write_gen || !sram_have_blk)
-      if (!sram_scan_req)
-         sram_scan_req = 1;
+   if (!FE_LOAD_ACQ(sram_scan_gen_valid) ||
+       FE_LOAD_ACQ(sram_scan_gen) != gen || !FE_LOAD_ACQ(sram_have_blk))
+   {
+      int zero = 0;
+      (void)__atomic_compare_exchange_n(&sram_scan_req, &zero, 1, 0,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+   }
    t0 = host.time_us ? host.time_us() : 0;
    if (!engage)
    {
       rw_flush_tick_yields++;
-      host_io->wake();
-      host_io->yield();
+      io->wake();
+      io->yield();
       return 1;
    }
    rw_flush_engage_waits++;
    {
       unsigned n = 0;
-      while (sram_disk_gen != backup_write_gen && n++ < 2000 &&
-             (!t0 || host.time_us() - t0 < 250000u))
+      while (FE_LOAD_ACQ(sram_disk_gen) != FE_LOAD_ACQ(backup_write_gen) &&
+             n++ < 2000 && (!t0 || host.time_us() - t0 < 250000u))
       {
-         host_io->wake();
-         host_io->yield();
+         io->wake();
+         io->yield();
       }
    }
    if (t0)
@@ -6782,7 +7639,7 @@ static int rw_flush_help(int engage)
       if (d > rw_flush_engage_max_us)
          rw_flush_engage_max_us = d;
       fe_evt("rewind_flush_wait ms=%u on_disk=%d", (unsigned)(d / 1000u),
-             sram_disk_gen == backup_write_gen);
+             FE_LOAD_ACQ(sram_disk_gen) == FE_LOAD_ACQ(backup_write_gen));
    }
    return 1;
 }
@@ -7299,6 +8156,193 @@ void fe_host_cpu_stat(uint64_t *emu_ns, uint64_t *frames)
 #endif
 }
 
+/* ---- Quick response (run-ahead by one frame) ------------------------------------------------------------
+ * Game Boy, Game Boy Color, NES and WonderSwan, the machines this file runs through gbcore_* (gbcore_mux.h).  At a refresh the
+ * player sees the picture of the frame AFTER the one the game is at: the real frame is run without drawing (its sound is the
+ * sound), the machine is saved (gbcore_ahead_save: the state plus what no state holds), the next frame is run with the same
+ * buttons (drawn, silent), and the machine is put back (gbcore_ahead_load).  The game, its sound and its saves are the same as
+ * without it; a press shows one frame sooner.  The caller (main_vita.c, pk_ahead.h's governor) asks per frame with
+ * fe_host_ahead_set and never during a link, rewind or fast forward. */
+#ifdef GPSP_CHEATS
+static void gb_cheat_frame(void)
+{
+   unsigned w = fe_cheats_gb_writes();
+   fe_cheats_gb_frame(gb_cheat_poke, gb_core);
+   fe_cheats_gb_writes_set(w);       /* the look-ahead frame's pokes are the next frame's: counted once, by that frame */
+}
+#endif
+
+#if defined(__linux__)
+/* GBADHOC_AHEAD_DIFF=1 (the twin's survey of what the machine keeps outside its state): every byte of the program's initialised and
+ * zero-initialised data that the look-ahead frame and the way back leave changed is remembered; at the end the ranges are logged
+ * (ahead_diff addr=0x.. len=..) for tools/ahead_globdiff.py to name from the binary's symbol table.  Heap data is not seen. */
+extern char __data_start, _end;
+static uint8_t *dbg_snap, *dbg_seen;
+static int dbg_on = -1;
+static void dbg_take(void)
+{
+   const size_t n = (size_t)(&_end - &__data_start);
+   if (dbg_on < 0)
+   {
+      const char *e = getenv("GBADHOC_AHEAD_DIFF");
+      dbg_on = e && *e == '1';
+   }
+   if (!dbg_on)
+      return;
+   if (!dbg_snap)
+   {
+      dbg_snap = (uint8_t *)malloc(n);
+      dbg_seen = (uint8_t *)calloc(1, n);
+   }
+   if (dbg_snap)
+      memcpy(dbg_snap, &__data_start, n);
+}
+static void dbg_compare(void)
+{
+   const size_t n = (size_t)(&_end - &__data_start);
+   size_t i;
+   if (dbg_on != 1 || !dbg_snap || !dbg_seen)
+      return;
+   for (i = 0; i < n; i++)
+      if (((const uint8_t *)&__data_start)[i] != dbg_snap[i])
+         dbg_seen[i] = 1;
+}
+/* the way back must also leave the SAME image: save again and compare (a restore hook that re-derives or clears a field shows here) */
+static uint8_t *dbg_rt;
+static size_t dbg_rt_cap;
+static unsigned dbg_rt_seen;
+static void dbg_roundtrip(const uint8_t *img, size_t n)
+{
+   size_t i, d = 0, first = 0;
+   if (dbg_on != 1)
+      return;
+   if (n > dbg_rt_cap)
+   {
+      free(dbg_rt);
+      dbg_rt = (uint8_t *)malloc(n);
+      dbg_rt_cap = dbg_rt ? n : 0;
+   }
+   if (!dbg_rt || gbcore_ahead_save(gb_core, dbg_rt, n) != (long)n)
+      return;
+   for (i = 0; i < n; i++)
+      if (img[i] != dbg_rt[i])
+      {
+         if (!d++)
+            first = i;
+      }
+   if (d && dbg_rt_seen++ < 12)
+      fe_evt("ahead_roundtrip frame=%u differs bytes=%u first=%u of %u", frame_count, (unsigned)d, (unsigned)first, (unsigned)n);
+}
+static void dbg_report(void)
+{
+   const size_t n = (size_t)(&_end - &__data_start);
+   size_t i = 0;
+   if (dbg_on != 1 || !dbg_seen)
+      return;
+   while (i < n)
+   {
+      size_t j;
+      if (!dbg_seen[i]) { i++; continue; }
+      for (j = i; j < n && (dbg_seen[j] || (j + 1 < n && dbg_seen[j + 1])); j++)
+         ;
+      fe_evt("ahead_diff addr=0x%lx len=%u", (unsigned long)(&__data_start + i), (unsigned)(j - i));
+      i = j;
+   }
+}
+#else
+static void dbg_take(void) {}
+static void dbg_compare(void) {}
+static void dbg_report(void) {}
+static void dbg_roundtrip(const uint8_t *img, size_t n) { (void)img; (void)n; }
+#endif
+
+/* 0 = done (the picture went out); -1 = not possible, nothing was run */
+static int gb_ahead_frame(uint32_t pad)
+{
+   static uint8_t *buf;
+   static size_t cap;
+   const size_t n = gbcore_ahead_size(gb_core);
+   const uint16_t b = gb_buttons_from_retro(pad);
+   int r;
+   if (!n)
+      return -1;
+   if (n > cap)
+   {
+      uint8_t *t = (uint8_t *)realloc(buf, n);
+      if (!t)
+         return -1;
+      buf = t;
+      cap = n;
+   }
+   /* the real frame: not drawn, its sound goes out */
+   ahead_mute_video = 1;
+   gbcore_set_skip_render(gb_core, 1);
+   if (host_sensor_on)                /* (the caller has made this frame's cheat pokes) */
+      gbcore_set_tilt(gb_core, host_sensor);
+   r = gbcore_run_frame(gb_core, b);
+   ahead_mute_video = 0;
+   if (r != 0)
+      fe_evt("gb_run_frame FAILED frame=%u", frame_count);
+   if (gb_prn_active())
+   {
+      /* A GB Printer transfer started on this real frame: suspend run-ahead
+       * immediately rather than letting the quiet look-ahead frame receive 0xFF. */
+      gb_skip_frame = 1;
+      gb_video_frame(NULL, NULL);
+      return 0;
+   }
+   if (gbcore_ahead_save(gb_core, buf, n) != (long)n)
+   {
+      /* cannot happen (the size was just asked for): the real frame stands, shown as a skipped one */
+      ahead_fails++;
+      gb_skip_frame = 1;
+      gb_video_frame(NULL, NULL);
+      return 0;
+   }
+   dbg_take();
+   /* the look-ahead frame: drawn, silent; its pokes are not counted */
+   gbcore_set_skip_render(gb_core, 0);
+   gbcore_set_quiet(gb_core, 1);
+   ahead_quiet = 1;
+#ifdef GPSP_CHEATS
+   gb_cheat_frame();
+#endif
+   r = gbcore_run_frame(gb_core, b);
+   ahead_quiet = 0;
+   gbcore_set_quiet(gb_core, 0);
+   {
+      const int back = gbcore_ahead_load(gb_core, buf, n);
+      dbg_compare();
+      dbg_roundtrip(buf, n);
+      if (back != 0)
+      {
+         /* cannot happen: the image is our own.  The machine is one frame ahead of where it should be: say so. */
+         ahead_fails++;
+         ahead_latched_off = 1;
+         fe_evt("ahead_load FAILED frame=%u: run-ahead is off for this session", frame_count);
+      }
+   }
+   ahead_frames++;
+   return 0;
+}
+
+int fe_host_ahead_possible(void)
+{
+   return gb_core && !ahead_latched_off && !gb_dual && !gbl && !gbl_hold &&
+          !gbl_pad && !gb_prn_active() && gbcore_ahead_size(gb_core) != 0;
+}
+
+void fe_host_ahead_set(int want)
+{
+   ahead_req = want ? 1 : 0;
+}
+
+void fe_host_ahead_stat(unsigned *frames, unsigned *fails)
+{
+   if (frames) *frames = ahead_frames;
+   if (fails) *fails = ahead_fails;
+}
+
 static void run_frame(void)
 {
    uint64_t core_t0 = host.time_us ? host.time_us() : 0;
@@ -7317,7 +8361,10 @@ static void run_frame(void)
 #endif
    if (gbl)
    {
-      gblink_frame(core_t0);
+      if (gbl_pad)
+         gblink_pad_frame(core_t0);
+      else
+         gblink_frame(core_t0);
       return;
    }
    if (gb_core && gbl_hold)
@@ -7356,10 +8403,17 @@ static void run_frame(void)
           * dual (link) path above; a no-op with nothing switched on. */
          fe_cheats_gb_frame(gb_cheat_poke, gb_core);
 #endif
+         gb_prn_frame();              /* once a real frame, run-ahead or not */
+         if (ahead_req && !ahead_latched_off && !gb_skip_frame && !gbl_hold &&
+             !gb_local_on && !gb_prn_active() && gb_ahead_frame(pad) == 0)
+            ;
+         else
+         {
          if (host_sensor_on)
             gbcore_set_tilt(gb_core, host_sensor);
          if (gbcore_run_frame(gb_core, gb_buttons_from_retro(pad)) != 0)
             fe_evt("gb_run_frame FAILED frame=%u", frame_count);
+         }
       }
       if (core_t0 && host.time_us)
       {
@@ -7410,6 +8464,24 @@ static void run_frame(void)
    rw_latch_input();
 #endif
    retro_run();
+#if defined(__linux__)
+   {  /* GBADHOC_AHEAD_GBA_PROBE=1 (twin only, no output of its own): what a run-ahead frame would cost on the GBA -- the state copy out, a second
+       * frame, the state copy back (docs/PERFORMANCE.md "GBA: Quick response is not offered"); the sound of that second frame is not muted */
+      static int probe = -1;
+      static void *img;
+      static size_t isz;
+      if (probe < 0)
+         probe = getenv("GBADHOC_AHEAD_GBA_PROBE") ? 1 : 0;
+      if (probe && !img && (isz = retro_serialize_size()) != 0)
+         img = malloc(isz);
+      if (probe && img)
+      {
+         retro_serialize(img, isz);
+         retro_run();
+         retro_unserialize(img, isz);
+      }
+   }
+#endif
    }
    fe_host_guest_fault_check();
 
@@ -7471,7 +8543,8 @@ static void run_frame(void)
     * owns the scan cadence as well as the writes, so the emulation thread
     * pays exactly nothing for the save path. */
    fe_host_sram_service();
-   if (!host_io && !gb_family && (frame_count % SRAM_CHECK_INTERVAL) == 0)
+   if (!FE_LOAD_ACQ(host_io) && !gb_family &&
+       (frame_count % SRAM_CHECK_INTERVAL) == 0)
       fe_host_sram_flush(0);   /* GB: fe_host_sram_service owns its cadence */
    if ((frame_count % hb_every) == 0)
    {
@@ -7614,7 +8687,8 @@ static int gbloc_single(const uint8_t *st, size_t stn)
       fe_evt("gb_local: the game could not be started again");
       return -1;
    }
-   if (st && gbcore_state_load(gb_core, st, stn) != 0)
+   /* (a pair's state is Standard's: on the Accurate core the game restarts from its save) */
+   if (st && !gbmux_is_gambatte(gb_core) && gbcore_state_load(gb_core, st, stn) != 0)
       fe_evt("gb_local: state refused, the game restarts from its save");
    return 0;
 }
@@ -7632,7 +8706,7 @@ int fe_host_gb_local_start(const fe_host_gb_local *cfg)
    const char *prom;
    int other, rc = 0;
 
-   if (!cfg || !gb_family || !gb_core || gb_dual || gbl)
+   if (!cfg || !gb_family || !gb_core || gb_dual || gbl || gbmux_other_console(gb_core) >= 0)
       return -1;
    other = cfg->rom_path && cfg->rom_path[0] &&
            strcmp(cfg->rom_path, host.rom_path) != 0;
@@ -7650,8 +8724,16 @@ int fe_host_gb_local_start(const fe_host_gb_local *cfg)
       free(sv);
       return -1;
    }
-   st = gbloc_state_take(0, gb_core, &stn);
-   if (!st)
+   if (gbmux_is_gambatte(gb_core))
+   {
+      /* the pair is Standard (TGB Dual): the game starts from its save, not from the Accurate core's state */
+      st = NULL;
+      gb_core_notice = 2;
+      fe_evt("gb_core local=standard");
+   }
+   else
+      st = gbloc_state_take(0, gb_core, &stn);
+   if (!st && !gbmux_is_gambatte(gb_core))
    {
       free(sv);
       return -1;
@@ -7688,9 +8770,9 @@ int fe_host_gb_local_start(const fe_host_gb_local *cfg)
    if (gb_dual)
    {
       gb_core = gbdual_core(gb_dual, 0);
-      if (gbcore_state_load(gb_core, st, stn) != 0)
+      if (st && gbdual_api(0)->state_load(gb_core, st, stn) != 0)
          rc = -1;                /* cannot happen: its own state */
-      else if (cfg->clone &&
+      else if (st && cfg->clone &&
                gbdual_api(1)->state_load(gbdual_core(gb_dual, 1), st, stn) != 0)
          rc = -3;
    }
@@ -7874,6 +8956,11 @@ void fe_host_shutdown(void)
    }
    if (gb_family)
    {
+      if (ahead_frames || ahead_fails)
+         fe_evt("ahead_frames n=%u failed=%u", ahead_frames, ahead_fails);
+      ahead_latched_off = 0;        /* the latch lasts one game */
+      dbg_report();
+      gb_prn_end();
       if (gb_dual)
          gbdual_destroy(gb_dual);
       else
@@ -7888,13 +8975,13 @@ void fe_host_shutdown(void)
       free(gb_save_buffer);
       gb_save_buffer = NULL;
       gb_save_capacity = 0;
-      if (!gb_io_req)
+      if (!FE_LOAD_ACQ(gb_io_req))
       {
          free(gb_io_buffer);
          gb_io_buffer = NULL;
          gb_io_capacity = 0;
       }
-      gb_io_failed = 0;
+      FE_STORE_REL(gb_io_failed, 0);
       gb_dirty_since = 0;
       gb_save_crc_valid = 0;
       gb_save_file_len = -1;

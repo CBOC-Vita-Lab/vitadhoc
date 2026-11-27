@@ -45,7 +45,7 @@ void fe_evt_close(void);
 #ifdef GPSP_NO_TELEMETRY
 #define fe_evt(...)   ((void)0)
 #else
-void fe_evt(const char *fmt, ...);
+void fe_evt(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 #endif
 
 /* A VALUE THAT EXISTS ONLY TO BE REPORTED.
@@ -63,7 +63,7 @@ void fe_evt(const char *fmt, ...);
 #define FE_EVT_ONLY(x)   ((void)(x))
 
 /* Free-form info line (not an EVT marker): "LOG " prefix, also flushed. */
-void fe_log(const char *fmt, ...);
+void fe_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 /* ---- log I/O cost accounting (ADR-0021) ---------------------------------
  * Every line is fflush()ed, and on a PSP that flush lands on a memory stick.
@@ -114,6 +114,8 @@ int  fe_evt_pending(void);
 /* Lines dropped because the async ring was full, since boot.  Every gap is
  * also marked in-band (`EVT evt_gap`); this is for the exit/RESULT report. */
 unsigned fe_evt_drops(void);
+/* Lines cut because they outgrew the line buffer (each ends in '~'). */
+unsigned fe_evt_cuts(void);
 void fe_evt_prof_io(unsigned *io_us, unsigned *io_max_us, unsigned *dropped,
                     unsigned *ring_hi);
 

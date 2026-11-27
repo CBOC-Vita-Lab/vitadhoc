@@ -27,7 +27,8 @@
  * result, valid for that frame) or -1 = cancelled, once. */
 enum { TXT_NONE = 0, TXT_NICK, TXT_CHEAT_NAME, TXT_CHEAT_FIND,
        TXT_BROWSER_FIND, TXT_RA_USER, TXT_RA_PASS, TXT_FOLDER,
-       TXT_SHOTDIR };
+       TXT_SHOTDIR, TXT_CHEAT_CODE, TXT_SEARCH_VALUE, TXT_COLL_NEW,
+       TXT_COLL_RENAME };
 
 static struct
 {
@@ -239,21 +240,36 @@ static int vw_wrap_lead(int x, int y, int w, const char *text, uint16_t col,
    int lines = 0;
    while (p && *p && lines < max_lines)
    {
-      int n = 0, last_sp = -1, i, ind = lines ? hang : lead;
+      int n = 0, last_brk = -1, i = 0, ind = lines ? hang : lead;
+      uint32_t prev = 0;
       while (*p == ' ')
          p++;
-      for (i = 0; p[i] && p[i] != '\n' && i < (int)sizeof(line) - 1; i++)
+      /* whole characters only (UTF-8): n is the longest prefix that fits, and
+       * last_brk the last place a line may break (a blank, or between two
+       * characters written without spaces: pk_u8_can_break) */
+      int here = 0;
+      while (p[i] && p[i] != '\n')
       {
-         line[i] = p[i];
-         line[i + 1] = '\0';
+         int l = (int)pk_u8_len(p + i), k;
+         uint32_t cp = pk_u8_next(p + i, &k);
+         here = p[i] != ' ' && prev && prev != ' ' && pk_u8_can_break(prev, cp);
+         if (i + l >= (int)sizeof(line))
+            break;
+         memcpy(line + i, p + i, (size_t)l);
+         line[i + l] = '\0';
          if (vid_text_w(line) > w - ind)
             break;
-         if (p[i] == ' ')
-            last_sp = i;
-         n = i + 1;
+         if (p[i] == ' ' || here)
+            last_brk = i;
+         prev = p[i] == ' ' ? ' ' : cp;
+         i += l;
+         n = i;
+         here = 0;
       }
-      if (p[n] && p[n] != '\n' && last_sp > 0)
-         n = last_sp;                    /* break at the last blank */
+      if (p[n] && p[n] != '\n' && last_brk > 0 && !here)
+         n = last_brk;                   /* break at the last blank / opportunity */
+      if (n == 0 && p[0] && p[0] != '\n')
+         n = (int)pk_u8_len(p);          /* one character wider than the line: still progress */
       memcpy(line, p, (size_t)n);
       line[n] = '\0';
       vid_text(x + ind, y, line, col);
@@ -354,7 +370,7 @@ static void kp_draw(const kp_pad *p, int cur, unsigned off)
       int w = k->span * KP_CW - 2, h = KP_CH - 2;
       int grey = (off >> i) & 1, sel = i == cur;
       int strong = k->act == KP_OK && !grey;
-      int tw = vid_text_w(k->label);
+      int tw = vid_text_w(tr(k->label));
       vid_rect(x, y, w, h, strong ? C_CON : C_CARD,
                strong ? (g_pcfg.theme == 1 ? 60 : 90) : 235);
       if (sel)
@@ -365,7 +381,7 @@ static void kp_draw(const kp_pad *p, int cur, unsigned off)
       }
       else
          ov_outline(x, y, w, h, C_ACCENT_DK, 70);
-      vid_text(x + (w - tw) / 2, vid_text_y_in(y, h), k->label,
+      vid_text(x + (w - tw) / 2, vid_text_y_in(y, h), tr(k->label),
                grey ? C_DIM : sel ? C_SEL : k->act == KP_CHAR ? C_VALUE
                                                               : C_ITEM);
       tch_row(KP_ROW_BASE + i, x - 1, y - 1, w + 2, h + 2);

@@ -824,6 +824,13 @@ static int rw_land(void)
    return 0;
 }
 
+/* The chip's text in the interface language: main_vita.c gives the catalogue's
+ * (i18n.h); this English one is for a program without it (the unit test). */
+__attribute__((weak)) const char *rewind_chip_format(int oldest)
+{
+   return oldest ? "<< %s (oldest)" : "<< REWIND %s";
+}
+
 static void rw_chip(void)
 {
    /* The chip holds 23 characters (osd_psp.c): "<< REWIND 12 s",
@@ -834,8 +841,7 @@ static void rw_chip(void)
       snprintf(t, sizeof(t), "%u s", s);
    else
       snprintf(t, sizeof(t), "%u:%02u", (s / 60) % 1000u, s % 60);
-   snprintf(chip, sizeof(chip), R.at_oldest ? "<< %s (oldest)"
-                                            : "<< REWIND %s", t);
+   snprintf(chip, sizeof(chip), rewind_chip_format(R.at_oldest), t);
    osd_chip_ff(chip);
 }
 
@@ -879,14 +885,14 @@ int rewind_frame(int want, int locked)
          return 0;
       if (locked)
       {
-         R.notice = "Rewind is off while games are linked";
+         R.notice = "toast.rewind_is_off_while_games_are_linked";
          fe_evt("rewind refused reason=locked");
          return 0;
       }
       if (!R.on)
       {
-         R.notice = R.seconds > 0 ? "Rewind: not enough memory for it"
-                                  : "Rewind is switched off (Settings)";
+         R.notice = R.seconds > 0 ? "toast.rewind_not_enough_memory_for_it"
+                                  : "toast.rewind_is_switched_off_settings";
          fe_evt("rewind refused reason=%s", R.seconds > 0 ? "memory" : "off");
          return 0;
       }
@@ -945,7 +951,7 @@ int rewind_frame(int want, int locked)
       fe_evt("rewind FAILED reason=%s", rc < 0 ? "step" : "state_load");
       rw_forget();
       rw_end("failed");
-      R.notice = "Rewind failed";
+      R.notice = "toast.rewind_failed";
       return 0;
    }
    if (!landed)
@@ -963,7 +969,7 @@ int rewind_frame(int want, int locked)
    if (R.at_oldest && !R.told_oldest)
    {
       R.told_oldest = 1;
-      R.notice = "This is as far back as rewind goes";
+      R.notice = "toast.this_is_as_far_back_as_rewind";
    }
    rw_chip();
    return 1;

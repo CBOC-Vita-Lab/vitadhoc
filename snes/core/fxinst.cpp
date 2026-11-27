@@ -11,7 +11,6 @@
 // Set this define if you wish the plot instruction to check for y-pos limits (I don't think it's nessecary)
 #define CHECK_LIMITS
 
-
 /*
  Codes used:
    rn   = a GSU register (r0 - r15)
@@ -23,9 +22,18 @@
 */
 
 // 00 - stop - stop GSU execution (and maybe generate an IRQ)
+#ifdef FX_LIMIT
+// Run-loop test merged into one compare: STOP drops the limit to 0, so the loop
+// needs only "vCycles < fx_limit" instead of the G-flag test plus the budget test.
+uint32 fx_limit;
+#endif
+
 static void fx_stop (void)
 {
 	CF(G);
+#ifdef FX_LIMIT
+	fx_limit = 0;
+#endif
 	GSU.vCounter = 0;
 	GSU.vInstCount = GSU.vCounter;
 
@@ -46,6 +54,13 @@ static void fx_nop (void)
 	R15++;
 }
 
+#ifdef FX_FAST
+uint32 fx_cacheLimit;
+#endif
+#ifdef FX_LINEFLAGS
+uint8 fx_lineOk[32];
+#endif
+
 // 02 - cache - reintialize GSU cache
 static void fx_cache (void)
 {
@@ -56,6 +71,9 @@ static void fx_cache (void)
 		fx_flushCache();
 		GSU.vCacheBaseReg = c;
 		GSU.bCacheActive = TRUE;
+#ifdef FX_FAST
+		fx_cacheLimit = 512;
+#endif
 
 	#if 0
 		if (c < (0x10000 - 512))
@@ -393,6 +411,7 @@ static void fx_with_r15 (void)
 
 // 30-3b - stw (rn) - store word
 #define FX_STW(reg) \
+	FX_CYC(GSU.vCostMem << 1); \
 	GSU.vLastRamAdr = GSU.avReg[reg]; \
 	RAM(GSU.avReg[reg]) = (uint8) SREG; \
 	RAM(GSU.avReg[reg] ^ 1) = (uint8) (SREG >> 8); \
@@ -461,6 +480,7 @@ static void fx_stw_r11 (void)
 
 // 30-3b (ALT1) - stb (rn) - store byte
 #define FX_STB(reg) \
+	FX_CYC(GSU.vCostMem); \
 	GSU.vLastRamAdr = GSU.avReg[reg]; \
 	RAM(GSU.avReg[reg]) = (uint8) SREG; \
 	CLRFLAGS; \
@@ -564,6 +584,7 @@ static void fx_alt3 (void)
 
 // 40-4b - ldw (rn) - load word from RAM
 #define FX_LDW(reg) \
+	FX_CYC(GSU.vCostMem << 1); \
 	uint32	v; \
 	GSU.vLastRamAdr = GSU.avReg[reg]; \
 	v = (uint32) RAM(GSU.avReg[reg]); \
@@ -635,6 +656,7 @@ static void fx_ldw_r11 (void)
 
 // 40-4b (ALT1) - ldb (rn) - load byte
 #define FX_LDB(reg) \
+	FX_CYC(GSU.vCostMem); \
 	uint32	v; \
 	GSU.vLastRamAdr = GSU.avReg[reg]; \
 	v = (uint32) RAM(GSU.avReg[reg]); \
@@ -706,6 +728,7 @@ static void fx_ldb_r11 (void)
 // 4c - plot - plot pixel with R1, R2 as x, y and the color register as the color
 static void fx_plot_2bit (void)
 {
+	FX_CYC(((GSU.vCostMem << 1) >> 3) + 1);
 	uint32	x = USEX8(R1);
 	uint32	y = USEX8(R2);
 	uint8	*a;
@@ -720,10 +743,10 @@ static void fx_plot_2bit (void)
 		return;
 #endif
 
-	if (!(GSU.vPlotOptionReg & 0x01) && !(COLR & 0xf))
+	if (!(GSU.vPlotOptionReg & PLOT_TRANSPARENT) && !(COLR & 0xf))
 		return;
 
-	if (GSU.vPlotOptionReg & 0x02)
+	if (GSU.vPlotOptionReg & PLOT_DITHER)
 		c = ((x ^ y) & 1) ? (uint8) (GSU.vColorReg >> 4) : (uint8) GSU.vColorReg;
 	else
 		c = (uint8) GSU.vColorReg;
@@ -745,13 +768,13 @@ static void fx_plot_2bit (void)
 // 4c (ALT1) - rpix - read color of the pixel with R1, R2 as x, y
 static void fx_rpix_2bit (void)
 {
+	FX_CYC(GSU.vCostMem << 1);
 	uint32	x = USEX8(R1);
 	uint32	y = USEX8(R2);
 	uint8	*a;
 	uint8	v;
 
 	R15++;
-	CLRFLAGS;
 
 #ifdef CHECK_LIMITS
 	if (y >= GSU.vScreenHeight)
@@ -765,11 +788,13 @@ static void fx_rpix_2bit (void)
 	DREG |= ((uint32) ((a[0] & v) != 0)) << 0;
 	DREG |= ((uint32) ((a[1] & v) != 0)) << 1;
 	TESTR14;
+	CLRFLAGS;
 }
 
 // 4c - plot - plot pixel with R1, R2 as x, y and the color register as the color
 static void fx_plot_4bit (void)
 {
+	FX_CYC(((GSU.vCostMem << 2) >> 3) + 1);
 	uint32	x = USEX8(R1);
 	uint32	y = USEX8(R2);
 	uint8	*a;
@@ -784,10 +809,10 @@ static void fx_plot_4bit (void)
 		return;
 #endif
 
-	if (!(GSU.vPlotOptionReg & 0x01) && !(COLR & 0xf))
+	if (!(GSU.vPlotOptionReg & PLOT_TRANSPARENT) && !(COLR & 0xf))
 		return;
 
-	if (GSU.vPlotOptionReg & 0x02)
+	if (GSU.vPlotOptionReg & PLOT_DITHER)
 		c = ((x ^ y) & 1) ? (uint8) (GSU.vColorReg >> 4) : (uint8) GSU.vColorReg;
 	else
 		c = (uint8) GSU.vColorReg;
@@ -819,13 +844,13 @@ static void fx_plot_4bit (void)
 // 4c (ALT1) - rpix - read color of the pixel with R1, R2 as x, y
 static void fx_rpix_4bit (void)
 {
+	FX_CYC(GSU.vCostMem << 2);
 	uint32	x = USEX8(R1);
 	uint32	y = USEX8(R2);
 	uint8	*a;
 	uint8	v;
 
 	R15++;
-	CLRFLAGS;
 
 #ifdef CHECK_LIMITS
 	if (y >= GSU.vScreenHeight)
@@ -841,11 +866,13 @@ static void fx_rpix_4bit (void)
 	DREG |= ((uint32) ((a[0x10] & v) != 0)) << 2;
 	DREG |= ((uint32) ((a[0x11] & v) != 0)) << 3;
 	TESTR14;
+	CLRFLAGS;
 }
 
 // 4c - plot - plot pixel with R1, R2 as x, y and the color register as the color
 static void fx_plot_8bit (void)
 {
+	FX_CYC(GSU.vCostMem + 1);
 	uint32	x = USEX8(R1);
 	uint32	y = USEX8(R2);
 	uint8	*a;
@@ -861,14 +888,10 @@ static void fx_plot_8bit (void)
 #endif
 
 	c = (uint8) GSU.vColorReg;
-	if (!(GSU.vPlotOptionReg & 0x10))
-	{
-		if (!(GSU.vPlotOptionReg & 0x01) && (!c || ((GSU.vPlotOptionReg & 0x08) && !(c & 0xf))))
-			return;
-	}
-	else
-	if (!(GSU.vPlotOptionReg & 0x01) && !c)
-		return;
+    if (!(GSU.vPlotOptionReg & PLOT_TRANSPARENT)) {
+        if ( (GSU.vPlotOptionReg & PLOT_FREEZEHIGH) && !(c & 0xf)) return;
+        if (!(GSU.vPlotOptionReg & PLOT_FREEZEHIGH) && !c)         return;
+    }
 
 	a = GSU.apvScreen[y >> 3] + GSU.x[x >> 3] + ((y & 7) << 1);
 	v = 128 >> (x & 7);
@@ -917,13 +940,13 @@ static void fx_plot_8bit (void)
 // 4c (ALT1) - rpix - read color of the pixel with R1, R2 as x, y
 static void fx_rpix_8bit (void)
 {
+	FX_CYC(GSU.vCostMem << 3);
 	uint32	x = USEX8(R1);
 	uint32	y = USEX8(R2);
 	uint8	*a;
 	uint8	v;
 
 	R15++;
-	CLRFLAGS;
 
 #ifdef CHECK_LIMITS
 	if (y >= GSU.vScreenHeight)
@@ -944,6 +967,7 @@ static void fx_rpix_8bit (void)
 	DREG |= ((uint32) ((a[0x31] & v) != 0)) << 7;
 	GSU.vZero = DREG;
 	TESTR14;
+	CLRFLAGS;
 }
 
 // 4c - plot - plot pixel with R1, R2 as x, y and the color register as the color
@@ -981,9 +1005,9 @@ static void fx_color (void)
 {
 	uint8	c = (uint8) SREG;
 
-	if (GSU.vPlotOptionReg & 0x04)
+	if (GSU.vPlotOptionReg & PLOT_HIGHNIBBLE)
 		c = (c & 0xf0) | (c >> 4);
-	if (GSU.vPlotOptionReg & 0x08)
+	if (GSU.vPlotOptionReg & PLOT_FREEZEHIGH)
 	{
 		GSU.vColorReg &= 0xf0;
 		GSU.vColorReg |= c & 0x0f;
@@ -1000,7 +1024,7 @@ static void fx_cmode (void)
 {
 	GSU.vPlotOptionReg = SREG;
 
-	if (GSU.vPlotOptionReg & 0x10)
+	if (GSU.vPlotOptionReg & PLOT_OBJECT)
 		GSU.vScreenHeight = 256; // OBJ Mode (for drawing into sprites)
 	else
 		GSU.vScreenHeight = GSU.vScreenRealHeight;
@@ -2112,6 +2136,7 @@ static void fx_bic_i15 (void)
 
 // 80-8f - mult rn - 8 bit to 16 bit signed multiply, register * register
 #define FX_MULT(reg) \
+	FX_CYC(GSU.vCostMult); \
 	uint32	v = (uint32) (SEX8(SREG) * SEX8(GSU.avReg[reg])); \
 	R15++; \
 	DREG = v; \
@@ -2202,6 +2227,7 @@ static void fx_mult_r15 (void)
 
 // 80-8f (ALT1) - umult rn - 8 bit to 16 bit unsigned multiply, register * register
 #define FX_UMULT(reg) \
+	FX_CYC(GSU.vCostMult); \
 	uint32	v = USEX8(SREG) * USEX8(GSU.avReg[reg]); \
 	R15++; \
 	DREG = v; \
@@ -2292,6 +2318,7 @@ static void fx_umult_r15 (void)
 
 // 80-8f (ALT2) - mult #n - 8 bit to 16 bit signed multiply, register * immediate
 #define FX_MULT_I(imm) \
+	FX_CYC(GSU.vCostMult); \
 	uint32	v = (uint32) (SEX8(SREG) * ((int32) imm)); \
 	R15++; \
 	DREG = v; \
@@ -2382,6 +2409,7 @@ static void fx_mult_i15 (void)
 
 // 80-8f (ALT3) - umult #n - 8 bit to 16 bit unsigned multiply, register * immediate
 #define FX_UMULT_I(imm) \
+	FX_CYC(GSU.vCostMult); \
 	uint32	v = USEX8(SREG) * ((uint32) imm); \
 	R15++; \
 	DREG = v; \
@@ -2473,6 +2501,7 @@ static void fx_umult_i15 (void)
 // 90 - sbk - store word to last accessed RAM address
 static void fx_sbk (void)
 {
+	FX_CYC(GSU.vCostMem << 1);
 	RAM(GSU.vLastRamAdr) = (uint8) SREG;
 	RAM(GSU.vLastRamAdr ^ 1) = (uint8) (SREG >> 8);
 	CLRFLAGS;
@@ -2651,6 +2680,7 @@ static void fx_lob (void)
 // 9f - fmult - 16 bit to 32 bit signed multiplication, upper 16 bits only
 static void fx_fmult (void)
 {
+	FX_CYC(GSU.vCostFmult);
 	uint32	v;
 	uint32	c = (uint32) (SEX16(SREG) * SEX16(R6));
 	v = c >> 16;
@@ -2666,6 +2696,7 @@ static void fx_fmult (void)
 // 9f (ALT1) - lmult - 16 bit to 32 bit signed multiplication
 static void fx_lmult (void)
 {
+	FX_CYC(GSU.vCostFmult);
 	uint32	v;
 	uint32	c = (uint32) (SEX16(SREG) * SEX16(R6));
 	R4 = c;
@@ -2772,6 +2803,7 @@ static void fx_ibt_r15 (void)
 
 // a0-af (ALT1) - lms rn, (yy) - load word from RAM (short address)
 #define FX_LMS(reg) \
+	FX_CYC(GSU.vCostMem << 1); \
 	GSU.vLastRamAdr = ((uint32) PIPE) << 1; \
 	R15++; \
 	FETCHPIPE; \
@@ -2865,6 +2897,7 @@ static void fx_lms_r15 (void)
 // XXX: If rn == r15, is the value of r15 before or after the extra byte is read ?
 #define FX_SMS(reg) \
 	uint32	v = GSU.avReg[reg]; \
+	FX_CYC(GSU.vCostMem << 1); \
 	GSU.vLastRamAdr = ((uint32) PIPE) << 1; \
 	R15++; \
 	FETCHPIPE; \
@@ -3498,10 +3531,10 @@ static void fx_getc (void)
 	uint8	c = GSU.vRomBuffer;
 #endif
 
-	if (GSU.vPlotOptionReg & 0x04)
+	if (GSU.vPlotOptionReg & PLOT_HIGHNIBBLE)
 		c = (c & 0xf0) | (c >> 4);
 
-	if (GSU.vPlotOptionReg & 0x08)
+	if (GSU.vPlotOptionReg & PLOT_FREEZEHIGH)
 	{
 		GSU.vColorReg &= 0xf0;
 		GSU.vColorReg |= c & 0x0f;
@@ -3619,6 +3652,8 @@ static void fx_dec_r14 (void)
 static void fx_getb (void)
 {
 	uint32	v;
+
+	FX_CYC(GSU.vCostMem);
 #ifndef FX_DO_ROMBUFFER
 	v = (uint32) ROM(R14);
 #else
@@ -3634,6 +3669,8 @@ static void fx_getb (void)
 static void fx_getbh (void)
 {
 	uint32	v;
+
+	FX_CYC(GSU.vCostMem);
 #ifndef FX_DO_ROMBUFFER
 	uint32	c = (uint32) ROM(R14);
 #else
@@ -3650,6 +3687,8 @@ static void fx_getbh (void)
 static void fx_getbl (void)
 {
 	uint32	v;
+
+	FX_CYC(GSU.vCostMem);
 #ifndef FX_DO_ROMBUFFER
 	uint32	c = (uint32) ROM(R14);
 #else
@@ -3666,6 +3705,8 @@ static void fx_getbl (void)
 static void fx_getbs (void)
 {
 	uint32	v;
+
+	FX_CYC(GSU.vCostMem);
 #ifndef FX_DO_ROMBUFFER
 	int8	c;
 	c = ROM(R14);
@@ -3774,6 +3815,7 @@ static void fx_iwt_r15 (void)
 
 // f0-ff (ALT1) - lm rn, (xx) - load word from RAM
 #define FX_LM(reg) \
+	FX_CYC(GSU.vCostMem << 1); \
 	GSU.vLastRamAdr = PIPE; \
 	R15++; \
 	FETCHPIPE; \
@@ -3870,6 +3912,7 @@ static void fx_lm_r15 (void)
 // XXX: If rn == r15, is the value of r15 before or after the extra bytes are read ?
 #define FX_SM(reg) \
 	uint32	v = GSU.avReg[reg]; \
+	FX_CYC(GSU.vCostMem << 1); \
 	GSU.vLastRamAdr = PIPE; \
 	R15++; \
 	FETCHPIPE; \
@@ -3963,8 +4006,152 @@ static void fx_sm_r15 (void)
 
 // GSU executions functions
 
-uint32 fx_run (uint32 nInstructions)
+#ifdef FX_PREFIX
+// Prefix opcodes (WITH, TO, FROM, ALT1-3) are about a third of all GSU
+// instructions and do almost nothing, so they are done inline in the run loop
+// without the indirect call. Same effect as fx_with_rn / fx_to_rn / fx_from_rn /
+// fx_alt1-3 (the opcode table has the same entry for all four ALT values for these):
+// TO and FROM with B set (MOVE / MOVES) still go through the table.
+// Class of each opcode: 0 other, 1 WITH, 2 TO, 3 FROM, 4 ALT1, 5 ALT2, 6 ALT3.
+static uint8 fx_prefixClass[256];
+static struct FxPrefixInit
 {
+	FxPrefixInit ()
+	{
+		for (int i = 0x10; i < 0x20; i++) fx_prefixClass[i] = 2;
+		for (int i = 0x20; i < 0x30; i++) fx_prefixClass[i] = 1;
+		for (int i = 0xb0; i < 0xc0; i++) fx_prefixClass[i] = 3;
+		fx_prefixClass[0x3d] = 4;
+		fx_prefixClass[0x3e] = 5;
+		fx_prefixClass[0x3f] = 6;
+	}
+} fx_prefixInit;
+
+#define FX_STEP_PFX \
+{ \
+	uint32	vOpcode = (uint32) PIPE; \
+	uint32	vClass = fx_prefixClass[vOpcode]; \
+	FETCHPIPE; \
+	FX_PROF_HIT((GSU.vStatusReg & 0x300) | vOpcode); \
+	if (vClass == 0) \
+		(*fx_OpcodeTable[(GSU.vStatusReg & 0x300) | vOpcode])(); \
+	else if (vClass == 1) \
+	{ \
+		SF(B); \
+		GSU.pvSreg = GSU.pvDreg = &GSU.avReg[vOpcode & 15]; \
+		R15++; \
+	} \
+	else if (vClass <= 3 && TF(B)) \
+		(*fx_OpcodeTable[(GSU.vStatusReg & 0x300) | vOpcode])(); \
+	else if (vClass == 2) \
+	{ \
+		GSU.pvDreg = &GSU.avReg[vOpcode & 15]; \
+		R15++; \
+	} \
+	else if (vClass == 3) \
+	{ \
+		GSU.pvSreg = &GSU.avReg[vOpcode & 15]; \
+		R15++; \
+	} \
+	else \
+	{ \
+		SFR |= (vClass == 4) ? FLG_ALT1 : (vClass == 5) ? FLG_ALT2 : (FLG_ALT1 | FLG_ALT2); \
+		CF(B); \
+		R15++; \
+	} \
+}
+#undef FX_STEP
+#define FX_STEP FX_STEP_PFX
+#endif
+
+#ifdef FX_PROF
+#include <stdio.h>
+#include <stdlib.h>
+uint64 fx_prof_hist[1024];
+uint64 fx_prof_runs, fx_prof_cycles;
+static void fx_prof_dump (void)
+{
+	const char *n = getenv("FX_PROF_OUT");
+	FILE *f = n ? fopen(n, "w") : NULL;
+	if (!f)
+		return;
+	fprintf(f, "runs %llu cycles %llu\n", (unsigned long long) fx_prof_runs, (unsigned long long) fx_prof_cycles);
+	for (int i = 0; i < 1024; i++)
+		if (fx_prof_hist[i])
+			fprintf(f, "%03x %llu\n", i, (unsigned long long) fx_prof_hist[i]);
+	fclose(f);
+}
+static struct FxProfInit { FxProfInit () { atexit(fx_prof_dump); } } fx_prof_init;
+#endif
+
+#ifdef FX_FAST
+static uint32 fx_run_impl (uint32 nInstructions);
+
+// Per-run setup of the fetch-timing shortcuts (both budget modes fetch through FETCHPIPE).
+uint32 fx_run_ref (uint32 nInstructions)
+{
+	fx_cacheLimit = GSU.bCacheActive ? 512 : 0;
+#ifdef FX_LINEFLAGS
+	// Byte per cache line while running; vCacheMask stays the stored form (snapshot
+	// load and CPU-side flushes change it between runs).
+	for (int i = 0; i < 32; i++)
+		fx_lineOk[i] = (GSU.vCacheMask >> i) & 1;
+#endif
+	uint32 r = fx_run_impl(nInstructions);
+#ifdef FX_LINEFLAGS
+	uint32 m = 0;
+	for (int i = 0; i < 32; i++)
+		m |= (uint32) fx_lineOk[i] << i;
+	GSU.vCacheMask = m;
+#endif
+	return r;
+}
+static uint32 fx_run_impl (uint32 nInstructions)
+#else
+uint32 fx_run_ref (uint32 nInstructions)
+#endif
+{
+	if (GSU.bCycleMode)
+	{
+		// nInstructions is a master-cycle budget in this mode; each FX_STEP
+		// accrues its real cost into GSU.vCycles (fetch source, memory ops).
+		GSU.vCycles = 0;
+#if defined(FX_LIMIT)
+		fx_limit = TF(G) ? nInstructions : 0;
+#define FX_GO	(GSU.vCycles < fx_limit)
+#else
+#define FX_GO	(TF(G) && GSU.vCycles < nInstructions)
+#endif
+#ifdef FX_UNROLL10
+		// Ten copies of the dispatch, so the indirect call has ten call sites
+		// for the branch predictor and the loop branch is taken a tenth as often.
+		// Every copy keeps its own exit test: the exit point (and so the timing) is unchanged.
+		while (FX_GO)
+		{
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP;
+		}
+#else
+		while (FX_GO)
+			FX_STEP;
+#endif
+#undef FX_GO
+#ifdef FX_PROF
+		fx_prof_runs++;
+		fx_prof_cycles += GSU.vCycles;
+#endif
+
+		return (0);
+	}
+
 	GSU.vCounter = nInstructions;
 	while (TF(G) && (GSU.vCounter-- > 0))
 		FX_STEP;

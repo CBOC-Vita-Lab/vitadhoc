@@ -440,6 +440,7 @@ void DSP3SetByte (uint8, uint16);
 uint8 DSP4GetByte (uint16);
 void DSP4SetByte (uint8, uint16);
 void DSP3_Reset (void);
+void *S9xDSP3AheadState (void *set);	// CBOC-Vita: run-ahead (ahead.cpp): the command state (set NULL: only read it)
 
 extern uint8 (*GetDSP) (uint16);
 extern void (*SetDSP) (uint8, uint16);

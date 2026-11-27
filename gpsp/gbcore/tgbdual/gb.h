@@ -265,6 +265,13 @@ void mbc_huc1_write(word adr,byte dat);
 void mbc_huc3_write(word adr,byte dat);
 void mbc_tama5_write(word adr,byte dat);
 void mbc_mmm01_write(word adr,byte dat);
+/* Game Boy Camera (gbcam.h) */
+void mbc_cam_write(word adr,byte dat);
+void mbc_cam_tick(void);
+int mbc_cam_ram_blocked(void);
+unsigned mbc_cam_starts(void);
+void mbc_cam_save(byte *out);
+void mbc_cam_load(const byte *in);
 
 // cpu.c
 extern byte vram[];
@@ -316,6 +323,7 @@ byte *cpu_get_ram_bank();
 void cpu_set_ram_bank(int bank);
 struct cpu_regs *cpu_get_regs();
 int cpu_get_clock();
+extern int cpu_access_off;
 char cpu_get_speed();
 char *cpu_get_halt();
 

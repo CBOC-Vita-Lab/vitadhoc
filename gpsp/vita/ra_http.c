@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Copyright (c) 2026 VitAdhoc contributors */
 /* ra_http.c -- see ra_http.h. */
 #include "ra_http.h"
 
@@ -20,7 +22,11 @@
 #include "ra_roots.h"
 #endif
 
+#ifdef PK_RA_PLAYER
+#include "pk_ra_plat.h"     /* snes.bin / md.bin: playerkit's own thread and network layer */
+#else
 #include "plat.h"
+#endif
 #include "rhash/md5.h"
 
 #define A_LOAD(x)      __atomic_load_n(&(x), __ATOMIC_SEQ_CST)
@@ -112,6 +118,36 @@ static void fail(int status, const char *why)
 
 /* Headers end in the buffer's first `got` bytes: parse the status, the
  * length and the coding.  The body is moved to the front. */
+/* The request's head, every piece counted: the host and the agent are the
+ * caller's text, not a fixed size.  malloc'd, NULL = out of memory or a
+ * head that cannot be measured.  (Not static: tests/ra/test_ra_head.c.) */
+char *ra_http_build_request(const char *path, const char *host,
+                            const char *agent, const char *type, int post,
+                            size_t plen)
+{
+   size_t cap = 512 + strlen(path) + strlen(host) + strlen(agent) +
+                (type ? strlen(type) : 0);
+   char *hdr = (char *)malloc(cap);
+   int n;
+   if (!hdr)
+      return NULL;
+   if (post)
+      n = snprintf(hdr, cap, "POST %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n"
+                   "Content-Type: %s\r\nContent-Length: %u\r\n"
+                   "Connection: close\r\n\r\n", path, host, agent,
+                   type ? type : "application/x-www-form-urlencoded",
+                   (unsigned)plen);
+   else
+      n = snprintf(hdr, cap, "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n"
+                   "Connection: close\r\n\r\n", path, host, agent);
+   if (n < 0 || (size_t)n >= cap)
+   {
+      free(hdr);
+      return NULL;
+   }
+   return hdr;
+}
+
 static void http_plain(void)
 {
    char host[128], portstr[8], *hdr = NULL;
@@ -151,21 +187,12 @@ static void http_plain(void)
       goto out;
    }
    plen = H.post ? strlen(H.post) : 0;
-   hdr = (char *)malloc(1024 + strlen(path));
+   hdr = ra_http_build_request(path, host, H.agent, H.type, H.post != NULL, plen);
    if (!hdr)
    {
       fail(RA_HTTP_RETRY, "memory");
       goto out;
    }
-   if (H.post)
-      sprintf(hdr, "POST %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n"
-              "Content-Type: %s\r\nContent-Length: %u\r\n"
-              "Connection: close\r\n\r\n", path, host, H.agent,
-              H.type ? H.type : "application/x-www-form-urlencoded",
-              (unsigned)plen);
-   else
-      sprintf(hdr, "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n"
-              "Connection: close\r\n\r\n", path, host, H.agent);
    if (send(s, hdr, strlen(hdr), 0) != (ssize_t)strlen(hdr) ||
        (plen && send(s, H.post, plen, 0) != (ssize_t)plen))
    {
@@ -281,6 +308,7 @@ out:
 static int g_tls;            /* 0 not up (tried again each request), 1 up */
 static int g_tpl = -1;
 static int g_certs_rc;
+static int g_active_req = -1; /* atomic: inflight Vita HTTP handle to abort on stop */
 
 static void tls_up(void)
 {
@@ -304,10 +332,23 @@ static void tls_up(void)
       data[i].size = ra_root_sizes[i];
       list[i] = &data[i];
    }
-   /* Beside the console's own store; if the library will not take them the
-    * console's store is what is left. */
+   /* Beside the console's own store; load each root on its own so one
+    * rejected by SceSsl never prevents the rest from loading. */
    if (g_tpl < 0)
-      g_certs_rc = sceHttpsLoadCert(RA_ROOTS_N, list, NULL, NULL);
+   {
+      int loaded = 0;
+      g_certs_rc = 0;
+      for (i = 0; i < RA_ROOTS_N; i++)
+      {
+         rc = sceHttpsLoadCert(1, &list[i], NULL, NULL);
+         if (rc >= 0)
+            loaded++;
+         else if (!g_certs_rc)
+            g_certs_rc = rc;
+      }
+      if (loaded > 0)
+         g_certs_rc = 0;
+   }
    if (g_tpl < 0)
       g_tpl = sceHttpCreateTemplate(H.agent, SCE_HTTP_VERSION_1_1, SCE_TRUE);
    if (g_tpl < 0)
@@ -346,6 +387,12 @@ static void http_tls(void)
    {
       snprintf(why, sizeof(why), "request 0x%08x", (unsigned)req);
       fail(RA_HTTP_RETRY, why);
+      goto out;
+   }
+   A_STORE(g_active_req, req);
+   if (A_LOAD(H.quit))
+   {
+      fail(RA_HTTP_RETRY, "stopped");
       goto out;
    }
    if (H.post)
@@ -405,6 +452,7 @@ static void http_tls(void)
    snprintf(H.res.note, sizeof(H.res.note), "https certs 0x%08x",
             (unsigned)g_certs_rc);
 out:
+   A_STORE(g_active_req, -1);
    if (req >= 0)
       sceHttpDeleteRequest(req);
    if (conn >= 0)
@@ -428,6 +476,17 @@ static void hash_file(void)
       return;
    }
    md5_init(&md5);
+   if (H.hash == 2)
+   {
+      /* RetroAchievements console 7 (NES): an iNES file is hashed without its
+       * 16-byte header (rcheevos rc_hash_nes); a file without one, whole. */
+      unsigned char hd[16];
+      size_t got = fread(hd, 1, sizeof(hd), f);
+      if (got == sizeof(hd) && !memcmp(hd, "NES\x1a", 4))
+         ;
+      else if (got)
+         md5_append(&md5, hd, (int)got);
+   }
    while (!A_LOAD(H.quit) && (n = fread(buf, 1, sizeof(buf), f)) > 0)
       md5_append(&md5, buf, (int)n);
    bad = ferror(f) || A_LOAD(H.quit);
@@ -502,6 +561,11 @@ int ra_http_hash_file(const char *path)
    return submit(path, NULL, NULL, 1);
 }
 
+int ra_http_hash_file_nes(const char *path)
+{
+   return submit(path, NULL, NULL, 2);
+}
+
 static int submit(const char *url, const char *post, const char *type,
                   int hash)
 {
@@ -554,6 +618,13 @@ void ra_http_stop(uint32_t timeout_us)
    if (!H.running)
       return;
    A_STORE(H.quit, 1);
+#ifdef __vita__
+   {
+      int r = A_LOAD(g_active_req);
+      if (r >= 0)
+         sceHttpAbortRequest(r);
+   }
+#endif
    if (plat_net_join(timeout_us))
    {
       H.running = 0;

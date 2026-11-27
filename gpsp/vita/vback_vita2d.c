@@ -56,14 +56,12 @@
 #include <psp2/kernel/modulemgr.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/sysmem.h>
-#include <psp2/shacccg.h>
 #include <vita2d.h>
 
 #include "vback.h"
 #include "menu_diag.h"
 /* fe_evt, weakly: the backend's GPU tests link without the log */
 extern void fe_evt(const char *fmt, ...) __attribute__((weak, format(printf, 1, 2)));
-#include "gpu_shaders.h"     /* build/vita/gen: the shaders/ files as strings */
 
 struct vb_tex
 {
@@ -155,7 +153,6 @@ static void defer_flush(void)
    md_end(MD_DEFER, t);
 }
 
-static void prog_release(void);
 static void recover(void);
 
 void vb_term(void)
@@ -166,7 +163,6 @@ void vb_term(void)
       vita2d_end_drawing();
    g_open = 0;
    defer_flush();
-   prog_release();
    vita2d_fini();
    g_inited = 0;
 }
@@ -359,6 +355,8 @@ void vb_tex_update(vb_tex *t, int x, int y, int w, int h,
 }
 
 /* ---- scenes ------------------------------------------------------------ */
+
+void vb_text_mark(void) { }
 
 void vb_frame_begin(int clear)
 {
@@ -708,6 +706,16 @@ void vb_tquads(vb_tex *t, const vb_tquad *q, int n, uint32_t tint, int filter)
    }
 }
 
+/* vb_tquads_mul: the same draw with vita2d's multiply program set
+ * (third_party/vita2d, vita2d_set_blend_mode_mul): dst * texel, no tint. */
+void vb_tquads_mul(vb_tex *t, const vb_tquad *q, int n, int filter)
+{
+   if (!vita2d_set_blend_mode_mul(1))
+      return;                       /* no multiply programs: no mask */
+   vb_tquads(t, q, n, 0xFFFFFFFFu, filter);
+   vita2d_set_blend_mode_mul(0);
+}
+
 int vb_readback(uint32_t *dst)
 {
    const uint32_t *fb;
@@ -722,467 +730,4 @@ int vb_readback(uint32_t *dst)
     * the same words vback.h's colours are. */
    memcpy(dst, fb, (size_t)VB_W * VB_H * sizeof(uint32_t));
    return 0;
-}
-
-/* ---- GPU programs (vback.h vb_prog) --------------------------------------
- * The shaders in gpsp/vita/shaders/ are compiled HERE, at run time, by the
- * system's own Cg compiler: SceShaccCg, the module libshacccg.suprx that
- * vitaGL games need too (the test console has it in ur0:data/).  Nothing to ship
- * and no offline compiler: VitaSDK has none.  A compiled program is kept in
- * ux0:data/GBAdhoc/shaders/<name>-<hash of the text>.gxp, so the compiler
- * runs once per version of a shader, not at every start.
- *
- * Each program is a fragment program bound to libvita2d's own texture
- * vertex program (position + texture coordinate, the same vertices
- * vb_tquads makes), without blending: its colour is written as it is. */
-
-extern const SceGxmProgram texture_v_gxp_start;          /* libvita2d */
-extern float _vita2d_ortho_matrix[4 * 4];
-extern SceGxmContext *_vita2d_context;
-extern SceGxmVertexProgram *_vita2d_textureVertexProgram;
-extern const SceGxmProgramParameter *_vita2d_textureWvpParam;
-
-struct vb_prog
-{
-   SceGxmShaderPatcherId  id;
-   SceGxmFragmentProgram *fp;
-   SceGxmProgram         *gxp;
-   const SceGxmProgramParameter *uni[VB_PROG_UNIFORMS];
-   int tex[2];                /* the samplers' resource indices          */
-};
-
-static struct vb_prog g_prog[VB_PROGS];
-static int  g_prog_state[VB_PROGS];          /* 0 untried, 1 ok, -1 not */
-static char g_prog_why[VB_PROGS][384];
-static int  g_shacc;                          /* 0 untried, 1 ok, -1 not */
-
-static const char *const g_prog_name[VB_PROGS] = { "xbrz0", "xbrz1", "xbrz2" };
-static const char *const g_prog_uni[VB_PROGS][VB_PROG_UNIFORMS] = {
-   { "SourceSize", NULL, NULL, NULL },
-   { "SourceSize", "CornerInv", NULL, NULL },
-   { "RefSize", "InfoScale", "OutScale", NULL } };
-static const char *const g_prog_tex[VB_PROGS][2] = {
-   { "Source", NULL }, { "Source", "Corner" }, { "Ref", "Info" } };
-
-/* The Cg half of the shaders' dialect (shaders/xbrz_common.inc). */
-static const char g_prelude_cg[] =
-   "#define V_XY(v) ((v).xy)\n"
-   "#define V_ZW(v) ((v).zw)\n"
-   "#define V_RGB(v) ((v).rgb)\n"
-   "#define V_MOD(a, b) fmod((a), (b))\n"
-   "#define V_EQ3(a, b) all((a) == (b))\n";
-static const char g_main0[] =
-   "float4 main(float2 vTexcoord : TEXCOORD0,\n"
-   "            uniform sampler2D Source : TEXUNIT0,\n"
-   "            uniform float4 SourceSize) : COLOR\n{\n";
-static const char g_main1[] =
-   "float4 main(float2 vTexcoord : TEXCOORD0,\n"
-   "            uniform sampler2D Source : TEXUNIT0,\n"
-   "            uniform sampler2D Corner : TEXUNIT1,\n"
-   "            uniform float4 SourceSize,\n"
-   "            uniform float4 CornerInv) : COLOR\n{\n";
-static const char g_main2[] =
-   "float4 main(float2 vTexcoord : TEXCOORD0,\n"
-   "            uniform sampler2D Ref : TEXUNIT0,\n"
-   "            uniform sampler2D Info : TEXUNIT1,\n"
-   "            uniform float4 RefSize, uniform float4 InfoScale,\n"
-   "            uniform float4 OutScale) : COLOR\n{\n";
-
-static int shacc_load(void)
-{
-   static const char *const where[] = { "ur0:data/libshacccg.suprx",
-                                        "ux0:data/libshacccg.suprx" };
-   unsigned i;
-   if (g_shacc)
-      return g_shacc > 0;
-   g_shacc = -1;
-   for (i = 0; i < sizeof(where) / sizeof(where[0]); i++)
-      if (sceKernelLoadStartModule(where[i], 0, NULL, 0, NULL, NULL) >= 0)
-      {
-         sceShaccCgSetDefaultAllocator(malloc, free);
-         g_shacc = 1;
-         break;
-      }
-   return g_shacc > 0;
-}
-
-static SceShaccCgSourceFile g_cg_src;
-
-static SceShaccCgSourceFile *cg_open(const char *name,
-                                     const SceShaccCgSourceLocation *from,
-                                     const SceShaccCgCompileOptions *opt,
-                                     const char **err)
-{
-   (void)name; (void)from; (void)opt; (void)err;
-   return &g_cg_src;
-}
-
-static uint32_t fnv(const char *s, uint32_t h)
-{
-   while (*s)
-      h = (h ^ (unsigned char)*s++) * 16777619u;
-   return h;
-}
-
-static const char *g_gxp_reject;       /* why a cached program was not used */
-
-static SceGxmProgram *gxp_load(const char *path)
-{
-   FILE *f = fopen(path, "rb");
-   long n = 0;
-   SceGxmProgram *p = NULL;
-   g_gxp_reject = NULL;
-   if (!f)
-      return NULL;
-   if (fseek(f, 0, SEEK_END) == 0 && (n = ftell(f)) > 0 && n < (1 << 20) &&
-       fseek(f, 0, SEEK_SET) == 0 && (p = (SceGxmProgram *)malloc((size_t)n)))
-   {
-      if (fread(p, 1, (size_t)n, f) != (size_t)n)
-         g_gxp_reject = "cache_short_read";
-      else if (sceGxmProgramCheck(p) != 0)
-         g_gxp_reject = "cache_check";
-      else if (!sceGxmProgramGetSize(p) || sceGxmProgramGetSize(p) > (unsigned)n)
-         g_gxp_reject = "cache_size";
-      if (g_gxp_reject)
-      {
-         free(p);
-         p = NULL;
-      }
-   }
-   else
-      g_gxp_reject = "cache_unreadable";
-   fclose(f);
-   return p;
-}
-
-/* One compile.  variant 0: the options as sceShaccCgInitializeCompileOptions
- * leaves them, then ours; 1: every field set by hand, as vitaShaRK does
- * (Rinnegatamante's wrapper that vitaGL uses).  `why` gets "compiled" or
- * the compiler's own words: every diagnostic, "L<line>:" before each. */
-static SceGxmProgram *cg_compile(const char *text, int variant, int opt,
-                                 char *why, size_t whylen, unsigned *size)
-{
-   SceShaccCgCallbackList cb;
-   SceShaccCgCompileOptions o;
-   const SceShaccCgCompileOutput *out;
-   SceGxmProgram *p = NULL;
-   size_t at = 0;
-   int i;
-   *size = 0;
-   if (!shacc_load())
-   {
-      snprintf(why, whylen, "no_compiler");      /* libshacccg.suprx */
-      return NULL;
-   }
-   g_cg_src.fileName = "gbadhoc.cg";
-   g_cg_src.text = text;
-   g_cg_src.size = (SceUInt32)strlen(text);
-   sceShaccCgInitializeCallbackList(&cb, SCE_SHACCCG_TRIVIAL);
-   cb.openFile = cg_open;
-   if (variant == 0)
-      sceShaccCgInitializeCompileOptions(&o);
-   else
-      memset(&o, 0, sizeof(o));
-   o.mainSourceFile = g_cg_src.fileName;
-   o.targetProfile = SCE_SHACCCG_PROFILE_FP;
-   o.entryFunctionName = "main";
-   o.searchPathCount = 0;
-   o.searchPaths = NULL;
-   o.macroDefinitionCount = 0;
-   o.macroDefinitions = NULL;
-   o.includeFileCount = 0;
-   o.includeFiles = NULL;
-   o.suppressedWarningsCount = 0;
-   o.suppressedWarnings = NULL;
-   o.locale = SCE_SHACCCG_ENGLISH;
-   o.useFx = 1;
-   o.noStdlib = 0;
-   o.optimizationLevel = opt;
-   o.useFastmath = 1;
-   o.useFastprecision = 0;
-   o.useFastint = 1;
-   o.warningsAsErrors = 0;
-   o.performanceWarnings = 0;
-   o.warningLevel = 1;
-   o.pedantic = 0;
-   o.pedanticError = 0;
-   out = sceShaccCgCompileProgram(&o, &cb, 0);
-   if (out && out->programData && out->programSize)
-   {
-      p = (SceGxmProgram *)malloc(out->programSize);
-      if (p)
-      {
-         memcpy(p, out->programData, out->programSize);
-         *size = out->programSize;
-      }
-      snprintf(why, whylen, p ? "compiled" : "no_memory");
-   }
-   else
-      at = (size_t)snprintf(why, whylen, out ? "failed" : "no_output");
-   for (i = 0; out && i < out->diagnosticCount && at + 8 < whylen; i++)
-   {
-      const SceShaccCgDiagnosticMessage *d = &out->diagnostics[i];
-      int n = snprintf(why + at, whylen - at, "%s%c L%u:%s",
-                       at ? ";" : "",
-                       d->level == SCE_SHACCCG_DIAGNOSTIC_LEVEL_ERROR ? 'E'
-                       : d->level == SCE_SHACCCG_DIAGNOSTIC_LEVEL_WARNING ? 'W'
-                       : 'I',
-                       d->location ? (unsigned)d->location->lineNumber : 0u,
-                       d->message ? d->message : "?");
-      if (n < 0)
-         break;
-      at += (size_t)n;
-      if (at >= whylen)
-         at = whylen - 1;
-   }
-   for (i = 0; why[i]; i++)                       /* one log line */
-      if (why[i] == '\n' || why[i] == '\r' || why[i] == ' ')
-         why[i] = '_';
-   if (out)
-      sceShaccCgDestroyCompileOutput(out);
-   return p;
-}
-
-/* Program `which`'s whole text (malloc'd). */
-static char *prog_text(int which)
-{
-   const char *body = which == VB_PROG_XBRZ0 ? gpu_src_xbrz_pass0
-                    : which == VB_PROG_XBRZ1 ? gpu_src_xbrz_pass1
-                                             : gpu_src_xbrz_pass2;
-   const char *mainf = which == VB_PROG_XBRZ0 ? g_main0
-                     : which == VB_PROG_XBRZ1 ? g_main1 : g_main2;
-   size_t len = strlen(g_prelude_cg) + strlen(gpu_src_xbrz_common) +
-                strlen(mainf) + strlen(body) + 4;
-   char *text = (char *)malloc(len);
-   if (text)
-      snprintf(text, len, "%s%s%s%s}\n", g_prelude_cg, gpu_src_xbrz_common,
-               mainf, body);
-   return text;
-}
-
-/* Program `which`'s compiled form: from the cache, or the compiler. */
-static SceGxmProgram *prog_gxp(int which, char *why, size_t whylen)
-{
-   char path[128];
-   char *text;
-   uint32_t h = 2166136261u;
-   unsigned size;
-   SceGxmProgram *p;
-
-   text = prog_text(which);
-   if (!text)
-   {
-      snprintf(why, whylen, "no_memory");
-      return NULL;
-   }
-   h = fnv(text, h);
-   h = fnv("o3 fastmath fastint v3", h);
-   snprintf(path, sizeof(path), "ux0:data/GBAdhoc/shaders/%s-%08x.gxp",
-            g_prog_name[which], (unsigned)h);
-   if ((p = gxp_load(path)))
-   {
-      free(text);
-      snprintf(why, whylen, "cached");
-      return p;
-   }
-   p = cg_compile(text, 1, 3, why, whylen, &size);
-   free(text);
-   if (p && g_gxp_reject)
-      snprintf(why, whylen, "compiled_%s", g_gxp_reject);
-   if (p)
-   {
-      FILE *f;
-      sceIoMkdir("ux0:data/GBAdhoc/shaders", 0777);
-      if ((f = fopen(path, "wb")))
-      {
-         fwrite(p, 1, size, f);
-         fclose(f);
-      }
-   }
-   return p;
-}
-
-/* vita.ini gpu_probe: compile test programs and say what the compiler
- * said (main_vita.c logs each as `gpu_probe`); nothing is kept.  Returns
- * 0 when there is no probe `n`. */
-int vb_prog_probe(int n, char *out, size_t outlen)
-{
-   static const char tiny[] =
-      "float4 main(float2 vTexcoord : TEXCOORD0,\n"
-      "            uniform sampler2D Source : TEXUNIT0) : COLOR\n"
-      "{\n   return tex2D(Source, vTexcoord);\n}\n";
-   static const struct { int text, variant, opt; } probe[] = {
-      { -1, 1, 3 }, { VB_PROG_XBRZ0, 1, 3 }, { VB_PROG_XBRZ1, 1, 3 },
-      { VB_PROG_XBRZ2, 1, 3 } };
-   char why[384];
-   char *text;
-   unsigned size = 0, t0;
-   SceGxmProgram *p;
-   if (n < 0 || n >= (int)(sizeof(probe) / sizeof(probe[0])))
-      return 0;
-   text = probe[n].text < 0 ? strdup(tiny) : prog_text(probe[n].text);
-   if (!text)
-      return 0;
-   t0 = sceKernelGetProcessTimeLow();
-   p = cg_compile(text, probe[n].variant, probe[n].opt, why, sizeof(why),
-                  &size);
-   snprintf(out, outlen, "n=%d text=%s variant=%d opt=%d ok=%d size=%u "
-            "us=%u why=%s", n, probe[n].text < 0 ? "tiny"
-            : g_prog_name[probe[n].text], probe[n].variant, probe[n].opt,
-            p ? 1 : 0, size, (unsigned)(sceKernelGetProcessTimeLow() - t0),
-            why);
-   free(p);
-   free(text);
-   return 1;
-}
-
-vb_prog *vb_prog_get(int which)
-{
-   struct vb_prog *P;
-   SceGxmShaderPatcher *sp;
-   int k;
-   if (which < 0 || which >= VB_PROGS || !g_inited)
-      return NULL;
-   if (g_prog_state[which])
-      return g_prog_state[which] > 0 ? &g_prog[which] : NULL;
-   g_prog_state[which] = -1;
-   P = &g_prog[which];
-   P->gxp = prog_gxp(which, g_prog_why[which], sizeof(g_prog_why[which]));
-   if (!P->gxp)
-      return NULL;
-   sp = vita2d_get_shader_patcher();
-   if (sceGxmProgramCheck(P->gxp) != 0 ||
-       sceGxmShaderPatcherRegisterProgram(sp, P->gxp, &P->id) < 0)
-   {
-      snprintf(g_prog_why[which], sizeof(g_prog_why[which]), "register_failed");
-      free(P->gxp);
-      P->gxp = NULL;
-      return NULL;
-   }
-   if (sceGxmShaderPatcherCreateFragmentProgram(
-          sp, P->id, SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4,
-          SCE_GXM_MULTISAMPLE_NONE, NULL, &texture_v_gxp_start, &P->fp) < 0)
-   {
-      snprintf(g_prog_why[which], sizeof(g_prog_why[which]), "link_failed");
-      sceGxmShaderPatcherUnregisterProgram(sp, P->id);
-      free(P->gxp);
-      P->gxp = NULL;
-      return NULL;
-   }
-   for (k = 0; k < VB_PROG_UNIFORMS; k++)
-      P->uni[k] = g_prog_uni[which][k]
-                  ? sceGxmProgramFindParameterByName(P->gxp, g_prog_uni[which][k])
-                  : NULL;
-   for (k = 0; k < 2; k++)
-   {
-      const SceGxmProgramParameter *s = g_prog_tex[which][k]
-         ? sceGxmProgramFindParameterByName(P->gxp, g_prog_tex[which][k]) : NULL;
-      P->tex[k] = s ? (int)sceGxmProgramParameterGetResourceIndex(s) : k;
-   }
-   g_prog_state[which] = 1;
-   return P;
-}
-
-/* vb_term: the patcher goes with libvita2d. */
-static void prog_release(void)
-{
-   SceGxmShaderPatcher *sp = vita2d_get_shader_patcher();
-   int i;
-   vita2d_wait_rendering_done();
-   for (i = 0; i < VB_PROGS; i++)
-   {
-      if (g_prog_state[i] > 0)
-      {
-         sceGxmShaderPatcherReleaseFragmentProgram(sp, g_prog[i].fp);
-         sceGxmShaderPatcherUnregisterProgram(sp, g_prog[i].id);
-         free(g_prog[i].gxp);
-      }
-      memset(&g_prog[i], 0, sizeof(g_prog[i]));
-      g_prog_state[i] = 0;
-   }
-}
-
-const char *vb_prog_status(int which)
-{
-   if (which < 0 || which >= VB_PROGS)
-      return "none";
-   return g_prog_state[which] ? g_prog_why[which] : "untried";
-}
-
-void vb_pquads(vb_prog *p, vb_tex *t0, vb_tex *t1, const vb_tquad *q, int n,
-               const float uni[VB_PROG_UNIFORMS][4])
-{
-   float iw, ih;
-   int clip = g_sc_on && !g_rt, k = 0, i;
-   float cx0 = (float)g_sc_x, cy0 = (float)g_sc_y;
-   float cx1 = (float)(g_sc_x + g_sc_w), cy1 = (float)(g_sc_y + g_sc_h);
-   vita2d_texture_vertex *v;
-   void *u;
-   if (!p || !p->fp || !t0 || !q || n <= 0 || n > QUAD_BATCH || !uni ||
-       (!g_open && !g_rt) || t0 == g_rt || (t1 && t1 == g_rt))
-      return;
-   iw = 1.0f / (float)t0->w;
-   ih = 1.0f / (float)t0->h;
-   v = (vita2d_texture_vertex *)vita2d_pool_memalign(
-          (unsigned)(n * 6) * sizeof(vita2d_texture_vertex),
-          sizeof(vita2d_texture_vertex));
-   if (!v)
-      return;
-   for (i = 0; i < n; i++, q++)
-   {
-      float x0 = q->x0, y0 = q->y0, x1 = q->x1, y1 = q->y1;
-      float u0 = q->u0, v0 = q->v0, u1 = q->u1, v1 = q->v1;
-      vita2d_texture_vertex *e;
-      if (!(x1 > x0) || !(y1 > y0))
-         continue;
-      if (clip)
-      {
-         float tx0, tx1, ty0, ty1, du = u1 - u0, dv = v1 - v0;
-         if (!clip_axis(&x0, &x1, cx0, cx1, &tx0, &tx1) ||
-             !clip_axis(&y0, &y1, cy0, cy1, &ty0, &ty1))
-            continue;
-         u1 = u0 + du * tx1; u0 = u0 + du * tx0;
-         v1 = v0 + dv * ty1; v0 = v0 + dv * ty0;
-      }
-      x0 = sx(x0); y0 = sy(y0); x1 = sx(x1); y1 = sy(y1);
-      u0 *= iw; v0 *= ih; u1 *= iw; v1 *= ih;
-      e = v + k++ * 6;
-      e[0].x = x0; e[0].y = y0; e[0].z = 0.5f; e[0].u = u0; e[0].v = v0;
-      e[1].x = x1; e[1].y = y0; e[1].z = 0.5f; e[1].u = u1; e[1].v = v0;
-      e[2].x = x0; e[2].y = y1; e[2].z = 0.5f; e[2].u = u0; e[2].v = v1;
-      e[3] = e[2];
-      e[4] = e[1];
-      e[5].x = x1; e[5].y = y1; e[5].z = 0.5f; e[5].u = u1; e[5].v = v1;
-   }
-   if (!k)
-      return;
-   if (!vita2d_fragment_fence_record(&t0->readers))
-      t0->unfenced = 1;
-   if (t1 && !vita2d_fragment_fence_record(&t1->readers))
-      t1->unfenced = 1;
-   sceGxmSetVertexProgram(_vita2d_context, _vita2d_textureVertexProgram);
-   sceGxmSetFragmentProgram(_vita2d_context, p->fp);
-   sceGxmReserveVertexDefaultUniformBuffer(_vita2d_context, &u);
-   sceGxmSetUniformDataF(u, _vita2d_textureWvpParam, 0, 16,
-                         _vita2d_ortho_matrix);
-   if (sceGxmReserveFragmentDefaultUniformBuffer(_vita2d_context, &u) == 0)
-      for (i = 0; i < VB_PROG_UNIFORMS; i++)
-         if (p->uni[i])
-            sceGxmSetUniformDataF(u, p->uni[i], 0, 4, uni[i]);
-   sceGxmSetBackPolygonMode(_vita2d_context, SCE_GXM_POLYGON_MODE_TRIANGLE_FILL);
-   vita2d_texture_set_filters(t0->t, SCE_GXM_TEXTURE_FILTER_POINT,
-                              SCE_GXM_TEXTURE_FILTER_POINT);
-   sceGxmSetFragmentTexture(_vita2d_context, (unsigned)p->tex[0],
-                            &t0->t->gxm_tex);
-   if (t1)
-   {
-      vita2d_texture_set_filters(t1->t, SCE_GXM_TEXTURE_FILTER_POINT,
-                                 SCE_GXM_TEXTURE_FILTER_POINT);
-      sceGxmSetFragmentTexture(_vita2d_context, (unsigned)p->tex[1],
-                               &t1->t->gxm_tex);
-   }
-   sceGxmSetVertexStream(_vita2d_context, 0, v);
-   sceGxmDraw(_vita2d_context, SCE_GXM_PRIMITIVE_TRIANGLES,
-              SCE_GXM_INDEX_FORMAT_U16, vita2d_get_linear_indices(),
-              (unsigned)(k * 6));
 }

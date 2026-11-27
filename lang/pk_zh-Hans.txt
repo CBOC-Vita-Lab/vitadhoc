@@ -1,0 +1,565 @@
+input.a_game_button_takes_one_button	游戏按键只能设为一个按键
+input.a_shortcut_takes_at_most_four	快捷键最多可设四个按键
+input.button_1	按键 1
+input.button_2	按键 2
+input.circle	○ 键
+input.cross	× 键
+input.d_pad_down	方向键下
+input.d_pad_left	方向键左
+input.d_pad_right	方向键右
+input.d_pad_up	方向键上
+input.down	下
+input.fast_forward	快进
+input.left	左
+input.left_stick_down	左摇杆下
+input.left_stick_left	左摇杆左
+input.left_stick_right	左摇杆右
+input.left_stick_up	左摇杆上
+input.mode	模式
+input.no_such_button	没有这个按键
+input.not_set	未设置
+input.only_player_1_has_shortcuts	只有玩家 1 有快捷键
+input.pause	暂停
+input.quick_load	快速读档
+input.quick_save	快速存档
+input.rear_touch_bottom_left	背面触摸：左下
+input.rear_touch_bottom_right	背面触摸：右下
+input.rear_touch_top_left	背面触摸：左上
+input.rear_touch_top_right	背面触摸：右上
+input.rewind	倒带
+input.right	右
+input.right_stick_down	右摇杆下
+input.right_stick_left	右摇杆左
+input.right_stick_right	右摇杆右
+input.right_stick_up	右摇杆上
+input.screenshot	截图
+input.select	SELECT
+input.square	□ 键
+input.start	START
+input.start_select_opens_the_menu_pick	Start + Select 用于打开菜单；请选其他按键
+input.triangle	△ 键
+input.turbo_a	连发 A
+input.turbo_b	连发 B
+input.up	上
+lang.auto	自动
+link.connecting_over_the_internet	正在通过互联网连接
+link.connecting_through_the_relay	正在通过中继连接
+link.ending_the_link_together	正在一起结束联机
+link.link_ended	联机已结束
+link.link_lost_the_other_vita_is	联机中断：另一台 Vita 已断开。
+link.nobody_answered	无人应答。
+link.opening_a_path_to_the_other	正在与另一台主机建立通路
+link.playing_together	一起游玩中
+link.reaching_player_1	正在连接玩家 1
+link.receiving_the_game_from_player_1	正在从玩家 1 接收游戏
+link.sending_the_game_to_player_2	正在向玩家 2 发送游戏
+link.starting_the_game_together	正在一起启动游戏
+link.the_game_could_not_be_saved	无法保存游戏。
+link.the_game_could_not_be_started	无法一起启动游戏。
+link.the_game_did_not_arrive_intact	游戏没有完整送达。请重试。
+link.the_link_failed	联机失败。
+link.the_link_failed_2	联机失败
+link.the_link_is_fine	联机状态良好。
+link.the_link_was_cancelled	联机已取消。
+link.the_other_vita_ended_the_link	另一台 Vita 结束了联机。
+link.the_other_vita_plays_a_different	另一台 Vita 玩的是另一个游戏。
+link.the_other_vita_runs_a_different	另一台 Vita 运行的 VitAdhoc 版本不同。
+link.the_other_vita_s_game_did	另一台 Vita 的游戏不匹配。
+link.the_two_games_fell_out_of	两边的游戏不同步了。联机已结束，未保存任何内容。
+link.there_was_not_enough_memory_to	内存不足，无法开始联机。
+link.this_vita_went_to_sleep_so	这台 Vita 进入了睡眠，联机已结束。
+link.waiting_for_player_2	正在等待玩家 2
+look.auto	自动（%s）
+look.auto_eased	自动（%s，缓和）
+md.128_kb	128 KB
+md.16_kb	16 KB
+md.256_kb	256 KB
+md.32_kb	32 KB
+md.3_buttons	3 键
+md.512_kb	512 KB
+md.64_kb	64 KB
+md.6_buttons	6 键
+md.a_game_gear_game_has_one	Game Gear 游戏只有一个手柄。
+md.a_game_gear_game_has_one_2	Game Gear 游戏只有一个手柄
+md.asic	ASIC
+md.auto_follows_the_game_3_buttons	自动：跟随游戏，3 键或 6 键。少数游戏会误读 6 键手柄，这些游戏请选 3 键。
+md.auto_follows_the_game_europe_runs	自动：跟随游戏。欧洲版以 50 Hz 速度运行，美国和日本版以 60 Hz 运行；有些游戏只能在自己的地区运行。
+md.both_edges	两侧边缘
+md.change_disc	更换光盘
+md.cheat_code_game_genie_pro_action	金手指代码（Game Genie、Pro Action Replay 或 地址:数值）
+md.cheat_list_not_saved	金手指列表未保存：%s。旧文件已保留。
+md.console	主机
+md.disc	光盘 %d
+md.disc_could_not_be_read	无法读取光盘 %d：%s
+md.disc_inserted	已放入光盘 %d
+md.disc_is_in_the_drive_already	光盘 %d 已在光驱中
+md.disc_is_missing	缺少光盘 %d：%s
+md.disc_tray_open	光盘托盘已打开
+md.discrete	独立
+md.enhanced	增强
+md.europe_50_hz	欧洲 (50 Hz)
+md.extra_save_memory_some_games_can	部分游戏可使用的额外存档内存，位于主机内置的 8 KB 之外。512 KB 是常用设置；128 KB 是世嘉当年出售的规格；关则不安装。用其他大小保存的存档会保留，再选该大小时会恢复。下次启动游戏时生效。双人游戏始终使用 512 KB。
+md.fm_sound	FM 音源
+md.fm_sound_unit	FM 音源单元
+md.for_a_game_on_several_discs	适用于多张光盘的游戏：会像手动操作一样，打开光盘托盘、取出光盘、放入你选的光盘并合上托盘。请在游戏要求换盘时使用。存档和即时存档仍属于该游戏。
+md.games_on_the_master_system_cover	Master System 游戏在画面滚动时会用边框颜色遮住左侧 8 列。此项会把它们隐藏，画面宽度变为 248。
+md.hide_masked_edge	隐藏遮挡边缘
+md.how_far_back_rewind_reaches_short	倒带能回到多久之前：短约 30 秒，中约一分钟。光盘游戏的即时存档很大（每个约 1 MB）：安静的场景可保持此时长，整屏重绘的场景（视频）只能保留几秒。可用内存是固定的。
+md.japan	日本
+md.lcd_colours	LCD 配色
+md.lcd_ghosting	LCD 拖影
+md.left_edge	左侧边缘
+md.look_eased_to_keep_full_speed	放宽画质以保持全速
+md.m3u_empty	.m3u 列表中没有光盘（.cue、.chd 或 .iso）。
+md.m3u_none_found	.m3u 列表中的光盘一张也没找到：%s
+md.m3u_unreadable	无法读取 .m3u 列表。
+md.no_sprite_flicker	无精灵闪烁
+md.pad_type	手柄类型
+md.ram_cartridge	RAM 卡带
+md.region	地区
+md.sega_cd_bios_missing	Sega CD 游戏：请把你自己的 Sega CD BIOS（例如 us_scd1_9210.bin、eu_mcd1_9210.bin 或 jp_mcd1_9112.bin）放到 ux0:data/GBAdhoc/bios 或游戏旁边
+md.sega_cd_bios_missing_notice	Sega CD 游戏需要 BIOS：请放到 ux0:data/GBAdhoc/bios
+md.sega_cd_load_failed	%s。Sega CD：请检查光盘镜像（.cue 及其 .bin 文件、.chd 或 .iso）。找到的 BIOS：%s。
+md.start_sega_games_from_vitadhoc	请从 VitAdhoc 启动 Sega 游戏。
+md.that_code_is_already_in_the	该代码已在列表中
+md.that_code_points_at_an_address	该代码指向的地址在此游戏中不存在
+md.that_is_not_a_cheat_code	这不是金手指代码。请使用 XXXX-XXXX（Game Genie）或 AAAAAA:VVVV（Pro Action Replay）
+md.that_is_not_a_cheat_code_2	这不是金手指代码。请使用 XXX-XXX（Game Genie）、00AA-AAVV（Pro Action Replay）或 AAAA:VV
+md.the_console_drew_only_4_sprites	主机每行只能绘制 4 个精灵，其余的游戏会让它们闪烁。开则全部绘制；游戏本身的运行完全不变。
+md.the_console_drew_only_8_sprites	主机每行只能绘制 8 个精灵，其余的游戏会让它们闪烁。开则全部绘制；游戏本身的运行完全不变。
+md.the_disc_is_being_changed_already	正在更换光盘
+md.the_game_gear_s_screen_showed	Game Gear 的屏幕色彩更柔和，且从无纯黑。开则按此效果绘制。
+md.the_list_names_a_disc_that_is_missing	列表中提到的光盘缺失：%s
+md.the_master_system_s_fm_add	Master System 的 FM 扩展，部分游戏会用到。“自动”会为需要它的游戏开启。
+md.the_ram_cartridge_changes_when_the_game	游戏重新开始时，RAM 卡带才会改变
+md.the_sega_core_could_not_start	Sega 核心无法启动。
+md.the_slow_game_gear_screen_left	慢速的 Game Gear 屏幕会在移动物体后留下拖影。0 为关，10 为浓。
+md.the_sound_chip_discrete_is_the	音频芯片：“独立”为原版 YM2612，ASIC 为后期的 YM3438，“增强”会补上缺失的高音。
+md.usa	美国
+menu.10_a_second	每秒 10 次
+menu.15_a_second	每秒 15 次
+menu.30_a_second	每秒 30 次
+menu.a_faint_pixel_grid_like_a	淡淡的像素网格，像掌机屏幕。1 为淡，10 为浓。
+menu.a_number_you_type	由你输入的数字
+menu.a_shortcut_can_be_one_button	快捷键可以是一个按键或组合键：同时按下它们。
+menu.a_soft_glow_beside_the_picture	用画面旁的柔和光晕代替黑边。
+menu.achievements	成就
+menu.add_a_cheat	添加金手指
+menu.all_games	全部游戏
+menu.ambient_glow	氛围光
+menu.anything_the_game_has_not_saved	游戏尚未保存的内容将会丢失。
+menu.apply_to	应用到
+menu.auto	自动
+menu.auto_adapts_to_keep_60_fps	自动：为保持 60 帧而自适应；条件允许时会平滑。
+menu.back	返回
+menu.back_to_the_game	返回游戏
+menu.back_to_the_game_list	返回游戏列表？
+menu.bigger_text_in_the_menus_of	应用和播放器菜单中的文字更大。
+menu.bilinear	双线性
+menu.brighter_text_and_clearer_edges_in	应用和播放器菜单中的文字更亮、边缘更清晰。
+menu.btntest.chord	%s（组合键）
+menu.button_mapping	按键映射
+menu.button_mapping_for_every_player_the	每位玩家的按键映射，以及摇杆和连发键。
+menu.button_test	按键测试
+menu.buttons	按键
+menu.cancel	取消
+menu.change	更改
+menu.cheat_deleted	金手指已删除
+menu.cheat_deleted_name	已删除：%s
+menu.cheats	金手指
+menu.cheats_you_add_or_turn_on	你添加或开启的金手指会显示在这里。
+menu.choose_which_vita_button_does_what	为每位玩家选择 Vita 的各个按键对应什么功能。
+menu.clear	清除
+menu.cleared	%s 已清除
+menu.coloured_stripes_like_a_crt_tube	像 CRT 显像管那样的彩色条纹。会让画面略暗。1 为淡，10 为浓。
+menu.coming	即将推出
+menu.confirm	确认
+menu.controls	操作
+menu.controls_reset_to_the_defaults	操作已恢复默认
+menu.controls_save_failed	无法保存操作设置：%s
+menu.could_not_change_slot_lock	无法更改存档位锁定状态
+menu.could_not_save_the_state_the	无法保存即时存档：无法截取游戏状态
+menu.crt_mask	CRT 荫罩
+menu.customised	已自定义
+menu.d_pad	方向键
+menu.dark	深色
+menu.dark_lines_between_the_rows_like	行与行之间的暗线，像电视一样。1 为淡，10 为浓。
+menu.default	默认
+menu.delete	删除
+menu.delete_slot	删除存档位 %d？
+menu.delete_this_cheat	删除此金手指？
+menu.empty_slot	空存档位
+menu.enhanced_2x	增强 2x
+menu.enhanced_3x	增强 3x
+menu.enhanced_4x	增强 4x
+menu.every_button_stick_and_turbo_setting	所有按键、摇杆和连发设置都会恢复默认。
+menu.exit	退出
+menu.exit_help	关闭 VitAdhoc
+menu.fast_forward	快进
+menu.fast_forward_and_sound_while_it	快进运行时的声音。
+menu.ff_button	快进键
+menu.find_a_value_s_address	查找数值的地址
+menu.find_where_the_game_keeps_lives	找出游戏把生命、金钱或体力存在哪里：记下数字，然后随着数字变化不断缩小范围。把结果变成金手指。
+menu.game_list	游戏列表
+menu.h_m_played	已玩 %lld 小时 %02lld 分钟
+menu.high_contrast	高对比度
+menu.hold	按住
+menu.hold_the_fast_forward_button_or	按住快进键，或按一下来开关快进。
+menu.hold_the_rewind_button_to_run	按住倒带键让游戏倒着运行。
+menu.hold_turbo_runs_while_the_button	按住：按住按键期间连发。切换：按一下开始，再按一下停止。
+menu.how_fast_it_runs_2x_and	运行速度。2x 和 3x 时声音可加速播放，或保持正常音调。“无限制”和“无限制平滑”静音：尽可能多地运行帧，每隔一次刷新显示一幅画面（无限制）或每次刷新都显示（无限制平滑）。
+menu.how_fast_turbo_a_presses_10	连发 A 的按键速度：每秒 10、15 或 30 次。
+menu.how_fast_turbo_b_presses_10	连发 B 的按键速度：每秒 10、15 或 30 次。
+menu.how_large_the_game_is_drawn	游戏画面的大小。“原始”保持主机的画面比例；“像素完美”使用整数倍。
+menu.how_the_game_is_run_and	游戏的运行与显示方式。
+menu.image_quality	画质
+menu.in_the_list	列表中有 %d 个
+menu.interface	界面
+menu.is_now	%s 现为 %s
+menu.keep	保留
+menu.keep_sound	保持声音
+menu.keep_the_places_that_are_just	保留与上一步完全相同的位置。
+menu.keep_the_places_that_are_not	保留与上一步不同的位置。
+menu.keep_the_places_that_do_not	保留数值不等于你所输数字的位置。
+menu.keep_the_places_that_hold_less	保留数值小于你所输数字的位置。
+menu.keep_the_places_that_hold_more	保留数值大于你所输数字的位置。
+menu.keep_the_places_that_hold_the	保留数值等于你所输数字的位置。请在游戏中查看该数字。
+menu.keep_the_places_that_went_down	保留自上一步以来减小的位置。
+menu.keep_the_places_that_went_up	保留自上一步以来增大的位置。
+menu.keep_these_controls_for_every_game	这些操作设置用于所有游戏，或仅用于此游戏。
+menu.keep_these_picture_settings_for_every	这些画面设置用于所有游戏，或仅用于此游戏。
+menu.language	语言
+menu.large	大
+menu.lcd_grid	LCD 网格
+menu.lcd_pch_2000	LCD (PCH-2000)
+menu.leave_this_game_for_the_game	离开此游戏，回到游戏列表
+menu.left_stick	左摇杆
+menu.left_stick_2	左摇杆  %d, %d
+menu.lets_the_rear_touch_panel_s	让背面触摸板的四个角充当可映射的按键。
+menu.light	浅色
+menu.load	读取
+menu.load_undone	已撤销读取
+menu.loading_states_is_not_available	无法读取即时存档
+menu.lock	锁定
+menu.look_at_the_game_s_memory	立即查看游戏内存
+menu.make_this_a_cheat_that_keeps	把它变成一个保持当前数值不变的金手指。
+menu.map.press_ok_for	请按确定，然后按应作为 %s 的 Vita 按键。
+menu.medium	中
+menu.min_played	已玩 %lld 分钟
+menu.mmpx_2x	MMPX 2x
+menu.mmpx_at_twice_its_size_crisp	MMPX 放大两倍：清晰的像素画，对 Vita 负担轻。
+menu.modal.cheat_delete_body	该金手指将从列表中移除，且无法撤销。
+menu.modal.cheat_delete_body_named	“%s”将从列表中移除，且无法撤销。
+menu.modal.exit_title	关闭 VitAdhoc？
+menu.modal.exit_title_named	%s？
+menu.most_counters_are_1_byte_try	多数计数器为 1 字节。金钱和分数可试 2 字节。“任意地址”也会查看奇数位置。下次新搜索时生效。
+menu.most_counters_are_1_byte_try_2	多数计数器为 1 字节。金钱和分数可试 2 字节，大数字可试 4 字节。下次新搜索时生效。
+menu.moved_here_from	%s 已从 %s 移到这里
+menu.moves_like_the_d_pad	与方向键相同
+menu.narrow_it_down_to_or_fewer	缩小到 %d 个以内即可查看。
+menu.new_search	新搜索
+menu.no_cheats_for_this_game	此游戏没有金手指
+menu.no_cheats_yet	还没有金手指
+menu.no_picture	无画面
+menu.no_results_start_a_new_search	没有结果。请开始新搜索
+menu.no_saved_state_in_this_slot	此存档位没有即时存档
+menu.normal	正常
+menu.normal_pitch	正常音调
+menu.not_set	未设置
+menu.not_usable_here	此处不可用
+menu.not_used	未使用
+menu.nothing_matched_start_a_new_search	没有匹配项。请开始新搜索。
+menu.nothing_pressed_the_button_was_not	没有按键：按键未更改
+menu.nothing_to_undo	没有可撤销的操作
+menu.off	关
+menu.oled_pch_1000	OLED (PCH-1000)
+menu.on	开
+menu.original	原始
+menu.overwrite	覆盖
+menu.overwrite_slot	覆盖存档位 %d？
+menu.pick_a_result_to_make_it	选一个结果，把它变成保持该数值的金手指。
+menu.pick_the_player_whose_buttons_you	选择你要修改按键的玩家。
+menu.picture	画面
+menu.picture_controls_speed_and_text	画面、操作、速度和文字
+menu.play_together	一起玩
+menu.play_with_a_friend	与好友一起玩
+menu.player	玩家
+menu.player_2	玩家 %d
+menu.player_buttons_reset	玩家 %d 的按键已重置
+menu.press_a_button_for	请按下按键以设置 %s
+menu.press_ok_then_the_vita_button	请按确定，然后按要用于它的 Vita 按键。
+menu.press_one_button_or_hold_several	按一个按键，或同时按住几个组成组合键。
+menu.press_the_vita_button_stick_direction	请按要使用的 Vita 按键、摇杆方向或背面触摸角。
+menu.ps_tv	PS TV
+menu.put_every_button_stick_and_turbo	把所有按键、摇杆和连发设置恢复为默认。
+menu.put_this_player_s_buttons_back	把此玩家的按键恢复为默认。
+menu.quit	退出
+menu.ra.help	此游戏的 RetroAchievements 及已解锁的成就。
+menu.ra.locked	未解锁
+menu.ra.no_achievements	没有可显示的成就
+menu.ra.pts	%u 分
+menu.ra.unlocked	已解锁
+menu.ra.unlocked_hc	已解锁 (HC)
+menu.rear_touch_panel	背面触摸板
+menu.reason.no_link	此主机不可用：该播放器没有联机功能
+menu.reason.unsupported	此播放器不可用
+menu.remember_the_game_s_memory_as	记住游戏内存当前的样子。继续游戏，然后用下面的步骤缩小列表。
+menu.reset	重置
+menu.reset_game	重置游戏
+menu.reset_the_controls	重置操作设置？
+menu.reset_the_game	重置游戏？
+menu.reset_this_player_s_buttons	重置此玩家的按键
+menu.reset_to_defaults	恢复默认
+menu.results	结果
+menu.resume	继续
+menu.rewind	倒带
+menu.rewind_length_help	倒带能回到多久之前：短约 30 秒，中约一分钟。繁忙的游戏会略少一些：可用内存是固定的。
+menu.right_stick	右摇杆
+menu.right_stick_2	右摇杆  %d, %d
+menu.save	保存
+menu.save_here	保存到这里
+menu.save_or_load_the_game_of	保存或读取游戏：已用 %d / %d 个存档位
+menu.save_states	即时存档
+menu.saved	已保存
+menu.saving_states_is_not_available	无法保存即时存档
+menu.saving_to_slot	正在保存到存档位 %d...
+menu.scanlines	扫描线
+menu.screen	屏幕
+menu.screen_size	屏幕大小
+menu.screen_size_image_quality_scanlines_lcd	屏幕大小、画质、扫描线、LCD 网格和氛围光。
+menu.search.ask_number	%s（数字）
+menu.search.found_at	位于 %s
+menu.search.n_result	%d 个结果
+menu.search.n_results	%d 个结果
+menu.search_memory	搜索内存
+menu.search_started_places_play_on_then	搜索已开始：%d 个位置。继续游戏，然后缩小范围
+menu.select	选择
+menu.settings	设置
+menu.shape.fit	适应
+menu.shape.pixel_perfect	像素完美
+menu.shape.stretch	拉伸
+menu.shape.zoom	缩放
+menu.sharp_bilinear	锐利双线性
+menu.short	短
+menu.shows_each_button_stick_and_touch	按下时显示每个按键、摇杆和触摸板，以及它们的功能。
+menu.shows_more_of_the_world_than	对有宽视野配置的游戏，显示比原主机更多的游戏世界。
+menu.since_the_last_step	自上一步以来
+menu.size_of_the_number	数字大小
+menu.slot	存档位 %d
+menu.slot_deleted	存档位 %d 已删除
+menu.slot_is_locked_press_l	存档位已锁定 - 按 L 解锁
+menu.slot_locked	存档位 %d 已锁定
+menu.slot_of	存档位 %d / %d
+menu.slot_unlocked	存档位 %d 已解锁
+menu.smoothed_at_four_times_its_size	放大四倍并平滑。细节最多，负担最大。
+menu.smoothed_at_three_times_its_size	放大三倍并平滑。细节更多，负担更大。
+menu.smoothed_at_twice_the_game_s	放大两倍并平滑，再缩放到合适大小。
+menu.sped_up	加速
+menu.speed	速度
+menu.speed.value_ff	快进 %s
+menu.start_again	重新开始
+menu.start_the_game_again_from_the	从头重新开始游戏
+menu.state_loaded_from_slot	已从存档位 %d 读取即时存档
+menu.state_saved_to_slot	即时存档已保存到存档位 %d
+menu.states.empty	空
+menu.stay	留下
+menu.tap_screen_for_menu	轻触屏幕开菜单
+menu.text_size	文字大小
+menu.text_size_and_high_contrast_for	应用和播放器菜单的文字大小与高对比度。
+menu.the_cheat_could_not_be_deleted	无法删除该金手指
+menu.the_game_s_own_pixels_evenly	游戏自身的像素，在任何屏幕尺寸下都大小均匀。
+menu.the_game_starts_again_from_the	游戏将从头重新开始。尚未保存的内容将会丢失。
+menu.the_saved_state_and_its_picture	即时存档及其图片将被移除，且无法撤销。
+menu.the_search_could_not_start_not	无法开始搜索：内存不足
+menu.the_sound_while_fast_forwarding_off	快进时的声音：关闭、随游戏加速，或保持正常音调。
+menu.the_state_could_not_be_deleted	无法删除该即时存档
+menu.the_state_could_not_be_loaded	无法读取该即时存档：此游戏或版本无法读取它
+menu.the_state_saved_there_will_be	保存在那里的即时存档将被游戏当前的状态替换。
+menu.the_undo_could_not_be_applied	无法执行撤销
+menu.theme	主题
+menu.there_is_no_memory_to_search	此游戏没有可搜索的内存
+menu.there_is_no_search_to_narrow	没有可缩小范围的搜索
+menu.this_game	此游戏
+menu.this_place_cannot_be_made_into	此位置无法在这里变成金手指
+menu.to_leave_hold_start_select_or	退出：按住 Start + Select，或用手指触摸此行
+menu.toggle	切换
+menu.touch_screen	触摸屏
+menu.touch_screen_2	触摸屏  %d, %d
+menu.touching	触摸中
+menu.turbo_a_speed	连发 A 速度
+menu.turbo_b_speed	连发 B 速度
+menu.turbo_mode	连发模式
+menu.turn_cheats_on_and_off	开启或关闭金手指
+menu.turn_this_cheat_on_or_off	开启或关闭此金手指。
+menu.turn_this_cheat_on_or_off_2	开启或关闭此金手指。按 △ 或“删除”可将其移除。
+menu.type_a_game_genie_pro_action	用键盘输入 Game Genie、Pro Action Replay 或 地址=数值 代码。
+menu.type_a_whole_number_from_0	请输入 0 到 %u 的整数（或以 0x 开头的十六进制）
+menu.ui.language_help	应用和播放器菜单的语言。“自动”跟随 Vita 自身的语言；没有翻译的语言会显示英文。
+menu.ui.large_text	大号文字
+menu.ui.normal_text	正常文字
+menu.ui.tap_menu_help	轻触游戏屏幕任意位置即可打开菜单。
+menu.ui.theme_help	在深色和浅色菜单主题之间切换。
+menu.ui.value_contrast	%s，高对比度
+menu.undo	撤销
+menu.undo_last_load	撤销上次读取
+menu.unlimited	无限制
+menu.unlimited_smooth	无限制平滑
+menu.unlock	解锁
+menu.video_filter_help	画面如何适应屏幕。锐利双线性：精确像素，边缘柔化，适用于任何尺寸。双线性：柔和，每个像素都与相邻像素融合。
+menu.waiting	等待中...  %d
+menu.what_the_left_stick_does_nothing	左摇杆的作用：无、方向键，或可映射的独立按键。
+menu.what_the_right_stick_does_nothing	右摇杆的作用：无、方向键，或可映射的独立按键。
+menu.which_vita_screen_this_is_oled	这是哪种 Vita 屏幕。OLED 会让颜色略显柔和。适用于所有主机。
+menu.wide_view	宽视野
+patch.patch_applied_checksums_match	补丁已应用（校验和一致）
+patch.patch_applied_this_kind_of_patch	补丁已应用（此类补丁无法校验 ROM）
+patch.the_patch_file_is_cut_short	补丁文件被截断
+patch.the_patch_file_is_damaged	补丁文件已损坏
+patch.the_patch_file_is_not_valid	补丁文件无效
+patch.the_patched_rom_does_not_match	打补丁后的 ROM 与补丁的校验和不符
+patch.the_patched_rom_would_be_too	打补丁后的 ROM 会过大
+patch.this_patch_was_made_for_a	此补丁是为另一个 ROM 制作的
+player.a_name_for_it_you_can	为它起个名字（可以留空）
+player.brought_in_the_newer_retroarch_save	已导入较新的 RetroArch 存档
+player.cancel_hint	%s：取消
+player.cheat_added	已添加并开启金手指：%s
+player.cheat_added_not_saved	金手指已添加并开启，但无法保存列表：%s
+player.cheat_deleted_not_saved	金手指已删除，但无法保存列表：%s
+player.cheat_off	金手指已关闭：%s
+player.cheat_off_not_saved	金手指已关闭，但无法保存列表：%s
+player.cheat_on	金手指已开启：%s
+player.cheat_on_not_saved	金手指已开启，但无法保存列表：%s
+player.cheats_are_off_while_linked_to	与其他主机连接时金手指已关闭。
+player.could_not_bring_in_the_retroarch	无法导入 RetroArch 存档：旧存档已保留
+player.could_not_continue	无法继续：%s
+player.could_not_continue_the_resume_point	无法继续：续玩点与此游戏不符
+player.could_not_save_the_screen_settings	无法保存屏幕设置
+player.draws_each_picture_on_its_own	在独立线程中绘制每幅画面，因此复杂的画面选项不会拖慢游戏。如果画面出现异常，请关闭它。
+player.european_games_run_at_50_hz	欧洲游戏以 50 Hz 运行。平滑 50 Hz 以其真实速度运行并让画面更均匀：每六次刷新有一次显示两帧的混合。真实 50 Hz 每六帧重复显示一帧；快速 60 Hz 则像在 60 Hz 屏幕上那样快 20％。
+player.fast_60_hz	快速 60 Hz
+player.game_not_started_err	无法启动此游戏：%s
+player.moved_old_states	已把 %d 个旧即时存档移到新存档位
+player.moved_one_old_state	已把 %d 个旧即时存档移到新存档位
+player.no_game_was_given	没有指定游戏。
+player.no_point_to_continue_from_the	没有可续玩的位置：游戏从头开始
+player.not_enough_memory	内存不足。
+player.pal_games_speed	PAL 游戏速度
+player.patch_failed_notice	无法应用补丁：%s
+player.quick_response	快速响应
+player.returning_to_vitadhoc	正在返回 VitAdhoc...
+player.rewind_length	倒带时长
+player.save_failed_retry	无法保存游戏：%s。旧存档已保留；正在重试。
+player.shows_what_you_press_one_frame	让你的按键提前一帧显示：提前计算并显示下一帧。游戏本身运行不变。“自动”在游戏留有余裕时使用。
+player.slot	存档位 %d：%s
+player.slot_1_is_empty	存档位 1 为空
+player.slot_could_not_be_loaded_this	无法读取存档位 %d：此游戏无法读取它
+player.smooth_50_hz	平滑 50 Hz
+player.smooth_hand_over	平滑交接
+player.start_it_from_the_game_list	请从游戏列表启动：设置 > 双人游戏
+player.state_loaded_from_slot_1	已从存档位 1 读取即时存档
+player.steady_pacing	稳定节奏
+player.that_code_is_too_long_16	代码过长（最多 16 段）
+player.the_cheat_could_not_be_added	无法添加该金手指
+player.the_cheat_list_is_full	金手指列表已满
+player.the_connection_could_not_be_opened	无法建立连接。
+player.the_game_file_could_not_be	无法读取游戏文件。
+player.the_game_file_could_not_be_2	无法再次读取游戏文件。
+player.the_game_is_saved_again	游戏已再次保存
+player.the_game_was_reset	游戏已重置
+player.the_patch_could_not_be_applied	无法应用补丁，因此没有启动游戏。
+player.the_resume_point_was_made_with	续玩点是用另一个补丁创建的：游戏从头开始
+player.the_two_player_game_could_not	双人游戏无法开始。
+player.the_two_player_link_could_not	双人联机无法开始。
+player.this_cheat_cannot_be_switched_on	此处无法开启这个金手指
+player.this_game_could_not_be_started	无法启动此游戏。
+player.true_50_hz	真实 50 Hz
+player.two_player_game	双人游戏
+player.unknown_error	未知错误
+player.video_filter	画面滤镜
+player.when_a_scene_is_too_heavy	当某个场景重到无法每帧都显示时，会均匀地每隔一帧显示。游戏本身保持全速。
+ra.achievement	成就：%s (%u)
+ra.achievements_sent	成就已发送
+ra.achievements_will_be_sent_when_back	恢复联网后会发送成就
+ra.challenge	挑战：%s
+ra.challenges_active	%u 个挑战进行中
+ra.completed	已完成：%s
+ra.error	RetroAchievements：%s
+ra.hardcore_no_cheats	硬核模式：金手指已关闭
+ra.hardcore_no_rewind	硬核模式：倒带已关闭
+ra.hardcore_no_states	硬核模式：无法读取即时存档
+ra.leaderboard_attempt	排行榜挑战：%s
+ra.leaderboard_failed	排行榜挑战失败：%s
+ra.leaderboard_submitted	已提交：%s %s
+ra.mastered	已精通：%s
+ra.no_achievements_for_this_game_yet	此游戏还没有成就
+ra.progress	%u / %u 个成就
+ra.progress_hardcore	%u / %u 个成就 - 硬核
+ra.rank	排名 %u / %u
+ra.retroachievements_does_not_know_this_version	RetroAchievements 不认识此版本
+ra.server_error	RetroAchievements：服务器错误
+ra.set_completed	已完成成就集：%s
+ra.sign_in_retry	RetroAchievements：无法登录，稍后会重试
+ra.unavailable_error	成就不可用：%s
+ra.unavailable_no_answer	成就不可用：无应答
+rewind.chip	<< 倒带 %u 秒
+rewind.chip_oldest	<< 倒带 %u 秒（最早）
+rewind.rewind_failed	倒带失败
+rewind.rewind_is_off_while_games_are	游戏联机时倒带已关闭
+rewind.rewind_is_switched_off_settings	倒带已关闭（设置）
+rewind.rewind_not_enough_memory_for_it	倒带：内存不足
+rewind.this_is_as_far_back_as	已是倒带能回到的最早位置
+search.1_byte	1 字节
+search.2_bytes	2 字节
+search.2_bytes_any_address	2 字节，任意地址
+search.4_bytes	4 字节
+search.4_bytes_any_address	4 字节，任意地址
+search.changed	已变化
+search.decreased	已减小
+search.equal_to	等于
+search.greater_than	大于
+search.increased	已增大
+search.less_than	小于
+search.not_equal_to	不等于
+search.unchanged	未变化
+snes.8_7_console	8:7（主机）
+snes.averages_pairs_of_columns_in_512	把 512 宽画面中相邻两列取平均，使其抖动式的透明效果更平滑。文字会变柔和。
+snes.averages_pairs_of_lines_in_interlaced	把隔行画面中相邻两行取平均，以消除闪烁。
+snes.blend_hi_res_columns	混合高分辨率列
+snes.blend_interlace_lines	混合隔行线
+snes.cheat_code_game_genie_pro_action	金手指代码（Game Genie、Pro Action Replay 或 地址=数值）
+snes.look_eased_to_keep_full_speed	放宽画质以保持全速
+snes.multitap	Multitap
+snes.pixel_perfect_only_the_console_s	仅限“像素完美”：主机略宽的像素 (8:7)，或方形像素。
+snes.pixel_shape	像素形状
+snes.start_snes_games_from_vitadhoc	请从 VitAdhoc 启动 SNES 游戏。
+snes.that_code_points_at_address_0	该代码指向地址 0，无法修改
+snes.that_is_not_a_cheat_code	这不是金手指代码。请使用 XXXX-XXXX（Game Genie）、AAAAAAVV（Pro Action Replay）或 AAAAAA=VV
+snes.the_snes_core_could_not_start	SNES 核心无法启动。
+snes.the_super_multitap_for_players_3	供玩家 3 和 4 使用的 Super Multitap。“自动”会为已知需要它的游戏开启。
+speed.unlimited	>> 无限制
+speed.unlimited_smooth	>> 无限制平滑
+states.apr	4月
+states.aug	8月
+states.could_not_save_the_state	无法保存即时存档：%s
+states.date_order	ymd
+states.dec	12月
+states.feb	2月
+states.jan	1月
+states.jul	7月
+states.jun	6月
+states.mar	3月
+states.may	5月
+states.no_saved_state_in_this_slot	此存档位没有即时存档
+states.no_such_slot	没有这个存档位
+states.nov	11月
+states.oct	10月
+states.sep	9月
+states.the_state_could_not_be_read	无法从记忆卡读取该即时存档
+states.the_state_could_not_be_written	无法写入该即时存档
+states.the_state_file_is_damaged	即时存档文件已损坏
+states.the_state_file_is_too_large	即时存档文件过大
+states.this_slot_is_locked	此存档位已锁定
+util.bad_request	请求无效
+util.could_not_replace_the_old_file	无法替换旧文件（已保留）
+util.could_not_write_to_the_memory	无法写入记忆卡（已满或写保护）
+util.the_card_did_not_keep_what	记忆卡没有保存所写入的内容

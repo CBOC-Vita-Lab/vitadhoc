@@ -511,7 +511,7 @@ extern u32 gba_rewind_cnt[2];
 #define RW_MARK_ALL()         ((void)0)
 #endif
 extern u32 vram_dirty_marks;
-extern u8 bios_rom[1024 * 16];
+extern u8 bios_rom[1024 * 32];
 // Double buffer used for SMC detection
 extern u8 ewram[1024 * 256 * 2];
 extern u8 iwram[1024 * 32 * 2];
@@ -524,6 +524,7 @@ extern u32 reg[64];
 #define BACKUP_FLASH      1
 #define BACKUP_EEPROM     2
 #define BACKUP_UNKN       3
+#define BACKUP_NONE       4   /* no chip (gba_over.h FLAGS_NO_BACKUP) */
 
 #define SRAM_SIZE_32KB    1
 #define SRAM_SIZE_64KB    2

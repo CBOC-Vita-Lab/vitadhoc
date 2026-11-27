@@ -1,5 +1,6 @@
 /* cpuclock.c -- see cpuclock.h. */
 #include "cpuclock.h"
+#include "i18n.h"
 #include "plat.h"
 #include "fe_evt.h"
 
@@ -298,13 +299,16 @@ static void profile_remove(void)
 
 /* ---- the clock ---- */
 
-const char *cpuclk_note(void);
+static const char *note_in(const char *(*t)(const char *), char *s, size_t n);
 static void measure(const char *when)
 {
    g_measured = plat_arm_mhz_measured();
    fe_evt("clocks: the ARM core measures %u MHz (the system reports %u) %s",
           g_measured, plat_arm_mhz(), when);
-   fe_evt("clocks: note=\"%s\"", cpuclk_note());
+   {
+      char en[128];
+      fe_evt("clocks: note=\"%s\"", note_in(tr_en, en, sizeof(en)));   /* the log stays English */
+   }
 }
 
 static void request(int fast)
@@ -348,6 +352,28 @@ void cpuclk_set(int fast)
    measure("after the change");
 }
 
+/* The console's clocks after a sleep: the system may bring the CPU, bus and
+ * GPU back at their defaults (444 / 222 / 111-ish), and a PSVshell profile
+ * is applied by the plugin at the title's start only.  Ask again for what
+ * the setting says and log the answer and the measured clock.  Returns the
+ * request's result (negative: refused, as at the start). */
+int cpuclk_reapply(void)
+{
+   int want = g_fast ? FAST_MHZ : STD_MHZ;
+   int rc = plat_cpu_set_mhz(want);
+   fe_evt("clocks: reapplied after resume: asked for %d MHz, result %d", want, rc);
+   if (rc < 0 && g_fast)
+   {
+      int rc2 = plat_cpu_set_mhz(STD_MHZ);
+      fe_evt("clocks: reapplied: asked for %d MHz, result %d", STD_MHZ, rc2);
+      g_granted = 0;
+   }
+   else
+      g_granted = (rc >= 0) && g_fast;
+   measure("after resume");
+   return rc;
+}
+
 void cpuclk_tick(void)
 {
    if (g_second_done || plat_time_us() - g_t0 < SECOND_MEASURE_US)
@@ -356,19 +382,25 @@ void cpuclk_tick(void)
    measure("8 s in");
 }
 
+/* The note in a language: tr (the interface's) or tr_en (the log's). */
+static const char *note_in(const char *(*t)(const char *), char *s, size_t n)
+{
+   /* One short line (the help line is about 56 characters wide) */
+   if (g_fast && !g_granted && !g_plugin)
+      return t("settings.help.needs_an_overclock_plugin_such_as");
+   if (g_fast && g_nowrite)
+      return t("settings.help.cannot_write_the_psvshell_profile");
+   if (g_measured)
+      snprintf(s, n, t("settings.help.measured_mhz"), g_measured,
+               g_fast && g_wrote_now && g_measured < 480
+                  ? t("settings.help.restart_the_app_to_apply") : "");
+   else
+      snprintf(s, n, "%s", t("settings.help.measured_not_known"));
+   return s;
+}
+
 const char *cpuclk_note(void)
 {
    static char s[128];
-   /* One short line (the help line is about 56 characters wide) */
-   if (g_fast && !g_granted && !g_plugin)
-      return "Needs an overclock plugin such as PSVshell";
-   if (g_fast && g_nowrite)
-      return "Cannot write the PSVshell profile";
-   if (g_measured)
-      snprintf(s, sizeof(s), "Measured: %u MHz%s", g_measured,
-               g_fast && g_wrote_now && g_measured < 480
-                  ? ". Restart the app to apply" : "");
-   else
-      snprintf(s, sizeof(s), "Measured: not known");
-   return s;
+   return note_in(tr, s, sizeof(s));
 }

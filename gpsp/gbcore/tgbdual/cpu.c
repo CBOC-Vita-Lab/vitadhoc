@@ -57,6 +57,7 @@ byte *ram_bank;
 byte z802gb[256],gb2z80[256];
 //	word org_pal[16][4];
 int total_clock,rest_clock,sys_clock,seri_occer,div_clock;
+int cpu_access_off;/* GBAdhoc: clocks from the instruction start to its memory access */
 static unsigned timer_pending, timer_reloading;
 /* GBAdhoc: the byte an internal-clock transfer delivers into SB when
  * seri_occer expires (0xFF with no cable), set at the SC write. */
@@ -228,6 +229,7 @@ void cpu_save_state_ex(int *dat)
 	dat[3]=total_clock;
 }
 
+extern int tmp_clocks;
 #include "cpu_io.h"
 
 void cpu_restore_state(int *dat)
@@ -264,7 +266,7 @@ byte cpu_read_direct_ord(word adr)
 		return vram_bank[adr&0x1FFF];//8KBVRAM
 	case 5:
 		if (mbc_is_ext_ram())
-			return mbc_get_sram()[adr&0x1FFF];//カートリッジRAM
+			return mbc_cam_ram_blocked()?0:mbc_get_sram()[adr&0x1FFF];//カートリッジRAM
 		else
 			return mbc_ext_read(adr);
 	case 6:
@@ -374,9 +376,10 @@ void cpu_write_direct_ord(word adr,byte dat)
 		vram_bank[adr&0x1FFF]=dat;
 		break;
 	case 5:
-		if (mbc_is_ext_ram())
-			mbc_get_sram()[adr&0x1FFF]=dat;//カートリッジRAM
-		else
+		if (mbc_is_ext_ram()){
+			if (!mbc_cam_ram_blocked())
+				mbc_get_sram()[adr&0x1FFF]=dat;//カートリッジRAM
+		}else
 			mbc_ext_write(adr,dat);
 		break;
 	case 6:
@@ -411,9 +414,10 @@ inline void cpu_write_direct(word adr,byte dat)
 		else
 			ram[adr&0x0fff]=dat;
 	} else if ((adr&0xe000)==0xa000) {
-		if (mbc_is_ext_ram())
-			mbc_get_sram()[adr&0x1FFF]=dat;//カートリッジRAM
-		else
+		if (mbc_is_ext_ram()){
+			if (!mbc_cam_ram_blocked())
+				mbc_get_sram()[adr&0x1FFF]=dat;//カートリッジRAM
+		}else
 			mbc_ext_write(adr,dat);
 	} else {
 		cpu_write_direct_ord(adr,dat);
@@ -667,6 +671,10 @@ void cpu_irq_process()
 
 	cpu_irq_check();
 
+	/* GBAdhoc: dispatching an interrupt takes 20 clocks (5 machine cycles). */
+	rest_clock-=20;
+	cpu_clock_advance(20);
+
 	//割り込みがかかったのでステートを足す
 	//13stateは暫定値。GBでどうなってるかは知らない。
 	//よくわからんのでsys_clockは足してないが入れてもいいかも - LCK
@@ -724,6 +732,7 @@ void cpu_exec(unsigned short clocks)
 
 
 	}
+	tmp_clocks=0; /* GBAdhoc: a register access outside an instruction has no M-cycle offset */
 	apu_update(); /* GBAdhoc: clocks advance even without sound-register I/O. */
 }
 

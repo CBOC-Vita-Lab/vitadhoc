@@ -1,0 +1,432 @@
+/* Unit tests: pk_states. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE). */
+#include "pk_test.h"
+#include "harness.h"
+#include "pk_states.h"
+#include "pk_i18n.h"
+#include <string.h>
+#include <stdlib.h>
+#include <time.h>
+#include <string>
+
+using namespace pk;
+
+static StateLayout layout(const std::string &root)
+{
+	StateLayout l;
+	l.root = root; l.console = "snes"; l.name = "Super Example World (USA)";
+	return l;
+}
+
+static std::vector<uint8_t> blob(int seed, size_t n = 30000)
+{
+	std::vector<uint8_t> v(n);
+	for (size_t i = 0; i < n; i++) v[i] = (uint8_t) (seed * 13 + (int) i * 5);
+	return v;
+}
+
+TEST(states_layout_names)
+{
+	StateLayout l = layout("ux0:data/GBAdhoc");
+	/* the bucket: crc32("Super Example World (USA)") = f3a54da3 */
+	CHECK_STR(l.flat_dir(), "ux0:data/GBAdhoc/states/snes");
+	CHECK_STR(l.states_dir(), "ux0:data/GBAdhoc/states/snes/f3");
+	CHECK_STR(l.slot_path(1), "ux0:data/GBAdhoc/states/snes/f3/Super Example World (USA).st0");
+	CHECK_STR(l.slot_path(10), "ux0:data/GBAdhoc/states/snes/f3/Super Example World (USA).st9");
+	CHECK_STR(l.resume_path(), "ux0:data/GBAdhoc/states/snes/f3/Super Example World (USA).rsm");
+	CHECK_STR(l.scene_path(), "ux0:data/GBAdhoc/scenes/Super Example World (USA).shot");
+}
+
+/* The flat layout before buckets (1.3): a game's files move into its bucket the first time it is
+ * looked at, with nothing lost; a file already in the bucket wins and the old one stays; once moved, a
+ * marker means one stat; another game's files are not touched; a mixed layout reads right. */
+TEST(states_bucket_migration)
+{
+	pkh::TempDir td;
+	StateLayout l = layout(td.path);
+	std::vector<uint16_t> px; pkh::make_game_frame(4, px);
+	Frame f(&px[0], 256, 224, 512);
+	std::vector<uint8_t> d1 = blob(1), d2 = blob(2), d5 = blob(5), back;
+	/* make real slot files in the bucket, then put them where 1.3 had them */
+	{
+		States st(l);
+		CHECK_EQ(st.save(1, &d1[0], d1.size(), f, 10).status, ST_OK);
+		CHECK_EQ(st.save(2, &d2[0], d2.size(), f, 20).status, ST_OK);
+	}
+	make_dirs(l.flat_dir());
+	const char *const files[] = { ".st0", ".st0.thumb", ".st0.shot", ".st0.meta", ".st1", ".st1.thumb",
+	                              ".st1.shot", ".st1.meta" };
+	for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); i++)
+		CHECK(fs().rename_file(path_join(l.states_dir(), l.name + files[i]),
+		                       path_join(l.flat_dir(), l.name + files[i])));
+	file_remove(path_join(l.states_dir(), l.name + ".st0.mig"));
+	/* slot 2 also in the bucket, newer: it wins, the flat one is kept */
+	{
+		std::vector<uint8_t> b; CHECK(file_read(path_join(l.flat_dir(), l.name + ".st1"), b, 1 << 20));
+		CHECK(fs().write_all(path_join(l.states_dir(), l.name + ".st1"), &d5[0], d5.size()));
+	}
+	/* another game's file in the flat folder stays */
+	CHECK(fs().write_all(path_join(l.flat_dir(), "Other Game.st0"), &d2[0], 10));
+	int failed = -1;
+	int moved = migrate_to_bucket(l, &failed);
+	CHECK_EQ(failed, 0);
+	CHECK(moved >= 7);
+	CHECK(file_exists(path_join(l.states_dir(), l.name + ".st0.mig")));
+	CHECK(file_exists(path_join(l.flat_dir(), l.name + ".st1")));        /* kept, not overwritten */
+	CHECK(file_exists(path_join(l.flat_dir(), "Other Game.st0")));
+	CHECK(!file_exists(path_join(l.flat_dir(), l.name + ".st0")));
+	CHECK_EQ(migrate_to_bucket(l, &failed), 0);                           /* the marker: done */
+	States st(l);
+	CHECK_EQ(st.load(1, back), ST_OK);
+	CHECK(back == d1);
+	SlotInfo s2 = st.info(2);
+	CHECK(s2.present);
+}
+
+/* A game on several discs gets an .m3u: the list is the game now, with a name of its own, and takes over the first disc's states once.
+ * Copies only: the first disc keeps its files; a game that has states of its own is left alone; a second call does nothing. */
+TEST(states_adopt_from_first_disc)
+{
+	pkh::TempDir td;
+	StateLayout disc = layout(td.path), game = layout(td.path);
+	disc.name = "Game (Disc 1)";
+	game.name = "Game";
+	std::vector<uint16_t> px; pkh::make_game_frame(4, px);
+	Frame f(&px[0], 256, 224, 512);
+	std::vector<uint8_t> d1 = blob(1), d2 = blob(2), back;
+	{
+		States st(disc);
+		CHECK_EQ(st.save(1, &d1[0], d1.size(), f, 10).status, ST_OK);
+		CHECK_EQ(st.save(3, &d2[0], d2.size(), f, 20).status, ST_OK);
+	}
+	int failed = -1;
+	const int n = adopt_states(disc, game, &failed);
+	CHECK(n >= 6);                                                          /* two slots, each with its picture, shot and notes */
+	CHECK_EQ(failed, 0);
+	CHECK(file_exists(disc.slot_path(1)) && file_exists(disc.slot_path(3)));     /* never moved */
+	States st(game);
+	CHECK_EQ(st.load(1, back), ST_OK);
+	CHECK(back == d1);
+	CHECK_EQ(st.load(3, back), ST_OK);
+	CHECK(back == d2);
+	CHECK(st.info(1).has_thumb);
+	CHECK_EQ(adopt_states(disc, game, &failed), 0);                         /* it has states now: nothing more is taken */
+	/* a game with a state of its own is left alone */
+	StateLayout other = layout(td.path);
+	other.name = "Other";
+	{
+		States so(other);
+		CHECK_EQ(so.save(2, &d2[0], d2.size(), f, 5).status, ST_OK);
+	}
+	CHECK_EQ(adopt_states(disc, other, &failed), 0);
+	CHECK(!file_exists(other.slot_path(1)));
+	/* nothing to take */
+	StateLayout none = layout(td.path), fresh = layout(td.path);
+	none.name = "Nothing (Disc 1)";
+	fresh.name = "Nothing";
+	CHECK_EQ(adopt_states(none, fresh, &failed), 0);
+	CHECK_EQ(failed, 0);
+}
+
+TEST(states_thumb_format_bytes)
+{
+	std::vector<uint16_t> px; pkh::make_game_frame(0, px);
+	Frame f(&px[0], 256, 224, 512);
+	std::vector<uint8_t> t = thumb_file(f);
+	CHECK_EQ(t.size(), THUMB_HEADER + THUMB_W * THUMB_H * 2);
+	CHECK(t[0] == 'S' && t[1] == 'T' && t[2] == 'H' && t[3] == '1');
+	std::vector<uint16_t> back; int w = 0, h = 0;
+	CHECK(parse_thumb(t, back, &w, &h));
+	CHECK_EQ(w, THUMB_W); CHECK_EQ(h, THUMB_H);
+	CHECK_EQ(back.size(), THUMB_W * THUMB_H);
+	/* the sky colour at the top middle is bluish: blue high in the file means blue is the top 5 bits of the raw word */
+	uint16_t raw = (uint16_t) (t[THUMB_HEADER + (THUMB_W / 2) * 2] | (t[THUMB_HEADER + (THUMB_W / 2) * 2 + 1] << 8));
+	/* the frame is letterboxed: the first rows are black, so look lower in */
+	raw = (uint16_t) (t[THUMB_HEADER + (10 * THUMB_W + 32) * 2] | (t[THUMB_HEADER + (10 * THUMB_W + 32) * 2 + 1] << 8));
+	CHECK((raw >> 11) > (raw & 31));     /* blue (high bits) larger than red (low bits) in a sky */
+	/* garbage is refused */
+	std::vector<uint8_t> bad = t; bad[0] = 'X';
+	CHECK(!parse_thumb(bad, back, &w, &h));
+	bad = t; bad.resize(20);
+	CHECK(!parse_thumb(bad, back, &w, &h));
+}
+
+TEST(states_shot_format)
+{
+	std::vector<uint16_t> px; pkh::make_game_frame(1, px);
+	Frame f(&px[0], 256, 224, 512);
+	std::vector<uint8_t> s = shot_file(f);
+	std::vector<uint16_t> back; int w = 0, h = 0;
+	CHECK(parse_shot(s, back, &w, &h));
+	CHECK(w <= SHOT_MAX_W && h <= SHOT_MAX_H && w > 100 && h > 100);
+	/* aspect ratio kept (256x224 -> about 1.143) */
+	CHECK(((double) w / h) > 1.10 && ((double) w / h) < 1.18);
+	std::vector<uint16_t> rows; int ow, oh;
+	make_shot(f, rows, &ow, &oh);
+	CHECK_EQ(rows.size(), (size_t) SHOT_STRIDE * oh);
+}
+
+TEST(states_box_filter_averages)
+{
+	/* a checkerboard of black and white pixels shrinks to mid grey */
+	std::vector<uint16_t> px(128 * 84);
+	for (int y = 0; y < 84; y++) for (int x = 0; x < 128; x++) px[(size_t) y * 128 + x] = ((x + y) & 1) ? 0xFFFF : 0;
+	Frame f(&px[0], 128, 84, 256);
+	uint16_t t[THUMB_W * THUMB_H];
+	make_thumb(f, t);
+	uint16_t mid = t[21 * THUMB_W + 32];
+	int r = mid & 31;
+	CHECK(r >= 13 && r <= 18);
+}
+
+TEST(states_save_load_info_remove)
+{
+	pkh::TempDir td;
+	States st(layout(td.path));
+	std::vector<uint16_t> px; pkh::make_game_frame(2, px);
+	Frame f(&px[0], 256, 224, 512);
+	std::vector<uint8_t> d = blob(3), back;
+	set_clock_for_tests([]() -> int64_t { return 1760000000; });   /* 9 Oct 2025 */
+	SaveReport r = st.save(3, &d[0], d.size(), f, 754);
+	set_clock_for_tests(0);
+	CHECK_EQ(r.status, ST_OK);
+	CHECK(r.thumb_ok && r.shot_ok && r.meta_ok);
+	CHECK_STR(r.text(), "");
+	SlotInfo si = st.info(3);
+	CHECK(si.present && si.has_thumb);
+	CHECK_EQ(si.size, d.size());
+	CHECK(si.saved == 1760000000);
+	CHECK(si.play_seconds == 754);
+	CHECK_EQ(st.load(3, back), ST_OK);
+	CHECK(back == d);
+	CHECK_EQ(st.load(4, back), ST_EMPTY);
+	CHECK_EQ(st.load(0, back), ST_BAD_SLOT);
+	CHECK_EQ(st.load(11, back), ST_BAD_SLOT);
+	CHECK_EQ(st.used_count(), 1);
+	SlotInfo all[STATE_SLOTS];
+	st.scan(all);
+	CHECK(all[2].present && !all[0].present);
+	std::vector<uint16_t> pxb; int w, h;
+	CHECK(st.read_thumb(3, pxb, &w, &h));
+	CHECK(st.read_shot(3, pxb, &w, &h));
+	CHECK(!st.read_thumb(4, pxb, &w, &h));
+	CHECK(file_exists(st.layout().slot_path(3) + ".thumb"));
+	CHECK(st.remove(3));
+	CHECK(!file_exists(st.layout().slot_path(3)));
+	CHECK(!file_exists(st.layout().slot_path(3) + ".thumb"));
+	CHECK(!file_exists(st.layout().slot_path(3) + ".shot"));
+	CHECK(!file_exists(st.layout().slot_path(3) + ".meta"));
+}
+
+TEST(states_damaged_file_is_detected)
+{
+	pkh::TempDir td;
+	States st(layout(td.path));
+	std::vector<uint16_t> px; pkh::make_game_frame(0, px);
+	Frame f(&px[0], 256, 224, 512);
+	std::vector<uint8_t> d = blob(1), back;
+	CHECK_EQ(st.save(1, &d[0], d.size(), f).status, ST_OK);
+	std::vector<uint8_t> bad = d; bad[100] ^= 0x40;
+	CHECK(fs().write_all(st.layout().slot_path(1), &bad[0], bad.size()));
+	CHECK_EQ(st.load(1, back), ST_DAMAGED);
+	/* a state with no .meta (saved by an older player) still loads */
+	file_remove(st.layout().slot_path(1) + ".meta");
+	CHECK_EQ(st.load(1, back), ST_OK);
+}
+
+static bool fail_all_writes(const std::string &, const uint8_t *, size_t) { return false; }
+
+TEST(states_failed_save_keeps_previous_slot)
+{
+	pkh::TempDir td;
+	States st(layout(td.path));
+	std::vector<uint16_t> px; pkh::make_game_frame(0, px);
+	Frame f(&px[0], 256, 224, 512);
+	std::vector<uint8_t> a = blob(1), b = blob(2), back;
+	CHECK_EQ(st.save(2, &a[0], a.size(), f).status, ST_OK);
+	FsOps real = fs();
+	fs().write_all = fail_all_writes;
+	SaveReport r = st.save(2, &b[0], b.size(), f);
+	fs() = real;
+	CHECK_EQ(r.status, ST_WRITE);
+	CHECK(!r.text().empty());
+	CHECK_EQ(st.load(2, back), ST_OK);
+	CHECK(back == a);
+}
+
+TEST(states_resume_point_round_trip)
+{
+	pkh::TempDir td;
+	States st(layout(td.path));
+	std::vector<uint16_t> px; pkh::make_game_frame(4, px);
+	Frame f(&px[0], 256, 224, 512);
+	std::vector<uint8_t> d = blob(9), back;
+	CHECK(!st.resume_present());
+	CHECK_EQ(st.save_resume(&d[0], d.size(), f, 99, "patch-a").status, ST_OK);
+	CHECK(st.resume_present());
+	CHECK_EQ(st.load_resume(back), ST_OK);
+	CHECK(back == d);
+	CHECK_EQ(st.resume_patch("patch-a"), States::PATCH_SAME);
+	CHECK_EQ(st.resume_patch("patch-b"), States::PATCH_DIFFERENT);
+	CHECK(st.remove_resume());
+	CHECK(!st.resume_present());
+	CHECK_EQ(st.resume_patch("x"), States::PATCH_UNKNOWN);
+}
+
+TEST(states_resume_due_timing)
+{
+	pkh::TempDir td;
+	States st(layout(td.path));
+	CHECK(st.resume_due(1000));            /* none yet */
+	st.resume_mark(1000);
+	CHECK(!st.resume_due(30000));
+	CHECK(st.resume_due(61001));
+	CHECK(st.resume_due(5000, 3000));
+}
+
+TEST(states_undo_and_scene)
+{
+	pkh::TempDir td;
+	States st(layout(td.path));
+	std::vector<uint8_t> d = blob(5), back;
+	CHECK(!st.undo_available());
+	CHECK(st.undo_store(&d[0], d.size()));
+	CHECK(st.undo_available());
+	CHECK_EQ(st.undo_fetch(back), ST_OK);
+	CHECK(back == d);
+	st.undo_clear();
+	CHECK(!st.undo_available());
+	std::vector<uint16_t> px; pkh::make_game_frame(0, px);
+	CHECK(st.save_scene(Frame(&px[0], 256, 224, 512)));
+	CHECK(file_exists(st.layout().scene_path()));
+	CHECK(!st.save_scene(Frame()));
+}
+
+TEST(states_stamp_text)
+{
+	/* the stamp is local time (what the player sees); pin the zone so the test does not depend on the machine's */
+	const char *oldtz = getenv("TZ");
+	std::string saved = oldtz ? oldtz : "";
+	setenv("TZ", "UTC", 1);
+	tzset();
+	CHECK_STR(stamp_text(0), "");
+	/* 2026-10-03 14:32:00 UTC */
+	CHECK_STR(stamp_text(1791037920), "3 Oct 2026, 14:32");
+	setenv("TZ", "UTC-2", 1);
+	tzset();
+	CHECK_STR(stamp_text(1791037920), "3 Oct 2026, 16:32");
+	/* the language's date order; Japanese and Chinese month names (10月) take 年 and 日 */
+	{
+		const char *ymd = "states.date_order\tymd\nstates.oct\t10\xe6\x9c\x88\n";
+		CHECK_EQ(pk::i18n_use_text(ymd, strlen(ymd)), 2);
+		CHECK_STR(stamp_text(1791037920), "2026\xe5\xb9\xb4" "10\xe6\x9c\x88" "3\xe6\x97\xa5, 16:32");
+		const char *mdy = "states.date_order\tmdy\nstates.oct\tOkt\n";
+		CHECK_EQ(pk::i18n_use_text(mdy, strlen(mdy)), 2);
+		CHECK_STR(stamp_text(1791037920), "Okt 3, 2026, 16:32");
+		const char *ymd2 = "states.date_order\tymd\n";
+		CHECK_EQ(pk::i18n_use_text(ymd2, strlen(ymd2)), 1);
+		CHECK_STR(stamp_text(1791037920), "2026 Oct 3, 16:32");
+		pk::i18n_use(pk::LANG_EN, 1);
+	}
+	if (oldtz) setenv("TZ", saved.c_str(), 1); else unsetenv("TZ");
+	tzset();
+}
+
+TEST(states_slot_lock_blocks_overwrite_and_delete_and_follows_migrate_adopt)
+{
+	pkh::TempDir td;
+	StateLayout l = layout(td.path);
+	std::vector<uint16_t> px; pkh::make_game_frame(1, px);
+	Frame f(&px[0], 256, 224, 512);
+	std::vector<uint8_t> d1 = blob(1), d2 = blob(2), back;
+	{
+		States st(l);
+		CHECK(!st.is_locked(1));
+		CHECK(!st.set_lock(1, true));                           /* empty slot cannot be locked */
+		CHECK_EQ(st.save(1, &d1[0], d1.size(), f, 12).status, ST_OK);
+		CHECK(st.set_lock(1, true));
+		CHECK(st.is_locked(1));
+		CHECK(st.info(1).locked);
+		CHECK(file_exists(l.slot_path(1) + ".lock"));
+		/* locked slot refuses save, commit, and remove without touching the existing slot */
+		CHECK_EQ(st.save(1, &d2[0], d2.size(), f, 24).status, ST_LOCKED);
+		StateJob j = st.prepare(1, &d2[0], d2.size(), f, 24);
+		CHECK_EQ(st.commit(j).status, ST_LOCKED);
+		CHECK(!st.remove(1));
+		CHECK_EQ(st.load(1, back), ST_OK);
+		CHECK(back == d1);
+		CHECK(!std::string(state_status_text(ST_LOCKED, true)).empty());
+	}
+	/* a fresh States instance picks up the .lock file from disk */
+	{
+		States st2(l);
+		CHECK(st2.is_locked(1));
+		CHECK_EQ(st2.save(1, &d2[0], d2.size(), f, 30).status, ST_LOCKED);
+		CHECK(st2.set_lock(1, false));
+		CHECK(!st2.is_locked(1));
+		CHECK(!file_exists(l.slot_path(1) + ".lock"));
+		CHECK_EQ(st2.save(1, &d2[0], d2.size(), f, 30).status, ST_OK);
+		CHECK(st2.set_lock(1, true));
+	}
+	/* adopt_states copies .lock alongside slot files */
+	StateLayout adopted = layout(td.path);
+	adopted.name = "Example Adopted";
+	int failed = -1;
+	CHECK(adopt_states(l, adopted, &failed) >= 2);
+	CHECK_EQ(failed, 0);
+	CHECK(file_exists(adopted.slot_path(1) + ".lock"));
+	States st_ad(adopted);
+	CHECK(st_ad.is_locked(1));
+	CHECK(!st_ad.remove(1));
+
+	/* migrate_to_bucket moves .lock alongside flat slot files */
+	StateLayout flat = layout(td.path);
+	flat.name = "Flat Locked Game";
+	make_dirs(flat.flat_dir());
+	CHECK(fs().write_all(path_join(flat.flat_dir(), flat.name + ".st0"), &d1[0], d1.size()));
+	CHECK(fs().write_all(path_join(flat.flat_dir(), flat.name + ".st0.lock"), (const uint8_t *) "locked\n", 7));
+	CHECK_EQ(migrate_to_bucket(flat, &failed), 2);
+	CHECK_EQ(failed, 0);
+	CHECK(!file_exists(path_join(flat.flat_dir(), flat.name + ".st0.lock")));
+	CHECK(file_exists(flat.slot_path(1) + ".lock"));
+	States st_mig(flat);
+	CHECK(st_mig.is_locked(1));
+}
+
+TEST(states_undo_persists_across_instances_and_handles_write_failure)
+{
+	pkh::TempDir td;
+	StateLayout l = layout(td.path);
+	std::vector<uint8_t> d = blob(7), back;
+	{
+		States st(l);
+		CHECK(!st.undo_available());
+		CHECK(st.undo_store(&d[0], d.size()));
+		CHECK(file_exists(l.undo_path()));
+		CHECK(st.undo_available());
+	}
+	/* new States instance after close/restart reads l.undo_path() from disk */
+	{
+		States st2(l);
+		CHECK(st2.undo_available());
+		CHECK_EQ(st2.undo_fetch(back), ST_OK);
+		CHECK(back == d);
+		st2.undo_clear();
+		CHECK(!st2.undo_available());
+		CHECK(!file_exists(l.undo_path()));
+	}
+	/* a fresh third instance sees undo was cleared */
+	{
+		States st3(l);
+		CHECK(!st3.undo_available());
+		CHECK_EQ(st3.undo_fetch(back), ST_EMPTY);
+	}
+	/* disk failure still keeps undo in memory */
+	States st4(l);
+	FsOps real = fs();
+	fs().write_all = fail_all_writes;
+	CHECK(st4.undo_store(&d[0], d.size()));
+	fs() = real;
+	CHECK(st4.undo_available());
+	CHECK_EQ(st4.undo_fetch(back), ST_OK);
+	CHECK(back == d);
+}

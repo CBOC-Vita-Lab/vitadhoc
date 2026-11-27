@@ -2343,6 +2343,11 @@ void init_emitter(bool must_swap) {
    * the regular load handlers already handle paged reads correctly, so
    * no per-flag specialization is needed here. */
   (void)must_swap;
+  /* the .S lays spsr (u32[16]) and reg_mode (u32[7][7]) out by hand */
+  GPSP_REGBLOCK_EXPECT("x86", spsr, reg, SPSR_BASE_OFF);
+  GPSP_REGBLOCK_EXPECT("x86", spsr, io_registers, sizeof(io_registers));
+  GPSP_REGBLOCK_EXPECT("x86", reg_mode, spsr, sizeof(spsr));
+  GPSP_REGBLOCK_EXPECT("x86", memory_map_read, reg, 0xA9220); /* RDMAP_OFF */
   memcpy(x86_table_info, x86_table_data, sizeof(x86_table_data));
 
   rom_cache_watermark = INITIAL_ROM_WATERMARK;

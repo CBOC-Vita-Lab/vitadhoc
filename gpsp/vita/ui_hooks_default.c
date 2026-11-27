@@ -35,15 +35,38 @@ UI_WEAK void ui_host_look_changed(void)
 {
    vid_set_look(pcfg_display_console() == FE_CONSOLE_GBA ? g_pcfg.color
                                                           : VID_COLOR_RAW,
-                g_pcfg.blend);
+                g_pcfg.ghost);
+   vid_set_overlays(g_pcfg.scan, g_pcfg.grid);
+   vid_set_crt(g_pcfg.crt);
+   vid_set_text_look(g_pcfg.text_large, g_pcfg.contrast);
+   vid_ambient_strength(g_pcfg.glow);
+   vid_ambient_mode(g_pcfg.glow ? g_pcfg.ambient : 0);
 }
 
 /* ---- section 2: ROM folders beside roms/ ---------------------------------- */
+UI_WEAK void        app_ws_options(void)        { }
+UI_WEAK void        app_nes_options(void)       { }
+UI_WEAK void        app_steady_options(void)    { }
+UI_WEAK void        app_handoff_options(void)   { }
+UI_WEAK void        app_core4_options(void)     { }
+UI_WEAK void        app_update_options(void)    { }
+UI_WEAK void        ui_host_update_now(void)    { }
+UI_WEAK void        ui_host_home_idle(int idle) { (void)idle; }
+UI_WEAK int         ui_host_clip_save(void)     { return 1; }
+UI_WEAK void        app_quick_options(void)     { }
+UI_WEAK int         app_quick_supported(int c)  { (void)c; return 0; }
+UI_WEAK const char *ui_host_core4_status(void)  { return "not available"; }
+UI_WEAK const char *ui_host_look_label(void)    { return NULL; }
+UI_WEAK int ui_host_export_save(int dest, char *where, size_t wcap, char *note,
+                                size_t cap)
+{ (void)dest; (void)where; (void)wcap; (void)note; (void)cap; return -1; }
+UI_WEAK int         ui_host_gb_kind_get(void)   { return 0; }
+UI_WEAK int         ui_host_gb_kind_set(int k)  { (void)k; return -1; }
 UI_WEAK int         ui_host_extra_roots(void)   { return 0; }
 UI_WEAK int         ui_host_extra_root_toggle(const char *f) { (void)f; return -3; }
 UI_WEAK int         ui_host_zip_console(const char *p, unsigned n) { (void)p; (void)n; return -1; }
-UI_WEAK int         ui_host_grid_level(void) { return 5; }
-UI_WEAK void        ui_host_grid_set(int l) { (void)l; }
+UI_WEAK int         ui_host_md_bin_ok(const char *p) { (void)p; return 1; }
+UI_WEAK int         ui_host_name_by_crc(unsigned c, char *o, size_t n) { (void)c; (void)o; (void)n; return 0; }
 UI_WEAK int         ui_host_sync_ra_on(void) { return 0; }
 UI_WEAK void        ui_host_sync_ra_set(int on) { (void)on; }
 UI_WEAK int         ui_host_cpu_fast(void) { return 1; }
@@ -52,6 +75,12 @@ UI_WEAK const char *ui_host_cpu_note(void) { return ""; }
 UI_WEAK int         ui_host_overlay_on(void) { return 0; }
 UI_WEAK void        ui_host_overlay_set(int on) { (void)on; }
 UI_WEAK const char *ui_host_overlay_name(void) { return ""; }
+UI_WEAK void        ui_host_btn_read(ui_btn_state *s)
+{
+   memset(s, 0, sizeof(*s));
+   s->lx = s->ly = s->rx = s->ry = 128;
+   s->front_use = "Nothing";
+}
 UI_WEAK int         ui_host_ab_circle(void) { return g_pcfg.ab_buttons == 1; }
 UI_WEAK void        ui_host_buttons_changed(void) { }
 UI_WEAK const char *ui_host_shot_dir(void) { return ""; }
@@ -89,6 +118,50 @@ UI_WEAK int ui_host_rooms_poll(ui_room *out, int max)
 }
 
 UI_WEAK void ui_host_rooms_end(void) { }
+
+/* ---- section 4b: online play (2.0) ----------------------------------------- */
+UI_WEAK int ui_host_online_rom_id(const char *path, char out[9])
+{
+   (void)path;
+   if (out)
+      out[0] = 0;
+   return -1;
+}
+
+UI_WEAK int ui_host_pad_game(char out[9])
+{
+   if (out)
+      out[0] = 0;
+   return 0;
+}
+
+UI_WEAK int ui_host_snes_game_id(const char *path, char out[9])
+{
+   (void)path;
+   if (out)
+      out[0] = 0;
+   return 0;
+}
+
+UI_WEAK int ui_host_online_available(void) { return 0; }
+
+UI_WEAK int ui_host_online_lookup(const char *code)
+{
+   (void)code;
+   return UI_ROOMS_E_NO_WIFI;
+}
+
+UI_WEAK void ui_host_online_card(ui_online_card *out)
+{
+   if (!out)
+      return;
+   memset(out, 0, sizeof(*out));
+   out->state = 2;
+}
+
+UI_WEAK void ui_host_online_cancel(void) { }
+
+UI_WEAK int ui_host_link_direct(void) { return 0; }
 
 /* ---- section 5: the local link ------------------------------------------- */
 UI_WEAK void ui_host_local_state(ui_local_state *out)

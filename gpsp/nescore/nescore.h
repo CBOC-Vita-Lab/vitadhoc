@@ -1,0 +1,134 @@
+/* Copyright (c) 2026 CBOC-Vita contributors.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
+ * Frontend-neutral NES / Famicom execution API, modelled on gbcore.h.
+ * Implementation: FCEUmm (nes/core, GPL-2.0-or-later) through nes/frontend/
+ * host.{h,c} (nes_host_*), a relocatable object whose only globals are
+ * nes_host_*, plus this adapter (nescore.c; gpsp/vita/nescore.mk).  A single global machine: one nescore_t at a time.
+ *
+ * The frontend (fe_host.c) reaches it through gbcore_mux.h, which routes the
+ * gbcore_* calls the Game Boy path makes to these when the console is the
+ * NES, so a NES game gets the same state, rewind, fast-forward, Continue and
+ * battery-save machinery as a Game Boy game.
+ */
+#ifndef GBADHOC_NESCORE_H
+#define GBADHOC_NESCORE_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct nescore nescore_t;
+
+enum {
+  NESCORE_BUTTON_A = 1u << 0, NESCORE_BUTTON_B = 1u << 1,
+  NESCORE_BUTTON_SELECT = 1u << 2, NESCORE_BUTTON_START = 1u << 3,
+  NESCORE_BUTTON_UP = 1u << 4, NESCORE_BUTTON_DOWN = 1u << 5,
+  NESCORE_BUTTON_LEFT = 1u << 6, NESCORE_BUTTON_RIGHT = 1u << 7
+};
+
+typedef struct nescore_video_frame {
+  const uint16_t *pixels;     /* RGB565, valid until the next run_frame */
+  unsigned width, height, pitch_bytes;
+} nescore_video_frame_t;
+
+typedef struct nescore_callbacks {
+  void *userdata;
+  void (*video)(void *userdata, const nescore_video_frame_t *frame);
+  void (*audio_batch)(void *userdata, const int16_t *interleaved, size_t frames);
+} nescore_callbacks_t;
+
+/* Folder that may hold disksys.rom (never shipped), set before create. */
+void nescore_set_system_dir(const char *dir);
+/* Loads the cartridge; the battery RAM is read from srm_path when it exists
+ * (NULL: none).  NULL on failure, the reason in nescore_error(). */
+nescore_t *nescore_create(const char *rom_path, const char *srm_path,
+                          const nescore_callbacks_t *callbacks);
+const char *nescore_error(void);
+int nescore_run_frame(nescore_t *core, unsigned buttons);
+void nescore_set_skip_render(nescore_t *core, int skip);
+/* The two-player link (frontend-common/fe_padpair.h): one emulated frame with
+ * both players' pads (bits NESCORE_BUTTON_*); pad 2 is the guest's. */
+int nescore_run_frame2(nescore_t *core, unsigned pad1, unsigned pad2);
+/* While a session runs: the options that change emulation are pinned (Four
+ * Score off); 0 puts the player's own back and lets go of pad 2. */
+void nescore_session_pin(nescore_t *core, int on);
+/* A cheap fingerprint of the battery RAM (0 = none). */
+uint32_t nescore_save_ram_crc(nescore_t *core);
+/* A refresh with no NES frame (a 50 Hz game on a 60 Hz display): the last
+ * picture is handed to the video callback again, no sound. */
+int nescore_repeat_frame(nescore_t *core);
+/* Smooth 50 Hz (pk_palsmooth.h): the NEXT nescore_run_frame hands its picture to the callback as the mean of the picture before it and
+ * itself; nescore_repeat_frame then shows the new picture alone.  One-shot. */
+void nescore_mix_next(nescore_t *core);
+void nescore_shutdown(nescore_t *core);
+
+unsigned nescore_sample_rate(const nescore_t *core);
+unsigned nescore_frame_width(const nescore_t *core);
+unsigned nescore_frame_height(const nescore_t *core);
+double nescore_fps(const nescore_t *core);
+int nescore_rom_title(nescore_t *core, char *destination, size_t capacity);
+uint32_t nescore_rom_crc(const nescore_t *core);
+
+size_t nescore_save_ram_size(nescore_t *core);
+int nescore_save_ram_read(nescore_t *core, void *destination, size_t capacity);
+/* 0 when the bytes already are the RAM (the load did it); else -1 for now. */
+int nescore_save_ram_write(nescore_t *core, const void *source, size_t size);
+
+size_t nescore_state_size(nescore_t *core);
+long nescore_state_save(nescore_t *core, void *destination, size_t capacity);
+int nescore_state_load(nescore_t *core, const void *source, size_t size);
+/* Quick response (gbcore.h gbcore_ahead_*): the state plus what it does not hold; the look-ahead frame runs with nescore_set_quiet(1)
+ * (it draws, its sound is dropped); the load keeps the picture it drew. */
+size_t nescore_ahead_size(nescore_t *core);
+long nescore_ahead_save(nescore_t *core, void *destination, size_t capacity);
+int nescore_ahead_load(nescore_t *core, const void *source, size_t size);
+void nescore_set_quiet(nescore_t *core, int quiet);
+
+/* RetroAchievements console 7: the CPU's address space ($0000-$07FF,
+ * $6000-$7FFF); returns the bytes copied. */
+uint32_t nescore_ra_read(nescore_t *core, uint32_t addr, uint8_t *out, uint32_t len);
+/* Game Genie / raw "AAAA:VV" codes joined by + , or space; replaces the list
+ * (NULL or "" clears it).  Returns how many were accepted. */
+int nescore_cheats_set(nescore_t *core, const char *codes);
+/* 1 when the battery RAM changed since it was loaded or last written. */
+int nescore_save_ram_dirty(nescore_t *core);
+void nescore_set_fourscore(nescore_t *core, int mode);
+
+/* CPU-visible RAM ($0000-$1FFF, $6000-$7FFF) for RetroAchievements; -1 if none. */
+int nescore_peek(nescore_t *core, unsigned address);
+void nescore_reset(nescore_t *core);
+
+/* The wide view (nes/frontend/host.h "wide view"): 0 Auto (the wider
+ * picture while the game's sides can be shown, else the original 256
+ * columns), 1 On (always the wider picture, soft edges where nothing is
+ * known), 2 Off.  Set before create; takes effect at the next frame.  The
+ * learned map of each game is kept in <system dir>/wide/<key>.map (loaded
+ * at create, written safely at shutdown).  The scout stays off. */
+enum { NESCORE_WIDE_AUTO = 0, NESCORE_WIDE_ON = 1, NESCORE_WIDE_OFF = 2 };
+void nescore_set_wide(int mode);
+/* The wide view's unknown sides: 1 (default) a soft glow of the picture's own
+ * edge colours, 0 black bars (the app's Ambient glow off).  Takes effect at
+ * the next frame; may be set before create. */
+void nescore_set_soft_edge(int on);
+/* 1 while the last frame handed over was the wider picture */
+int nescore_wide_shown(void);
+
+/* The Zapper (the light gun on the touch screen).  The mode is read at the next load: NESCORE_PORT2_AUTO (the games the core's
+ * game database lists as Zapper games get one), NESCORE_PORT2_ZAPPER (one on port 2 for any game), NESCORE_PORT2_PAD (never).
+ * nescore_zapper_active() is 1 when the loaded game has one.  nescore_set_zapper(): where the gun points this frame, in the
+ * core's own 256 x 240 picture pixels (anything outside = off the screen), and whether the trigger is held; it stays until
+ * the next call.  nescore_top() is the picture's first row in that 240-row frame: the app crops the overscan. */
+enum { NESCORE_PORT2_AUTO = 0, NESCORE_PORT2_ZAPPER = 1, NESCORE_PORT2_PAD = 2 };
+void nescore_set_port2(int mode);
+int nescore_zapper_active(void);
+void nescore_set_zapper(int x, int y, int trigger);
+unsigned nescore_top(void);
+
+#ifdef __cplusplus
+}
+#endif
+#endif

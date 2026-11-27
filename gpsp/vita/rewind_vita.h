@@ -118,7 +118,10 @@ int  rewind_frame(int want, int locked);
 int  rewind_active(void);
 /* Something the player should be told, once: "Rewind is off during a link
  * session", "This is as far back as it goes".  NULL = nothing. */
-const char *rewind_notice(void);
+const char *rewind_notice(void);   /* a catalogue key (i18n.h): tr() it to show it */
+/* The chip's format ("<< REWIND %s", "<< %s (oldest)"); weak in rewind_vita.c, the
+ * app's own (main_vita.c) is in the interface language. */
+const char *rewind_chip_format(int oldest);
 
 /* ---- numbers ---------------------------------------------------------------- */
 

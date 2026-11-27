@@ -257,8 +257,13 @@ int main(void)
       assert(disk_matches_live() && sram_fp);
       kill_handle(seek_fails);
       game_save(0, 14, 0x32);
-      periodic_scan();                   /* fails on the dead handle */
-      assert(!disk_matches_live());
+      periodic_scan();                   /* fails on the dead handle ... */
+      /* ... and the whole image is written at once from memory through a
+       * fresh .tmp/.old swap (it used to wait for the next scan). */
+      assert(disk_matches_live() && !sram_retry_full && !sram_full_req);
+      game_save(14, 6, 0x33);            /* still playing: deltas again */
+      periodic_scan();
+      assert(disk_matches_live());
       exit_like_the_psp();               /* before the next 5 s scan */
       assert(disk_matches_live());
       unlink(path);

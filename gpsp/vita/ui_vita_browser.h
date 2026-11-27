@@ -102,7 +102,7 @@ static void vita_browser_touch(int *cur, int n, unsigned *edges, int *idle,
    {
       x = 0; y = HM_ROW_Y / 2; w = VID_SCR_W; h = HM_BIG / 2;
       row_h = (HM_SMALL + HM_GAP) / 2;
-      k = tch_steps_axis(&g_br_ts, row_h, x, y, w, h, 1);
+      k = g_pick_on ? 0 : tch_steps_axis(&g_br_ts, row_h, x, y, w, h, 1);
       if ((g_tch.down && !g_tch.dead && tch_in(x, y, w, h)) || g_br_ts.on)
          *idle = 0;
    }
@@ -149,9 +149,9 @@ static const char *vita_extra_note(char *out, size_t cap)
    int n = ui_host_extra_roots();
    out[0] = '\0';
    if (n == 1)
-      snprintf(out, cap, "Also looked in %s", ui_host_extra_root(0));
+      snprintf(out, cap, tr("browse.also_looked_in"), ui_host_extra_root(0));
    else if (n > 1)
-      snprintf(out, cap, "Also looked in %s and %d more", ui_host_extra_root(0),
+      snprintf(out, cap, tr("browse.also_looked_in_and_more"), ui_host_extra_root(0),
                n - 1);
    return out;
 }
@@ -164,25 +164,24 @@ static void vita_browser_empty(const char *rom_dir, const ui_skin *s,
    char msg[96], dir[PSP_FILE_PATH_CAP];
    int others = vita_browser_others(rom_dir);
    browser_cart(240, 92, s);
-   snprintf(msg, sizeof(msg), "No %s games yet", s->full);
+   snprintf(msg, sizeof(msg), tr("browse.no_games_yet"), s->full);
    vid_text_hd((480 - vid_text_hd_w(msg)) / 2, 118, msg, sel);
-   snprintf(msg, sizeof(msg), "Copy your .%s files into this folder on the "
-            "memory card:", s->ext);
+   snprintf(msg, sizeof(msg), tr("browse.copy_your_files_into_this_folder")
+, s->ext);
    vid_text_center(150, msg, item);
    snprintf(dir, sizeof(dir), "%s", rom_dir);
    clip_title(dir, 440);
    vid_text_center(170, dir, sel);
    if (others > 0)
    {
-      snprintf(msg, sizeof(msg), VID_GLYPH_TRI " shows your %d other game%s",
-               others, others == 1 ? "" : "s");
+      snprintf(msg, sizeof(msg), others == 1 ? tr("browse.other_game_one")
+                                              : tr("browse.other_game_many"), others);
       vid_text_center(200, msg, dim);
       UI_TCH_BTN(PSP_CTRL_TRIANGLE, (480 - vid_text_w(msg)) / 2 - 10, 192,
                  vid_text_w(msg) + 20, 32);
    }
    else
-      vid_text_center(200, ".gba, .gb and .gbc games all go there. Then "
-                      "press " VID_GLYPH_X ".", dim);
+      vid_text_center(200, tr("browse.games_go_there_then_press"), dim);
    if (vita_extra_note(dir, sizeof(dir))[0])
    {
       clip_title(dir, 440);

@@ -1,0 +1,14 @@
+{
+  "name": "vitadhoc-online",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "VitAdhoc online play: room codes, the punch handshake and relay credentials (one Cloudflare Worker and one Durable Object)",
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "dev": "node dev/server.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

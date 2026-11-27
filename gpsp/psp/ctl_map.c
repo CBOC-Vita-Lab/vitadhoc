@@ -6,6 +6,16 @@
 #include <string.h>
 
 #include "ctl_map.h"
+#ifdef VITA
+#include "i18n.h"
+#else
+#ifndef TR_KEY
+#define TR_KEY(k) (k)
+#endif
+#ifndef tr
+#define tr(k) (k)
+#endif
+#endif
 #include "fe_util.h"
 #include "fe_evt.h"
 
@@ -58,34 +68,34 @@ static const ctl_action_info INFO[CTL_ACTIONS] = {
    { "bind_down",         "Down",           CTL_DOWN,     RJ_DOWN,   CTL_F_GAME },
    { "bind_left",         "Left",           CTL_LEFT,     RJ_LEFT,   CTL_F_GAME },
    { "bind_right",        "Right",          CTL_RIGHT,    RJ_RIGHT,  CTL_F_GAME },
-   { "bind_ff",           "Fast-forward",   CTL_SQUARE,   0,         CTL_F_YIELD },
+   { "bind_ff",           TR_KEY("ctl.fast_forward"),   CTL_SQUARE,   0,         CTL_F_YIELD },
 #ifdef REWIND
-   { "bind_video",        "Video preset",   0,            0,         0 },
+   { "bind_video",        TR_KEY("ctl.video_preset"),   0,            0,         0 },
 #else
-   { "bind_video",        "Video preset",   CTL_TRIANGLE, 0,         0 },
+   { "bind_video",        TR_KEY("ctl.video_preset"),   CTL_TRIANGLE, 0,         0 },
 #endif
-   { "bind_quicksave",    "Quick save",     CTL_SELECT | CTL_L, 0,   CTL_F_YIELD },
-   { "bind_quickload",    "Quick load",     CTL_SELECT | CTL_R, 0,   CTL_F_YIELD },
+   { "bind_quicksave",    TR_KEY("ctl.quick_save"),     CTL_SELECT | CTL_L, 0,   CTL_F_YIELD },
+   { "bind_quickload",    TR_KEY("ctl.quick_load"),     CTL_SELECT | CTL_R, 0,   CTL_F_YIELD },
 #ifdef VITA
    /* Unbound on the Vita, which has its own screenshot (PS + Start).  The
     * combo is a Settings row (Controls > Screenshot button combo) that puts
     * L + R + SELECT back; a bind_screenshot already in config.ini wins. */
-   { "bind_screenshot",   "Screenshot",     0, 0,                    CTL_F_YIELD },
+   { "bind_screenshot",   TR_KEY("ctl.screenshot"),     0, 0,                    CTL_F_YIELD },
 #else
    { "bind_screenshot",   "Screenshot",     CTL_L | CTL_R | CTL_SELECT, 0,
                                                                      CTL_F_YIELD },
 #endif
-   { "bind_pause",        "Pause screen",   CTL_SELECT | CTL_TRIANGLE, 0,
+   { "bind_pause",        TR_KEY("ctl.pause_screen"),   CTL_SELECT | CTL_TRIANGLE, 0,
                                                                      CTL_F_YIELD },
-   { "bind_mystery_gift", "Mystery Gift",   CTL_SELECT | CTL_DOWN, 0, 0 },
-   { "bind_catch_test",   "Crash self-test",
+   { "bind_mystery_gift", TR_KEY("ctl.mystery_gift"),   CTL_SELECT | CTL_DOWN, 0, 0 },
+   { "bind_catch_test",   TR_KEY("ctl.crash_self_test"),
                           CTL_L | CTL_R | CTL_UP | CTL_TRIANGLE, 0,  CTL_F_YIELD },
 #ifdef VITA
    /* SELECT + the fast-forward button: the same key, the other way.  It
     * contains fast forward's whole chord, so fast forward stands down while
     * it is held (CTL_F_YIELD there); nothing contains it.  The right stick
     * held LEFT rewinds too, without a binding (vita/main_vita.c). */
-   { "bind_rewind",       "Rewind",         CTL_SELECT | CTL_SQUARE, 0, 0 },
+   { "bind_rewind",       TR_KEY("ctl.rewind"),         CTL_SELECT | CTL_SQUARE, 0, 0 },
 #elif defined(REWIND)
    /* Yields to any longer chord that contains it: SELECT+TRIANGLE is the
     * pause screen, not a rewind. */
@@ -93,10 +103,10 @@ static const ctl_action_info INFO[CTL_ACTIONS] = {
 #endif
    /* Turbo buttons: unbound, and LAST (ctl_map.h).  retro_id is the game
     * button the pulse presses. */
-   { "bind_turbo_a",      "Turbo A",        0,            RJ_A,      CTL_F_TURBO },
-   { "bind_turbo_a2",     "Turbo A (2)",    0,            RJ_A,      CTL_F_TURBO },
-   { "bind_turbo_b",      "Turbo B",        0,            RJ_B,      CTL_F_TURBO },
-   { "bind_turbo_b2",     "Turbo B (2)",    0,            RJ_B,      CTL_F_TURBO },
+   { "bind_turbo_a",      TR_KEY("ctl.turbo_a"),        0,            RJ_A,      CTL_F_TURBO },
+   { "bind_turbo_a2",     TR_KEY("ctl.turbo_a_2"),    0,            RJ_A,      CTL_F_TURBO },
+   { "bind_turbo_b",      TR_KEY("ctl.turbo_b"),        0,            RJ_B,      CTL_F_TURBO },
+   { "bind_turbo_b2",     TR_KEY("ctl.turbo_b_2"),    0,            RJ_B,      CTL_F_TURBO },
 };
 
 /* CONFIG.INI keys of each turbo action's rate and mode. */
@@ -119,6 +129,9 @@ static const struct { unsigned bit; const char *name; } BUTTONS[CTL_NBUTTONS] = 
    /* The stick's directions last: the first twelve slots are 3.5.0's. */
    { CTL_STICK_UP, "STICK_UP" }, { CTL_STICK_DOWN, "STICK_DOWN" },
    { CTL_STICK_LEFT, "STICK_LEFT" }, { CTL_STICK_RIGHT, "STICK_RIGHT" },
+   /* The rear panel's corners after them: the first sixteen slots are 3.6's. */
+   { CTL_REAR_TL, "REAR_TL" }, { CTL_REAR_TR, "REAR_TR" },
+   { CTL_REAR_BL, "REAR_BL" }, { CTL_REAR_BR, "REAR_BR" },
 };
 
 const ctl_action_info *ctl_info(int a)
@@ -162,7 +175,7 @@ static void defaults_in(ctl_map *m, int legacy_swap)
    int a;
    for (a = 0; a < CTL_ACTIONS; a++)
    {
-      m->bind[a] = (uint16_t)load_default(a, legacy_swap);
+      m->bind[a] = (uint32_t)load_default(a, legacy_swap);
       m->keep[a] = 0;
    }
    m->menu_home = CTL_MENU_START_SELECT;
@@ -185,7 +198,7 @@ void ctl_reset(ctl_map *m)
 {
    int a;
    for (a = 0; a < CTL_ACTIONS; a++)
-      m->bind[a] = (uint16_t)ctl_default(a);
+      m->bind[a] = (uint32_t)ctl_default(a);
    m->menu_home = CTL_MENU_START_SELECT;
    for (a = 0; a < CTL_TURBO_N; a++)
    {
@@ -237,11 +250,19 @@ const char *ctl_error_text(int err)
    switch (err)
    {
    case CTL_OK:         return "ok";
+#ifdef VITA
+   case CTL_E_ACTION:   return tr("ctl.not_available_in_this_build");
+   case CTL_E_BITS:     return tr("ctl.that_button_cannot_be_bound");
+   case CTL_E_SINGLE:   return tr("ctl.this_one_takes_a_single_button");
+   case CTL_E_RESERVED: return tr("ctl.start_select_is_reserved_for_the");
+   case CTL_E_TOO_MANY: return tr("ctl.at_most_4_buttons");
+#else
    case CTL_E_ACTION:   return "not available in this build";
    case CTL_E_BITS:     return "that button cannot be bound";
    case CTL_E_SINGLE:   return "this one takes a single button";
    case CTL_E_RESERVED: return "START+SELECT is reserved for the menu";
    case CTL_E_TOO_MANY: return "at most 4 buttons";
+#endif
    default:             return "invalid";
    }
 }
@@ -329,6 +350,43 @@ unsigned ctl_stick_bits(int mode, int lx, int ly, unsigned *state)
              (d & CTL_STICK_LEFT ? CTL_LEFT : 0) |
              (d & CTL_STICK_RIGHT ? CTL_RIGHT : 0);
    return 0;
+}
+
+unsigned ctl_rear_zones(const int *x, const int *y, int n)
+{
+   /* 12% outer grip inset keeps resting fingers on the Vita 1000 back grips
+    * quiet; ~8% center band avoids quadrant flutter along the crosshair. */
+   enum
+   {
+      REAR_H    = CTL_REAR_Y1 - CTL_REAR_Y0 + 1,
+      INSET_X   = CTL_REAR_W * 12 / 100,
+      INSET_Y   = REAR_H * 12 / 100,
+      DEAD_X    = CTL_REAR_W * 4 / 100,
+      DEAD_Y    = REAR_H * 4 / 100,
+      MID_X     = CTL_REAR_W / 2
+   };
+   unsigned z = 0;
+   int i;
+   if (!x || !y)
+      return 0;
+   for (i = 0; i < n && i < 4; i++)
+   {
+      int px = x[i], py = y[i];
+      int dx, dy, left, top;
+      if (px < INSET_X || px >= CTL_REAR_W - INSET_X ||
+          py < CTL_REAR_Y0 + INSET_Y || py > CTL_REAR_Y1 - INSET_Y)
+         continue;
+      dx = px - MID_X;
+      dy = py - CTL_REAR_MID_Y;
+      if ((dx >= -DEAD_X && dx < DEAD_X) ||
+          (dy >= -DEAD_Y && dy < DEAD_Y))
+         continue;
+      left = px < MID_X;
+      top = py < CTL_REAR_MID_Y;
+      z |= top ? (left ? CTL_REAR_TL : CTL_REAR_TR)
+               : (left ? CTL_REAR_BL : CTL_REAR_BR);
+   }
+   return z;
 }
 
 int ctl_stick_only(unsigned mask)
@@ -476,7 +534,7 @@ int ctl_assign(ctl_map *m, int a, unsigned mask, int *stolen)
       if (stolen)
          *stolen = j;
    }
-   m->bind[a] = (uint16_t)mask;
+   m->bind[a] = (uint32_t)mask;
    return CTL_OK;
 }
 
@@ -517,7 +575,7 @@ static int repair_in(ctl_map *m, int legacy_swap,
       }
       if (ctl_check(a, m->bind[a]) != CTL_OK)
       {
-         m->bind[a] = (uint16_t)load_default(a, legacy_swap);
+         m->bind[a] = (uint32_t)load_default(a, legacy_swap);
          changed++;
          if (note)
             note(user, a, -1);
@@ -604,7 +662,7 @@ int ctl_load_ini(ctl_map *m, const char *path)
          err = ctl_check(a, mask);
       if (err == CTL_OK)
       {
-         m->bind[a] = (uint16_t)mask;
+         m->bind[a] = (uint32_t)mask;
          continue;
       }
       bad++;

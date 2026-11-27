@@ -27,12 +27,49 @@ and each vendored component's provenance file. The seven libvita2d shader
 objects are retained licensed upstream inputs with `.cg` source alongside them;
 they are not a bundled proprietary shader compiler.
 
-## Vita Build
+## Mbed TLS (Online play, 2.0)
 
-From the repository root, with the SDK at `/opt/vitasdk`:
+Online play talks HTTPS with the project's own client (`gpsp/vita/nethttps/`),
+which needs Mbed TLS 3.6.8. It is fetched and built once, by a script, into a
+private prefix; it is never installed into VitaSDK and the build itself stays
+offline. The pin (git commit, tag, and every hash) is `gpsp/vita/deps/lock.json`; the recipe is
+`gpsp/vita/deps/Makefile.mbedtls` and the client profile (TLS client only, no
+server, no SHA-1 or MD5) is `gpsp/vita/deps/mbedtls/np_user_config.h`.
 
 ```sh
-make -C gpsp/vita -j4 vpk BIOS= VITASDK=/opt/vitasdk
+python3 tools/online/build-mbedtls.py --target vita   --work "$TLS"   # Vita prefix:  $TLS/mbedtls/vita
+python3 tools/online/build-mbedtls.py --target host64 --work "$TLS"   # twin prefix:  $TLS/mbedtls/host64
+```
+
+`$TLS` is any new folder. The first run needs the network once (it clones the
+pinned source and checks the commit); after that `--fetch-only` and
+`--rebuild` exist, and the script refuses to reuse a work folder built from
+different inputs (use a new one). `--target all` builds `vita`, `host32` and
+`host64`. The Vita target needs VitaSDK at `$VITASDK` (default `/opt/vitasdk`)
+and `arm-vita-eabi-gcc`; the host targets need gcc.
+
+Then pass the prefix to the builds:
+
+```sh
+make -C gpsp/vita -j4 vpk BIOS= VITASDK=/opt/vitasdk MBEDTLS="$TLS/mbedtls/vita"
+make -C gpsp/vita/hostcore ARCH=x86 -j8 MBEDTLS="$TLS/mbedtls/host64"
+```
+
+`MBEDTLS_VITA` (or the gate's `GATE_MBEDTLS_VITA`) in the environment does the same as
+`MBEDTLS=`. Without a prefix the Vita build stops at `vpk` on purpose: a package without
+TLS would be an Online that cannot connect. The twin builds without it and then
+speaks plain `http://` only (the TLS test cases are skipped; `MBEDTLS_HOST`
+points the unit tests at the host prefix). The licence of Mbed TLS (Apache-2.0
+or GPL-2.0-or-later, used here under GPL-2.0-or-later) is in
+[Licensing Status](../LICENSING.md).
+
+## Vita Build
+
+From the repository root, with the SDK at `/opt/vitasdk` and the Mbed TLS Vita
+prefix built above:
+
+```sh
+make -C gpsp/vita -j4 vpk BIOS= VITASDK=/opt/vitasdk MBEDTLS="$TLS/mbedtls/vita"
 ```
 
 Output: `gpsp/vita/VitAdhoc.vpk`; intermediate files are in
@@ -49,11 +86,196 @@ SFO version.
 app writes in its log. Version 1.0 was built with
 `GIT_VERSION=library-r7-20261022` ([Source record](SOURCE.md) has its hashes).
 
-Committed LiveArea images allow a normal build without Python graphics tools.
-To regenerate them, install Pillow, CairoSVG and their normal dependencies,
-then run `make -C gpsp/vita assets`. This now calls `tools/make_livearea.py`,
-not the obsolete `make_assets.py`. pngquant is optional and changes PNG bytes;
-record tool versions before claiming byte-for-byte artwork reproduction.
+The VPK target uses the ready-to-package images under `gpsp/vita/sce_sys/`.
+For this working tree, the Neon Link masters are under `gpsp/vita/artwork/livearea/`.
+To regenerate the bubble, LiveArea background, and Start gate, install
+ImageMagick 7 and run `make -C gpsp/vita assets`. It uses the bundled Outfit
+and Inter fonts and produces 8-bit indexed PNGs. A normal VPK build does not
+need ImageMagick. Keep the masters with the working files when moving this tree.
+
+## Host twins (Linux builds of the app)
+
+The app also builds as a Linux program, the "twin", that the tests drive with a
+scripted pad (see [Testing](TESTING.md)). Three architectures:
+
+```sh
+make -C gpsp/vita/hostcore ARCH=x86 -j2          # x86-64, with the x86 recompiler
+make -C gpsp/vita/hostcore ARCH=armhf -j2        # 32-bit ARM under qemu-arm (arm-linux-gnueabihf-gcc)
+make -C gpsp/vita/hostcore ARCH=aarch64 -j2      # 64-bit ARM Linux
+make -C gpsp/vita/hostcore ARCH=macos -j2        # macOS, native (see "The twin on a Mac" below)
+```
+
+`ARCH=aarch64` is for an Apple-silicon Mac's Linux VM (or any aarch64 Linux) as the
+second player against a real Vita. Natively on an aarch64 Linux the command above is
+all that is needed (gcc, make, libc headers). On another machine it cross-builds with
+`aarch64-linux-gnu-gcc` (Debian / Ubuntu: `apt install gcc-aarch64-linux-gnu
+g++-aarch64-linux-gnu`; `CROSS=` names another prefix). The program is linked
+statically (`build/aarch64/gbadhoc_host`), so the one file starts on any aarch64 Linux. One
+limit: a static glibc looks host names up (`getaddrinfo`: the room service, cover art) through the
+resolver libraries of the glibc it was linked with, loaded at run time, which must match the
+machine it runs on (the linker warns about exactly this). A file cross-built on a machine with a
+newer glibc than the VM's can therefore start, link on the Same Wi-Fi and still fail to resolve
+`psvita.dev` names. For Online rooms (and cover art) build natively on the VM, where the two are
+the same glibc; for Same Wi-Fi rooms the cross-built file should be enough (no name has to be resolved).
+There is no AArch64 recompiler in the GBA core, so this twin
+runs the GBA **interpreter** (`DYNAREC=0` is forced); the other cores are plain C and
+are the same as everywhere. The interpreter's speed on Apple silicon has not been measured (expected to be
+far above 60 frames a second; confirm with the first run).
+
+`DYNAREC=0` also works on x86 (`make -C gpsp/vita/hostcore ARCH=x86 DYNAREC=0`, build
+folder `build/x86-interp`): the same interpreter path, handy for testing it without
+emulation. A build without the recompiler gets `hostcore/interp_stub.c`, which gives the
+recompiler's counters and switches the value "no recompiler".
+
+Two settings for a twin that talks to a real Vita:
+
+- `HOST_VERSION=<the Vita build's CORE_VERSION>` (default `host-<revision>`): link rooms
+  compare the version string, so a twin whose string differs from the Vita's is refused
+  ("different version"). The package's own string is `CORE_VERSION` in `gpsp/vita/Makefile`
+  (`4.1.1+4.5.0fixes` at the time of writing). Build the twin with it and the Vita and the
+  twin hash the same build word.
+- `MBEDTLS=<prefix of the twin's own architecture>` (`--target macos` for `ARCH=macos`): Online rooms are on an https service, so the twin needs Mbed
+  TLS for its own architecture. `python3 tools/online/build-mbedtls.py --target aarch64 --work DIR`
+  builds it (native on aarch64, `aarch64-linux-gnu-gcc` elsewhere); then
+  `make -C gpsp/vita/hostcore ARCH=aarch64 MBEDTLS=DIR/mbedtls/aarch64 HOST_VERSION=...`.
+  Same Wi-Fi rooms need no TLS.
+
+### The twin on a Mac (native macOS)
+
+`ARCH=macos` builds the twin as a native macOS program (Apple silicon or Intel), so the Mac
+itself is the second player against a real Vita on the Same Wi-Fi **and** Online (a Linux VM on
+the Mac may have no route to the room service; the native program uses the Mac's own network).
+It is modelled on `ARCH=aarch64`: Apple clang, the GBA **interpreter** (`DYNAREC=0` is forced),
+not static, not `-no-pie`; the other cores are plain C.
+
+What it needs (macOS 15 and its Xcode command line tools; nothing else is installed by the build):
+
+- `xcode-select --install` (clang, clang++, make 3.81, git) and `python3`;
+- Homebrew's LLVM: `brew install llvm`. Mach-O has neither GNU `ld -r -T` nor `objcopy`, which
+  the Linux build uses to make a second copy of the GBA core (instance B), to keep the NES,
+  WonderSwan and GB cores' many global names private, and to mark the data that is put back
+  before each session. On macOS those steps are done with `llvm-objcopy --redefine-syms`
+  and `llvm-nm` (`tools/build/macho-group.sh`; the instances' writable data sit in sections of
+  their own, `__gbab_*` and `__tgb*`, which the linker's `section$start$` symbols mark). The
+  Makefile finds them on `PATH`, in `LLVM_BIN=<dir>` or under Homebrew's prefix and stops with
+  a clear message when they are missing. GNU make 3.81, the version macOS ships, is enough
+  (nothing in these Makefiles needs make 4).
+
+The one-command build, which stops at the first failing step and prints the last 40 lines of its log:
+
+```sh
+sh tools/build/macos-build.sh [--host-version <the Vita build's CORE_VERSION>] [--no-tls]
+```
+
+It checks the tools, builds Mbed TLS for macOS (`python3 tools/online/build-mbedtls.py
+--target macos --work DIR`; the work folder must not be under `/tmp` or `/var`, which are symlinks
+on a Mac), builds the twin (`make -C gpsp/vita/hostcore ARCH=macos MBEDTLS=DIR/mbedtls/macos
+HOST_VERSION=...`, the program is `gpsp/vita/hostcore/build/macos/gbadhoc_host`) and starts it
+once for 20 refreshes. `--no-tls` skips Mbed TLS: Same Wi-Fi rooms work, Online does not.
+`HOST_VERSION` is explained below; the Mac's GBA link "backend" word is `interp`, as the aarch64
+twin's.
+
+Where the macOS code differs (all under `__APPLE__`, so the Linux builds are unchanged):
+`sem_init`/`sem_timedwait` (a mutex and condition variable: `vita/host_sem.h`, `netdrv/nd_thread.h`),
+`pthread_timedjoin_np`, `getrandom` (`getentropy`), `pthread_condattr_setclock`, `memalign`/`<malloc.h>`,
+`st_mtim`, `SYS_gettid` and `ucontext` (the optional profiler), `MSG_NOSIGNAL` (`SO_NOSIGPIPE` and
+`SIGPIPE` ignored), `SO_REUSEPORT` for the LAN discovery broadcast port, the LAN address (`en*`
+interfaces first), the assembler's font file (Mach-O sections and underscored symbols), and
+the linker (`-framework CoreFoundation` for libretro-common, libc++).
+
+## Fast builds
+
+Everything here is optional: without it the Makefiles build as they always did.
+Numbers are in the table at the end of the section (host measurements on a
+shared 2-core machine; nothing here has run on a Vita).
+
+**ccache.** `tools/build/ccache.mk` is included by every Makefile that compiles
+C or C++ (the Vita app, its host twin, the SNES, NES, WonderSwan and Sega
+programs and twins, playerkit, widekit). When `ccache` is on `PATH` it is put in
+front of the compiler inside `CC` and `CXX` themselves; no wrapper directory of
+symlinks is involved, so there is nothing that can vanish and turn a build cold
+without saying so. Without ccache the variable is empty and nothing changes.
+
+- `make ccache-stats` (in `gpsp/vita` and `gpsp/vita/hostcore`) and the end of
+  `make vpk` print this build's hits and misses, or say plainly that ccache was
+  not used. The gate prints the same for its whole run.
+- `USE_CCACHE=0` turns it off (a bisect, or a doubt about a cached object);
+  `CCACHE=/path/to/ccache` picks another binary.
+- The cache lives in ccache's default directory (`~/.cache/ccache`) unless
+  `CCACHE_DIR` is set. On a machine whose home directory is thrown away,
+  `tools/build/ccache-setup.sh <persistent dir>` installs the package when it is
+  missing and (as root) writes `/etc/ccache.conf` with that directory and a 5 GB
+  cap; run it again after the machine image is rebuilt. The Makefiles cap the
+  cache at 5 GB when nothing else sets `CCACHE_MAXSIZE`.
+- `CCACHE_BASEDIR` is the parent of the checkout and `CCACHE_NOHASHDIR=1`, so a
+  second checkout, a worktree beside it, or a scratch build directory
+  (`B=...`) with the same layout shares hits. The only thing a hit carries from
+  another directory is the debug info's recorded working directory; no shipped
+  file contains it. No `sloppiness` is set: file times and `__DATE__`-style
+  macros stay in the hash, so a hit is what a cold compile would produce.
+- The Makefiles' flag stamps (`.flags`, `.feflags`, `.appflags`) name the compiler
+  without the ccache prefix, so turning ccache on or off does not make every
+  object look out of date.
+- Compile-and-link-in-one-command rules (the test programs of playerkit,
+  widekit and the twins' `main`) cannot be cached by ccache; the per-object
+  rules, which are almost all the time, are.
+
+**Linking.** `vita-elf-create` needs about 3.3 KB of room behind the end of the
+first segment for the module's import tables; when the program's text ends in the
+last 3.3 KB before a 64 KiB boundary it stops with "Cannot allocate N bytes for
+SCE data at end of segment 0; segment 1 overlaps" (any change anywhere can cause
+that). The Vita Makefiles (`gpsp/vita`, `snes/vita`, `md/vita`) detect exactly
+that message, print how many bytes were missing, and link again with 8 KiB of
+padding; nothing else changes.
+
+**Jobs.** `make vpk` builds `snes.bin` through `make -C snes/vita`, which
+inherits the job slots of the outer make (it used to be forced to `-j1`; the SNES
+objects are independent and the link waits for all of them). Use `-j2` on the
+two-core build machines; `nice` it if others are working.
+
+**Dependency files.** Every object is compiled with `-MMD -MP`, and every
+Makefile reads the `.d` files of all of them (the render-thread pair and the GB
+pair glue of the Vita build were missing). A header change rebuilds what
+includes it, and a build with nothing changed compiles and links nothing:
+`make vpk` twice in a row repacks nothing the second time.
+
+**`make vpk-repack`** (`gpsp/vita`): a package from the last package, for a
+change that is not code: new LiveArea art, `gamedb.txt` or `cheats.db`, a
+notice, or a rebuilt `snes.bin` (`make -C snes/vita`, then this). It reads
+the last `VitAdhoc.vpk` and the same inputs `make vpk` packs
+(`tools/build/vpk_repack.py`, which takes the same `-s`, `-b` and `-a` arguments
+as `vita-pack-vpk`), copies every member whose content is unchanged as its stored
+bytes, compresses only those that changed, prints what changed, and checks the
+result (zip structure and CRCs, member list and order, every member against its
+input) before it replaces the old file. The package it writes has the same file
+list, order, modes and per-member contents as a full `make vpk`; compressed sizes
+of changed members may differ by a few bytes from the packer's own. It compiles
+nothing of the app: run `make` first if `eboot.bin` should change. Check the
+result like any package:
+`python3 -m unittest discover -s gpsp/vita/tests -p test_release_package.py`
+(or the gate's `release-package` step). A release is always a full `make vpk`
+from a clean tree.
+
+**Measured** (host timings, 2 cores shared with other builds, so the CPU seconds
+of the build's children are the figure to trust; "load" was 4 to 11 throughout):
+
+| build | before | after |
+|---|---|---|
+| Vita app cores + app (`make all`), cold, no cache | 2167 s wall, 597 s CPU | 967 s wall, 595 s CPU (cache empty: the first build costs the same) |
+| same, new checkout or scratch `B=`, cache warm | 2167 s wall, 597 s CPU | 12 s wall, 8 s CPU |
+| SNES `snes.bin`, cold | 2339 s wall, 716 s CPU (`-j1`) | 952 s wall, 683 s CPU (`-j2`, cache empty); 13 s wall, 6 s CPU with the cache warm |
+| `make vpk`, nothing changed | repacked each time | 1 s, nothing rebuilt or repacked |
+| one `.c` touched, `make` | 9 s wall, 3.5 s CPU | the same (one compile and a link; a hit if the content was seen before) |
+| art, data or notice only | full `make vpk` | `make vpk-repack`, under 1 s |
+
+**Habits that keep a fast build fast** (learned on the sister ports):
+
+- One gated build per batch of changes, with every change behind a runtime
+  switch, rather than a build per edit.
+- Never edit a shell script while a run is using it: bash reads a script as it
+  goes, so a change mid-run executes a mixture of the old and the new text.
+- Compiler levers (ThinLTO, PGO, section ordering) gave the sister ports no run-time
+  gain, and a PGO build at `-O3` once miscompiled. They are not used here.
 
 ## Tests
 
@@ -61,7 +283,8 @@ record tool versions before claiming byte-for-byte artwork reproduction.
 python3 -m unittest discover -s tests                     # download checker
 python3 -m unittest discover -s gpsp/vita/tests -p test_release_package.py
 make -C gpsp/vita/tests/gamedb test
-make -C gpsp/vita/hostcore ARCH=x86 -j8                   # the app, built for Linux
+make -C gpsp/vita/hostcore ARCH=x86 -j8                   # the app, built for Linux (add MBEDTLS=<host64 prefix> for https://)
+(cd online/service && node --test "test/*.test.mjs")      # the online room service (Online, 2.0)
 python3 gpsp/vita/hostcore/app_tests.py x86 --keep        # whole-app tests
 ```
 

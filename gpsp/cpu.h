@@ -253,6 +253,7 @@ void xlat_depth_probe_reset(void);
 extern u32 rom_branch_hash[ROM_BRANCH_HASH_SIZE];
 
 void flush_translation_cache_rom(void);
+u32 gpsp_jit_counters(u32 *out, u32 n);        /* WP0, see cpu_threaded.c */
 void flush_translation_cache_ram(void);
 void flush_translation_cache_ram_smc(void);   /* dynarec stubs only */
 void flush_translation_cache_ram_dma(void);   /* dynarec stubs only */
@@ -262,6 +263,14 @@ void flush_dynarec_caches(void);
 void flush_dynarec_caches_ram(void);
 extern u32 state_load_keeps_rom;
 void init_emitter(bool);
+/* Dynarec register block self-check: the stubs (x86/arm/arm64/mips *_stub.S)
+ * lay the C globals out by hand and the emitters hardcode offsets into it.
+ * Checks (char*)hi - (char*)lo == expect; on a mismatch it logs loudly and
+ * aborts (running on would corrupt the CPU state). */
+void gpsp_regblock_expect(const char *arch, const char *what, const void *hi,
+ const void *lo, long expect);
+#define GPSP_REGBLOCK_EXPECT(arch, hi, lo, expect) \
+  gpsp_regblock_expect(arch, #hi " - " #lo, (const void *)(hi), (const void *)(lo), (long)(expect))
 void init_bios_hooks(void);
 
 #if defined(RUNTIME_JIT_CACHE)
@@ -282,7 +291,7 @@ void dynarec_release_translation_caches(void);
 #endif
 
 extern u32 reg_mode[7][7];
-extern u32 spsr[6];
+extern u32 spsr[16];
 
 extern const u32 cpu_modes[16];
 extern const u32 cpsr_masks[4][2];

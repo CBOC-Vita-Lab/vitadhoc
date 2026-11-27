@@ -20,8 +20,11 @@
  *   SCR_ADHOC      "the Vita's own connection screen comes next"
  *   SCR_LOCAL      two players on this Vita: how the partner starts; while
  *                  it runs, who the pad drives, the layout, Stop
- *   SCR_CONN       Wi-Fi / Internet / Ad hoc, each with its one line, and
- *                  Link delay
+ *   SCR_CONN       Same Wi-Fi / Online / Nearby (and Direct address when
+ *                  vita.ini link_direct = 1), each with its one line, then
+ *                  Link delay and Always use the relay
+ *   SCR_ONLINE_CODE, SCR_ONLINE_CARD   Online: the code pad and the room
+ *                  card, in ui_vita_online.h
  *   SCR_HELP       how to play together, two short pages
  *
  * NOTHING HERE WAITS.  The network is asked through vita/ui_host_hooks.h:
@@ -30,6 +33,8 @@
  */
 #ifndef UI_VITA_PLAY_H
 #define UI_VITA_PLAY_H
+
+#include "online_vita.h"      /* ON_*, ONLINE_Q_*, ONLINE_APP_VERSION */
 
 /* ---- state -------------------------------------------------------------- */
 
@@ -41,12 +46,22 @@ static int  g_play_pending;            /* frames since a Host / local start
                                         * was returned and nothing answered  */
 #define PLAY_PENDING_MAX 600           /* 10 s: then the page says so        */
 static ui_join_info g_join_tgt;
+/* The last room card's version and game title: the %s of the Online
+ * sentences (ui_online_fail_text), whoever asks for them. */
+static char g_ol_last_ver[16], g_ol_last_title[24];
 static int  g_adhoc_host;              /* SCR_ADHOC: 1 host, 0 join          */
 static int  g_help_page;
 
 const ui_join_info *ui_join_target(void)
 {
    return &g_join_tgt;
+}
+
+/* A page that picks the room itself (the SNES Two players page) hands it over here. */
+void ui_join_set(const ui_join_info *t)
+{
+   if (t)
+      g_join_tgt = *t;
 }
 
 /* The network's state, asked at most twice a second (and at once when
@@ -71,53 +86,101 @@ static const ui_net_status *play_net(int now)
 
 static const char *conn_name(int c)
 {
-   return c == UI_CONN_INTERNET ? "Internet" : c == UI_CONN_ADHOC ? "Ad hoc"
-                                                                  : "Wi-Fi";
+   return c == UI_CONN_INTERNET ? tr("play.direct_address")
+        : c == UI_CONN_ADHOC ? tr("play.nearby")
+        : c == UI_CONN_ONLINE ? tr("play.online") : tr("play.same_wi_fi");
+}
+
+/* The Connection page's rows, in the order they are shown: Same Wi-Fi,
+ * Online, Nearby, and the typed address only when vita.ini link_direct = 1
+ * (the old way, kept for a player who forwards a port by hand). */
+static int conn_rows(int ids[UI_CONN_COUNT])
+{
+   int n = 0;
+   ids[n++] = UI_CONN_WIFI;
+   ids[n++] = UI_CONN_ONLINE;
+   ids[n++] = UI_CONN_ADHOC;
+   if (ui_host_link_direct())
+      ids[n++] = UI_CONN_INTERNET;
+   return n;
+}
+
+/* The row of `conn` on that page (a value that is not shown: the first). */
+static int conn_row_of(int conn)
+{
+   int ids[UI_CONN_COUNT], n = conn_rows(ids), i;
+   for (i = 0; i < n; i++)
+      if (ids[i] == conn)
+         return i;
+   return 0;
+}
+
+/* The next connection in the page's order, `dir` steps on (Settings). */
+static int conn_step(int conn, int dir)
+{
+   int ids[UI_CONN_COUNT], n = conn_rows(ids);
+   return ids[(conn_row_of(conn) + n + dir) % n];
+}
+
+/* A NES or WonderSwan game links one way only: Two players (both Vitas run
+ * the same game, one pad each). */
+static int pad_console(void)
+{
+   return g_pcfg.console == FE_CONSOLE_NES ||
+          g_pcfg.console == FE_CONSOLE_WSWAN;
 }
 
 static const char *kind_name(int kind)
 {
-   return kind == ROOM_ADAPTER ? "Wireless Adapter"
-        : kind == ROOM_CABLE_GB ? "GB Link Cable" : "Link Cable";
+   return kind == ROOM_ADAPTER ? tr("play.wireless_adapter")
+        : kind == ROOM_PAD ? tr("play.two_players")
+        : kind == ROOM_CABLE_GB ? tr("play.gb_link_cable") : tr("play.link_cable");
 }
 
 /* Every failure, in the player's words (ui_psp.h). */
 void ui_link_fail_text(int why, const char **l1, const char **l2)
 {
-   static const char *const t[UI_FAIL_COUNT][2] = {
-      { "This " UI_DEV " is not connected to Wi-Fi.",
-        "Connect in the " UI_DEV "'s Settings > Network, then try again." },
-      { "Nobody answered.",
-        "Is the other " UI_DEV " hosting, and on the same network?" },
-      { "That room is full.",
-        "A room takes two players. Ask the host to open a new one." },
-      { "The other " UI_DEV " runs a different version of VitAdhoc.",
-        "Install the same version on both, then link again." },
-      { "The other player's game did not arrive.",
-        "Try again. If it keeps happening, check the memory card has room." },
-      { "The host closed the room.",
-        "Ask them to choose Host a game again." },
-      { "Link lost: the other " UI_DEV " is gone.",
-        "Your game carries on. Save as usual." },
-      { "The two games fell out of step.",
-        "The link ended and nothing was saved. Link again to retry." },
-      { "That is not an address.",
-        "It looks like 192.168.1.23 or 203.0.113.9:19019." },
-      { "The connection screen was closed.",
-        "Nothing was changed. Choose Host or Join to try again." },
-      { "Wi-Fi and ad hoc cannot be used at the same time.",
-        "End the current link first." },
-      { "The room could not be opened on this network.",
-        "The port may be in use. Try again in a moment." },
-      { "Not enough memory to link this game.",
-        "Quit to the game list, open the game again and link first." },
-      { "The second game would not start.",
-        "This game cannot run twice on one " UI_DEV "." },
+   const char *const t[UI_FAIL_COUNT][2] = {
+      { tr("play.this_vita_is_not_connected_to"),
+        tr("play.connect_in_the_vita_s_settings") },
+      { tr("play.nobody_answered"),
+        tr("play.is_the_other_vita_hosting_and") },
+      { tr("play.that_room_is_full"),
+        tr("play.a_room_takes_two_players_ask") },
+      { tr("play.the_other_vita_runs_a_different"),
+        tr("play.install_the_same_version_on_both") },
+      { tr("play.the_other_player_s_game_did"),
+        tr("play.try_again_if_it_keeps_happening") },
+      { tr("play.the_host_closed_the_room"),
+        tr("play.ask_them_to_choose_host_a") },
+      { tr("play.link_lost_the_other_vita_is"),
+        tr("play.your_game_carries_on_save_as") },
+      { tr("play.the_two_games_fell_out_of"),
+        tr("play.the_link_ended_and_nothing_was") },
+      { tr("play.that_is_not_an_address"),
+        tr("play.it_looks_like_192_168_1") },
+      { tr("play.the_connection_screen_was_closed"),
+        tr("play.nothing_was_changed_choose_host_or") },
+      { tr("play.wi_fi_and_ad_hoc_cannot"),
+        tr("play.end_the_current_link_first") },
+      { tr("play.the_room_could_not_be_opened"),
+        tr("play.the_port_may_be_in_use") },
+      { tr("play.not_enough_memory_to_link_this"),
+        tr("play.quit_to_the_game_list_open") },
+      { tr("play.the_second_game_would_not_start"),
+        tr("play.this_game_cannot_run_twice_on") },
    };
+   if (why >= UI_FAIL_ONLINE_CODE && why < UI_FAIL_COUNT)
+   {
+      ui_online_fail_text(why, why == UI_FAIL_ONLINE_GAME ||
+                          why == UI_FAIL_ONLINE_GAME_FILE ? g_ol_last_title
+                          : g_ol_last_ver, ONLINE_APP_VERSION, l1, l2);
+      return;
+   }
    if (why < 0 || why >= UI_FAIL_COUNT)
       why = UI_FAIL_NO_ANSWER;
-   if (l1) *l1 = t[why][0];
-   if (l2) *l2 = t[why][1];
+   if (l1) *l1 = tr(t[why][0]);
+   if (l2) *l2 = tr(t[why][1]);
 }
 
 /* "Wi-Fi: HomeNet  192.168.1.23" -- the one live line every Play together
@@ -127,24 +190,24 @@ static int play_status_line(char *out, size_t cap, int conn,
 {
    if (conn == UI_CONN_ADHOC)
    {
-      snprintf(out, cap, "Ad hoc: the two " UI_DEVS " connect directly, no "
-               "router.");
+      snprintf(out, cap, tr("play.ad_hoc_the_two_vitas_connect")
+);
       return 1;
    }
    if (n->wifi == UI_WIFI_CONNECTED)
    {
       char ssid[40];
-      vw_clip(ssid, sizeof(ssid), n->ssid[0] ? n->ssid : "connected", 170);
+      vw_clip(ssid, sizeof(ssid), n->ssid[0] ? n->ssid : tr("play.connected"), 170);
       snprintf(out, cap, "%s: %s   %s", conn_name(conn), ssid, n->ip);
       return 1;
    }
    if (n->wifi == UI_WIFI_CONNECTING)
-      snprintf(out, cap, "%s: connecting to Wi-Fi...", conn_name(conn));
+      snprintf(out, cap, tr("play.connecting_to_wi_fi"), conn_name(conn));
    else if (n->radio == UI_RADIO_ADHOC)
-      snprintf(out, cap, "%s: the radio is in ad hoc use.", conn_name(conn));
+      snprintf(out, cap, tr("play.the_radio_is_in_ad_hoc"), conn_name(conn));
    else
-      snprintf(out, cap, "No Wi-Fi. Connect in the " UI_DEV "'s Settings > "
-               "Network.");
+      snprintf(out, cap, tr("play.no_wi_fi_connect_in_the")
+);
    return 0;
 }
 
@@ -161,23 +224,28 @@ static void play_status_draw(int y, int conn, const ui_net_status *n)
 /* What this game links with, in one line (the page's sub-title). */
 static void play_game_line(char *out, size_t cap)
 {
-   if (g_pcfg.console != FE_CONSOLE_GBA)
-      wl_line_name(out, cap, "Link Cable game. Player 2 needs ",
-                   own_game_name(), ", or is sent it.", 436);
+   if (pad_console())
+      wl_line_name(out, cap, tr("play.two_players_both_vitas_need"),
+                   own_game_name(), 436);
+   else if (g_pcfg.console != FE_CONSOLE_GBA)
+      wl_line_name(out, cap, tr("play.link_cable_game_player_2_needs"),
+                   own_game_name(), 436);
    else
       switch (ui_host_mode())
       {
       case UI_HOST_CABLE:
-         wl_line_name(out, cap, "Link Cable game: both " UI_DEVS " need ",
-                      own_game_name(), " open.", 436);
+         /* Each side may run its own game (Ruby with Sapphire): the partner's cartridge crosses once
+          * (fe_gblink), so nobody needs this very file. */
+         wl_line_name(out, cap, tr("play.link_cable_game_each_vita_plays"),
+                      own_game_name(), 436);
          break;
       case UI_HOST_ASK:
-         snprintf(out, cap, "Links by Link Cable or Wireless Adapter: the "
-                  "host chooses.");
+         snprintf(out, cap, tr("play.links_by_link_cable_or_wireless")
+);
          break;
       default:
-         snprintf(out, cap, "Wireless Adapter game: the game itself pairs "
-                  "the players.");
+         snprintf(out, cap, tr("play.wireless_adapter_game_the_game_itself")
+);
          break;
       }
 }
@@ -191,7 +259,8 @@ static int play_rows(int ids[PL_COUNT])
    int n = 0;
    ids[n++] = PL_HOST;
    ids[n++] = PL_JOIN;
-   ids[n++] = PL_LOCAL;
+   if (!pad_console())
+      ids[n++] = PL_LOCAL;           /* a NES / WonderSwan game runs once */
    ids[n++] = PL_CONN;
    if (g_pcfg.console == FE_CONSOLE_GBA && ui_host_mgift_available())
       ids[n++] = PL_MGIFT;
@@ -204,6 +273,10 @@ static ui_action screen_join(unsigned edges);
 static ui_action screen_addr(unsigned edges);
 static ui_action screen_local(unsigned edges);
 static void join_open(const char *addr);
+/* ui_vita_online.h */
+static ui_action screen_online_code(unsigned edges);
+static void online_code_open(void);
+static void online_host_page(int y_top, const char *game);
 
 /* Host, decided: Link Cable or Wireless Adapter.  Ad hoc explains the
  * system's screen first; everything else starts the room now.  The menu
@@ -231,9 +304,16 @@ static void play_host_value(char *out, size_t cap)
 {
    char lbl[ROOM_LABEL_CAP];
    int m = g_pcfg.console == FE_CONSOLE_GBA ? ui_host_mode() : UI_HOST_CABLE;
+   if (g_pcfg.net_conn == UI_CONN_ONLINE)
+   {
+      /* a code, not a room number: the number means nothing over the
+       * internet */
+      snprintf(out, cap, tr("play.a_code_for_your_friend"));
+      return;
+   }
    snprintf(out, cap, "%s  -  %s", room_label(g_pcfg.group, lbl, sizeof(lbl)),
-            m == UI_HOST_ASK ? "Cable or Adapter" : m == UI_HOST_ADAPTER
-               ? "Wireless Adapter" : "Link Cable");
+            pad_console() ? tr("play.two_players") : m == UI_HOST_ASK ? tr("play.cable_or_adapter") : m == UI_HOST_ADAPTER
+               ? tr("play.wireless_adapter") : tr("play.link_cable"));
 }
 
 /* A room is open or a link is up: the status, and how to end it. */
@@ -245,8 +325,9 @@ static ui_action play_session(unsigned edges, const char *session_info)
    int pending = g_link.state == UI_LINK_OFF && g_play_pending;
    int conn = g_link.state != UI_LINK_OFF ? g_link.conn : g_pcfg.net_conn;
    char l1[120], l2[120], la[120], lb[120], lc[120], para[260], big[32];
-   const char *mode = g_link.cable ? "Link Cable" : "Wireless Adapter";
-   int y;
+   const char *mode = pad_console() ? tr("play.two_players")
+                    : g_link.cable ? tr("play.link_cable") : tr("play.wireless_adapter");
+   int y, online = 0;
 
    if (g_cursor >= PS_COUNT)
       g_cursor = 0;
@@ -272,34 +353,39 @@ static ui_action play_session(unsigned edges, const char *session_info)
    l1[0] = l2[0] = para[0] = big[0] = la[0] = lb[0] = lc[0] = '\0';
    if (pending)
    {
-      snprintf(l1, sizeof(l1), "Opening %s...", g_link_room[0] ? g_link_room
+      snprintf(l1, sizeof(l1), tr("play.opening"), g_link_room[0] ? g_link_room
                : room_label(g_pcfg.group, big, sizeof(big)));
       big[0] = '\0';
       snprintf(l2, sizeof(l2), conn == UI_CONN_ADHOC
-               ? "The " UI_DEV "'s connection screen comes up next."
-               : "One moment.");
+               ? tr("play.the_vita_s_connection_screen_comes")
+               : tr("play.one_moment"));
+   }
+   else if (hosting && conn == UI_CONN_ONLINE)
+   {
+      /* Online: the code, big, and nothing else the player must read. */
+      online = 1;
    }
    else if (hosting)
    {
-      snprintf(l1, sizeof(l1), "Hosting %s by %s", g_link.room, mode);
-      snprintf(l2, sizeof(l2), "Waiting for player 2. You can keep playing "
-               "meanwhile.");
+      snprintf(l1, sizeof(l1), tr("play.hosting_by"), g_link.room, mode);
+      snprintf(l2, sizeof(l2), tr("play.waiting_for_player_2_you_can")
+);
       if (conn == UI_CONN_INTERNET)
       {
          if (n->public_state == UI_PUBLIC_ASKING)
-            snprintf(la, sizeof(la), "Asking your router to let the other "
-                     "player in...");
+            snprintf(la, sizeof(la), tr("play.asking_your_router_to_let_the")
+);
          else if (n->public_state == UI_PUBLIC_CLOSED)
          {
             char port[8] = "19019";
             const char *c = strrchr(n->host_addr, ':');
             if (c && c[1])
                snprintf(port, sizeof(port), "%.5s", c + 1);
-            snprintf(para, sizeof(para), "Your router did not open the way "
-                     "in by itself. In its settings, forward UDP port %s to "
-                     "this " UI_DEV " (%s). The other player then types "
-                     "your public address%s%s.", port,
-                     n->ip[0] ? n->ip : "its address",
+            snprintf(para, sizeof(para), tr("play.your_router_did_not_open_the")
+
+
+, port,
+                     n->ip[0] ? n->ip : tr("play.its_address"),
                      n->public_addr[0] ? ": " : "", n->public_addr);
          }
          else if (n->public_state == UI_PUBLIC_OPEN && !n->public_addr[0])
@@ -307,65 +393,82 @@ static ui_action play_session(unsigned edges, const char *session_info)
             /* The router opened the port and would not say its own
              * address: only the port is known. */
             const char *c = strrchr(n->host_addr, ':');
-            snprintf(para, sizeof(para), "Your router opened the way in, "
-                     "but did not say its public address. Look it up (a "
-                     "phone on this Wi-Fi: search \"what is my IP\"). The "
-                     "other player types that address, then %s.",
+            snprintf(para, sizeof(para), tr("play.your_router_opened_the_way_in")
+
+
+,
                      c && c[1] ? c : ":19019");
          }
          else
          {
-            snprintf(la, sizeof(la), "Tell the other player this address:");
+            snprintf(la, sizeof(la), tr("play.tell_the_other_player_this_address"));
             snprintf(big, sizeof(big), "%s", n->public_state == UI_PUBLIC_OPEN
                      && n->public_addr[0] ? n->public_addr : n->host_addr);
-            snprintf(lc, sizeof(lc), "They choose Play together > Join a "
-                     "game and type it.");
+            snprintf(lc, sizeof(lc), tr("play.they_choose_play_together_join_a")
+);
          }
       }
       else
       {
-         wl_line_name(la, sizeof(la), "On the other " UI_DEV ", open ",
-                      own_game_name(), ".", 436);
+         wl_line_name(la, sizeof(la), tr("play.on_the_other_vita_open"),
+                      own_game_name(), 436);
          if (conn == UI_CONN_ADHOC)
-            snprintf(lb, sizeof(lb), "Connection: Ad hoc, then Play together "
-                     "> Join a game.");
+            snprintf(lb, sizeof(lb), tr("play.connection_ad_hoc_then_play_together")
+);
          else
          {
             char who[24];
-            snprintf(lb, sizeof(lb), "Then Play together > Join a game: "
-                     "pick %s's room.", vw_clip(who, sizeof(who),
-                     g_pcfg.nick[0] ? g_pcfg.nick : "this " UI_DEV, 96));
+            snprintf(lb, sizeof(lb), tr("play.then_play_together_join_a_game")
+, vw_clip(who, sizeof(who),
+                     g_pcfg.nick[0] ? g_pcfg.nick : tr("play.this_vita"), 96));
             if (n->host_addr[0])
-               snprintf(lc, sizeof(lc), "Not listed? Connection: Internet, "
-                        "type %s", n->host_addr);
+               snprintf(lc, sizeof(lc), tr("play.not_listed_connection_internet_type")
+, n->host_addr);
          }
       }
    }
    else if (g_link.state == UI_LINK_LINKED)
    {
       if (g_link_peer[0])
-         snprintf(l1, sizeof(l1), "Linked with %s", g_link_peer);
+         snprintf(l1, sizeof(l1), tr("play.linked_with"), g_link_peer);
       else
-         snprintf(l1, sizeof(l1), "Linked with the other " UI_DEV);
-      if (g_link.cable && g_link.player)
-         snprintf(l2, sizeof(l2), "You are Player %d%s in %s, by Link Cable.",
-                  g_link.player, g_link.player == 1 ? " (the host)" : "",
-                  g_link.room);
+         snprintf(l1, sizeof(l1), tr("play.linked_with_the_other"));
+      /* Online has no room to name: a code that did its work */
+      if (g_link.cable && g_link.player && conn == UI_CONN_ONLINE)
+         snprintf(l2, sizeof(l2), tr("play.you_are_player"),
+                  g_link.player, g_link.player == 1 ? tr("play.the_host") : "",
+                  pad_console() ? tr("play.two_players") : tr("play.by_link_cable"));
+      else if (g_link.cable && g_link.player)
+         snprintf(l2, sizeof(l2), tr("play.you_are_player_in"),
+                  g_link.player, g_link.player == 1 ? tr("play.the_host") : "",
+                  g_link.room,
+                  pad_console() ? tr("play.two_players") : tr("play.by_link_cable"));
       else if (g_link.cable)
-         snprintf(l2, sizeof(l2), "%s, by Link Cable.", g_link.room);
+         snprintf(l2, sizeof(l2), "%s, %s.", conn == UI_CONN_ONLINE
+                  ? tr("play.online") : g_link.room,
+                  pad_console() ? tr("play.two_players") : tr("play.by_link_cable"));
       else
-         snprintf(l2, sizeof(l2), "%s, by Wireless Adapter. The game pairs "
-                  "the players.", g_link.room);
-      snprintf(para, sizeof(para), "Save states and cheats are off while "
-               "linked. Disconnect ends the link for both players: each "
-               "game saves and carries on alone.");
+         snprintf(l2, sizeof(l2), tr("play.by_wireless_adapter_the_game_pairs")
+, conn == UI_CONN_ONLINE ? tr("play.online")
+                  : g_link.room);
+      if (pad_console())
+         snprintf(para, sizeof(para), tr("play.save_states_cheats_rewind_and_fast")
+
+
+);
+      else
+         snprintf(para, sizeof(para), tr("play.save_states_and_cheats_are_off")
+
+);
    }
    else
       snprintf(l1, sizeof(l1), "%s", session_info && session_info[0]
-               ? session_info : "A link session is running.");
+               ? session_info : tr("play.a_link_session_is_running"));
 
    ov_backdrop(OV_SCRIM_DENSE);
-   vw_head(g_ov_title, "PLAY TOGETHER");
+   vw_head(g_ov_title, tr("play.play_together"));
+   if (online)
+      online_host_page(60, own_game_name());
    vw_line(22, 68, 420, l1, C_VALUE);
    if (pending)
       vw_ring(22 + vid_text_w(l1) + 16, 68 + 8, C_TITLE);
@@ -377,10 +480,24 @@ static ui_action play_session(unsigned edges, const char *session_info)
       /* The connection, measured: what it is on, how quick, how strong. */
       char q[96];
       int x;
-      if (g_link.rtt_ms >= 0)
-         snprintf(q, sizeof(q), "%s   %s (%d ms round trip)",
-                  conn_name(conn), g_link.rtt_ms < 40 ? "quick"
-                  : g_link.rtt_ms < 120 ? "fine" : "slow, expect delay",
+      if (conn == UI_CONN_ONLINE)
+      {
+         /* Great / Good / Slow, the words of the connect toast, and the
+          * relay when the link goes through it */
+         const char *w = g_link.quality == ONLINE_Q_GREAT ? tr("play.great")
+                       : g_link.quality == ONLINE_Q_GOOD ? tr("play.good")
+                       : g_link.quality == ONLINE_Q_SLOW ? tr("play.slow") : "";
+         char rtt[40];
+         rtt[0] = '\0';
+         if (g_link.rtt_ms >= 0)
+            snprintf(rtt, sizeof(rtt), tr("play.ms_round_trip"), g_link.rtt_ms);
+         snprintf(q, sizeof(q), "%s%s   %s%s", conn_name(conn),
+                  g_link.relay ? tr("play.through_the_relay") : "", w, w[0] ? rtt : "");
+      }
+      else if (g_link.rtt_ms >= 0)
+         snprintf(q, sizeof(q), tr("play.ms_round_trip_2"),
+                  conn_name(conn), g_link.rtt_ms < 40 ? tr("play.quick")
+                  : g_link.rtt_ms < 120 ? tr("play.fine") : tr("play.slow_expect_delay"),
                   g_link.rtt_ms);
       else
          snprintf(q, sizeof(q), "%s", conn_name(conn));
@@ -388,8 +505,8 @@ static ui_action play_session(unsigned edges, const char *session_info)
       x = 22 + vid_text_w(q) + 12;
       if (g_link.signal_pct >= 0)
       {
-         vid_text(x, y, "signal", C_DIM);
-         vw_signal(x + vid_text_w("signal") + 6, y + 1, g_link.signal_pct);
+         vid_text(x, y, tr("play.signal"), C_DIM);
+         vw_signal(x + vid_text_w(tr("play.signal")) + 6, y + 1, g_link.signal_pct);
       }
       y += FE_FONT_H + 6;
    }
@@ -414,10 +531,10 @@ static ui_action play_session(unsigned edges, const char *session_info)
    if (lc[0])
       vw_line(22, y + 4, 436, lc, C_DIM);
    vw_row(PS_RESUME, 200, 300, g_cursor == PS_RESUME, 1,
-          g_link.state == UI_LINK_LINKED ? "Back to the game"
-          : pending ? "Back to the game" : "Keep playing", NULL);
+          g_link.state == UI_LINK_LINKED ? tr("play.back_to_the_game")
+          : pending ? tr("play.back_to_the_game") : tr("play.keep_playing"), NULL);
    vw_row(PS_END, 200 + VW_PITCH, 300, g_cursor == PS_END, 1,
-          hosting ? "Stop hosting" : pending ? "Cancel" : "Disconnect", NULL);
+          hosting ? tr("play.stop_hosting") : pending ? tr("play.cancel") : tr("play.disconnect"), NULL);
    /* The other way of linking is not on offer while this one is up
     * (main_vita.c decides that): said beside the row that ends it. */
    if (g_cursor == PS_END)
@@ -426,15 +543,17 @@ static ui_action play_session(unsigned edges, const char *session_info)
       memset(&ls, 0, sizeof(ls));
       ui_host_local_state(&ls);
       if (!ls.active)
-         vw_wrap(334, 198, 126, "Two players on this " UI_DEV
-                 ": after this has ended.", C_DIM, 3);
+         vw_wrap(334, 198, 126, tr("play.two_players_on_this_vita_after")
+, C_DIM, 3);
    }
-   footer(VID_GLYPH_X " select   " VID_GLYPH_O " back");
+   footer(tr("hint.x_select_o_back"));
    return UI_ACT_NONE;
 }
 
-static ui_action screen_play(unsigned edges, int session_active,
-                             const char *session_info)
+LARGE_WRAP(ui_action, screen_play, (unsigned edges, int session_active, const char *session_info),
+           (edges, session_active, session_info))
+static ui_action screen_play_page(unsigned edges, int session_active,
+                                  const char *session_info)
 {
    int ids[PL_COUNT], n = play_rows(ids), i, id, y0;
    const ui_net_status *net;
@@ -460,8 +579,8 @@ static ui_action screen_play(unsigned edges, int session_active,
       else if (play_net(0)->radio != UI_RADIO_ADHOC &&
                ++g_play_pending > PLAY_PENDING_MAX)
       {
-         snprintf(g_play_note, sizeof(g_play_note), "The room did not "
-                  "open. Check the connection and try again.");
+         snprintf(g_play_note, sizeof(g_play_note), tr("play.the_room_did_not_open_check")
+);
          g_play_pending = 0;
       }
    }
@@ -485,7 +604,7 @@ static ui_action screen_play(unsigned edges, int session_active,
    if (edges & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT))
    {
       int dir = (edges & PSP_CTRL_LEFT) ? -1 : 1;
-      if (id == PL_HOST)
+      if (id == PL_HOST && g_pcfg.net_conn != UI_CONN_ONLINE)
          settings_adjust(SET_ROOM, dir);
       else if (id == PL_CONN)
          settings_adjust(SET_CONN, dir);
@@ -513,6 +632,13 @@ static ui_action screen_play(unsigned edges, int session_active,
          }
          if (id == PL_HOST)
          {
+            if (g_pcfg.net_conn == UI_CONN_ONLINE && !ui_host_online_available())
+            {
+               const char *a, *b;
+               ui_link_fail_text(UI_FAIL_RADIO_BUSY, &a, &b);
+               snprintf(g_play_note, sizeof(g_play_note), "%s", a);
+               break;
+            }
             if (g_pcfg.console == FE_CONSOLE_GBA &&
                 ui_host_mode() == UI_HOST_ASK)
             {
@@ -521,6 +647,18 @@ static ui_action screen_play(unsigned edges, int session_active,
             }
             return play_host_go(g_pcfg.console != FE_CONSOLE_GBA ||
                                 ui_host_mode() == UI_HOST_CABLE);
+         }
+         if (g_pcfg.net_conn == UI_CONN_ONLINE)
+         {
+            if (!ui_host_online_available())
+            {
+               const char *a, *b;
+               ui_link_fail_text(UI_FAIL_RADIO_BUSY, &a, &b);
+               snprintf(g_play_note, sizeof(g_play_note), "%s", a);
+               break;
+            }
+            online_code_open();
+            return screen_online_code(0);
          }
          if (g_pcfg.net_conn == UI_CONN_INTERNET)
          {
@@ -541,14 +679,14 @@ static ui_action screen_play(unsigned edges, int session_active,
          {
             snprintf(g_play_note, sizeof(g_play_note), "%s",
                      ls.why_not && ls.why_not[0] ? ls.why_not
-                     : "This game cannot run twice on one " UI_DEV ".");
+                     : tr("play.this_game_cannot_run_twice_on"));
             break;
          }
          screen_to(SCR_LOCAL);
          return screen_local(0);
       case PL_CONN:
          screen_to(SCR_CONN);
-         g_cursor = g_pcfg.net_conn;
+         g_cursor = conn_row_of(g_pcfg.net_conn);
          return UI_ACT_NONE;
       case PL_MGIFT:
          screen_to(SCR_MGIFT);
@@ -563,7 +701,7 @@ static ui_action screen_play(unsigned edges, int session_active,
    net = play_net(0);
    play_game_line(sub, sizeof(sub));
    ov_backdrop(OV_SCRIM);
-   vw_head(sub, "PLAY TOGETHER");
+   vw_head(sub, tr("play.play_together"));
    play_status_draw(68, g_pcfg.net_conn, net);
    y0 = n > 5 ? 92 : 96;
    for (i = 0; i < n; i++)
@@ -573,38 +711,41 @@ static ui_action screen_play(unsigned edges, int session_active,
       {
       case PL_HOST:
          play_host_value(hv, sizeof(hv));
-         vw_row(i, y, 440, sel, 1, "Host a game", hv);
+         vw_row(i, y, 440, sel, 1, tr("play.host_a_game"), hv);
          break;
       case PL_JOIN:
-         vw_row(i, y, 440, sel, 1, "Join a game",
-                g_pcfg.net_conn == UI_CONN_INTERNET ? "type the host's address"
-                : g_pcfg.net_conn == UI_CONN_ADHOC ? "a " UI_DEV " nearby"
-                : "rooms on this Wi-Fi");
+         vw_row(i, y, 440, sel, 1, tr("play.join_a_game"),
+                g_pcfg.net_conn == UI_CONN_ONLINE ? tr("play.type_your_friend_s_code")
+                : g_pcfg.net_conn == UI_CONN_INTERNET ? tr("play.type_the_host_s_address")
+                : g_pcfg.net_conn == UI_CONN_ADHOC ? tr("play.a_vita_nearby")
+                : tr("play.rooms_on_this_wi_fi"));
          break;
       case PL_LOCAL:
-         vw_row(i, y, 440, sel, ls.available, "Two players on this " UI_DEV,
-                ls.available ? NULL : "not for this game");
+         vw_row(i, y, 440, sel, ls.available, tr("play.two_players_on_this"),
+                ls.available ? NULL : tr("play.not_for_this_game"));
          break;
       case PL_CONN:
-         vw_row(i, y, 440, sel, 1, "Connection", conn_name(g_pcfg.net_conn));
+         vw_row(i, y, 440, sel, 1, tr("play.connection"), conn_name(g_pcfg.net_conn));
          break;
       case PL_MGIFT:
-         vw_row(i, y, 440, sel, 1, "Mystery Gift",
-                mgift_ui_active() ? "listening" : "from a phone");
+         vw_row(i, y, 440, sel, 1, tr("play.mystery_gift"),
+                mgift_ui_active() ? tr("play.listening_value") : tr("play.from_a_phone"));
          break;
       default:
-         vw_row(i, y, 440, sel, 1, "How to play together", NULL);
+         vw_row(i, y, 440, sel, 1, tr("play.how_to_play_together"), NULL);
          break;
       }
    }
    if (g_play_note[0])
       vw_plate(g_play_note);
+   else if (id == PL_HOST && g_pcfg.net_conn == UI_CONN_ONLINE)
+      footer(tr("hint.x_host_o_back"));
    else if (id == PL_HOST)
-      footer(VID_GLYPH_X " host   DPAD room number   " VID_GLYPH_O " back");
+      footer(tr("hint.x_host_dpad_room_number_o"));
    else if (id == PL_CONN)
-      footer(VID_GLYPH_X " choose   DPAD change   " VID_GLYPH_O " back");
+      footer(tr("hint.x_choose_dpad_change_o_back"));
    else
-      footer(VID_GLYPH_X " select   " VID_GLYPH_O " back");
+      footer(tr("hint.x_select_o_back"));
    return UI_ACT_NONE;
 }
 
@@ -643,8 +784,9 @@ static const char *join_title(const ui_room *r)
    if (r->kind == ROOM_CABLE_GBA && g_pcfg.console == FE_CONSOLE_GBA &&
        !strncmp(r->code, code, 4))
       return own_game_name();
-   t = r->kind == ROOM_CABLE_GB ? NULL : link_game_title(r->code);
-   return t ? t : r->title[0] ? r->title : "a game";
+   t = r->kind == ROOM_CABLE_GB || r->kind == ROOM_PAD
+         ? NULL : link_game_title(r->code);
+   return t ? t : r->title[0] ? r->title : tr("play.a_game");
 }
 
 /* 1 = a Link Cable room playing another Game Boy Advance game than this
@@ -657,6 +799,16 @@ static int join_other_game(const ui_room *r)
           strncmp(r->code, code, 4) != 0;
 }
 
+/* A Two players room plays one game file: its code is the first 4 hex
+ * digits of the file's CRC (the session's handshake checks the whole file). */
+static int join_same_pad_game(const ui_room *r)
+{
+   char id[9];
+   if (!ui_host_pad_game(id))
+      return 0;
+   return !strncmp(r->code, id, 4);
+}
+
 /* Whether this game can enter a room, and the sentence when it cannot. */
 typedef struct { int ok; char why[40]; char plate[112]; } join_verdict;
 
@@ -666,39 +818,47 @@ static void join_decide(const ui_room *r, join_verdict *v)
    int gba = g_pcfg.console == FE_CONSOLE_GBA;
    memset(v, 0, sizeof(*v));
    v->ok = 1;
-   snprintf(rl, sizeof(rl), ROOM_LABEL_WORD " %d", r->number);
+   snprintf(rl, sizeof(rl), tr("link.room"), r->number);
    vw_clip(t, sizeof(t), join_title(r), 150);
 #define JOIN_NO(short_, ...) \
    do { v->ok = 0; snprintf(v->why, sizeof(v->why), "%s", short_); \
         snprintf(v->plate, sizeof(v->plate), __VA_ARGS__); } while (0)
    if (!r->compatible)
-      JOIN_NO("different version", "%s runs a different version of "
-              "VitAdhoc.", r->nick[0] ? r->nick : rl);
+      JOIN_NO(tr("play.different_version"), tr("play.runs_a_different_version_of_vitadhoc")
+, r->nick[0] ? r->nick : rl);
    else if (r->kind == ROOM_ADAPTER && !gba)
-      JOIN_NO("a Game Boy Advance room", "%s is a Game Boy Advance room.", rl);
+      JOIN_NO(tr("play.a_game_boy_advance_room"), tr("play.is_a_game_boy_advance_room"), rl);
    else if (r->kind == ROOM_ADAPTER && !join_can_adapter())
-      JOIN_NO("this game links by cable", "%s is a Wireless Adapter room. "
-              "This game links by cable.", rl);
+      JOIN_NO(tr("play.this_game_links_by_cable"), tr("play.is_a_wireless_adapter_room_this")
+, rl);
    else if (r->kind == ROOM_CABLE_GBA && !gba)
-      JOIN_NO("a Game Boy Advance room", "%s is a Game Boy Advance room.", rl);
+      JOIN_NO(tr("play.a_game_boy_advance_room"), tr("play.is_a_game_boy_advance_room"), rl);
    /* ANOTHER game is fine (Ruby with Sapphire, FireRed with Emerald): a
     * link cable joins any two Game Boy Advance games, the games themselves
     * decide what they do with it.  The session fetches the other game
     * (fe_gblink partner_rom); the list names both. */
    else if (r->kind == ROOM_CABLE_GBA && !join_can_cable())
-      JOIN_NO(g_cable_ready ? "this game links by adapter"
-                            : "restart the game to link",
-              g_cable_ready ? "%s is a Link Cable room. This game links by "
-                              "adapter."
-                            : "%s is a Link Cable room. Restart the game to "
-                              "link.", rl);
+      JOIN_NO(g_cable_ready ? tr("play.this_game_links_by_adapter")
+                            : tr("play.restart_the_game_to_link"),
+              g_cable_ready ? tr("play.is_a_link_cable_room_this")
+
+                            : tr("play.is_a_link_cable_room_restart")
+, rl);
    else if (r->kind == ROOM_CABLE_GB && gba)
-      JOIN_NO("a Game Boy room", "%s is a Game Boy room.", rl);
+      JOIN_NO(tr("play.a_game_boy_room"), tr("play.is_a_game_boy_room"), rl);
+   else if (r->kind == ROOM_PAD && !pad_console())
+      JOIN_NO(tr("play.a_nes_wonderswan_room"), tr("play.is_a_two_players_room_for")
+, rl);
+   else if (pad_console() && r->kind != ROOM_PAD)
+      JOIN_NO(tr("play.not_a_two_players_room"), tr("play.is_not_a_two_players_room"), rl);
+   else if (r->kind == ROOM_PAD && !join_same_pad_game(r))
+      JOIN_NO(tr("play.a_different_game"), tr("play.is_playing_open_the_same_game")
+, rl, t);
    else if (r->max_players > 0 && r->players >= r->max_players)
-      JOIN_NO("full", "%s is full: a room takes %d players.", rl,
+      JOIN_NO(tr("play.full"), tr("play.is_full_a_room_takes_players"), rl,
               r->max_players);
    else if (!r->open)
-      JOIN_NO("already playing", "%s is in the middle of a game.", rl);
+      JOIN_NO(tr("play.already_playing"), tr("play.is_in_the_middle_of_a"), rl);
 #undef JOIN_NO
 }
 
@@ -905,14 +1065,14 @@ static ui_action screen_join(unsigned edges)
    }
 
    ov_backdrop(OV_SCRIM_DENSE);
-   vw_head(internet ? g_jn.addr : NULL, "JOIN A GAME");
+   vw_head(internet ? g_jn.addr : NULL, tr("play.join_a_game_2"));
    {
       /* Top right: what the page is doing.  It never stops looking. */
       char st[32];
       if (n > 0)
-         snprintf(st, sizeof(st), "%d FOUND", n);
+         snprintf(st, sizeof(st), tr("play.found"), n);
       else
-         snprintf(st, sizeof(st), "%s", g_jn.open ? "SEARCHING" : "WAITING");
+         snprintf(st, sizeof(st), "%s", g_jn.open ? tr("play.searching") : tr("play.waiting"));
       ov_text_right(460, 48, st, C_DIM);
       if (g_jn.open)
          vw_ring(460 - vid_text_w(st) - 14, 48 + 8, C_TITLE);
@@ -924,43 +1084,43 @@ static ui_action screen_join(unsigned edges)
       if (!g_jn.open && (g_jn.err == UI_ROOMS_E_NO_WIFI ||
                          net->wifi != UI_WIFI_CONNECTED))
       {
-         snprintf(l1, sizeof(l1), "This " UI_DEV " is not connected to "
-                  "Wi-Fi.");
-         snprintf(l2, sizeof(l2), "Connect in the " UI_DEV "'s Settings > "
-                  "Network. This page carries on by itself as soon as it "
-                  "is.");
+         snprintf(l1, sizeof(l1), tr("play.this_vita_is_not_connected_to")
+);
+         snprintf(l2, sizeof(l2), tr("play.connect_in_the_vita_s_settings_2")
+
+);
       }
       else if (!g_jn.open && g_jn.err == UI_ROOMS_E_BUSY)
       {
-         snprintf(l1, sizeof(l1), "The radio is busy with another link.");
-         snprintf(l2, sizeof(l2), "End it first (Play together > "
-                  "Disconnect).");
+         snprintf(l1, sizeof(l1), tr("play.the_radio_is_busy_with_another"));
+         snprintf(l2, sizeof(l2), tr("play.end_it_first_play_together_disconnect")
+);
       }
       else if (!g_jn.open)
       {
-         snprintf(l1, sizeof(l1), "The search could not start.");
-         snprintf(l2, sizeof(l2), "Trying again by itself. If this stays, "
-                  "check the " UI_DEV "'s Wi-Fi.");
+         snprintf(l1, sizeof(l1), tr("play.the_search_could_not_start"));
+         snprintf(l2, sizeof(l2), tr("play.trying_again_by_itself_if_this")
+);
       }
       else if (g_jn.frames < JOIN_QUIET)
-         snprintf(l1, sizeof(l1), internet ? "Looking for a game at that "
-                  "address..." : "Looking for games on this Wi-Fi...");
+         snprintf(l1, sizeof(l1), internet ? tr("play.looking_for_a_game_at_that")
+ : tr("play.looking_for_games_on_this_wi"));
       else if (internet)
       {
-         snprintf(l1, sizeof(l1), "No answer from %s yet.", g_jn.addr);
-         snprintf(l2, sizeof(l2), "Is the address right, and is the other "
-                  "player hosting with Connection set to Internet? Their "
-                  "router must let UDP port 19019 through.");
-         snprintf(l3, sizeof(l3), "Still trying.");
+         snprintf(l1, sizeof(l1), tr("play.no_answer_from_yet"), g_jn.addr);
+         snprintf(l2, sizeof(l2), tr("play.is_the_address_right_and_is")
+
+);
+         snprintf(l3, sizeof(l3), tr("play.still_trying"));
       }
       else
       {
          char ssid[40];
-         snprintf(l1, sizeof(l1), "No games found yet.");
-         snprintf(l2, sizeof(l2), "Both consoles on the same Wi-Fi? Is the "
-                  "other one hosting?");
-         snprintf(l3, sizeof(l3), "This " UI_DEV " is on %s (%s). Still "
-                  "looking.", vw_clip(ssid, sizeof(ssid), net->ssid[0]
+         snprintf(l1, sizeof(l1), tr("play.no_games_found_yet"));
+         snprintf(l2, sizeof(l2), tr("play.both_consoles_on_the_same_wi")
+);
+         snprintf(l3, sizeof(l3), tr("play.this_vita_is_on_still_looking")
+, vw_clip(ssid, sizeof(ssid), net->ssid[0]
                   ? net->ssid : "Wi-Fi", 150), net->ip);
       }
       vid_text(22, 76, l1, C_ITEM);
@@ -1003,14 +1163,14 @@ static ui_action screen_join(unsigned edges)
          ov_text_right(452, y, pl, v.ok ? C_VALUE : C_DIM);
          /* Who, where, how quick -- or why not. */
          if (v.ok && r->rtt_ms >= 0)
-            snprintf(d, sizeof(d), "%s  -  " ROOM_LABEL_WORD " %d  -  %d ms",
-                     r->nick[0] ? r->nick : "a player", r->number, r->rtt_ms);
+            snprintf(d, sizeof(d), tr("play.nick_room_ms"),
+                     r->nick[0] ? r->nick : tr("play.a_player"), r->number, r->rtt_ms);
          else if (v.ok)
-            snprintf(d, sizeof(d), "%s  -  " ROOM_LABEL_WORD " %d",
-                     r->nick[0] ? r->nick : "a player", r->number);
+            snprintf(d, sizeof(d), tr("play.nick_room"),
+                     r->nick[0] ? r->nick : tr("play.a_player"), r->number);
          else
             snprintf(d, sizeof(d), "%s  -  %s", r->nick[0] ? r->nick
-                     : "a player", v.why);
+                     : tr("play.a_player"), v.why);
          /* The reason reads a step brighter than the greyed row: it is the
           * answer to "why can't I join my friend's room". */
          vid_text(18, y + 14, vw_clip(t, sizeof(t), d, 430),
@@ -1031,9 +1191,9 @@ static ui_action screen_join(unsigned edges)
    if (g_jn.note[0])
       vw_plate(g_jn.note);
    else if (rows > 0)
-      footer(VID_GLYPH_X " join   " VID_GLYPH_O " back");
+      footer(tr("hint.x_join_o_back"));
    else
-      footer(VID_GLYPH_O " back");
+      footer(tr("hint.o_back"));
    return UI_ACT_NONE;
 }
 
@@ -1041,12 +1201,12 @@ static ui_action screen_join(unsigned edges)
 
 static const kp_key ADDR_KEYS[] = {
    { "1", '1', KP_CHAR, 0, 0, 1 }, { "2", '2', KP_CHAR, 1, 0, 1 },
-   { "3", '3', KP_CHAR, 2, 0, 1 }, { "Del", 0, KP_DEL, 3, 0, 1 },
+   { "3", '3', KP_CHAR, 2, 0, 1 }, { TR_KEY("play.del"), 0, KP_DEL, 3, 0, 1 },
    { "4", '4', KP_CHAR, 0, 1, 1 }, { "5", '5', KP_CHAR, 1, 1, 1 },
    { "6", '6', KP_CHAR, 2, 1, 1 }, { ".", '.', KP_CHAR, 3, 1, 1 },
    { "7", '7', KP_CHAR, 0, 2, 1 }, { "8", '8', KP_CHAR, 1, 2, 1 },
    { "9", '9', KP_CHAR, 2, 2, 1 }, { ":", ':', KP_CHAR, 3, 2, 1 },
-   { "0", '0', KP_CHAR, 0, 3, 2 }, { "Join", 0, KP_OK, 2, 3, 2 },
+   { "0", '0', KP_CHAR, 0, 3, 2 }, { TR_KEY("play.join"), 0, KP_OK, 2, 3, 2 },
 };
 #define ADDR_NKEYS ((int)(sizeof(ADDR_KEYS) / sizeof(ADDR_KEYS[0])))
 #define ADDR_KEY_OK (ADDR_NKEYS - 1)
@@ -1168,8 +1328,8 @@ static ui_action screen_addr(unsigned edges)
    {
       if (ok)
          return addr_go(g_ad.text);
-      snprintf(g_play_note, sizeof(g_play_note), "Not a whole address yet. "
-               "Example: 203.0.113.9:19019");
+      snprintf(g_play_note, sizeof(g_play_note), tr("play.not_a_whole_address_yet_example")
+);
    }
    else if (edges)
       g_play_note[0] = '\0';
@@ -1182,21 +1342,21 @@ static ui_action screen_addr(unsigned edges)
    }
 
    ov_backdrop(OV_SCRIM_DENSE);
-   vw_head("Type the address the host's screen shows.", "JOIN A GAME");
+   vw_head(tr("play.type_the_address_the_host_s"), tr("play.join_a_game_2"));
    vw_box(20, 66, 440, 28, g_cursor < ADDR_NKEYS);
    vid_text_hd(28, 69, g_ad.text, C_SEL);
    vw_caret(28 + vid_text_hd_w(g_ad.text) + 1, 70, 20);
    /* In the box's right end: is it an address yet. */
-   ov_text_right(452, 72, ok ? "looks right" : len ? "not a whole address yet"
-                 : "like 203.0.113.9:19019", ok ? C_VALUE : C_DIM);
+   ov_text_right(452, 72, ok ? tr("play.looks_right") : len ? tr("play.not_a_whole_address_yet")
+                 : tr("play.like_203_0_113_9_19019"), ok ? C_VALUE : C_DIM);
    kp_draw(&pad, g_cursor < ADDR_NKEYS ? g_cursor : -1,
            ok ? 0u : 1u << ADDR_KEY_OK);
    {
       int x = 208, y = 102;
       if (nrec)
       {
-         int lx = x + vid_text_w("RECENT") + FE_FONT_W;
-         vid_text(x, y, "RECENT", C_ACCENT);
+         int lx = x + vid_text_w(tr("play.recent")) + FE_FONT_W;
+         vid_text(x, y, tr("play.recent"), C_ACCENT);
          vid_rect(lx, y + FE_FONT_H / 2, 456 - lx, 1, C_ACCENT_DK, 120);
          for (i = 0; i < nrec; i++)
          {
@@ -1214,16 +1374,16 @@ static ui_action screen_addr(unsigned edges)
       }
       else
       {
-         vw_wrap(x, y + 2, 250, "The host chooses Play together > Host a "
-                 "game with Connection set to Internet. Their screen then "
-                 "shows the address to type here.", C_DIM, 6);
+         vw_wrap(x, y + 2, 250, tr("play.the_host_chooses_play_together_host")
+
+, C_DIM, 6);
       }
    }
    if (g_play_note[0])
       vw_plate(g_play_note);
    else
-      footer(VID_GLYPH_X " type   " VID_GLYPH_SQ " delete   " VID_GLYPH_TRI
-             " join   " VID_GLYPH_O " back");
+      footer(tr("hint.x_type_sq_delete_tri_join")
+);
    return UI_ACT_NONE;
 }
 
@@ -1250,7 +1410,8 @@ static ui_action screen_adhoc(unsigned edges)
          return play_host_go(g_host_cable);
       memset(&g_join_tgt, 0, sizeof(g_join_tgt));
       g_join_tgt.conn = UI_CONN_ADHOC;
-      g_join_tgt.kind = g_pcfg.console != FE_CONSOLE_GBA ? ROOM_CABLE_GB
+      g_join_tgt.kind = pad_console() ? ROOM_PAD
+                      : g_pcfg.console != FE_CONSOLE_GBA ? ROOM_CABLE_GB
                       : ui_host_mode() == UI_HOST_ADAPTER ? ROOM_ADAPTER
                                                           : ROOM_CABLE_GBA;
       g_join_tgt.number = room_number(g_pcfg.group);
@@ -1260,20 +1421,20 @@ static ui_action screen_adhoc(unsigned edges)
       return UI_ACT_NET_JOIN;
    }
    ov_backdrop(OV_SCRIM_DENSE);
-   vw_head(g_ov_title, "AD HOC");
-   vid_text(22, 68, "Next: the " UI_DEV "'s own connection screen.", C_VALUE);
+   vw_head(g_ov_title, tr("play.ad_hoc"));
+   vid_text(22, 68, tr("play.next_the_vita_s_own_connection"), C_VALUE);
    vw_wrap(22, 90, 436, g_adhoc_host
-           ? "It links the two " UI_DEVS " directly, with no router. Follow "
-             "it to create the connection; the other " UI_DEV " then joins "
-             "from the same screen. When it is done you are back in the game."
-           : "It links the two " UI_DEVS " directly, with no router. Follow "
-             "it to join the connection the other " UI_DEV " created. When "
-             "it is done you are back in the game.", C_ITEM, 4);
-   vid_text(22, 150, "Wi-Fi is set aside while linked and returns "
-            "afterwards.", C_DIM);
-   vw_row(AH_GO, 182, 300, g_cursor == AH_GO, 1, "Continue", NULL);
-   vw_row(AH_BACK, 182 + VW_PITCH, 300, g_cursor == AH_BACK, 1, "Back", NULL);
-   footer(VID_GLYPH_X " select   " VID_GLYPH_O " back");
+           ? tr("play.it_links_the_two_vitas_directly")
+
+
+           : tr("play.it_links_the_two_vitas_directly_2")
+
+, C_ITEM, 4);
+   vid_text(22, 150, tr("play.wi_fi_is_set_aside_while")
+, C_DIM);
+   vw_row(AH_GO, 182, 300, g_cursor == AH_GO, 1, tr("play.continue"), NULL);
+   vw_row(AH_BACK, 182 + VW_PITCH, 300, g_cursor == AH_BACK, 1, tr("play.back"), NULL);
+   footer(tr("hint.x_select_o_back"));
    return UI_ACT_NONE;
 }
 
@@ -1281,7 +1442,7 @@ static ui_action screen_adhoc(unsigned edges)
 
 static const char *layout_name(int l)
 {
-   return l == VID_PAIR_INSET ? "large + small" : "side by side";
+   return l == VID_PAIR_INSET ? tr("play.large_small") : tr("play.side_by_side");
 }
 
 /* The partner's game: a list of the other cartridges of this console, in
@@ -1325,7 +1486,7 @@ static void local_pick(unsigned edges, const ui_local_state *ls)
       fe_evt("play_local_pick row=%d rc=%d", g_lpick.cur, rc);
       if (rc != 0)
          snprintf(g_play_note, sizeof(g_play_note),
-                  "That game could not be chosen.");
+                  tr("play.that_game_could_not_be_chosen"));
       g_lpick.open = 0;
       tch_reset();
       return;
@@ -1338,20 +1499,20 @@ static void local_pick(unsigned edges, const ui_local_state *ls)
    }
 
    ov_backdrop(OV_SCRIM_DENSE);
-   vw_head(g_ov_title, "PARTNER'S GAME");
+   vw_head(g_ov_title, tr("play.partner_s_game"));
    vw_wrap(22, 68, 436, g_lpick.n
-           ? "The second machine can hold another game: the other version, "
-             "with the save you have for it."
-           : "No other game for this console is in your game list.",
+           ? tr("play.the_second_machine_can_hold_another")
+
+           : tr("play.no_other_game_for_this_console"),
            C_ITEM, 2);
    for (i = g_lpick.top; i < total && i < g_lpick.top + LP_ROWS; i++)
    {
       int y = 108 + (i - g_lpick.top) * VW_PITCH, sel = g_lpick.cur == i;
-      const char *nm = i ? ui_host_local_rom_name(i - 1) : "This game";
+      const char *nm = i ? ui_host_local_rom_name(i - 1) : tr("play.this_game");
       int chosen = i ? (ls->partner_game && !strcmp(ls->partner_game, nm))
                      : !ls->partner_game;
       vw_row(i, y, 440, sel, 1, nm,
-             chosen ? "chosen" : i ? NULL : "a copy, or a second save");
+             chosen ? tr("play.chosen") : i ? NULL : tr("play.a_copy_or_a_second_save"));
    }
    if (total > LP_ROWS)
    {
@@ -1362,8 +1523,8 @@ static void local_pick(unsigned edges, const ui_local_state *ls)
       vid_rect(452, 108 + ky, 2, kh < 6 ? 6 : kh, C_ACCENT, 255);
    }
    footer(total > LP_ROWS
-          ? VID_GLYPH_X " choose   L/R page   " VID_GLYPH_O " back"
-          : VID_GLYPH_X " choose   " VID_GLYPH_O " back");
+          ? tr("hint.x_choose_l_r_page_o")
+          : tr("hint.x_choose_o_back"));
 }
 
 static ui_action screen_local(unsigned edges)
@@ -1482,7 +1643,7 @@ static ui_action screen_local(unsigned edges)
       else if (!ls.available)
          snprintf(g_play_note, sizeof(g_play_note), "%s",
                   ls.why_not && ls.why_not[0] ? ls.why_not
-                  : "This game cannot run twice on one " UI_DEV ".");
+                  : tr("play.this_game_cannot_run_twice_on"));
       else if (!g_play_pending)
       {
          g_pcfg.local_partner = id == LS_OWN;
@@ -1495,22 +1656,22 @@ static ui_action screen_local(unsigned edges)
    }
 
    ov_backdrop(OV_SCRIM_DENSE);
-   vw_head(g_ov_title, "TWO PLAYERS");
+   vw_head(g_ov_title, tr("play.two_players_2"));
    if (ls.active)
    {
       char line[120];
       if (other)
-         snprintf(line, sizeof(line), "Linked by cable with %s",
+         snprintf(line, sizeof(line), tr("play.linked_by_cable_with"),
                   ls.partner_game);
       else
-         snprintf(line, sizeof(line), "Two games are running on this " UI_DEV
-                  ", linked by cable.");
+         snprintf(line, sizeof(line), tr("play.two_games_are_running_on_this")
+);
       vw_line(22, 68, 436, line, C_VALUE);
       vid_text(22, 86, ls.have_pad2
-               ? "Your buttons: your game. Second controller: the "
-                 "partner's."
-               : ls.controlled ? "The buttons drive the partner's game."
-                               : "The buttons drive your game.", C_ITEM);
+               ? tr("play.your_buttons_your_game_second_controller")
+
+               : ls.controlled ? tr("play.the_buttons_drive_the_partner_s")
+                               : tr("play.the_buttons_drive_your_game"), C_ITEM);
       for (i = 0; i < n; i++)
       {
          int y = 108 + i * VW_PITCH, sel = g_cursor == i;
@@ -1519,91 +1680,91 @@ static ui_action screen_local(unsigned edges)
          case LA_SWAP:
             /* two pads: nobody's buttons move, the view does */
             vw_row(i, y, 440, sel, 1, ls.have_pad2
-                   ? "Swap sound and large picture" : "Swap controlled game",
-                   ls.controlled ? "now: the partner's" : "now: yours");
+                   ? tr("play.swap_sound_and_large_picture") : tr("play.swap_controlled_game"),
+                   ls.controlled ? tr("play.now_the_partner_s") : tr("play.now_yours"));
             break;
          case LA_LAYOUT:
-            vw_row(i, y, 440, sel, 1, "Layout",
+            vw_row(i, y, 440, sel, 1, tr("play.layout"),
                    ls.have_pad2 || g_pcfg.local_touch2
-                   ? "side by side (two players)"
+                   ? tr("play.side_by_side_two_players")
                    : layout_name(g_pcfg.local_layout));
             break;
          case LA_TOUCH:
-            vw_row(i, y, 440, sel, 1, "Player 2 on the touch screen",
-                   g_pcfg.local_touch2 ? (ls.have_pad2 ? "on (pad in use)"
-                                                       : "on") : "off");
+            vw_row(i, y, 440, sel, 1, tr("play.player_2_on_the_touch_screen"),
+                   g_pcfg.local_touch2 ? (ls.have_pad2 ? tr("play.on_pad_in_use")
+                                                       : tr("play.on")) : tr("play.off"));
             break;
          case LA_STOP:
-            vw_row(i, y, 440, sel, 1, "Stop", "your game carries on alone");
+            vw_row(i, y, 440, sel, 1, tr("play.stop"), tr("play.your_game_carries_on_alone"));
             break;
          default:
-            vw_row(i, y, 440, sel, 1, "Back to the game", NULL);
+            vw_row(i, y, 440, sel, 1, tr("play.back_to_the_game"), NULL);
             break;
          }
       }
       /* (Host a game and Join a game are not on offer while this runs:
        * the page says so where the way out is) */
       vw_line(22, 240, 436, ids[g_cursor] == LA_STOP
-              ? "Stop it first to host or join a game over the network."
+              ? tr("play.stop_it_first_to_host_or")
               : ids[g_cursor] == LA_TOUCH
-              ? "Player 2 plays on the front screen while no controller is "
-                "paired."
+              ? tr("play.player_2_plays_on_the_front")
+
               : ls.have_pad2
-              ? "In the game: right stick sideways or a tap swaps the sound."
-              : "In the game: right stick sideways or a tap on a picture "
-                "swaps.", C_DIM);
+              ? tr("play.in_the_game_right_stick_sideways")
+              : tr("play.in_the_game_right_stick_sideways_2")
+, C_DIM);
    }
    else
    {
-      vw_wrap(22, 62, 436, "Both games run here, joined by a link cable.",
+      vw_wrap(22, 62, 436, tr("play.both_games_run_here_joined_by"),
               C_ITEM, 1);
-      snprintf(own, sizeof(own), other ? "Start: the partner plays its game"
-                                       : "Start: the partner uses its own "
-                                         "save");
+      snprintf(own, sizeof(own), other ? tr("play.start_the_partner_plays_its_game")
+                                       : tr("play.start_the_partner_uses_its_own")
+);
       vw_row(0, 88, 440, g_cursor == 0, ls.available && !other,
-             "Start: the partner copies my save",
-             other ? "same game only" : NULL);
+             tr("play.start_the_partner_copies_my_save"),
+             other ? tr("play.same_game_only") : NULL);
       vw_row(1, 88 + VW_PITCH, 440, g_cursor == 1, ls.available, own,
-             ls.partner_save ? "save found" : "starts a new game");
-      vw_row(2, 88 + 2 * VW_PITCH, 440, g_cursor == 2, 1, "Partner's game",
-             other ? ls.partner_game : "this one");
-      vw_row(3, 88 + 3 * VW_PITCH, 440, g_cursor == 3, 1, "Layout",
+             ls.partner_save ? tr("play.save_found") : tr("play.starts_a_new_game"));
+      vw_row(2, 88 + 2 * VW_PITCH, 440, g_cursor == 2, 1, tr("play.partner_s_game_2"),
+             other ? ls.partner_game : tr("play.this_one"));
+      vw_row(3, 88 + 3 * VW_PITCH, 440, g_cursor == 3, 1, tr("play.layout"),
              ls.have_pad2 || g_pcfg.local_touch2
-             ? "side by side (two players)"
+             ? tr("play.side_by_side_two_players")
              : layout_name(g_pcfg.local_layout));
       vw_row(4, 88 + 4 * VW_PITCH, 440, g_cursor == 4, 1,
-             "Player 2 on the touch screen",
-             g_pcfg.local_touch2 ? "on" : "off");
+             tr("play.player_2_on_the_touch_screen"),
+             g_pcfg.local_touch2 ? tr("play.on") : tr("play.off"));
       vw_wrap(22, 214, 436,
-              g_play_pending ? "Starting the second game..."
+              g_play_pending ? tr("play.starting_the_second_game")
               : !ls.available ? (ls.why_not && ls.why_not[0] ? ls.why_not
-                 : "This game cannot run twice on one " UI_DEV ".")
+                 : tr("play.this_game_cannot_run_twice_on"))
               : id == LS_COPY
-              ? "The second game begins as a copy of yours, exactly where "
-                "you are now. If it saves, that is the second save file."
+              ? tr("play.the_second_game_begins_as_a")
+
               : id == LS_OWN
-              ? (other ? "The second machine boots that game with its own "
-                         "save, the one you play it with."
-                       : "The second game starts from its own save file, "
-                         "like a second cartridge. It is kept beside yours.")
+              ? (other ? tr("play.the_second_machine_boots_that_game")
+
+                       : tr("play.the_second_game_starts_from_its")
+)
               : id == LS_GAME
-              ? "The same game twice, or the other version of it in the "
-                "second machine."
+              ? tr("play.the_same_game_twice_or_the")
+
               : id == LS_TOUCH
-              ? "No second controller? Player 2 plays on the front screen: "
-                "buttons are drawn on their half."
-              : "Side by side: two equal pictures. Large + small: the game "
-                "you drive is the large one.", C_DIM, 2);
+              ? tr("play.no_second_controller_player_2_plays")
+
+              : tr("play.side_by_side_two_equal_pictures")
+, C_DIM, 2);
    }
    if (g_play_note[0])
       vw_plate(g_play_note);
    else if (ls.active)
-      footer(VID_GLYPH_X " select   " VID_GLYPH_O " back");
+      footer(tr("hint.x_select_o_back"));
    else
-      footer(id == LS_GAME ? VID_GLYPH_X " choose   " VID_GLYPH_O " back"
+      footer(id == LS_GAME ? tr("hint.x_choose_o_back")
              : id == LS_LAYOUT || id == LS_TOUCH
-             ? VID_GLYPH_X " change   " VID_GLYPH_O " back"
-             : VID_GLYPH_X " start   " VID_GLYPH_O " back");
+             ? tr("hint.x_change_o_back")
+             : tr("hint.x_start_o_back"));
    return act;
 }
 
@@ -1612,41 +1773,54 @@ static ui_action screen_local(unsigned edges)
 static const char *delay_name(int d, char *buf, size_t cap)
 {
    if (d <= 0)
-      return "Auto";
-   snprintf(buf, cap, d == 1 ? "%d frame" : "%d frames", d);
+      return tr("play.auto");
+   snprintf(buf, cap, d == 1 ? tr("play.frame") : tr("play.frames"), d);
    return buf;
 }
 
 static ui_action screen_conn(unsigned edges)
 {
-   enum { CN_DELAY = UI_CONN_COUNT, CN_COUNT };
-   static const char *const what[UI_CONN_COUNT] = {
-      "Same Wi-Fi or hotspot. Rooms are found by themselves.",
-      "Far apart: the joiner types the address the host is shown.",
-      "No router: the two " UI_DEVS " connect directly, side by side.",
+   /* The connections as rows (conn_rows), then Link delay and Always use the
+    * relay. */
+   const char *const what[UI_CONN_COUNT] = {
+      [UI_CONN_WIFI] = tr("play.same_wi_fi_or_hotspot_rooms"),
+      [UI_CONN_INTERNET] = tr("play.advanced_the_joiner_types_the_address"),
+      [UI_CONN_ADHOC] = tr("play.no_router_the_two_vitas_connect"),
+      [UI_CONN_ONLINE] = tr("play.far_apart_host_shows_a_code"),
    };
    const ui_net_status *net = play_net(0);
+   int ids[UI_CONN_COUNT], nc = conn_rows(ids), count = nc + 2;
+   int cn_delay = nc, cn_relay = nc + 1;
+   int pitch = nc > 3 ? 28 : 36, y0 = 70, i, y;
    char db[16];
-   int i;
-   if (g_cursor >= CN_COUNT)
+   if (g_cursor >= count)
       g_cursor = 0;
    tch_rows(&g_cursor, &edges);
    if (edges & PSP_CTRL_UP)
-      g_cursor = (g_cursor + CN_COUNT - 1) % CN_COUNT;
+      g_cursor = (g_cursor + count - 1) % count;
    if (edges & PSP_CTRL_DOWN)
-      g_cursor = (g_cursor + 1) % CN_COUNT;
-   if (g_cursor == CN_DELAY)
+      g_cursor = (g_cursor + 1) % count;
+   if (g_cursor == cn_delay)
    {
       if (edges & PSP_CTRL_LEFT)
          settings_adjust(SET_DELAY, -1);
       if (edges & (PSP_CTRL_RIGHT | PSP_CTRL_CROSS))
          settings_adjust(SET_DELAY, +1);
    }
+   else if (g_cursor == cn_relay)
+   {
+      if (edges & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT | PSP_CTRL_CROSS))
+      {
+         g_pcfg.online_relay = !g_pcfg.online_relay;
+         g_settings_dirty = 1;
+         fe_evt("online_relay value=%d", g_pcfg.online_relay);
+      }
+   }
    else if (edges & PSP_CTRL_CROSS)
    {
-      if (g_pcfg.net_conn != g_cursor)
+      if (g_pcfg.net_conn != ids[g_cursor])
       {
-         g_pcfg.net_conn = g_cursor;
+         g_pcfg.net_conn = ids[g_cursor];
          g_settings_dirty = 1;
          fe_evt("net_conn value=%d", g_pcfg.net_conn);
       }
@@ -1660,37 +1834,42 @@ static ui_action screen_conn(unsigned edges)
    }
 
    ov_backdrop(OV_SCRIM_DENSE);
-   vw_head(NULL, "CONNECTION");
-   play_status_draw(52, g_pcfg.net_conn, net);
-   for (i = 0; i < UI_CONN_COUNT; i++)
+   vw_head(NULL, tr("play.connection_2"));
+   play_status_draw(50, g_pcfg.net_conn, net);
+   for (i = 0; i < nc; i++)
    {
-      int y = 78 + i * 38, sel = g_cursor == i, on = g_pcfg.net_conn == i;
+      int cy = y0 + i * pitch, sel = g_cursor == i, on = g_pcfg.net_conn == ids[i];
       if (sel)
       {
-         vid_rect(0, y - 4, 460, 36, C_ACCENT, 40);
-         vid_rect(0, y - 4, 4, 36, C_ACCENT, 255);
+         vid_rect(0, cy - 4, 460, pitch - 2, C_ACCENT, 40);
+         vid_rect(0, cy - 4, 4, pitch - 2, C_ACCENT, 255);
       }
       /* The chosen one wears the console colour's dot. */
-      ov_outline(18, y + 2, 10, 10, on ? C_CON : C_DIM, on ? 255 : 160);
+      ov_outline(18, cy + 2, 10, 10, on ? C_CON : C_DIM, on ? 255 : 160);
       if (on)
-         vid_rect(21, y + 5, 4, 4, C_CON, 255);
-      vid_text(36, y, conn_name(i), sel ? C_SEL : C_ITEM);
-      vw_line(36, y + 15, 420, what[i], sel ? C_VALUE : C_DIM);
-      tch_row(i, 0, y - 5, 460, 38);
+         vid_rect(21, cy + 5, 4, 4, C_CON, 255);
+      vid_text(36, cy, conn_name(ids[i]), sel ? C_SEL : C_ITEM);
+      vw_line(36, cy + 14, 420, what[ids[i]], sel ? C_VALUE : C_DIM);
+      tch_row(i, 0, cy - 5, 460, pitch);
    }
-   {
-      int y = 78 + 3 * 38 + 4;
-      vw_row(CN_DELAY, y, 440, g_cursor == CN_DELAY, 1, "Link delay",
-             delay_name(g_pcfg.link_delay, db, sizeof(db)));
-      vid_text(22, y + 19, g_pcfg.link_delay
-               ? "Fewer frames react faster; more ride out a slow "
-                 "connection."
-               : "Auto picks it from the connection. The host's choice "
-                 "counts.", C_DIM);
-   }
-   footer(g_cursor == CN_DELAY
-          ? "DPAD change   " VID_GLYPH_O " back"
-          : VID_GLYPH_X " choose   " VID_GLYPH_O " back");
+   y = y0 + nc * pitch + 2;
+   vw_row(cn_delay, y, 440, g_cursor == cn_delay, 1, tr("play.link_delay"),
+          delay_name(g_pcfg.link_delay, db, sizeof(db)));
+   vw_row(cn_relay, y + VW_PITCH, 440, g_cursor == cn_relay, 1,
+          tr("play.always_use_the_relay"), g_pcfg.online_relay ? tr("play.on") : tr("play.off"));
+   /* one line of help, for the row the cursor is on */
+   y += 2 * VW_PITCH;
+   if (g_cursor == cn_delay)
+      vw_line(22, y, 436, g_pcfg.link_delay
+              ? tr("play.fewer_frames_react_faster_more_ride")
+              : tr("play.auto_picks_it_from_the_connection"),
+              C_DIM);
+   else if (g_cursor == cn_relay)
+      vw_line(22, y, 436, tr("play.hides_your_internet_address_from_the")
+, C_DIM);
+   footer(g_cursor >= cn_delay
+          ? tr("hint.dpad_change_o_back")
+          : tr("hint.x_choose_o_back"));
    return UI_ACT_NONE;
 }
 
@@ -1703,11 +1882,11 @@ enum { MGV_START, MGV_BACK, MGV_COUNT };
 
 static ui_action screen_mgift(unsigned edges)
 {
-   static const char *const steps[][2] = {
-      { "Phone", "Mystery Gift Station: pick a gift." },
-      { UI_DEV,  "Settings > Network: join the Wi-Fi Mystery Gift." },
-      { "Here",  "Start listening, or Select + Down in the game." },
-      { "Game",  "MYSTERY GIFT on the title screen." },
+   const char *const steps[][2] = {
+      { tr("play.phone"), tr("play.mystery_gift_station_pick_a_gift") },
+      { "Vita",  tr("play.settings_network_join_the_wi_fi") },
+      { tr("play.here"),  tr("play.start_listening_or_select_down_in") },
+      { tr("play.game"),  tr("play.mystery_gift_on_the_title_screen") },
    };
    const char *l1 = mgift_ui_line1();
    const char *l2 = mgift_ui_line2();
@@ -1733,16 +1912,16 @@ static ui_action screen_mgift(unsigned edges)
    }
 
    ov_backdrop(OV_SCRIM);
-   vw_head("FireRed, LeafGreen and Emerald, from a phone", "MYSTERY GIFT");
-   ov_status_right(running ? "LISTENING" : "OFF");
+   vw_head(tr("play.firered_leafgreen_and_emerald_from_a"), tr("play.mystery_gift_2"));
+   ov_status_right(running ? tr("play.listening") : tr("play.status_off"));
    play_status_draw(68, UI_CONN_WIFI, play_net(0));
-   vw_line(22, 84, 436, l1 && l1[0] ? l1 : "Not listening", C_VALUE);
+   vw_line(22, 84, 436, l1 && l1[0] ? l1 : tr("play.not_listening"), C_VALUE);
    if (l2 && l2[0])
       vw_line(22, 84 + FE_FONT_H + 2, 436, l2, C_ITEM);
    y = 122;
    vw_row(MGV_START, y, 440, g_cursor == MGV_START, 1,
-          running ? "Stop listening" : "Start listening", NULL);
-   vw_row(MGV_BACK, y + VW_PITCH, 440, g_cursor == MGV_BACK, 1, "Back", NULL);
+          running ? tr("play.stop_listening") : tr("play.start_listening"), NULL);
+   vw_row(MGV_BACK, y + VW_PITCH, 440, g_cursor == MGV_BACK, 1, tr("play.back"), NULL);
    if (!running)
    {
       y += 2 * VW_PITCH;
@@ -1754,11 +1933,11 @@ static ui_action screen_mgift(unsigned edges)
       }
    }
    if (g_cursor == MGV_BACK)
-      footer(VID_GLYPH_X " back   " VID_GLYPH_O " back");
+      footer(tr("hint.x_back_o_back"));
    else if (running)
-      footer(VID_GLYPH_X " stop   " VID_GLYPH_O " back (keeps listening)");
+      footer(tr("hint.x_stop_o_back_keeps_listening"));
    else
-      footer(VID_GLYPH_X " start   " VID_GLYPH_O " back");
+      footer(tr("hint.x_start_o_back"));
    return UI_ACT_NONE;
 }
 
@@ -1767,26 +1946,26 @@ static ui_action screen_mgift(unsigned edges)
 static ui_action screen_help(unsigned edges)
 {
    /* Page 1: the steps.  Page 2: each connection, its name leading. */
-   static const char *const p1[][2] = {
-      { "1", "Both players open their game: the same one, or the other version (Ruby and Sapphire, FireRed and LeafGreen)." },
-      { "2", "One chooses Play together > Host a game." },
-      { "3", "The other chooses Play together > Join a game and picks the "
-             "room in the list." },
-      { "4", "When it says Linked, use the game's own link feature: the "
-             "trade centre, a link battle, the cable club." },
-      { "", "To stop, either player chooses Play together > Disconnect. "
-            "Both games save and carry on alone." },
+   const char *const p1[][2] = {
+      { "1", tr("play.both_players_open_their_game_the") },
+      { "2", tr("play.one_chooses_play_together_host_a") },
+      { "3", tr("play.the_other_chooses_play_together_join")
+ },
+      { "4", tr("play.when_it_says_linked_use_the")
+ },
+      { "", tr("play.to_stop_either_player_chooses_play")
+ },
    };
-   static const char *const p2[][2] = {
-      { "Wi-Fi", "Same network or a phone's hotspot. Rooms show up in the "
-                 "list by themselves. The easy one." },
-      { "Internet", "For a friend far away. The host's screen shows an "
-                    "address; the joiner types it." },
-      { "Ad hoc", "No router anywhere? The two " UI_DEVS " connect "
-                  "directly, through the " UI_DEV "'s own connection "
-                  "screen." },
-      { "Two players on this " UI_DEV, "Both games run on this console: "
-                  "trade with yourself, no second " UI_DEV " needed." },
+   const char *const p2[][2] = {
+      { tr("play.same_wi_fi"), tr("play.same_network_or_a_phone_s")
+ },
+      { tr("play.online"), tr("play.for_a_friend_far_away_the")
+ },
+      { tr("play.nearby"), tr("play.no_router_anywhere_the_two_vitas")
+
+ },
+      { tr("play.two_players_on_this"), tr("play.both_games_run_on_this_console")
+ },
    };
    const char *const (*p)[2] = g_help_page ? p2 : p1;
    int n = g_help_page ? (int)(sizeof(p2) / sizeof(p2[0]))
@@ -1801,8 +1980,8 @@ static ui_action screen_help(unsigned edges)
       return UI_ACT_NONE;
    }
    ov_backdrop(OV_SCRIM_DENSE);
-   vw_head(g_help_page ? "Which connection?" : "The four steps",
-           "HOW TO PLAY");
+   vw_head(g_help_page ? tr("play.which_connection") : tr("play.the_four_steps"),
+           tr("play.how_to_play"));
    ov_text_right(460, 48, g_help_page ? "2 / 2" : "1 / 2", C_DIM);
    for (i = 0; i < n; i++)
    {
@@ -1816,9 +1995,9 @@ static ui_action screen_help(unsigned edges)
    }
    /* Anywhere on the page turns it. */
    tch_btn(PSP_CTRL_CROSS, 0, 44, VID_SCR_W, TCH_HINT_Y - 44);
-   footer(g_help_page ? VID_GLYPH_X " the steps   " VID_GLYPH_O " back"
-                      : VID_GLYPH_X " which connection?   " VID_GLYPH_O
-                        " back");
+   footer(g_help_page ? tr("hint.x_the_steps_o_back")
+                      : tr("hint.x_which_connection_o_back")
+);
    return UI_ACT_NONE;
 }
 

@@ -81,6 +81,8 @@ void     pspcompat_wait_vblank(void);
 /* Buttons held now, PSP bit layout, left stick folded into the d-pad.  A
  * main loop can use this for its own menu input too. */
 unsigned pspcompat_pad(void);
+/* Same physical layout without applying g_pc_face_swap. */
+unsigned pspcompat_pad_raw(void);
 /* 1 = pspcompat_pad() also answers for the SECOND controller (plat.h
  * plat_pad_read2), so with two players either one drives the menu and its
  * pages; 0 (the start) = the first pad alone. */
@@ -222,9 +224,9 @@ int pspcompat_touch(pc_touch *out);
  *        the caller keeps the old text
  *   every frame after that, pspcompat_ime_poll(out, cap):
  *        PC_IME_RUNNING     still typing: keep drawing frames
- *        PC_IME_DONE        `out` holds what was entered (UTF-8 reduced to
- *                           printable ASCII: the UI's faces have no other
- *                           glyphs; anything else becomes '?'), once
+ *        PC_IME_DONE        `out` holds what was entered, as UTF-8 (the
+ *                           UI draws Latin, Greek, Cyrillic, kana, kanji and
+ *                           Hangul; control characters become blanks), once
  *        PC_IME_CANCELLED   closed without accepting, once
  *        PC_IME_IDLE        nothing is open
  *
@@ -251,6 +253,10 @@ void pspcompat_dialogs_init(void);
  * Enter Button Assignment): 1 = Circle confirms (the Japanese layout).  The
  * twin answers 0, or 1 with GBADHOC_ENTER_BUTTON=circle in its environment. */
 int  pspcompat_enter_is_circle(void);
+/* The Vita's system language, a SceSystemParamLang (0 Japanese, 1 English US,
+ * 2 French, 3 Spanish, 4 German, 5 Italian ... 17 Brazilian Portuguese); 1 when
+ * unknown.  The twin answers 1, or GBADHOC_FAKE_LANG's number. */
+int  pspcompat_system_lang(void);
 /* 1 = pspcompat_pad() hands Cross and Circle over exchanged (the same switch
  * as plat_pad_face_swap, for the pad this file reads itself). */
 void pspcompat_face_swap(int on);

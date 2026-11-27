@@ -1887,6 +1887,15 @@ extern void* ldst_lookup_tables[16*4 + 17*6];
 void init_emitter(bool must_swap) {
   /* must_swap is unused on AArch64 (see x86_emit.h for context). */
   (void)must_swap;
+  /* the .S lays spsr (u32[16]) and reg_mode (u32[7][7]) out by hand */
+  GPSP_REGBLOCK_EXPECT("arm64", spsr, reg, 0x100);        /* SPSR_RAM_OFF */
+  GPSP_REGBLOCK_EXPECT("arm64", reg_mode, spsr, sizeof(spsr));
+  GPSP_REGBLOCK_EXPECT("arm64", reg_mode, reg, 0x140);    /* REGMODE_RAM_OFF */
+  GPSP_REGBLOCK_EXPECT("arm64", oam_ram, reg, 0x240);     /* OAM_RAM_OFF */
+  GPSP_REGBLOCK_EXPECT("arm64", palette_ram, reg, 0x640); /* PAL_RAM_OFF */
+  GPSP_REGBLOCK_EXPECT("arm64", io_registers, reg, 0xA40);/* IOREG_OFF */
+  GPSP_REGBLOCK_EXPECT("arm64", palette_ram_converted, reg, 0xE40);
+  GPSP_REGBLOCK_EXPECT("arm64", ldst_lookup_tables, reg, -0x1000); /* MEM_TBL_OFF */
   rom_cache_watermark = INITIAL_ROM_WATERMARK;
   init_bios_hooks();
 

@@ -11,7 +11,7 @@ $(B)/library_app_main.o: $(B)/app/main_vita.o
 $(LIBRARY_TEST): $(B)/library_test.o $(B)/library_app_main.o $(LIBRARY_APP) $(FE_OBJS) $(GB_OBJS) $(CORE_A) $(CORE_B) $(CORE_R)
 	$(CC) $(CORE_ARCH_FLAGS) $(LDFLAGS_ARCH) $(SAN_FLAGS) -o $@ \
 	  $(B)/library_test.o $(B)/library_app_main.o $(LIBRARY_APP) $(FE_OBJS) \
-	  $(GB_OBJS) $(CORE_R) $(CORE_B) $(CORE_A) -lm -lpthread
+	  $(GB_OBJS) $(CORE_R) $(CORE_B) $(CORE_A) $(MBEDTLS_LIBS) -lstdc++ -lm -lpthread
 
 library-test: $(LIBRARY_TEST)
 	./$(LIBRARY_TEST)

@@ -37,7 +37,7 @@ SRC_VID  := $(GPSP)/vita/video_vita.c $(GPSP)/vita/video_vita_text.c \
             $(GPSP)/vita/ui_hooks_default.c \
             $(GPSP)/vita/third_party/stb/stb_impl_vita.c
 SRC_FE   := $(GPSP)/frontend-common/fe_util.c $(GPSP)/frontend-common/fe_evt.c \
-            $(GPSP)/frontend-common/fe_favs.c \
+            $(GPSP)/frontend-common/fe_favs.c $(GPSP)/frontend-common/fe_collect.c \
             $(GPSP)/frontend-common/fe_linkmode.c
 SRC_ASM  := $(GPSP)/vita/video_vita_fonts.S
 SRCS     := ui_host_test.c $(SRC_UI) $(SRC_VID) $(SRC_FE)
@@ -140,7 +140,7 @@ GPSP_DIR := $(GPSP)
 include $(GPSP)/vita/ui.mk
 VSRCS := vita_linkcheck.c $(VITA_UI_SRCS_C) \
          $(GPSP)/frontend-common/fe_util.c $(GPSP)/frontend-common/fe_evt.c \
-         $(GPSP)/frontend-common/fe_favs.c \
+         $(GPSP)/frontend-common/fe_favs.c $(GPSP)/frontend-common/fe_collect.c \
          $(GPSP)/frontend-common/fe_linkmode.c
 VOBJS := $(patsubst %.c,$(VDIR)/%.o,$(notdir $(VSRCS))) \
          $(VDIR)/video_vita_fonts.o

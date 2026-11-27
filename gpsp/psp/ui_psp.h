@@ -25,6 +25,7 @@ typedef enum
    UI_ACT_RESUME,          /* close the menu */
    UI_ACT_SAVESTATE,
    UI_ACT_LOADSTATE,
+   UI_ACT_UNDOLOAD,      /* Save states > Undo: back to before the last load */
    UI_ACT_NET_HOST,        /* host on ui_group() */
    UI_ACT_NET_JOIN,        /* join ui_group() */
    UI_ACT_NET_DISCONNECT,
@@ -47,7 +48,10 @@ typedef enum
    ,
    UI_ACT_NET_LOCAL,       /* start it; g_pcfg.local_partner says how */
    UI_ACT_NET_LOCAL_STOP,
-   UI_ACT_NET_LOCAL_SWAP   /* the pad drives the other machine */
+   UI_ACT_NET_LOCAL_SWAP,  /* the pad drives the other machine */
+   /* 2.0 online play: quit this game, open ui_online_open_path(), then join
+    * ui_join_target() (the room's game is not the one that is open). */
+   UI_ACT_ONLINE_OPEN_JOIN
 #endif
 } ui_action;
 
@@ -111,6 +115,9 @@ int ui_state_load_done(int rc);
  * EVT shot_read n= us=. */
 void ui_shot_probe_arm(int on);
 
+/* the game ended: Search memory's snapshot goes (Vita; ui_vita_cheats.h) */
+void ui_cheat_search_free(void);
+
 #ifdef GPSP_CHEATS
 /* ---- cheats (docs/CHEATS.md) ---------------------------------------------
  * The cheat list of the game at rom_path (only its file name matters):
@@ -162,6 +169,12 @@ typedef struct
    int signal_pct;       /* Wi-Fi / ad hoc signal 0..100, -1 unknown */
    const char *error;    /* UI_LINK_OFF: why the last Host / local start
                           * failed, one sentence; NULL/"" = nothing */
+   /* 2.0 online play (vita/online_vita.h); all zero when conn is not Online. */
+   const char *online_code;   /* hosting Online: the code to show, NULL/"" until the room exists */
+   int online_stage;          /* ON_* (online_vita.h), 0 when the connection is not Online */
+   int online_ttl_s;          /* seconds until the code expires */
+   int relay;                 /* 1: the link runs through the relay */
+   int quality;               /* ONLINE_Q_* */
 #endif
    int fast;             /* Fast link in the running GBA cable session: 1 /
                             0, -1 = not one (fe_host_fast_link) */
@@ -190,8 +203,14 @@ typedef struct ui_join_info
    char code[5];
    char title[24];
    char nick[16];
+   char online_code[6];  /* conn ONLINE: the room code typed or picked */
 } ui_join_info;
 const ui_join_info *ui_join_target(void);
+/* Set what UI_ACT_NET_JOIN / the SNES link joins, for a page that picks the room itself (the game list's SNES
+ * "Two players" page; ui_vita_play.h). */
+void ui_join_set(const ui_join_info *t);
+/* The game list's Settings > Two players (SNES) chose a game: 0 nothing, 1 host a room with it, 2 join one.  Once. */
+int ui_snes_two_take(void);
 
 /* Every way a link can fail, in the player's words: two lines for the
  * LINKING screen (ui_linking_view.l1 / .l2 with .fail = 1) or one sentence
@@ -212,9 +231,44 @@ enum
    UI_FAIL_PORT,            /* the host's port could not be opened         */
    UI_FAIL_MEMORY,
    UI_FAIL_LOCAL,           /* the second machine would not start          */
+   /* 2.0 online play (texts: plan 1.6; the %s of some are filled by
+    * ui_online_fail_text from the last room card's values) */
+   UI_FAIL_ONLINE_CODE,
+   UI_FAIL_ONLINE_UPDATE,
+   UI_FAIL_ONLINE_VER_OLD_HERE,
+   UI_FAIL_ONLINE_VER_OLD_THERE,
+   UI_FAIL_ONLINE_SETUP,
+   UI_FAIL_ONLINE_CLOCK,
+   UI_FAIL_ONLINE_GAME,
+   UI_FAIL_ONLINE_GAME_FILE,
+   UI_FAIL_ONLINE_FULL,
+   UI_FAIL_ONLINE_UNREACHABLE,
+   UI_FAIL_ONLINE_BUSY,
+   UI_FAIL_ONLINE_SERVICE,
+   UI_FAIL_ONLINE_CLOSED,
+   UI_FAIL_ONLINE_SLOW,     /* a short 429: too many tries from this network */
+   UI_FAIL_ONLINE_CONSOLE,  /* the room service does not know this console (an older service) */
    UI_FAIL_COUNT
 };
 void ui_link_fail_text(int why, const char **l1, const char **l2);
+/* The Online sentences, with their %s filled from arg1 / arg2 (package U
+ * defines it in ui_vita_online.h; ui_link_fail_text calls it with the last
+ * card's values). */
+void ui_online_fail_text(int why, const char *arg1, const char *arg2, const char **l1, const char **l2);
+/* The path of the game the Online join has to open first (valid after
+ * UI_ACT_ONLINE_OPEN_JOIN). */
+const char *ui_online_open_path(void);
+/* The library chose a game in order to join a room: 1 once, with the target
+ * in *ui_join_target(). */
+int ui_online_take_pending(void);
+/* The code pad as a blocking page, for a screen that needs a room code (the
+ * share screens): 1 and the five characters in out when the player
+ * confirmed, 0 when they backed out. */
+int ui_online_code_modal(char out[6]);
+/* The toast of a link that has just formed over the internet: "Connected to
+ * <peer>. Connection: Great|Good|Slow", and a second line for Slow.  quality
+ * is ONLINE_Q_* (online_vita.h). */
+void ui_online_connected_toast(const char *peer, int quality);
 
 /* The LINKING screen and the finger: ui_linking_draw() registers its
  * footer's hints ("O cancel", "O back") as touch targets.  Whoever draws
@@ -291,9 +345,65 @@ static inline int ui_rom_matches_console(const char *name, fe_console_t console)
    const char *ext;
    size_t len, i;
    static const char *const suffix[] = { ".gba", ".gb", ".gbc", ".sfc", ".smc" };
-   if (!name || console < FE_CONSOLE_GBA || console > FE_CONSOLE_SNES)
+   if (!name || console < FE_CONSOLE_GBA || console >= FE_CONSOLE_COUNT)
       return 0;
    len = strlen(name);
+   if (console == FE_CONSOLE_NES || console == FE_CONSOLE_WSWAN)
+   {
+      /* a Famicom/NES cartridge in four spellings: .nes (iNES), .fds (a
+       * Famicom Disk System disk), .unf and .unif (UNIF); a WonderSwan one
+       * in three: .ws, .wsc (Color) and .pc2 (Pocket Challenge V2) */
+      static const char *const nes_ext[] = { ".nes", ".fds", ".unf", ".unif" };
+      static const char *const ws_ext[] = { ".ws", ".wsc", ".pc2", "" };
+      const char *const *exts = console == FE_CONSOLE_NES ? nes_ext : ws_ext;
+      size_t k;
+      for (k = 0; k < 4 && exts[k][0]; k++)
+      {
+         size_t el = strlen(exts[k]);
+         if (len <= el)
+            continue;
+         for (i = 0; i < el; i++)
+         {
+            unsigned char a = (unsigned char)name[len - el + i];
+            if (a >= 'A' && a <= 'Z') a = (unsigned char)(a + ('a' - 'A'));
+            if (a != (unsigned char)exts[k][i]) break;
+         }
+         if (i == el)
+            return 1;
+      }
+      return 0;
+   }
+   if (console >= FE_CONSOLE_MD)
+   {
+      /* the Sega consoles (md.bin): Genesis in four spellings (.bin is only
+       * a candidate here; the scan asks gamedb_md_accept about the bytes),
+       * the others one each */
+      static const char *const md_ext[] = { ".md", ".gen", ".smd", ".bin", ".68k" };
+      static const char *const sms_ext[] = { ".sms", "", "", "", "" };
+      static const char *const gg_ext[] = { ".gg", "", "", "", "" };
+      static const char *const sg_ext[] = { ".sg", ".sc", "", "", "" };   /* .sc: an SC-3000 cartridge, run as the SG-1000 family */
+      static const char *const scd_ext[] = { ".cue", ".chd", ".iso", ".m3u", "" };   /* Sega CD: a disc, or the .m3u of a game on several discs (its .bin tracks and the discs an .m3u names are not listed) */
+      const char *const *exts = console == FE_CONSOLE_MD ? md_ext
+                              : console == FE_CONSOLE_SMS ? sms_ext
+                              : console == FE_CONSOLE_GG ? gg_ext
+                              : console == FE_CONSOLE_SCD ? scd_ext : sg_ext;
+      size_t k;
+      for (k = 0; k < 5 && exts[k][0]; k++)
+      {
+         size_t el = strlen(exts[k]);
+         if (len <= el)
+            continue;
+         for (i = 0; i < el; i++)
+         {
+            unsigned char a = (unsigned char)name[len - el + i];
+            if (a >= 'A' && a <= 'Z') a = (unsigned char)(a + ('a' - 'A'));
+            if (a != (unsigned char)exts[k][i]) break;
+         }
+         if (i == el)
+            return 1;
+      }
+      return 0;
+   }
    ext = suffix[console];
    if (len < strlen(ext))
       return 0;
@@ -314,6 +424,16 @@ static inline int ui_rom_matches_console(const char *name, fe_console_t console)
       if (a != b) return 0;
    }
    return 1;
+}
+
+/* The chord that opens the pause menu, named for the hint under a game page
+ * and on the loading screen.  It is START + SELECT held on every console,
+ * the Super NES and Sega players included (L + R + START also opens the menu
+ * of those two players and is named in CONTROLS.md, not on a hint). */
+static inline const char *ui_menu_chord_text(int console)
+{
+   (void)console;
+   return "START + SELECT";
 }
 
 static inline size_t ui_rom_stem_length(const char *name)

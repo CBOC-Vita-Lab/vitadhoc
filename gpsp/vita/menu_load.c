@@ -8,7 +8,9 @@
 
 #define ML_GET(x) __atomic_load_n(&(x), __ATOMIC_ACQUIRE)
 #define ML_SET(x, v) __atomic_store_n(&(x), (v), __ATOMIC_RELEASE)
-enum { MS_FREE, MS_WRITING, MS_READY, MS_PINNED };
+enum { MS_FREE, MS_WRITING, MS_READY, MS_PINNED, MS_DISCARD };
+enum { MB_FREE = 0, MB_BUSY = 1 };
+#define ML_BATCH_POOL 4
 typedef struct ml_batch
 {
    unsigned revision, count;
@@ -20,7 +22,12 @@ typedef struct ml_slot
    unsigned revision;
    menu_load_result result;
 } ml_slot;
-static ml_batch *g_pending;
+/* Fixed static batch pool + MS_DISCARD keep the UI thread completely free of
+ * malloc()/free(), preventing priority inversion on newlib's global heap lock
+ * while background workers decode PNGs. */
+static ml_batch g_batches[ML_BATCH_POOL];
+static int g_batch_state[ML_BATCH_POOL];
+static int g_pending_idx = -1;
 static ml_slot g_slots[ML_SLOTS];
 static menu_load_fn g_load;
 static unsigned g_revision, g_current_revision;
@@ -70,6 +77,16 @@ static void ml_free_slot(unsigned i)
    g_slots[i].result.pixels = NULL;
    ML_SET(g_slots[i].state, MS_FREE);
 }
+static void ml_sweep_discards(void)
+{
+   for (unsigned i = 0; i < ML_SLOTS; i++)
+   {
+      int state = MS_DISCARD;
+      if (__atomic_compare_exchange_n(&g_slots[i].state, &state, MS_WRITING,
+                                      0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+         ml_free_slot(i);
+   }
+}
 static int ml_claim(int image)
 {
    unsigned first = image ? ML_META_SLOTS : 0;
@@ -80,6 +97,16 @@ static int ml_claim(int image)
       if (__atomic_compare_exchange_n(&g_slots[i].state, &state, MS_WRITING,
                                      0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
          return (int)i;
+      if (state == MS_DISCARD)
+      {
+         if (__atomic_compare_exchange_n(&g_slots[i].state, &state, MS_WRITING,
+                                        0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+         {
+            free(g_slots[i].result.pixels);
+            g_slots[i].result.pixels = NULL;
+            return (int)i;
+         }
+      }
       if (state == MS_READY && g_slots[i].revision != ML_GET(g_revision))
       {
          state = MS_READY;
@@ -97,16 +124,29 @@ static int ml_claim(int image)
 }
 static void ml_run(void)
 {
-   ml_batch *batch = NULL;
+   int active_idx = -1;
    while (!ML_GET(g_quit))
    {
-      ml_batch *next = __atomic_exchange_n(&g_pending, NULL, __ATOMIC_ACQ_REL);
+      int next_idx;
+      ml_batch *batch;
       unsigned j = 0, kind = 0;
       int slot;
       uint64_t t;
-      if (next) { free(batch); batch = next; }
+      ml_sweep_discards();
+      next_idx = __atomic_exchange_n(&g_pending_idx, -1, __ATOMIC_ACQ_REL);
+      if (next_idx >= 0)
+      {
+         if (active_idx >= 0)
+            ML_SET(g_batch_state[active_idx], MB_FREE);
+         active_idx = next_idx;
+      }
+      batch = active_idx >= 0 ? &g_batches[active_idx] : NULL;
       if (batch && batch->revision != ML_GET(g_revision))
-      { free(batch); batch = NULL; }
+      {
+         ML_SET(g_batch_state[active_idx], MB_FREE);
+         active_idx = -1;
+         batch = NULL;
+      }
       if (!ML_GET(g_paused) && batch)
          for (j = 0; j < batch->count; j++)
             if (batch->jobs[j].tasks)
@@ -172,8 +212,14 @@ static void ml_run(void)
       __atomic_add_fetch(&g_published, 1, __ATOMIC_RELAXED);
       ML_SET(s->state, MS_READY);
    }
-   free(batch);
-   free(__atomic_exchange_n(&g_pending, NULL, __ATOMIC_ACQ_REL));
+   if (active_idx >= 0)
+      ML_SET(g_batch_state[active_idx], MB_FREE);
+   {
+      int rem = __atomic_exchange_n(&g_pending_idx, -1, __ATOMIC_ACQ_REL);
+      if (rem >= 0)
+         ML_SET(g_batch_state[rem], MB_FREE);
+   }
+   ml_sweep_discards();
    ML_SET(g_phase, 0);
    ML_SET(g_done, 1);
 }
@@ -189,6 +235,8 @@ int menu_load_start(menu_load_fn load)
    if (ML_GET(g_quit) || ML_GET(g_failed) || !load) return -1;
    if (ML_GET(g_started)) return load == g_load ? 0 : -1;
    g_load = load;
+   g_pending_idx = -1;
+   memset(g_batch_state, 0, sizeof(g_batch_state));
 #ifdef __vita__
    g_wake = sceKernelCreateSema("menu-local-wake", 0, 0, 1, NULL);
    if (g_wake < 0) goto fail;
@@ -213,6 +261,7 @@ fail:
 
 int menu_load_submit(const menu_load_job *jobs, unsigned count)
 {
+   int idx, prev;
    ml_batch *batch;
    if (!ML_GET(g_started) || ML_GET(g_quit) || ML_GET(g_paused) || !jobs ||
        !count || count > 1 + ML_NEIGHBORS) return 0;
@@ -225,30 +274,46 @@ int menu_load_submit(const menu_load_job *jobs, unsigned count)
           jobs[i].generation != jobs[0].generation ||
           (jobs[i].tasks & ~(((unsigned)ML_STATE0 << ML_STATE_SLOTS) - 1u)))
          return 0;
-   batch = malloc(sizeof(*batch));
-   if (!batch) return 0;
+   /* Reclaim any unconsumed pending batch first, else claim a free pool slot
+    * (worker holds at most 2 slots at a time, so >= 1 of 4 is always free). */
+   idx = __atomic_exchange_n(&g_pending_idx, -1, __ATOMIC_ACQ_REL);
+   if (idx < 0)
+   {
+      for (int i = 0; i < ML_BATCH_POOL; i++)
+      {
+         int free_st = MB_FREE;
+         if (__atomic_compare_exchange_n(&g_batch_state[i], &free_st, MB_BUSY,
+                                         0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+         { idx = i; break; }
+      }
+      if (idx < 0) return 0;
+   }
+   batch = &g_batches[idx];
    batch->count = count;
    memcpy(batch->jobs, jobs, count * sizeof(*jobs));
    batch->revision = __atomic_add_fetch(&g_revision, 1, __ATOMIC_ACQ_REL);
-   free(__atomic_exchange_n(&g_pending, batch, __ATOMIC_ACQ_REL));
+   prev = __atomic_exchange_n(&g_pending_idx, idx, __ATOMIC_ACQ_REL);
+   if (prev >= 0)
+      ML_SET(g_batch_state[prev], MB_FREE);
    __atomic_add_fetch(&g_submitted, 1, __ATOMIC_RELAXED);
    ml_wake();
    return 1;
 }
 void menu_load_pause(void)
 {
+   int prev;
    ML_SET(g_paused, 1);
    __atomic_add_fetch(&g_revision, 1, __ATOMIC_ACQ_REL);
-   free(__atomic_exchange_n(&g_pending, NULL, __ATOMIC_ACQ_REL));
-   /* Results of the old revision can never be taken now: free their pixels
-    * at once rather than holding them (up to two stills) through a game.
-    * A slot the worker is writing or the UI has pinned is not touched. */
+   prev = __atomic_exchange_n(&g_pending_idx, -1, __ATOMIC_ACQ_REL);
+   if (prev >= 0)
+      ML_SET(g_batch_state[prev], MB_FREE);
+   /* Results of the old revision can never be taken now: hand them back to the
+    * worker to free off the UI thread so pause never contends on heap locks. */
    for (unsigned i = 0; i < ML_SLOTS; i++)
    {
       int state = MS_READY;
-      if (__atomic_compare_exchange_n(&g_slots[i].state, &state, MS_PINNED,
-                                      0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
-         ml_free_slot(i);
+      __atomic_compare_exchange_n(&g_slots[i].state, &state, MS_DISCARD,
+                                  0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
    }
    ml_wake();
 }
@@ -268,7 +333,7 @@ int menu_load_take(int image, menu_load_result *out)
                                       0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
          continue;
       if (g_slots[i].revision != ML_GET(g_revision) || ML_GET(g_paused))
-      { ml_free_slot(i); continue; }
+      { ML_SET(g_slots[i].state, MS_DISCARD); ml_wake(); continue; }
       *out = g_slots[i].result;
       return 1;
    }
@@ -277,7 +342,7 @@ int menu_load_take(int image, menu_load_result *out)
 void menu_load_release(unsigned slot)
 {
    if (slot < ML_SLOTS && ML_GET(g_slots[slot].state) == MS_PINNED)
-   { ml_free_slot(slot); ml_wake(); }
+   { ML_SET(g_slots[slot].state, MS_DISCARD); ml_wake(); }
 }
 int menu_load_shutdown(uint32_t timeout_us)
 {
@@ -305,7 +370,10 @@ int menu_load_shutdown(uint32_t timeout_us)
 #endif
    ML_SET(g_started, 0);
    for (unsigned i = 0; i < ML_SLOTS; i++)
-      if (ML_GET(g_slots[i].state) == MS_READY) ml_free_slot(i);
+   {
+      int st = ML_GET(g_slots[i].state);
+      if (st == MS_READY || st == MS_DISCARD) ml_free_slot(i);
+   }
    return 1;
 }
 void menu_load_get_diag(menu_load_diag *out)

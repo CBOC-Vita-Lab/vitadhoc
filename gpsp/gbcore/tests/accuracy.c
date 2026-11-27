@@ -110,6 +110,24 @@ static void channels(int color,int fast) {
   tick(24576);CHECK(apu_get_stat_cpu()->sq1_freq==768);CHECK(status()==1);
   tick(32768);CHECK(apu_get_stat_cpu()->sq1_freq==1152);CHECK(status()==1);
   tick(32768);CHECK(apu_get_stat_cpu()->sq1_freq==1728);CHECK(status()==0);
+  /* the sweep rewrites NR13/NR14's frequency: a later NR14 write keeps its low byte */
+  power();cpu_write(0xff10,0x11);cpu_write(0xff12,0xf0);cpu_write(0xff13,0);cpu_write(0xff14,0x82);
+  tick(24576);tick(32768);CHECK(apu_get_stat_cpu()->sq1_freq==1152);
+  cpu_write(0xff14,0x03);CHECK(apu_get_stat_cpu()->sq1_freq==0x380);
+  /* wave RAM while channel 3 plays: the byte it is on (CGB), or 0xFF away from its fetch (DMG) */
+  power();cpu_write(0xff1a,0);for(int i=0;i<16;i++)cpu_write((word)(0xff30+i),(byte)(i*0x11));
+  cpu_write(0xff1a,0x80);cpu_write(0xff1c,0x20);cpu_write(0xff1d,0);cpu_write(0xff1e,0x80);
+  CHECK(cpu_read(0xff30)==(color?0x00:0xff));
+  tick(8200);CHECK(cpu_read(0xff30)==(color?0x11:0xff));
+  cpu_write(0xff35,0xa5);cpu_write(0xff1a,0);CHECK(cpu_read(0xff31)==(color?0xa5:0x11));
+  /* ... and the channel's clock model rides in the state */
+  power();cpu_write(0xff1a,0);for(int i=0;i<16;i++)cpu_write((word)(0xff30+i),(byte)(i*0x11));
+  cpu_write(0xff1a,0x80);cpu_write(0xff1c,0x20);cpu_write(0xff1d,0xf0);cpu_write(0xff1e,0x87);tick(1000);
+  {long n=gbcore_state_save(c,state,sizeof state);byte a[8],b[8];CHECK(n>0);
+   for(int i=0;i<8;i++){tick(300);a[i]=(byte)cpu_read(0xff30);}
+   CHECK(gbcore_state_load(c,state,(size_t)n)==0);
+   for(int i=0;i<8;i++){tick(300);b[i]=(byte)cpu_read(0xff30);}
+   CHECK(!memcmp(a,b,8));}
   gbcore_shutdown(c);printf("PASS NR52/length/DAC/power/DIV/envelope/sweep mode=%s speed=%d\n",color?"CGB":"SGB",fast+1);
 }
 static void restore(int color) {

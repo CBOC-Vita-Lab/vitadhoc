@@ -118,7 +118,7 @@ _##symbol:
 .equ EWRAM_OFF,          0x28D00
 .equ IORAM_OFF,          0xA8D00
 .equ SPSR_OFF,           0xA9100
-.equ RDMAP_OFF,          0xA9200
+.equ RDMAP_OFF,          0xA9220 /* SPSR_OFF + 64 (spsr[16]) + 224 (reg_mode+pad) */
 
 #define REG_CYCLES          %ebp
 
@@ -751,8 +751,7 @@ defsymbl(ewram)
 defsymbl(io_registers)
   .space 0x400
 defsymbl(spsr)
-  .space 24
-  .space 8    # padding
+  .space 64   # u32 spsr[16] (cpu.h), indexed by mode & 0xF
 defsymbl(reg_mode)
   .space 196
   .space 28   # padding

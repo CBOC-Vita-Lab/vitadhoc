@@ -505,11 +505,20 @@ static int test_bare_ram(void)
    utc = UPGRADE_UTC + 7 * DAY;
    CHECK(play_and_save() == C0 + 7 * DAY + 50 && file_flags() == 0);
    /* Any other size: the RAM is kept and the clock starts from zero, as
-    * before, with no flag. */
+    * before, with no flag.  A file LONGER than RAM + 48 carries bytes the
+    * core does not read (another emulator's extra block): they stay in the
+    * file, verbatim, after the standard image (fe_host.c gb_extra); a shorter
+    * one is simply rewritten in the standard layout. */
    for (k = 0; k < sizeof(other) / sizeof(other[0]); k++)
    {
+      size_t extra = other[k] > RAM + 48 ? other[k] - (RAM + 48) : 0, j;
       CHECK(write_raw(other[k]) == 0);
-      CHECK(play_and_save() == 0 && file_flags() == 0);
+      CHECK(boot() == 0 && fe_host_sram_flush(1) == 1);
+      fe_host_shutdown();
+      CHECK(read_save() == (long)(RAM + 48 + extra));
+      CHECK(file_count() == 0 && file_flags() == 0);
+      for (j = 0; j < extra; j++)
+         CHECK(file[RAM + 48 + j] == (uint8_t)((RAM + 48 + j) * 5 + 2));
    }
    return 0;
 }

@@ -1,0 +1,500 @@
+/* online_lib_test.c -- the library match of the code pad's room card
+ * (online_lib.c): a folder tree with a .gba, a .gb, zips and a miss;
+ * several files with ONE code (the reviewer's test); the pure decision.
+ *
+ * Built by online_lib.mk (make online-lib-test).  The host's hooks are
+ * replaced here: the identity of a file is a hash of its bytes, or, for a
+ * file with a patch beside it, of the PATCH's bytes (standing for "the image
+ * after the patch": the real hook is main_vita.c's). */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+#include "../../online_lib.h"
+#include "../../ui_host_hooks.h"
+#include "../../disc_id.h"
+
+char g_app_rom_dir[APP_PATH_CAP];
+static char g_extra[2][APP_PATH_CAP];
+static int  g_extra_n;
+int         ui_host_extra_roots(void) { return g_extra_n; }
+const char *ui_host_extra_root(int i) { return g_extra[i]; }
+
+/* zip_rom.c's extractor is linked but never called here */
+unsigned long fe_crc32(unsigned long c, const void *d, unsigned long n) { (void)d; (void)n; return c; }
+int stbi_zlib_decode_noheader_buffer(char *o, int ol, const char *i, int il) { (void)o; (void)ol; (void)i; (void)il; return -1; }
+
+static uint32_t test_crc(uint32_t crc, const uint8_t *p, size_t n)
+{
+   crc = ~crc;
+   while (n--)
+   {
+      int k;
+      crc ^= *p++;
+      for (k = 0; k < 8; k++)
+         crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+   }
+   return ~crc;
+}
+
+/* ---- counting what the walk reads ---------------------------------------- */
+static int g_opens, g_rom_ids, g_m3u_reads;
+FILE *__real_fopen(const char *p, const char *m);
+FILE *__wrap_fopen(const char *p, const char *m)
+{
+   size_t n = strlen(p);
+   g_opens++;
+   if (n > 4 && !strcmp(p + n - 4, ".m3u"))
+      g_m3u_reads++;
+   return __real_fopen(p, m);
+}
+
+static unsigned hash_file(const char *path)
+{
+   FILE *f = __real_fopen(path, "rb");
+   unsigned h = 2166136261u;
+   int c;
+   if (!f)
+      return 0;
+   while ((c = fgetc(f)) != EOF)
+      h = (h ^ (unsigned)c) * 16777619u;
+   fclose(f);
+   return h;
+}
+
+int ui_host_online_rom_id(const char *path, char out[9])
+{
+   char patch[APP_PATH_CAP];
+   const char *dot = strrchr(path, '.');
+   struct stat st;
+   unsigned h;
+   g_rom_ids++;
+   if (!dot)
+      return -1;
+   snprintf(patch, sizeof(patch), "%.*s.ips", (int)(dot - path), path);
+   h = stat(patch, &st) == 0 ? hash_file(patch) : hash_file(path);
+   snprintf(out, 9, "%08x", h);
+   return 0;
+}
+int ui_host_online_available(void) { return 1; }
+
+/* ---- fixture -------------------------------------------------------------- */
+static int fails, checks;
+#define CHECK(c, ...) do { checks++; if (!(c)) { fails++; \
+   printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); \
+   printf("\n"); } } while (0)
+
+static char root[APP_PATH_CAP];
+
+static void mk(const char *rel)
+{
+   char p[APP_PATH_CAP];
+   snprintf(p, sizeof(p), "%s/%s", root, rel);
+   mkdir(p, 0755);
+}
+
+/* A GBA file: 0x100 bytes of `fill`, the code at 0xAC. */
+static void put_gba(const char *rel, const char *code, int fill)
+{
+   char p[APP_PATH_CAP];
+   unsigned char b[0x200];
+   FILE *f;
+   memset(b, fill, sizeof(b));
+   memcpy(b + 0xAC, code, 4);
+   snprintf(p, sizeof(p), "%s/%s", root, rel);
+   f = fopen(p, "wb");
+   fwrite(b, 1, sizeof(b), f);
+   fclose(f);
+}
+
+static void put_gb(const char *rel, const char *title, int fill)
+{
+   char p[APP_PATH_CAP];
+   unsigned char b[0x200];
+   FILE *f;
+   memset(b, fill, sizeof(b));
+   memset(b + 0x134, 0, 16);
+   memcpy(b + 0x134, title, strlen(title));
+   snprintf(p, sizeof(p), "%s/%s", root, rel);
+   f = fopen(p, "wb");
+   fwrite(b, 1, sizeof(b), f);
+   fclose(f);
+}
+
+static void put_text(const char *rel, const char *text)
+{
+   char p[APP_PATH_CAP];
+   FILE *f;
+   snprintf(p, sizeof(p), "%s/%s", root, rel);
+   f = fopen(p, "wb");
+   fputs(text, f);
+   fclose(f);
+}
+
+static void w16(unsigned char *p, unsigned v) { p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8); }
+static void w32(unsigned char *p, unsigned long v)
+{
+   w16(p, (unsigned)(v & 0xFFFF)); w16(p + 2, (unsigned)(v >> 16));
+}
+
+/* A one-entry zip holding `data` as `name`, stored (method 0) or "deflated"
+ * (method 8: the bytes are not a real stream; only the directory is read). */
+static void put_zip(const char *rel, const char *name, const unsigned char *data,
+                    size_t len, int method)
+{
+   unsigned char lh[30], cd[46], eo[22];
+   size_t nl = strlen(name), cd_off;
+   char p[APP_PATH_CAP];
+   FILE *f;
+   memset(lh, 0, sizeof(lh)); memset(cd, 0, sizeof(cd)); memset(eo, 0, sizeof(eo));
+   w32(lh, 0x04034b50ul); w16(lh + 8, (unsigned)method);
+   w32(lh + 18, len); w32(lh + 22, len); w16(lh + 26, (unsigned)nl);
+   cd_off = 30 + nl + len;
+   w32(cd, 0x02014b50ul); w16(cd + 10, (unsigned)method);
+   w32(cd + 20, len); w32(cd + 24, len); w16(cd + 28, (unsigned)nl);
+   w32(cd + 42, 0);
+   w32(eo, 0x06054b50ul); w16(eo + 8, 1); w16(eo + 10, 1);
+   w32(eo + 12, 46 + nl); w32(eo + 16, cd_off);
+   snprintf(p, sizeof(p), "%s/%s", root, rel);
+   f = fopen(p, "wb");
+   fwrite(lh, 1, 30, f); fwrite(name, 1, nl, f); fwrite(data, 1, len, f);
+   fwrite(cd, 1, 46, f); fwrite(name, 1, nl, f); fwrite(eo, 1, 22, f);
+   fclose(f);
+}
+
+static void gba_bytes(unsigned char *b, size_t n, const char *code, int fill)
+{
+   memset(b, fill, n);
+   memcpy(b + 0xAC, code, 4);
+}
+
+static char *idof(const char *rel, char out[9])
+{
+   char p[APP_PATH_CAP];
+   snprintf(p, sizeof(p), "%s/%s", root, rel);
+   ui_host_online_rom_id(p, out);
+   return out;
+}
+
+/* Run a whole search; returns the hits. */
+static int search(const char *console, const char *game, const char *rom,
+                  online_lib_hit *h, int per_call)
+{
+   int guard = 0, n;
+   if (online_lib_begin(console, game, rom) != 0)
+      return -1;
+   while (!online_lib_step(per_call) && ++guard < 10000)
+      ;
+   n = online_lib_hits(h, ONLINE_LIB_MAX);
+   return n;
+}
+
+static const char *base(const char *p)
+{
+   const char *s = strrchr(p, '/');
+   return s ? s + 1 : p;
+}
+
+int main(void)
+{
+   online_lib_hit h[ONLINE_LIB_MAX], syn[3];
+   char id[9], rel[APP_PATH_CAP];
+   unsigned char zb[0x200];
+   int n, i, calls, per_max, guard;
+
+   snprintf(root, sizeof(root), "/tmp/online_lib_test.%d", (int)getpid());
+   mkdir(root, 0755);
+   mk("roms"); mk("roms/sub"); mk("roms/sub/deep"); mk("extra"); mk("extra/Hacks");
+   snprintf(g_app_rom_dir, sizeof(g_app_rom_dir), "%s/roms", root);
+   snprintf(g_extra[0], sizeof(g_extra[0]), "%s/extra", root);
+   g_extra_n = 1;
+
+   /* -- the tree: Emerald three times (one is the host's), others, a miss -- */
+   put_gba("roms/Emerald (USA).gba", "BPEE", 0x11);            /* a dump      */
+   put_gba("roms/sub/Emerald (Europe).gba", "BPEE", 0x22);     /* another     */
+   put_gba("extra/Hacks/Emerald host copy.gba", "BPEE", 0x33); /* the host's  */
+   put_gba("roms/Ruby.gba", "AXVE", 0x44);
+   put_gba("roms/sub/deep/Emerald too deep.gba", "BPEE", 0x55); /* depth 3: not seen */
+   put_gb("roms/Tetris.gb", "TETRIS", 0x66);
+   put_gb("roms/Tetris (color).gbc", "TETRIS", 0x67);
+   put_text("roms/readme.txt", "BPEE");
+   gba_bytes(zb, sizeof(zb), "BPEE", 0x77);
+   put_zip("roms/Stored.zip", "Stored Emerald.gba", zb, sizeof(zb), 0);
+   gba_bytes(zb, sizeof(zb), "AXVE", 0x78);
+   put_zip("roms/Packed.zip", "Packed Ruby.gba", zb, sizeof(zb), 8);
+
+   /* ---- 1. a code with three files and the host's bytes among them ------ */
+   idof("extra/Hacks/Emerald host copy.gba", id);
+   n = search("gba", "BPEE", id, h, 8);
+   CHECK(n == 4, "BPEE: %d hits (3 files + the stored zip), not the deep one", n);
+   CHECK(n > 0 && h[0].rom_match && !strcmp(base(h[0].path), "Emerald host copy.gba"),
+         "the host's bytes come first: %s", n > 0 ? base(h[0].path) : "-");
+   for (i = 1; i < n; i++)
+      CHECK(!h[i].rom_match, "only one file is the host's (%s)", base(h[i].path));
+   CHECK(online_lib_decide(h, n, 1) == ONLINE_PICK_OPEN, "cable, host bytes found: OPEN");
+   CHECK(online_lib_decide(h, n, 0) == ONLINE_PICK_OPEN, "adapter, host bytes found: OPEN");
+   CHECK(online_lib_skipped() == 1, "the deflated zip was counted: %d", online_lib_skipped());
+   for (i = 0; i < n; i++)
+      CHECK(strstr(h[i].path, "too deep") == NULL, "depth 3 is not walked");
+   online_lib_end();
+
+   /* ---- 2. the same, no file is the host's ------------------------------ */
+   n = search("gba", "BPEE", "deadbeef", h, 8);
+   CHECK(n == 4, "BPEE, other bytes: %d hits", n);
+   for (i = 0; i < n; i++)
+      CHECK(!h[i].rom_match, "no match for deadbeef");
+   CHECK(online_lib_decide(h, n, 1) == ONLINE_PICK_ASK, "cable, several, none the host's: ASK");
+   CHECK(online_lib_decide(h, n, 0) == ONLINE_PICK_ASK, "adapter, several: ASK");
+   online_lib_end();
+
+   /* ---- 3. one hit only: cable asks, the adapter opens ------------------- */
+   n = search("gba", "AXVE", "deadbeef", h, 8);
+   CHECK(n == 1 || n == 1, "AXVE: %d hits (the deflated zip is skipped)", n);
+   CHECK(online_lib_decide(h, n, 1) == ONLINE_PICK_ASK,
+         "cable game, one hit that is not known to be the host's: ASK (never opened on its code)");
+   CHECK(online_lib_decide(h, n, 0) == ONLINE_PICK_OPEN, "adapter, one hit: OPEN");
+   online_lib_end();
+
+   /* ---- 4. the card's rom is empty --------------------------------------- */
+   n = search("gba", "AXVE", "", h, 8);
+   CHECK(n == 1 && !h[0].rom_match && h[0].rom[0] == '\0', "empty rom: no match, no id");
+   CHECK(online_lib_decide(h, n, 1) == ONLINE_PICK_ASK, "empty rom, cable: ASK");
+   CHECK(g_rom_ids >= 0, "(counter)");
+   online_lib_end();
+   {
+      int before = g_rom_ids;
+      n = search("gba", "BPEE", "", h, 8);
+      CHECK(g_rom_ids == before, "an empty rom asks the hook for nothing");
+      CHECK(online_lib_decide(h, n, 1) == ONLINE_PICK_ASK, "empty rom, three files, cable: ASK");
+      online_lib_end();
+   }
+
+   /* ---- 5. a miss -------------------------------------------------------- */
+   n = search("gba", "ZZZZ", "00000000", h, 8);
+   CHECK(n == 0 && online_lib_decide(h, n, 1) == ONLINE_PICK_NONE, "no such code: NONE (%d)", n);
+   online_lib_end();
+
+   /* ---- 6. Game Boy: the title's first four letters ---------------------- */
+   n = search("gb", "TETR", "", h, 8);
+   CHECK(n == 2, "TETR: the .gb and the .gbc, %d hits", n);
+   n = search("gbc", "TETR", "", h, 8);
+   CHECK(n == 2, "gbc room: both files (a cable links either), %d hits", n);
+   online_lib_end();
+   n = search("gb", "GAME", "", h, 8);
+   CHECK(n == 0, "GAME is a fallback, not a title here (%d)", n);
+   online_lib_end();
+
+   /* ---- 7. a patched file whose patched image is the host's -------------- */
+   put_gba("roms/Patched.gba", "BXYZ", 0x88);
+   put_text("roms/Patched.ips", "PATCH body that yields the host's image");
+   snprintf(rel, sizeof(rel), "%s/roms/Patched.ips", root);
+   snprintf(id, sizeof(id), "%08x", hash_file(rel));        /* host's identity */
+   n = search("gba", "BXYZ", id, h, 8);
+   CHECK(n == 1 && h[0].patched && h[0].rom_match, "patched file: patched=%d match=%d",
+         n ? h[0].patched : -1, n ? h[0].rom_match : -1);
+   CHECK(online_lib_decide(h, n, 1) == ONLINE_PICK_OPEN, "its patched image is the host's: OPEN");
+   online_lib_end();
+   put_gba("roms/Plain.gba", "BXYW", 0x89);
+   n = search("gba", "BXYW", "00000001", h, 8);
+   CHECK(n == 1 && !h[0].patched, "no patch beside it: patched=%d", n ? h[0].patched : -1);
+   online_lib_end();
+
+   /* ---- 8. the budget: never more than `files` files per call ----------- */
+   {
+      int total = 0;
+      mk("roms/many");
+      for (i = 0; i < 20; i++)
+      {
+         snprintf(rel, sizeof(rel), "roms/many/F%02d.gba", i);
+         put_gba(rel, "NOPE", 0x90 + i);
+      }
+      CHECK(online_lib_begin("gba", "QQQQ", "") == 0, "begin");
+      per_max = 0; calls = 0; guard = 0;
+      for (;;)
+      {
+         int d;
+         g_opens = 0;
+         d = online_lib_step(3);
+         calls++;
+         total += g_opens;
+         if (g_opens > per_max)
+            per_max = g_opens;
+         if (d || ++guard > 1000)
+            break;
+      }
+      CHECK(per_max <= 3, "3 files a call: the most opened in one call was %d", per_max);
+      CHECK(calls > 5, "the walk took %d calls (it is spread over frames)", calls);
+      online_lib_end();
+   }
+   {
+      /* the identity is one file per call even with a big budget */
+      int per_call_ids = 0, d;
+      CHECK(online_lib_begin("gba", "BPEE", idof("extra/Hacks/Emerald host copy.gba", id)) == 0, "begin");
+      guard = 0;
+      do
+      {
+         int before = g_rom_ids;
+         d = online_lib_step(100000);
+         if (g_rom_ids - before > per_call_ids)
+            per_call_ids = g_rom_ids - before;
+      } while (!d && ++guard < 1000);
+      CHECK(per_call_ids == 1, "at most one file identity per call (%d)", per_call_ids);
+      online_lib_end();
+   }
+
+   /* ---- 9. the list holds ONLINE_LIB_MAX ---------------------------------- */
+   for (i = 0; i < 12; i++)
+   {
+      snprintf(rel, sizeof(rel), "extra/Dup%02d.gba", i);
+      put_gba(rel, "DUPL", 0xA0 + i);
+   }
+   n = search("gba", "DUPL", "", h, 8);
+   CHECK(n == ONLINE_LIB_MAX, "twelve copies, the list stops at %d", n);
+   online_lib_end();
+
+   /* ---- 10. the pure decision, with hits made by hand --------------------- */
+   memset(syn, 0, sizeof(syn));
+   CHECK(online_lib_decide(syn, 0, 1) == ONLINE_PICK_NONE, "no hits: NONE");
+   CHECK(online_lib_decide(NULL, 0, 0) == ONLINE_PICK_NONE, "NULL: NONE");
+   syn[0].rom_match = 1; syn[1].rom_match = 1;
+   CHECK(online_lib_decide(syn, 2, 1) == ONLINE_PICK_OPEN, "two with the host's bytes (the same bytes): OPEN");
+   memset(syn, 0, sizeof(syn));
+   syn[1].rom_match = 1;
+   CHECK(online_lib_decide(syn, 3, 0) == ONLINE_PICK_ASK, "a match that is not first: the caller must not open hits[0]");
+   CHECK(online_lib_decide(syn, 3, 1) == ONLINE_PICK_ASK, "(cable too)");
+   memset(syn, 0, sizeof(syn));
+   CHECK(online_lib_decide(syn, 1, 1) == ONLINE_PICK_ASK, "cable, one, no match: ASK");
+   CHECK(online_lib_decide(syn, 1, 0) == ONLINE_PICK_OPEN, "adapter, one: OPEN");
+   CHECK(online_lib_decide(syn, 2, 0) == ONLINE_PICK_ASK, "adapter, two: ASK");
+   CHECK(online_lib_decide(syn, 3, 1) == ONLINE_PICK_ASK, "cable, three: ASK");
+
+   /* ---- 11. Two players games: found by the whole game's CRC (2.0) -------- */
+   {
+      static unsigned char prg[16384], chr_[8192], img[1024 + 512];
+      unsigned char hdr[16 + 512];
+      char want[9], nm[APP_PATH_CAP];
+      unsigned c;
+      FILE *f;
+      int k;
+      for (k = 0; k < (int)sizeof(prg); k++) prg[k] = (unsigned char)(k * 7 + 3);
+      for (k = 0; k < (int)sizeof(chr_); k++) chr_[k] = (unsigned char)(k * 5 + 1);
+      memset(hdr, 0, sizeof(hdr));
+      memcpy(hdr, "NES\x1a", 4); hdr[4] = 1; hdr[5] = 1;
+      /* NES: the CRC of PRG + CHR, with and without a trainer; a file with other bytes must not match */
+      snprintf(nm, sizeof(nm), "%s/roms/Test Cart.nes", root);
+      f = fopen(nm, "wb"); fwrite(hdr, 1, 16, f); fwrite(prg, 1, sizeof(prg), f); fwrite(chr_, 1, sizeof(chr_), f); fclose(f);
+      hdr[6] = 4;
+      snprintf(nm, sizeof(nm), "%s/roms/sub/Test Cart trained.nes", root);
+      f = fopen(nm, "wb"); fwrite(hdr, 1, 16 + 512, f); fwrite(prg, 1, sizeof(prg), f); fwrite(chr_, 1, sizeof(chr_), f); fclose(f);
+      snprintf(nm, sizeof(nm), "%s/roms/Other.nes", root);
+      prg[0] ^= 0xFF;
+      hdr[6] = 0;
+      f = fopen(nm, "wb"); fwrite(hdr, 1, 16, f); fwrite(prg, 1, sizeof(prg), f); fwrite(chr_, 1, sizeof(chr_), f); fclose(f);
+      prg[0] ^= 0xFF;
+      snprintf(want, sizeof(want), "%08X", 0xb45248a4u);
+      n = search("nes", want, "", h, 8);
+      CHECK(n == 2, "NES: the plain and the trained copy are one game by PRG + CHR (%d)", n);
+      CHECK(n >= 1 && h[0].rom_match, "NES: a CRC match is the host's file");
+      n = search("nes", "00000000", "", h, 8);
+      CHECK(n == 0, "NES: another CRC finds nothing (%d)", n);
+      /* SNES: the whole file; a 512 byte copier header is not part of the game */
+      for (k = 0; k < (int)sizeof(img); k++) img[k] = (unsigned char)(k * 11 + 9);
+      snprintf(nm, sizeof(nm), "%s/roms/Game.sfc", root);
+      f = fopen(nm, "wb"); fwrite(img + 512, 1, 1024, f); fclose(f);
+      snprintf(nm, sizeof(nm), "%s/extra/Game (headered).smc", root);
+      f = fopen(nm, "wb"); fwrite(img, 1, 1024 + 512, f); fclose(f);
+      snprintf(want, sizeof(want), "%08X", 0x2b5385b6u);
+      n = search("snes", want, "", h, 8);
+      CHECK(n == 2, "SNES: the plain and the headered copy match (%d)", n);
+      CHECK(online_lib_begin("snes", want, "") == 0, "snes begins");
+      online_lib_end();
+      /* WonderSwan: the whole file */
+      snprintf(nm, sizeof(nm), "%s/roms/Swan.ws", root);
+      f = fopen(nm, "wb"); fwrite(img + 512, 1, 1024, f); fclose(f);
+      snprintf(want, sizeof(want), "%08X", 0x2b5385b6u);
+      n = search("ws", want, "", h, 8);
+      CHECK(n == 1 && !strcmp(base(h[0].path), "Swan.ws"), "WS: one file (%d)", n);
+      /* a GBA search never looks at them, and the other way round */
+      n = search("gba", "BPEE", "", h, 8);
+      CHECK(n >= 3, "GBA search unchanged (%d)", n);
+      (void)c;
+   }
+
+   /* Sega CD: an .m3u is the game and the discs it names are not offered on
+    * their own, whichever folder holds the .m3u (the folder of the discs or
+    * the one above) and whichever the walk reaches first; a list that names
+    * no disc is not a game; the folder is read for lists once, not for every
+    * file */
+   {
+      static const unsigned char sec[2048] = { 0 };
+      char want1[9], want2[9], wantA[9], bin[APP_PATH_CAP];
+      unsigned char b[4096];
+      unsigned fill;
+      FILE *f;
+      static const struct { const char *rel, *bin; unsigned fill; } disc[] = {
+         { "roms/Game/Game (Disc 1).cue", "roms/Game/Game (Disc 1).bin", 0x5A },
+         { "roms/Game/Game (Disc 2).cue", "roms/Game/Game (Disc 2).bin", 0x6B },
+         { "roms/Alone.cue", "roms/Alone.bin", 0x7C },
+         { "roms/z/Zed (Disc 1).cue", "roms/z/Zed (Disc 1).bin", 0x1D },
+         { "roms/z/Zed (Disc 2).cue", "roms/z/Zed (Disc 2).bin", 0x2E },
+      };
+      char id_of[5][9];
+      (void)sec;
+      mk("roms/Game"); mk("roms/z");
+      for (i = 0; i < 5; i++)
+      {
+         const char *nm = strrchr(disc[i].bin, '/') + 1;
+         fill = disc[i].fill;
+         memset(b, (int)fill, sizeof(b));
+         snprintf(bin, sizeof(bin), "%s/%s", root, disc[i].bin);
+         f = fopen(bin, "wb"); fwrite(b, 1, sizeof(b), f); fclose(f);
+         snprintf(bin, sizeof(bin), "FILE \"%s\" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n", nm);
+         put_text(disc[i].rel, bin);
+         snprintf(bin, sizeof(bin), "%s/%s", root, disc[i].rel);
+         CHECK(disc_game_id(bin, id_of[i], test_crc) == 1, "disc %d has an id", i);
+      }
+      snprintf(want1, sizeof(want1), "%s", id_of[0]);
+      snprintf(want2, sizeof(want2), "%s", id_of[1]);
+      snprintf(wantA, sizeof(wantA), "%s", id_of[2]);
+      /* the list is in the folder above its discs (the walk reads the .m3u
+       * after Game/ may have been seen); a second list sits beside its discs */
+      put_text("roms/Game.m3u", "Game/Game (Disc 1).cue\r\nGame/Game (Disc 2).cue\r\n");
+      put_text("roms/z/Zed.m3u", "Zed (Disc 1).cue\nZed (Disc 2).cue\n");
+      put_text("roms/Music.m3u", "#EXTM3U\nsong.mp3\nother/track.flac\n");
+      g_m3u_reads = 0;
+      n = search("scd", want1, "", h, 8);
+      CHECK(n == 1 && !strcmp(base(h[0].path), "Game.m3u"), "Sega CD: the .m3u is the game, not its first disc (%d, %s)", n, n > 0 ? base(h[0].path) : "-");
+      /* 3 lists read when their folders are opened, 3 to see that each names discs, 2 for the ids of the games: not once per disc file */
+      CHECK(g_m3u_reads <= 8, "the lists are read once per folder and list, not once per file (%d reads)", g_m3u_reads);
+      n = search("scd", want2, "", h, 8);
+      CHECK(n == 0, "the second disc is not a game of its own (%d)", n);
+      n = search("scd", wantA, "", h, 8);
+      CHECK(n == 1 && !strcmp(base(h[0].path), "Alone.cue"), "a disc no list names is offered (%d)", n);
+      n = search("scd", id_of[3], "", h, 8);
+      CHECK(n == 1 && !strcmp(base(h[0].path), "Zed.m3u"), "a list beside its discs hides them too (%d)", n);
+      online_lib_end();
+   }
+
+   /* unsupported consoles and bad input */
+   CHECK(online_lib_begin("n64", "ABCD", "") != 0, "a console with no Two players");
+   CHECK(online_lib_begin("md", "ABCD1234", "") == 0, "md begins");
+   online_lib_end();
+   CHECK(online_lib_begin("sms", "ABCD1234", "") == 0, "sms begins");
+   online_lib_end();
+   CHECK(online_lib_begin("sg", "ABCD1234", "") == 0, "sg begins");
+   online_lib_end();
+   CHECK(online_lib_begin("gg", "ABCD1234", "") != 0, "the Game Gear has no Two players: a gg room is refused");
+   CHECK(online_lib_begin("gba", "", "") != 0, "an empty code");
+   CHECK(online_lib_step(8) == 1, "no search: finished");
+   online_lib_end();
+
+   {
+      char cmd[APP_PATH_CAP + 16];
+      snprintf(cmd, sizeof(cmd), "rm -rf %s", root);
+      if (system(cmd)) { }
+   }
+   printf("online_lib_test: %d checks, %d failed\n", checks, fails);
+   return fails ? 1 : 0;
+}

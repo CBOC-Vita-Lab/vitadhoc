@@ -65,6 +65,9 @@ void vid_pair_rects(unsigned w, unsigned h, int layout, vid_rect_t *left,
                     vid_rect_t *right);
 /* Where a single w x h picture lands at the current scale (native pixels). */
 void vid_picture_rect(unsigned w, unsigned h, vid_rect_t *out);
+/* ...and which of its rows that rectangle shows: `count` rows from `first`
+ * (all h of them from 0, except at "4x crop", which shows the middle ones). */
+void vid_picture_rows(unsigned w, unsigned h, int *first, int *count);
 void vid_set_quality(int quality);
 /* Of the `margin` extra columns a wide picture has on each side of the
  * console's w x h: how many fit on the screen at the scale in use. */
@@ -117,14 +120,15 @@ void vid_image_screen_soft(const uint16_t *pix, int texw, int srcw, int srch,
  * vid_text_w() itself equals the PSP's for every string by construction. */
 float vid_text_advance_dev(int hd, int *worst_char, float *mean_abs);
 
-/* COLOUR and MOTION BLEND of the game's picture (video_vita.c "colour and
- * motion"): `color` is VID_COLOR_*, `blend` 1 mixes each frame with the one
- * before.  The main loop sets them when a game boots (a GBA game's colour;
- * VID_COLOR_RAW for GB and GBC, whose colours their own core corrects) and
- * the Settings rows when they change. */
+/* COLOUR and LCD GHOSTING of the game's picture (video_vita.c "colour and
+ * motion"): `color` is VID_COLOR_*, `ghost` 0..10 how much of the last frame
+ * stays in each new one (0 off, 5 half and half).  The main loop sets them
+ * when a game boots (a GBA's, WonderSwan's or NES's colour; VID_COLOR_RAW for
+ * GB and GBC, whose colours their own core corrects) and the Settings rows
+ * when they change. */
 enum { VID_COLOR_RAW = 0, VID_COLOR_GBA = 1, VID_COLOR_GBA_DARK = 2,
-       VID_COLOR_MODES = 3 };
-void vid_set_look(int color, int blend);
+       VID_COLOR_WS = 3, VID_COLOR_NES = 4, VID_COLOR_MODES = 5 };
+void vid_set_look(int color, int ghost);
 /* 1 = the hints' circle and cross (and the home screen's button icons) are
  * drawn exchanged, for a player whose Circle is the confirm button. */
 void vid_set_face_glyphs(int swap);
@@ -132,8 +136,38 @@ void vid_set_face_glyphs(int swap);
  * whole screen with its own transparency) on top of the game -- a bezel, a
  * Game Boy shell, a dot-matrix mask.  NULL or "" removes it.  0 = shown. */
 int  vid_set_overlay(const char *png_path);
-/* LCD grid / scanlines strength, percent of the default (0..200). */
-void vid_set_lcd_strength(int pct);
+/* SCANLINES and LCD GRID, 0..10 each (0 off), independent of each other and
+ * of the filter: drawn over the picture however it was made. */
+void vid_set_overlays(int scan, int grid);
+int  vid_overlay_scan(void);
+int  vid_overlay_grid(void);
+/* CRT MASK 0..10 (0 off): an aperture grille multiplied over the picture,
+ * one extra quad (playerkit/src/pk_screen.h).  Over any picture, like the
+ * grid. */
+void vid_set_crt(int strength);
+int  vid_overlay_crt(void);
+/* SCREEN PROFILE: the resolved choice (PK_SCREEN_OLED / LCD / PSTV; the
+ * caller turns Auto into one with pk_screen_resolve).  Folded into the
+ * colour table every console's picture passes through. */
+void vid_set_screen(int profile);
+/* TEXT SIZE (Normal / Large) and HIGH CONTRAST (Off / On) of every menu the
+ * renderer draws, both text systems (the PSP-layout one and vstyle.h's).
+ * The faces bake again at the start of the next frame. */
+void vid_set_text_look(int large, int contrast);
+int  vid_text_pct(void);
+/* The PSP-layout text (vid_text and its family) is Large only between
+ * vid_text_scope(1) and vid_text_scope(0): a page asks for it once its
+ * fixed rows hold the larger lines (Settings does); everywhere else that
+ * text stays at Normal, so it cannot outgrow a row.  The newer faces
+ * (vstyle.h: the home screen, the console list, toasts) follow Text size
+ * everywhere.  Both return 1 while the Large faces are the ones in use. */
+int  vid_text_scope(int large_ok);
+int  vid_text_scope_large(void);
+int  vid_screen_profile(void);
+/* AMBIENT GLOW strength 0..10: how bright the colours beside the picture are
+ * (0 black bars, 5 the look the bars have always had).  vid_ambient_mode
+ * says what the colours come from. */
+void vid_ambient_strength(int level);
 int  vid_look_color(void);
 int  vid_look_blend(void);
 
@@ -151,18 +185,10 @@ void vid_upscale_stats(upscale_stats_t *out);
 /* One line for the in-game menu when smoothing has stepped down to keep up
  * (Keep full speed), else NULL. */
 const char *vid_smooth_note(void);
-/* xBRZ drawn by the GPU when it can (video_vita.c, "xBRZ on the GPU"):
- * on = 0 keeps it on the CPU.  vid_gpu_xbrz: is it the GPU's now, and the
- * pictures it has drawn so far. */
-void vid_set_gpu_xbrz(int on);
-int  vid_gpu_xbrz(unsigned *frames);
 /* on = 1: every present waits for the GPU and is timed (measuring only);
  * vid_gpu_time_stats: timed samples so far, the GPU's time over a frame
  * last measured, the slowest since the last call. */
 void vid_set_gpu_time(int on);
-void vid_gpu_probe(void);
-void vid_set_gpu_debug(int on);
-void vid_set_gpu_view(int v);
 void vid_gpu_time_stats(unsigned *samples, unsigned *avg_us, unsigned *max_us);
 
 /* The slowest of each part of vid_draw_frame since the last call (and the

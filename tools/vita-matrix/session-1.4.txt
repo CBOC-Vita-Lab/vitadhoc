@@ -1,0 +1,79 @@
+# VitAdhoc 1.4 owner session plan, one unattended run (python3 matrix.py session-1.4.txt).
+# Format: game | duration | key=value ... | label
+#   plain keys -> vita.ini (test switches), t.<key> -> snes/threads.ini,
+#   c.<key> -> config.ini (merged into the owner's own Settings, restored at the end).
+# Keys (final names):
+#   smooth_smooth_handoff=0|1   frame hand-over (draw on its own thread); handoff_check=0 keeps it on
+#   look_gov=0|1         look governor (Auto picture quality)
+#   core4=off|auto       fourth CPU core (needs the CapUnlocker plugin; t.core4 for SNES)
+#   c.quality_gba=N      Image quality: 0 Auto, 1 Original, 2 xBRZ 2x, 3 xBRZ 3x, 4 xBRZ 4x, 5 MMPX 2x
+#   jit_lazy_exits=1     GBA lazy translation A/B (shipped off); read vita_jit_worst
+#   t.draw_core=1|2      SNES draw thread core; t.wide_policy=0 SNES wide ladder off
+# Read per entry: handoff: vc_miss= (missed refreshes: 0 = locked 60), look:, vita_jit_worst,
+# SNES t= / A t= / wide ladder: / superfx clock.
+# Each entry starts from an EMPTY vita.ini / threads.ini plus these keys, so a row is
+# never coloured by the owner's own files (they are put back at the end).
+#
+# Layers, one at a time, on every GBA game: baseline (all three off), +hand-over,
+# +governor, +core4, then everything on.  60 s each (about 3600 frames).
+
+# ---- GBA: Golden Sun (UE) [!].gba
+Golden Sun (UE) [!].gba | 60s | smooth_handoff=0 look_gov=0 core4=off | baseline
+Golden Sun (UE) [!].gba | 60s | smooth_handoff=1 look_gov=0 core4=off | handover
+Golden Sun (UE) [!].gba | 60s | smooth_handoff=0 look_gov=1 core4=off | governor
+Golden Sun (UE) [!].gba | 60s | smooth_handoff=0 look_gov=0 core4=auto | core4
+Golden Sun (UE) [!].gba | 60s | smooth_handoff=1 look_gov=1 core4=auto | all-on
+
+# ---- GBA: Pokemon - Fire Red Version (U) (V1.1).gba
+Pokemon - Fire Red Version (U) (V1.1).gba | 60s | smooth_handoff=0 look_gov=0 core4=off | baseline
+Pokemon - Fire Red Version (U) (V1.1).gba | 60s | smooth_handoff=1 look_gov=0 core4=off | handover
+Pokemon - Fire Red Version (U) (V1.1).gba | 60s | smooth_handoff=0 look_gov=1 core4=off | governor
+Pokemon - Fire Red Version (U) (V1.1).gba | 60s | smooth_handoff=0 look_gov=0 core4=auto | core4
+Pokemon - Fire Red Version (U) (V1.1).gba | 60s | smooth_handoff=1 look_gov=1 core4=auto | all-on
+
+# ---- GBA: Mario Golf - Advance Tour (U).gba
+Mario Golf - Advance Tour (U).gba | 60s | smooth_handoff=0 look_gov=0 core4=off | baseline
+Mario Golf - Advance Tour (U).gba | 60s | smooth_handoff=1 look_gov=0 core4=off | handover
+Mario Golf - Advance Tour (U).gba | 60s | smooth_handoff=0 look_gov=1 core4=off | governor
+Mario Golf - Advance Tour (U).gba | 60s | smooth_handoff=0 look_gov=0 core4=auto | core4
+Mario Golf - Advance Tour (U).gba | 60s | smooth_handoff=1 look_gov=1 core4=auto | all-on
+
+# ---- GBA: Need for Speed - Underground (UE) (M4).gba
+Need for Speed - Underground (UE) (M4).gba | 60s | smooth_handoff=0 look_gov=0 core4=off | baseline
+Need for Speed - Underground (UE) (M4).gba | 60s | smooth_handoff=1 look_gov=0 core4=off | handover
+Need for Speed - Underground (UE) (M4).gba | 60s | smooth_handoff=0 look_gov=1 core4=off | governor
+Need for Speed - Underground (UE) (M4).gba | 60s | smooth_handoff=0 look_gov=0 core4=auto | core4
+Need for Speed - Underground (UE) (M4).gba | 60s | smooth_handoff=1 look_gov=1 core4=auto | all-on
+
+# ---- xBRZ: each factor forced, then Auto (all other layers on)
+Golden Sun (UE) [!].gba | 60s | smooth_handoff=1 look_gov=1 core4=auto c.quality_gba=2 | xbrz2
+Golden Sun (UE) [!].gba | 60s | smooth_handoff=1 look_gov=1 core4=auto c.quality_gba=3 | xbrz3
+Golden Sun (UE) [!].gba | 60s | smooth_handoff=1 look_gov=1 core4=auto c.quality_gba=4 | xbrz4
+Golden Sun (UE) [!].gba | 60s | smooth_handoff=1 look_gov=1 core4=auto c.quality_gba=0 | xbrz-auto
+Need for Speed - Underground (UE) (M4).gba | 60s | smooth_handoff=1 look_gov=1 core4=auto c.quality_gba=2 | xbrz2
+Need for Speed - Underground (UE) (M4).gba | 60s | smooth_handoff=1 look_gov=1 core4=auto c.quality_gba=3 | xbrz3
+Need for Speed - Underground (UE) (M4).gba | 60s | smooth_handoff=1 look_gov=1 core4=auto c.quality_gba=4 | xbrz4
+Need for Speed - Underground (UE) (M4).gba | 60s | smooth_handoff=1 look_gov=1 core4=auto c.quality_gba=0 | xbrz-auto
+
+# ---- SNES: core4 off vs auto (threads.ini), 45 s of wall time each.
+# The SNES player has no autoexit: the tool stops the app after the time given.
+Super Metroid.smc | 45s | t.core4=off | core4-off
+Super Metroid.smc | 45s | t.core4=auto | core4-auto
+Super Mario Kart.smc | 45s | t.core4=off | core4-off
+Super Mario Kart.smc | 45s | t.core4=auto | core4-auto
+Yoshi's Island.smc | 45s | t.core4=off | core4-off
+Yoshi's Island.smc | 45s | t.core4=auto | core4-auto
+Super Mario RPG.smc | 45s | t.core4=off | core4-off
+Super Mario RPG.smc | 45s | t.core4=auto | core4-auto
+
+# ---- MMPX 2x vs xBRZ 2x on a heavy scrolling game
+Golden Sun (UE) [!].gba | 60s | c.quality_gba=5 | mmpx2
+
+# ---- GBA lazy translation A/B (stutter): read vita_jit_worst xlat_us / sync_us
+Mario Golf - Advance Tour (U).gba | 90s | jit_lazy_exits=0 | lazy-off
+Mario Golf - Advance Tour (U).gba | 90s | jit_lazy_exits=1 | lazy-on
+
+# ---- SNES: draw thread on core 2, and the wide ladder off (full margin) on a heavy game
+Super Metroid.smc | 45s | t.draw_core=2 | draw-core2
+Yoshi's Island.smc | 45s | t.draw_core=2 | draw-core2
+Yoshi's Island.smc | 45s | t.wide_policy=0 | wide-ladder-off

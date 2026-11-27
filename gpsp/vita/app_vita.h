@@ -166,6 +166,9 @@ void app_wide_apply(void);
 
 /* Sound: what is queued belongs to another timeline. */
 void app_audio_flush(void);
+/* WonderSwan: the running game's Rotation / Vertical play / palette and the
+ * smoothing setting, to the core (main_vita.c) */
+void app_ws_options(void);
 /* The pacer: do not count the time just spent as a late frame. */
 void app_pace_reset(void);
 
@@ -190,13 +193,18 @@ unsigned app_vcount(void);
 #define LINK_CONN_WIFI      0   /* same Wi-Fi network / hotspot: rooms are found */
 #define LINK_CONN_INTERNET  1   /* the joiner types the host's address           */
 #define LINK_CONN_ADHOC     2   /* no router: console to console                 */
-#define LINK_CONN_COUNT     3
+#define LINK_CONN_ONLINE    3   /* 2.0: over the internet, a room code           */
+#define LINK_CONN_COUNT     4
 
 /* Once, after the configuration is loaded (net_vita_init...). */
 void link_boot(void);
 /* For Share game data (vita/share_vita.c): 1 when the network stack is up,
  * and the rooms' base port (vita.ini link_port; 0 = the default). */
 int  link_net_info(uint16_t *disc_port);
+/* Online transports (link_vita.c, share_vita.c): the flags and the test
+ * simulator fields an Online lan_transport is created with (2.0). */
+struct lan_config;
+void link_online_config(struct lan_config *cfg);
 /* At exit. */
 void link_shutdown(void);
 

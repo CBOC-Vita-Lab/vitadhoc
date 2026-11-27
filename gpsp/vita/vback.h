@@ -151,34 +151,22 @@ void vb_cquads(const vb_cquad *q, int n);
 void vb_tquads(vb_tex *t, const vb_tquad *q, int n, uint32_t tint,
                int filter);
 
+/* A string is about to be drawn (one or more vb_tquads follow): the twin's
+ * text audit (GBADHOC_TEXT_BOXES) groups the draws of one string; the console
+ * does nothing. */
+void vb_text_mark(void);
+
+/* The same, multiplying what is already there instead of laying over it:
+ * out = dst * texel (per channel, the texel's alpha ignored, no tint).  One
+ * draw, no shader: on the console it is vita2d's texture program with a
+ * multiply blend state (third_party/vita2d, vita2d_set_blend_mode_mul).  The
+ * CRT mask is drawn with it. */
+void vb_tquads_mul(vb_tex *t, const vb_tquad *q, int n, int filter);
+
 /* The composed frame (what the last/next present shows), as VB_W x VB_H
  * 0xAABBGGRR words.  Closes the frame.  0 = ok. */
 int  vb_readback(uint32_t *dst);
 
-/* GPU programs: picture filters the GPU runs per output pixel (gpu shaders
- * in gpsp/vita/shaders/, written once for both backends).  xBRZ is three:
- *
- *   VB_PROG_XBRZ0   the points where four picture pixels meet: unit 0 = the
- *                   picture; uniforms [0] its width, height, 1/width,
- *                   1/height.  Drawn 1:1 into a render target one pixel
- *                   larger each way (u from -1).
- *   VB_PROG_XBRZ1   each pixel's four corners: unit 0 = the picture, unit 1
- *                   = XBRZ0's target; [0] as above, [1] xy = 1 / that
- *                   target's width, height.  Drawn 1:1.
- *   VB_PROG_XBRZ2   xBRZ at any size: unit 0 = the picture, unit 1 =
- *                   XBRZ1's target; [0] as above, [1] xy the picture's
- *                   size over that target's, [2] xy output pixels per
- *                   picture pixel.
- *
- * vb_prog_get makes a program on first use and keeps it; NULL when this
- * backend cannot (the console without the system's shader compiler,
- * ur0:data/libshacccg.suprx; the twin unless --gpu-progs) -- and
- * vb_prog_status says why, or how it was made, for the log.
- *
- * vb_pquads: n rectangles through program p, as vb_tquads draws them (u, v
- * in texels of t0; the scissor applies in the frame), except that the
- * program's colour is written as it is: no tint, no blending.  Every
- * texture is point sampled, its edges clamped. */
 /* How long the GPU takes over a frame: vb_gpu_time(n) times the next n
  * presents (-1: every present until vb_gpu_time(0)) -- each waits until
  * the GPU has finished everything queued and counts the wait, so it costs
@@ -189,17 +177,6 @@ int  vb_readback(uint32_t *dst);
 void vb_gpu_time(int frames);
 int  vb_gpu_timing(void);
 void vb_gpu_stats(unsigned *frames, unsigned *avg_us, unsigned *max_us);
-
-enum { VB_PROG_XBRZ0 = 0, VB_PROG_XBRZ1 = 1, VB_PROG_XBRZ2 = 2, VB_PROGS };
-enum { VB_PROG_UNIFORMS = 4 };
-typedef struct vb_prog vb_prog;
-vb_prog    *vb_prog_get(int which);
-const char *vb_prog_status(int which);
-/* Diagnostics: compile test program n (0, 1, ...) and describe the result
- * in `out`; 0 = no such test.  Nothing is kept. */
-int         vb_prog_probe(int n, char *out, size_t outlen);
-void        vb_pquads(vb_prog *p, vb_tex *t0, vb_tex *t1, const vb_tquad *q,
-                      int n, const float uni[VB_PROG_UNIFORMS][4]);
 
 #ifdef __cplusplus
 }

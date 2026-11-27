@@ -1,0 +1,158 @@
+# tools/gate
+
+One command for every test in this repository. `gate.py` is standard library
+only (Python 3.8 or later) and runs the existing suites as they are; it
+changes no test and no build file.
+
+```sh
+python3 tools/gate/gate.py                 # default tier
+python3 tools/gate/gate.py --quick         # the fast subset
+python3 tools/gate/gate.py --full          # everything, incl. armhf under qemu and the Vita package
+python3 tools/gate/gate.py --release       # --full plus the release pins (committed VPK hashes, SHA256SUMS)
+python3 tools/gate/gate.py --changed       # steps selected by the paths changed since HEAD
+python3 tools/gate/gate.py --list          # every step, its tier, tags, prerequisites, and whether it can run here
+python3 tools/gate/gate.py --dry-run       # the plan, with cache hits and skips marked
+python3 tools/gate/gate.py --only a,b      # these steps and their prerequisites
+python3 tools/gate/gate.py --skip a,b      # leave these out
+python3 tools/gate/gate.py --force         # ignore the cache
+python3 tools/gate/gate.py --baseline F    # compare with a saved summary.json
+```
+
+## Tiers
+
+| tier | what runs |
+|---|---|
+| `--quick` | release unit tests, the package test on a fresh `make vpk` build, the three save tests, `gamedb`, `playerkit` (with `pk-link`, the players' own link under ASan+UBSan and TSan), `widekit`, the SNES, NES and WonderSwan selftests |
+| default | quick, plus the host app (`app`, `rewind`, `local`, `link` on x86), the unit suites, the translated catalogues (`i18n-catalogues`), audio, cover art, cheats, library, the online play steps (below), and the private-ROM steps (skipped unless their folder is set) |
+| `--full` | everything, plus armhf under qemu (including `online-armhf`), the cheats end-to-end, the NES armhf check, the Vita compile checks, and the Vita package build (`make vpk`) |
+| `--release` | `--full` plus the release pins: `release-package-pinned` (the committed root VitAdhoc.vpk and its pinned hashes) and `check-files` (SHA256SUMS); stale by design between releases |
+
+`--only`, `--skip` and `--changed` act within the tier you name, and
+`--only` ignores tiers. A step's prerequisites are always added.
+
+### Online play steps (2.0)
+
+All of these stay on the loopback and contact no real service. Node 22.5 or
+newer is needed for the first and the twin step.
+
+| step | covers |
+|---|---|
+| `online-service` | the room service under `node --test` (`npm ci`, then `npm test`) |
+| `online-nat` | STUN, punch and the TURN client against the NAT simulator (`make -C gpsp/netdrv test-nat`) |
+| `online-http` | the HTTPS room client; its TLS cases need `GATE_MBEDTLS_HOST` |
+| `online-conn` | the connection state machine against fakes |
+| `online-library` | the library match: a room code to a game file |
+| `fe-padpair` | the two-player pad adapter (NES, WonderSwan) under the real session |
+| `online-x86` | two app twins linked through the room service and a NAT simulator (`online_tests.py x86`; `--list` names its scenarios) |
+| `online-armhf` | the cheap set of those scenarios on armhf under qemu (full tier) |
+
+`docs/TESTING.md` says what each scenario proves.
+
+## What gate does
+
+1. **Builds once.** Each prerequisite (the twins, the host app, the GBA and
+   GB test cartridges, the link ROM, the cheats and rewind ROMs) is a step of
+   its own. Steps that need it depend on it, so it is built once per run and
+   reused. A build step that is already up to date costs `make` a second.
+2. **Runs the suites as steps.** Each step is a command (run by `bash -o pipefail`: no step passes through a pipe), a working directory,
+   prerequisites, tags, a timeout and a log. Commands run under `nice -n 10`,
+   at most `--jobs` at a time (default: the number of cores).
+3. **Shares resources safely.** Steps in one group never overlap: `gpsp-make`
+   (make inside `gpsp/`), `hostcore-run` (app runs that share data roots, the
+   screenshot folder and loopback ports), `tmp-fixed` (`run_host_tests.py`
+   compiles into fixed `/tmp` names). Every step that binds loopback ports (link, realtime, pk-link, the
+   playerkit net tests, online, and every `hostcore-run` step) also holds the
+   `loopback` resource, so two of them never run at once, whatever their group.
+4. **Caches PASSes.** The key of a step is a SHA-256 of: its command, its
+   working directory, the content of its input directories (tracked and
+   untracked files that git does not ignore), its prerequisites' keys, the
+   value of its private-ROM variable, and `gate.py` itself. A PASS is written to
+   `out/.gate-cache/<step>.json`. The next run skips the step while the key is
+   the same and its declared outputs exist. Only PASS is cached.
+5. **Private ROMs.** Steps that need ROMs you cannot commit run only when the
+   variable is set, and otherwise report SKIP:
+
+   | variable | steps |
+   |---|---|
+   | `GATE_GBA_ROMS` (folder) | `cores-private-gba` (run_tests.sh over the folder, x86 against armhf) |
+   | `GATE_SNES_ROMS` (folder) | `snes-mt-compare`, `snes-conformance` (informational), `snes-link` (two SNES players over LAN, punch and relay, 3000 frames); `snes-selftest` also uses it for its ROM sections; `snes-ahead` (Quick response) adds every `.sfc` / `.smc` under it (recursively) to its own cartridges (the public test programs of `git clone https://github.com/PeterLemon/SNES` work: 164 files, about 15 min at 300 frames on the shared 2-core machine) |
+   | `GATE_MD_ROMS` (folder, the SGDK samples tree), `GATE_MD_SMS_ROMS` (folder) | `md-link` (two Sega players over LAN, punch and relay, 3000 frames; `md-selftest` uses them too), `md-link-fm` and `md-player-fm` (full tier: the same two with the YM2612 on its own thread, `MD_TWIN_FM=check`), `md-ahead` (undrawn frames, Quick response and loaded states equal the uninterrupted run; `md/twin/ahead_check.sh`) |
+   | `GATE_GB_TEST_ROMS` (folder), `GATE_GB_ACID2`, `GATE_GB_MOONEYE` | `gb-suites` (`gpsp/gbcore/tests/run_suites.py`): the Game Boy core against blargg's prebuilt ROMs (`git clone https://github.com/retrio/gb-test-roms`), dmg-acid2 / cgb-acid2 (built with RGBDS 0.5.x: a folder holding `dmg-acid2/build/dmg-acid2.gb`, `cgb-acid2/build/cgb-acid2.gbc` and their `img/` pictures) and the mooneye-test-suite acceptance ROMs (WLA-DX build, folder `GATE_GB_MOONEYE`), compared with `gpsp/gbcore/tests/suites-expected.txt`: a test that passed must still pass |
+   | `GATE_NES_ROMS` (folder) | `nes-conformance` (against `nes/twin/conformance_expect.txt`); also `link-x86` (Same Wi-Fi Two players) and `online-x86` (Online direct and relay, other-game and version refusals): they play `nes15-NTSC.nes` from the nes-test-roms collection (`git clone https://github.com/christopherpow/nes-test-roms`), or the file `VITADHOC_NES_ROM` names; and `app-ahead` (the app's Quick response on and off over the Game Boy test cartridges, the first 40 NES ROMs and `GATE_WS_ROM`: sound, quick save and battery identical; `gpsp/vita/hostcore/ahead_check.sh`). `app-ahead-latency` needs no ROMs: it builds one small cartridge per console (RGBDS, nasm) that answers a button one refresh later and checks that Quick response shows it one refresh sooner |
+   | `GATE_WS_ROM` (file) | `wswan-private` (the WonderSwan acceptance section): needs a real game that makes sound; also the fallback for `GATE_WS_ONLINE_ROM` |
+   | `GATE_WS_ONLINE_ROM` (file) | `link-x86` and `online-x86` for WonderSwan (Same Wi-Fi and Online Two players, refusals): any homebrew test ROM will do, e.g. `testroms/spritepriority/spritepriority.ws` of `git clone https://github.com/MiSTer-devel/WonderSwan_MiSTer`; falls back to `GATE_WS_ROM` |
+   | `GATE_SG_ROM` (file) or a `.sg` file under `GATE_MD_SMS_ROMS` | `link-x86` and `online-x86` play it as the SG-1000 game (e.g. a build of the SGlib of `git clone https://github.com/sverx/devkitSMS` with SDCC); without one they use a synthetic image of the right kind |
+   | `GATE_SG_ROM` and `GATE_GG_ROM` (files) or a `.sg` / `.gg` under `GATE_MD_SMS_ROMS` | `md-player` runs the SG-1000 and Game Gear files through the whole Sega player walk; without a file it makes its own small cartridges (`md/twin/tools/sg_gen.py`, a `.sg` and a `.gg` with the Game Gear header); a public homebrew replaces them |
+   | `GATE_MBEDTLS_VITA` (folder) | `vita-build`: passed as `MBEDTLS=` to `make vpk` (a prefix made by `tools/online/build-mbedtls.py --target vita`); SKIP without it |
+   | `GATE_MBEDTLS_HOST` (folder, optional) | `online-http`: its TLS cases run against this host64 prefix; they are SKIPPED, loudly, without it |
+   | `GATE_GBA_ROMS` (folder, optional) | also `online-x86`: its determinism scenario plays the first Link Cable game of the folder |
+   | `GATE_MD_ROMS`, `GATE_MD_SMS_ROMS`, `GATE_SNES_ROMS`, `GATE_NES_ROMS`, `GATE_WS_ROM`, `GATE_GBA_ROMS` | `state-fuzz` (`tools/statefuzz/statefuzz.sh`): each core's state loader against damaged states (checksums repaired) under ASan + UBSan, and the load proof, 12 s per ROM; a core with no ROM variable is reported SKIP in the step's log, the Game Boy cores use the test cartridges of `build-testrom-gb`. Longer: `STATEFUZZ_SECONDS=300 bash tools/statefuzz/statefuzz.sh <dir>` |
+
+   The cache key of a private step includes the folder path, not the ROM files.
+   After changing the ROMs, run with `--force` or delete the step's cache file.
+6. **Reads each suite's own totals.** The parsers in `PARSERS` read the
+   summary line each suite prints (`N checks, M failed`, `N passed, M failed,
+   K skipped`, `Ran N tests`, `PASS`/`FAIL` lines, and so on). A step with no
+   totals counts as one check that passed or failed by exit status (shown as
+   `-` in checks). The totals are only as strict as the suite that prints them.
+7. **Writes one summary.** A table on stdout, `out/summary.md` and
+   `out/summary.json`. Logs are in `out/logs/<step>.log`. The exit status is
+   1 if a step FAILs or is BLOCKED, or if a baseline regression is found.
+
+## Results
+
+| result | meaning | counts as failure |
+|---|---|---|
+| PASS | exit 0, no reported failures (cached PASSes are marked) | no |
+| FAIL | non-zero exit, a reported failure, or a timeout | yes |
+| BLOCKED | a prerequisite failed or is blocked, so the step did not run | yes |
+| SKIP | a prerequisite is missing from this machine, or a private folder is not set | no |
+| INFO | informational: shown with its numbers, not gating | no (unless baseline) |
+
+## Baseline
+
+`--baseline FILE` reads a `summary.json` (or any JSON with a `steps` object).
+A step is flagged when its check count dropped or its failure count rose.
+Flags appear in the table's note column, in `summary.md`, and set exit
+status 1. A step that did not run this time is not flagged.
+
+```sh
+cp tools/gate/out/summary.json ~/gate-baseline.json       # after a good run
+python3 tools/gate/gate.py --quick --baseline ~/gate-baseline.json
+```
+
+## --changed
+
+`--changed` compares the working tree with `--base` (default `HEAD`; untracked
+files count too) and maps each path to tags. The table is `CHANGE_MAP` at the
+top of `gate.py`: the longest matching prefix decides, and a step runs if one of
+its tags is selected.
+
+| path | selects |
+|---|---|
+| `nes/` | NES steps, the app steps (the NES core is built into the app), `vita` |
+| `snes/`, `wswan/`, `playerkit/`, `widekit/` | that core's steps, `vita` |
+| `gpsp/vita/tests/savesync/`, `.../localsave/` | the save tests |
+| `gpsp/` (any other path) | every gpsp step |
+| `tests/`, `tools/` (except `tools/gate/`), `docs/`, `licenses/`, `notices/`, `SHA256SUMS`, top-level files | release steps (`SHA256SUMS` lists every shipped file) |
+| `tools/gate/` | everything |
+| any other path | everything (the safe answer) |
+
+Changing `gate.py` changes every key, so the next run is a full run.
+
+## Adding a step
+
+Add a `Step(...)` to `STEPS`. Give it a tier, the tags it answers to, its
+input directories, its prerequisites (`deps`), and its requirements
+(`("exe", name)`, `("path", p)`, `("py", module)`). Set `parse` to the name of
+a parser, or leave it as `"exit"`. Run `--list` and `--dry-run` to check it.
+
+## Output
+
+`tools/gate/out/` is gitignored by the root `**/out/` rule. It holds `logs/`,
+`summary.json`, `summary.md`, `.gate-cache/` and `bin/` (the C test binaries
+of the save tests). Delete it at any time; the next run rebuilds it.
+
+## Not wired
+
+See `docs/TESTING.md`, section "Not wired", for the suites this gate does not run.

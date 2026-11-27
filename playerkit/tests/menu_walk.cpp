@@ -1,0 +1,409 @@
+/*
+ * Scripted walk through every menu page with the software pk_gfx: renders one
+ * PNG per screen so the menu can be looked at. Also asserts the walk does what
+ * it should (it is a test as well as a camera).
+ *
+ *   menu_walk <output folder>
+ *
+ * Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE).
+ */
+#include "harness.h"
+#include "pk_gfx_soft.h"
+#include "pk_glyphs.h"
+#include "pk_i18n.h"
+#include <stdio.h>
+#include <time.h>
+
+using namespace pk;
+
+static int g_fail = 0;
+#define EXPECT(cond) do { if (!(cond)) { fprintf(stderr, "menu_walk: FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); g_fail++; } } while (0)
+
+struct Walk {
+	SoftGfx gfx;
+	Text text;
+	Texture *game;
+	std::string out;
+	std::vector<std::string> shots;
+	std::vector<std::vector<uint8_t> > thumbs_rgb;   /* downscaled copies for the contact sheets */
+	Walk(const std::string &o) : gfx(), text(&gfx), game(0), out(o)
+	{
+		std::vector<uint16_t> px;
+		pkh::make_game_frame(0, px);
+		game = gfx.tex_create(256, 224, TEX_RGB565);
+		gfx.tex_update(game, &px[0], 512);
+	}
+	~Walk() { gfx.tex_free(game); }
+
+	void paint_game()
+	{
+		gfx.clear(0x050505);
+		/* side glow, the way the players draw it */
+		gfx.gradient_v(0, 0, 960, 544, PK_HEX(0x2a3f7a, 255), PK_HEX(0x7a3a2a, 255));
+		gfx.fill_rect(0, 0, 118, 544, PK_HEX(0x000000, 150));
+		gfx.fill_rect(842, 0, 118, 544, PK_HEX(0x000000, 150));
+		gfx.tex_draw(game, 0, 0, 256, 224, 118, 0, 724, 544, 0xFFFFFFFFu, false);
+	}
+	void snap(Menu &m, const char *name)
+	{
+		paint_game();
+		m.draw(&gfx, &text);
+		std::string p = out + "/" + name + ".png";
+		bool ok = gfx.write_png(p);
+		EXPECT(ok);
+		shots.push_back(p);
+		/* a half-size copy for the contact sheet */
+		std::vector<uint8_t> half(480 * 272 * 3);
+		for (int y = 0; y < 272; y++)
+			for (int x = 0; x < 480; x++) {
+				int r = 0, g = 0, b = 0;
+				for (int k = 0; k < 4; k++) {
+					uint32_t c = gfx.pixel(x * 2 + (k & 1), y * 2 + (k >> 1));
+					r += c & 255; g += (c >> 8) & 255; b += (c >> 16) & 255;
+				}
+				uint8_t *d = &half[((size_t) y * 480 + x) * 3];
+				d[0] = (uint8_t) (r / 4); d[1] = (uint8_t) (g / 4); d[2] = (uint8_t) (b / 4);
+			}
+		thumbs_rgb.push_back(half);
+	}
+	void sheet(const char *name, size_t first, size_t count)
+	{
+		std::vector<uint8_t> big(960 * 544 * 3, 16);
+		for (size_t i = 0; i < count && first + i < thumbs_rgb.size(); i++) {
+			int ox = (int) (i % 2) * 480, oy = (int) (i / 2) * 272;
+			for (int y = 0; y < 272; y++) memcpy(&big[((size_t) (oy + y) * 960 + ox) * 3], &thumbs_rgb[first + i][(size_t) y * 480 * 3], 480 * 3);
+		}
+		write_png_rgb(out + "/" + name + ".png", 960, 544, big.data());
+	}
+};
+
+static void advance(Menu &m, int ms)
+{
+	for (int t = 0; t < ms; t += 16) m.update(pkh::idle(16));
+}
+
+static int64_t g_clock;
+static int64_t fake_clock() { return g_clock; }
+
+int main(int argc, char **argv)
+{
+	std::string out = argc > 1 ? argv[1] : "build/shots";
+	make_dirs(out);
+	{ const char *fd = getenv("PK_FONT_DIR"); pk_glyphs_set_dir(fd && *fd ? fd : "../gpsp/vita/assets"); }
+	pkh::TempDir tmp;
+	setenv("TZ", "UTC", 1);
+	tzset();
+	set_clock_for_tests(fake_clock);
+
+	StateLayout lay;
+	lay.root = tmp.path;
+	lay.console = "snes";
+	lay.name = "Super Example World";
+	States states(lay);
+	pkh::MockHost host;
+	/* five slots in use, saved on different days */
+	static const int used[5] = { 1, 2, 3, 5, 8 };
+	for (int i = 0; i < 5; i++) {
+		g_clock = 1794132000 + i * 86400 * 3 + i * 4321;     /* November 2026 */
+		host.machine = 10 + i;
+		host.variant = i * 3 + 1;
+		std::vector<uint8_t> data;
+		host.capture_state(data);
+		Frame f;
+		host.current_frame(&f);
+		SaveReport r = states.save(used[i], data.data(), data.size(), f, 3600 * (i + 1) + 600);
+		EXPECT(r.status == ST_OK);
+	}
+	states.undo_store((const uint8_t *) "undo-state-bytes", 16);
+	g_clock = 1794500000;
+	host.variant = 0;
+	host.cheat_list.resize(3);
+	host.cheat_list[0].name = "Infinite lives"; host.cheat_list[0].on = true;
+	host.cheat_list[1].name = "Start with 99 coins";
+	host.cheat_list[2].name = "Walk through walls"; host.cheat_list[2].available = false;
+
+	const PadModel &model = model_snes();
+	Profile prof = profile_defaults(model, true);
+	Mapper mapper;
+	mapper.configure(model, prof, MapperConfig());
+	ProfileStore store(tmp.path, "snes", lay.name);
+
+	MenuConfig cfg;
+	cfg.game_name = "Super Example World (USA)";
+	cfg.console_label = "Super Nintendo";
+	cfg.caps = CAP_ALL_BASIC | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_CHEATS;      /* no Wide view, no Rewind, no Play together */
+	cfg.accent = 0x7B6CFF;
+		cfg.play_together_reason = "Not available for Super NES: the player is a separate program and has no link";
+	cfg.unsupported_reason = "Not available for Super NES";
+	Menu menu;
+	menu.configure(cfg, &host, &states);
+	menu.attach_input(&mapper, &store, &model, &prof);
+	menu.set_value(ROW_PIC_SHAPE, 1);
+	menu.set_value(ROW_PIC_SCANLINES, 4);
+	menu.set_value(ROW_PIC_GLOW, 6);
+	menu.set_value(ROW_SPD_FF, 1);
+
+	Walk w(out);
+	menu.open(0);
+	advance(menu, 200);
+	w.snap(menu, "01_control_centre");
+	EXPECT(menu.page() == Menu::PAGE_TOP);
+
+	pkh::press(menu, PH_RIGHT);
+	pkh::press(menu, PH_RIGHT);
+	EXPECT(menu.cursor() == 3);                        /* Play together is not on this console, so it has no card */
+	w.snap(menu, "02_control_centre_cheats");
+
+	/* Save states */
+	pkh::press(menu, PH_LEFT);
+	EXPECT(menu.cursor() == 1);
+	pkh::press(menu, PH_CROSS);
+	EXPECT(menu.page() == Menu::PAGE_STATES);
+	pkh::press(menu, PH_DOWN);
+	EXPECT(menu.selected_slot() == 2);
+	advance(menu, 100);
+	w.snap(menu, "03_save_states");
+	pkh::press(menu, PH_SQUARE);
+	EXPECT(menu.modal_open());
+	w.snap(menu, "04_save_states_overwrite");
+	pkh::press(menu, PH_CIRCLE);
+	EXPECT(!menu.modal_open());
+	/* an empty slot, with the toast after saving */
+	pkh::press(menu, PH_DOWN);       /* slot 3 */
+	pkh::press(menu, PH_DOWN);       /* slot 4: empty */
+	pkh::press(menu, PH_DOWN);       /* slot 5 */
+	pkh::press(menu, PH_UP);
+	pkh::press(menu, PH_CROSS);      /* empty: saves at once */
+	EXPECT(states.info(4).present);
+	advance(menu, 100);
+	w.snap(menu, "05_save_states_saved_toast");
+	for (int i = 0; i < 9; i++) pkh::press(menu, PH_DOWN);
+	w.snap(menu, "06_save_states_scrolled");
+	pkh::press(menu, PH_CIRCLE);
+	EXPECT(menu.page() == Menu::PAGE_TOP);
+
+	/* Settings > Picture */
+	for (int i = 0; i < 2; i++) pkh::press(menu, PH_RIGHT);
+	EXPECT(menu.cursor() == 4);
+	pkh::press(menu, PH_CROSS);
+	EXPECT(menu.page() == Menu::PAGE_SETTINGS);
+	w.snap(menu, "07_settings");
+	pkh::press(menu, PH_CROSS);
+	EXPECT(menu.page() == Menu::PAGE_PICTURE);
+	advance(menu, 100);
+	w.snap(menu, "08_picture");
+	for (int i = 0; i < 5; i++) pkh::press(menu, PH_DOWN);
+	advance(menu, 400);
+	w.snap(menu, "09_picture_scrolled");
+	/* a greyed row whose reason helps (Wide view, with nothing to apply it to, is hidden instead) */
+	menu.set_row_note(ROW_PIC_GRID, "Needs Pixel perfect screen size");
+	menu.goto_page(Menu::PAGE_PICTURE);
+	for (int i = 0; i < 3; i++) pkh::press(menu, PH_DOWN);
+	advance(menu, 400);
+	w.snap(menu, "10_picture_greyed_with_reason");
+	menu.set_row_note(ROW_PIC_GRID, "");
+	menu.goto_page(Menu::PAGE_PICTURE);
+	pkh::press(menu, PH_CIRCLE);
+	pkh::press(menu, PH_DOWN);
+	pkh::press(menu, PH_CROSS);
+	EXPECT(menu.page() == Menu::PAGE_CONTROLS);
+	w.snap(menu, "11_controls");
+	{
+		/* the Button test: Cross, a corner of the rear panel, the left stick and a finger lit */
+		pkh::press(menu, PH_DOWN);
+		for (int i = 0; i < 3; i++) pkh::press(menu, PH_DOWN);
+		pkh::press(menu, PH_CROSS);
+		EXPECT(menu.button_test_open());
+		pk::MenuInput in = pkh::idle();
+		in.pads[0].buttons = PH_CROSS | PH_L;
+		in.pads[0].lx = 255;
+		in.pads[0].back = 2;
+		in.touch.down = true; in.touch.x = 300; in.touch.y = 200;
+		menu.update(in);
+		advance(menu, 100);
+		menu.update(in);
+		w.snap(menu, "11b_button_test");
+		in = pkh::idle();
+		in.pads[0].buttons = PH_START | PH_SELECT;
+		for (int k = 0; k < 40; k++) menu.update(in);
+		EXPECT(!menu.button_test_open());
+		menu.update(pkh::idle());
+		pkh::press(menu, PH_UP);
+		pkh::press(menu, PH_UP);
+		pkh::press(menu, PH_UP);
+		pkh::press(menu, PH_UP);
+	}
+	for (int i = 0; i < 3; i++) pkh::press(menu, PH_DOWN);
+	pkh::press(menu, PH_CROSS);
+	EXPECT(menu.page() == Menu::PAGE_MAPPING);
+	advance(menu, 200);
+	w.snap(menu, "12_button_mapping");
+	pkh::press(menu, PH_DOWN);
+	pkh::press(menu, PH_CROSS);
+	EXPECT(menu.modal_kind() == 7 /* M_CAPTURE */);
+	{
+		/* the first frames only record what is already down */
+		advance(menu, 100);
+		w.snap(menu, "13_mapping_capture");
+		pk::MenuInput in = pkh::idle();
+		in.pads[0].buttons = PH_TRIANGLE;
+		menu.update(in);
+		menu.update(pkh::idle());
+		EXPECT(!menu.modal_open());
+		EXPECT(prof.bind[0][0] == PH_TRIANGLE);        /* B is now on Triangle */
+		EXPECT(prof.bind[0][3] == 0);                  /* X lost it */
+	}
+	advance(menu, 100);
+	w.snap(menu, "14_mapping_changed");
+	pkh::press(menu, PH_CIRCLE);
+	pkh::press(menu, PH_CIRCLE);
+	pkh::press(menu, PH_DOWN);
+	pkh::press(menu, PH_CROSS);
+	EXPECT(menu.page() == Menu::PAGE_SPEED);
+	w.snap(menu, "15_speed");
+	pkh::press(menu, PH_CIRCLE);
+	pkh::press(menu, PH_CIRCLE);
+
+	/* Cheats */
+	pkh::press(menu, PH_LEFT);
+	EXPECT(menu.cursor() == 3);
+	pkh::press(menu, PH_CROSS);
+	EXPECT(menu.page() == Menu::PAGE_CHEATS);
+	pkh::press(menu, PH_DOWN);
+	pkh::press(menu, PH_CROSS);
+	EXPECT(host.cheat_list[1].on);
+	advance(menu, 100);
+	w.snap(menu, "16_cheats");
+	pkh::press(menu, PH_CIRCLE);
+
+	/* Exit question, and an error toast */
+	for (int i = 0; i < 4; i++) pkh::press(menu, PH_RIGHT);
+	EXPECT(menu.cursor() == 7);
+	pkh::press(menu, PH_CROSS);
+	EXPECT(menu.modal_open());
+	w.snap(menu, "17_exit_question");
+	pkh::press(menu, PH_CIRCLE);
+	menu.notices().push("Could not save the game: the memory card is full", NOTICE_ERROR);
+	advance(menu, 400);
+	w.snap(menu, "18_error_toast");
+
+	/* touch: a finger down on a row, then the flash */
+	menu.goto_page(Menu::PAGE_PICTURE);
+	advance(menu, 100);
+	{
+		pk::MenuInput in = pkh::idle();
+		in.touch.down = true; in.touch.x = 300; in.touch.y = 108 + 80 + 30;     /* second row */
+		menu.update(in);
+		advance(menu, 0);
+		in.touch.down = true;
+		menu.update(in);
+		w.snap(menu, "19_touch_pressed");
+		in.touch.down = false;
+		menu.update(in);
+		w.snap(menu, "20_touch_tap_flash");
+	}
+
+	/* Japanese names: the game's title, the console, cheat names, an error toast and the exit question */
+	{
+		size_t jp_first = w.shots.size();
+		cfg.game_name = "\xE3\x82\xB9\xE3\x83\xBC\xE3\x83\x91\xE3\x83\xBC\xE3\x83\x9E\xE3\x83\xAA\xE3\x82\xAA\xE3\x83\xAF\xE3\x83\xBC\xE3\x83\xAB\xE3\x83\x89 (\xE6\x97\xA5\xE6\x9C\xAC) Caf\xC3\xA9 \xC5\x8Dsaka \xE2\x80\x93 \xEC\x9E\x91\xEA\xB1\xB4";       /* スーパーマリオワールド (日本) Café ōsaka – 작건 */
+		cfg.console_label = "\xE3\x82\xB9\xE3\x83\xBC\xE3\x83\x91\xE3\x83\xBC\xE3\x83\x95\xE3\x82\xA1\xE3\x83\x9F\xE3\x82\xB3\xE3\x83\xB3";    /* スーパーファミコン */
+		host.cheat_list.resize(3);
+		host.cheat_list[0].name = "\xE7\x84\xA1\xE9\x99\x90\xE3\x83\xA9\xE3\x82\xA4\xE3\x83\x95";                  /* 無限ライフ */
+		host.cheat_list[0].on = true;
+		host.cheat_list[1].name = "\xE3\x82\xB3\xE3\x82\xA4\xE3\x83\xB3\xE3\x82\x99\xEF\xBC\x99\xEF\xBC\x99\xE6\x9E\x9A\xE3\x81\xA7\xE3\x82\xB9\xE3\x82\xBF\xE3\x83\xBC\xE3\x83\x88 Start with 99 coins and a very long name that has to be cut";
+		host.cheat_list[2].name = "\xE5\xA3\x81\xE6\x8A\x9C\xE3\x81\x91";                                                   /* 壁抜け */
+		host.cheat_list[2].available = false;
+		menu.configure(cfg, &host, &states);
+		menu.goto_page(Menu::PAGE_TOP);
+		advance(menu, 300);
+		w.snap(menu, "21_japanese_control_centre");
+		menu.goto_page(Menu::PAGE_CHEATS);
+		advance(menu, 300);
+		w.snap(menu, "22_japanese_cheats");
+		menu.goto_page(Menu::PAGE_TOP);
+		menu.notices().push("\xE3\x82\xBB\xE3\x83\xBC\xE3\x83\x96\xE3\x81\xAB\xE5\xA4\xB1\xE6\x95\x97\xE3\x81\x97\xE3\x81\xBE\xE3\x81\x97\xE3\x81\x9F: Could not save", NOTICE_ERROR);
+		advance(menu, 300);
+		w.snap(menu, "23_japanese_toast");
+		(void) jp_first;
+	}
+
+	/* the pseudo-locale xx-long (about 35% longer, accented): the same pages again, to look at; the text-fit audit (test_uilook.cpp) is the check */
+	{
+		i18n_use(LANG_PSEUDO, 1);
+		EXPECT(i18n_current() == LANG_PSEUDO);
+		cfg.game_name = "Super Example World (USA)";
+		cfg.console_label = "Super Nintendo";
+		host.cheat_list.resize(3);
+		host.cheat_list[0].name = "Infinite lives"; host.cheat_list[0].on = true;
+		host.cheat_list[1].name = "Start with 99 coins";
+		host.cheat_list[2].name = "Walk through walls"; host.cheat_list[2].available = false;
+		menu.configure(cfg, &host, &states);
+		menu.notices().clear();
+		static const struct { Menu::PageId page; const char *name; } pages[] = {
+			{ Menu::PAGE_TOP, "xx_control_centre" }, { Menu::PAGE_STATES, "xx_save_states" }, { Menu::PAGE_SETTINGS, "xx_settings" },
+			{ Menu::PAGE_PICTURE, "xx_picture" }, { Menu::PAGE_CONTROLS, "xx_controls" }, { Menu::PAGE_MAPPING, "xx_button_mapping" },
+			{ Menu::PAGE_SPEED, "xx_speed" }, { Menu::PAGE_INTERFACE, "xx_interface" }, { Menu::PAGE_CHEATS, "xx_cheats" }, { Menu::PAGE_CHEAT_SEARCH, "xx_search_memory" } };
+		size_t xx_first = w.shots.size();
+		for (size_t i = 0; i < sizeof pages / sizeof pages[0]; i++) {
+			menu.goto_page(pages[i].page);
+			advance(menu, 400);
+			w.snap(menu, pages[i].name);
+		}
+		menu.goto_page(Menu::PAGE_TOP);
+		for (int i = 0; i < 6; i++) pkh::press(menu, PH_RIGHT);
+		EXPECT(menu.cursor() == 7);
+		pkh::press(menu, PH_CROSS);
+		EXPECT(menu.modal_open());
+		w.snap(menu, "xx_exit_question");
+		pkh::press(menu, PH_CIRCLE);
+		menu.notices().push(tr("states.the_state_file_is_too_large"), NOTICE_ERROR);
+		advance(menu, 400);
+		w.snap(menu, "xx_error_toast");
+		w.sheet("contact_xx_1", xx_first, 4);
+		w.sheet("contact_xx_2", xx_first + 4, 4);
+		w.sheet("contact_xx_3", xx_first + 8, 4);
+		i18n_use(LANG_EN, 1);
+		EXPECT(i18n_current() == LANG_EN);
+	}
+
+	/* Japanese and Simplified Chinese from the test catalogues (machine translated; tests/testlang): the pages again, to look at
+	 * (test_uilook.cpp's menu_every_page_fits_in_japanese_and_chinese is the check) */
+	{
+		static const struct { const char *file; int lang; const char *tag; } cj[] = {
+			{ "tests/testlang/pk_ja.txt", LANG_JA, "ja" }, { "tests/testlang/pk_zh-Hans.txt", LANG_ZHS, "zh" } };
+		for (int li = 0; li < 2; li++) {
+			FILE *f = fopen(cj[li].file, "rb");
+			if (!f) continue;
+			std::string cat;
+			char buf[4096];
+			size_t n;
+			while ((n = fread(buf, 1, sizeof buf, f)) > 0) cat.append(buf, n);
+			fclose(f);
+			i18n_use_text(cat.data(), cat.size(), cj[li].lang);
+			cfg.game_name = "Super Example World (USA)";
+			cfg.console_label = "Super Nintendo";
+			menu.configure(cfg, &host, &states);
+			menu.notices().clear();
+			static const struct { Menu::PageId page; const char *name; } pg[] = {
+				{ Menu::PAGE_TOP, "control_centre" }, { Menu::PAGE_SETTINGS, "settings" }, { Menu::PAGE_PICTURE, "picture" },
+				{ Menu::PAGE_INTERFACE, "interface" }, { Menu::PAGE_CHEATS, "cheats" }, { Menu::PAGE_CHEAT_SEARCH, "search_memory" } };
+			for (size_t i = 0; i < sizeof pg / sizeof pg[0]; i++) {
+				menu.goto_page(pg[i].page);
+				advance(menu, 400);
+				w.snap(menu, (std::string(cj[li].tag) + "_" + pg[i].name).c_str());
+			}
+			i18n_use(LANG_EN, 1);
+		}
+	}
+
+	w.sheet("contact_1", 0, 4);
+	w.sheet("contact_2", 4, 4);
+	w.sheet("contact_3", 8, 4);
+	w.sheet("contact_4", 12, 4);
+	w.sheet("contact_5", 16, 4);
+	w.sheet("contact_6", 20, 4);
+	menu.release_textures();
+	printf("menu_walk: %d screenshots in %s, %d failed checks\n", (int) w.shots.size(), out.c_str(), g_fail);
+	return g_fail ? 1 : 0;
+}

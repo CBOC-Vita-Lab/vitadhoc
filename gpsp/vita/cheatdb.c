@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #define DB_MAGIC   "GBADCHT1"
 #define DB_HEADER  64
@@ -93,22 +94,26 @@ void cheatdb_close(void)
 int cheatdb_open(const char *path)
 {
    uint8_t h[DB_HEADER];
+   struct stat st;
    FILE *f;
-   long end;
+   uint32_t end;
 
    cheatdb_close();
    if (!path || !*path || strlen(path) >= sizeof(db.path))
       return 0;
+   if (stat(path, &st) != 0 || st.st_size < DB_HEADER ||
+       (uint64_t)st.st_size > 0x7FFFFFFFull)
+      return 0;
+   end = (uint32_t)st.st_size;
    f = fopen(path, "rb");
    if (!f)
       return 0;
    if (fread(h, 1, sizeof(h), f) != sizeof(h) || memcmp(h, DB_MAGIC, 8) ||
-       le32(h + 8) != 1 || fseek(f, 0, SEEK_END) != 0)
+       le32(h + 8) != 1)
    {
       fclose(f);
       return 0;
    }
-   end = ftell(f);
    fclose(f);
 
    db.games = le32(h + 12);
@@ -126,7 +131,7 @@ int cheatdb_open(const char *path)
    db.cheats = le32(h + 60);
 
    /* A truncated or foreign file must not send a read anywhere odd. */
-   if (end < 0 || (uint32_t)end != db.size || !db.games ||
+   if (end != db.size || !db.games ||
        db.games > 0x100000 || db.n_crc > 0x1000000 ||
        db.n_serial > 0x1000000 || db.n_name > 0x1000000 ||
        (uint64_t)db.off_games + 16ull * db.games > db.size ||

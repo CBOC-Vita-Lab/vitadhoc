@@ -39,6 +39,9 @@ u32 smc_window_violations;
 #include "gpsp_profile.h"   /* named build profiles + illegal-flag rejection */
 #if defined(VITA)
 #include <psp2/kernel/sysmem.h>
+#ifdef __vita__
+#include <psp2/kernel/processmgr.h>   /* sceKernelGetProcessTimeLow (jd_*) */
+#endif
 #include <stdio.h>
 #elif defined(PS2)
 #include <kernel.h>
@@ -252,6 +255,36 @@ typedef struct
 #define thumb_decode_branch()                                                 \
   u32 offset = opcode & 0x07FF                                                \
 
+#if defined(ARM_ARCH)
+/* Per-cache sorted side tables mapping host LR (return address after memory
+ * load/store BLX) to guest PC, eliminating inline PC literals so all fast
+ * load/store stubs return via plain `bx lr` without Cortex-A9 RAS mispredicts. */
+static void arm_mem_pc_record(const u8 *lr_ptr, u32 guest_pc, bool ram_region);
+static void arm_mem_pc_reset_rom(void);
+static void arm_mem_pc_truncate_rom(u32 watermark);
+static void arm_mem_pc_reset_ram(void);
+#if defined(SMC_RANGE) && SMC_RANGE
+static u32  arm_mem_pc_mark_ram(void);
+static void arm_mem_pc_rewind_ram(u32 mark);
+#endif
+static bool arm_rom_mem_pc_near_full(void);
+u32 function_cc arm_lookup_mem_pc(u32 host_lr);
+
+#define ARM_MEM_PC_RESET_ROM()         arm_mem_pc_reset_rom()
+#define ARM_MEM_PC_TRUNCATE_ROM(wm)    arm_mem_pc_truncate_rom((wm))
+#define ARM_MEM_PC_RESET_RAM()         arm_mem_pc_reset_ram()
+#define ARM_MEM_PC_MARK_RAM()          arm_mem_pc_mark_ram()
+#define ARM_MEM_PC_REWIND_RAM(m)       arm_mem_pc_rewind_ram((m))
+#define ARM_ROM_MEM_PC_NEAR_FULL()     arm_rom_mem_pc_near_full()
+#else
+#define ARM_MEM_PC_RESET_ROM()         do { } while (0)
+#define ARM_MEM_PC_TRUNCATE_ROM(wm)    do { (void)(wm); } while (0)
+#define ARM_MEM_PC_RESET_RAM()         do { } while (0)
+#define ARM_MEM_PC_MARK_RAM()          (0u)
+#define ARM_MEM_PC_REWIND_RAM(m)       do { (void)(m); } while (0)
+#define ARM_ROM_MEM_PC_NEAR_FULL()     (0)
+#endif
+
 /* Include the right emitter headers */
 #if defined(MIPS_ARCH)
   #include "mips/mips_emit.h"
@@ -272,6 +305,227 @@ typedef struct
  * Other emitters use the ordinary block prologue for RAM and ROM blocks. */
 #ifndef ram_block_prologue_size
 #define ram_block_prologue_size block_prologue_size
+#endif
+
+/* WP0: per-frame tail instrumentation.  Always-on monotonic counters (a few
+ * increments per translated block or per flush, never on an execution path);
+ * the frontend reads them through gpsp_jit_counters() and logs the delta per
+ * frame.  [0] blocks translated (ARM), [1] blocks translated (Thumb),
+ * [2] icache/VM-domain sync calls, [3] bytes those syncs covered,
+ * [4] RAM cache flushes, [5] ROM cache flushes, [6] RAM flushes caused by a
+ * code write (SMC). */
+/* SMC_RANGE (docs/TECHNICAL.md "Version 1.4: SMC without whole-cache
+ * flushes") adds slots 7..15; the first seven keep their meaning, except that
+ * with smc_partial on [4] counts only the flushes that DISCARD RAM code (the
+ * tag-only flushes that replace the others are [7]):
+ * [7] tag-only RAM flushes (the full-flush build's RAM flushes, re-enacted on
+ *     the tags while the code is kept), [8] blocks revived (a translation the
+ *     full-flush build would have made, served from kept code), [9] RAM block
+ *     translations the full-flush build would have made (= the full-flush
+ *     build's RAM part of [0]+[1]: identical in both modes), [10] kept blocks
+ *     whose links were re-pointed, [11] VM-domain syncs of re-pointed links
+ *     (also counted in [2]), [12] kept translations dropped because their
+ *     guest source changed, [13] RAM code reclaims (kept code thrown away for
+ *     room), [14] dispatch-cache hits (lookups avoided), [15] dispatch-cache
+ *     fills (lookups through the C dispatcher that could be cached). */
+#define JCTR_N 16
+static u32 jctr[JCTR_N];
+#define JCTR(i) (jctr[i]++)
+#define JCTR_SYNC(b, e) do { jctr[2]++; jctr[3] += (u32)((char *)(e) - (char *)(b)); } while (0)
+u32 gpsp_jit_counters(u32 *out, u32 n)
+{
+  u32 i;
+  for (i = 0; i < n && i < JCTR_N; i++)
+    out[i] = jctr[i];
+#if defined(GPSP_DCACHE) && GPSP_DCACHE
+  {
+    extern u32 adc_hits;   /* incremented by arm_stub.S */
+    if (n > 14)
+      out[14] = adc_hits;
+  }
+#endif
+  return JCTR_N;
+}
+
+/* WORST-FRAME DIAGNOSTIC (vita_jit_worst EVT line, gpsp_jit_worst_line).
+ * Per GBA frame: blocks translated because the guest asked for them (demand,
+ * translate_depth 1) vs because a block's exit pointed at them (speculative,
+ * depth >= 2), publish syncs and the microseconds in them, the microseconds
+ * the outermost translations took, and the ROM pages the translations pulled
+ * in.  Everything is touched only on the translating path (a few adds per
+ * block, two clock reads per top-level translation and per sync), never on an
+ * execution path or in a lookup that hits, so an idle game pays nothing.  A
+ * frame is closed when the first event of the next one arrives; the window
+ * keeps the frame with the most time (translation + sync), its own totals,
+ * and is emptied when the frontend reads it. */
+#if defined(VITA) && defined(__vita__)
+#define JD_NOW_US() ((u32)sceKernelGetProcessTimeLow())
+#elif defined(PSP)
+#define JD_NOW_US() ((u32)sceKernelGetSystemTimeLow())
+#else
+#include <time.h>
+static u32 jd_now_us(void)
+{
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (u32)(ts.tv_sec * 1000000u + ts.tv_nsec / 1000u);
+}
+#define JD_NOW_US() jd_now_us()
+#endif
+/* Lazy exits (below, GPSP_LAZY_EXITS): the switches and the window's counts
+ * live here so every build has them. */
+u32 jit_lazy_exits = 0;          /* default OFF: see docs/TECHNICAL.md; the frontend sets it before load */
+u32 jit_lazy_budget = 0;         /* speculative translations per outermost lookup */
+u32 lz_islands, lz_resolved;     /* islands made / exits taken the first time */
+static u32 jd_lz_i0, jd_lz_r0;
+void gpsp_jit_lazy_set(u32 on, u32 budget)
+{
+  jit_lazy_exits = on ? 1 : 0;
+  jit_lazy_budget = budget;
+}
+typedef struct {
+  u32 frame, demand, spec, syncs, sync_us, sync_bytes, xlat_us, pages, tops;
+} jd_frame_t;
+static jd_frame_t jd_cur, jd_worst;
+static u32 jd_win_demand, jd_win_spec, jd_win_syncs, jd_win_sync_us,
+           jd_win_xlat_us, jd_win_pages, jd_win_frames;
+static u32 jd_cap_told;
+static u32 jd_xlat_t0, jd_pages0;
+static inline void jd_close(void)
+{
+  u32 cost = jd_cur.xlat_us + jd_cur.sync_us;
+  if (!jd_cur.demand && !jd_cur.spec && !jd_cur.syncs)
+    return;
+  jd_win_frames++;
+  jd_win_demand += jd_cur.demand;  jd_win_spec += jd_cur.spec;
+  jd_win_syncs += jd_cur.syncs;    jd_win_sync_us += jd_cur.sync_us;
+  jd_win_xlat_us += jd_cur.xlat_us; jd_win_pages += jd_cur.pages;
+  if (cost >= jd_worst.xlat_us + jd_worst.sync_us)
+    jd_worst = jd_cur;
+}
+static inline jd_frame_t *jd_frame(void)
+{
+  if (jd_cur.frame != frame_counter) {
+    jd_close();
+    memset(&jd_cur, 0, sizeof(jd_cur));
+    jd_cur.frame = frame_counter;
+  }
+  return &jd_cur;
+}
+#define JD_BLOCK(depth) do { jd_frame_t *f_ = jd_frame();                     \
+  if ((depth) <= 1) f_->demand++; else f_->spec++; } while (0)
+#define JD_SYNC_BEGIN() u32 jd_t0_ = JD_NOW_US()
+#define JD_SYNC_END(b, e) do { jd_frame_t *f_ = jd_frame(); f_->syncs++;      \
+  f_->sync_bytes += (u32)((char *)(e) - (char *)(b));                         \
+  f_->sync_us += JD_NOW_US() - jd_t0_; } while (0)
+/* Fills buf with one EVT body for the window just ended and starts the next
+ * (the frontend calls it once per window; main_vita.c).  Returns its length,
+ * 0 when nothing was translated this window. */
+extern u32 gamepak_page_loads;
+extern const char *gamepak_cap_reason;
+u32 gpsp_jit_worst_line(char *buf, u32 cap)
+{
+  int n;
+  jd_close();
+  memset(&jd_cur, 0, sizeof(jd_cur));
+  jd_cur.frame = ~0u;
+  if (!jd_win_frames) {
+    memset(&jd_worst, 0, sizeof(jd_worst));
+    return 0;
+  }
+  n = snprintf(buf, cap,
+    "vita_jit_worst frame=%u demand=%u spec=%u syncs=%u sync_us=%u "
+    "sync_kb=%u xlat_us=%u xlat_pages=%u | win frames=%u demand=%u spec=%u "
+    "syncs=%u sync_us=%u xlat_us=%u xlat_pages=%u pages_total=%u lazy=%u "
+    "islands=%u resolved=%u%s%s",
+    jd_worst.frame, jd_worst.demand, jd_worst.spec, jd_worst.syncs,
+    jd_worst.sync_us, jd_worst.sync_bytes >> 10, jd_worst.xlat_us,
+    jd_worst.pages, jd_win_frames, jd_win_demand, jd_win_spec, jd_win_syncs,
+    jd_win_sync_us, jd_win_xlat_us, jd_win_pages, gamepak_page_loads,
+    jit_lazy_exits, lz_islands - jd_lz_i0, lz_resolved - jd_lz_r0,
+    jd_cap_told ? "" : " cap=", jd_cap_told ? "" : gamepak_cap_reason);
+  jd_cap_told = 1;
+  jd_lz_i0 = lz_islands; jd_lz_r0 = lz_resolved;
+  memset(&jd_worst, 0, sizeof(jd_worst));
+  jd_win_demand = jd_win_spec = jd_win_syncs = jd_win_sync_us =
+    jd_win_xlat_us = jd_win_pages = jd_win_frames = 0;
+  return n > 0 ? (u32)n : 0;
+}
+
+/* Twin diagnostic: GPSP_LAZY_STATS=1 prints the lazy-exit and translation
+ * totals to stderr at exit (instance A only: instance B has no frames). */
+static void __attribute__((destructor)) lz_stats_dump(void)
+{
+  if (getenv("GPSP_LAZY_STATS") && (lz_islands || jctr[0] || jctr[1]))
+    fprintf(stderr, "lazy_stats: lazy=%u budget=%u islands=%u resolved=%u "
+            "blocks=%u syncs=%u\n", (unsigned)jit_lazy_exits,
+            (unsigned)jit_lazy_budget, (unsigned)lz_islands,
+            (unsigned)lz_resolved, (unsigned)(jctr[0] + jctr[1]),
+            (unsigned)jctr[2]);
+}
+
+#ifdef JCTR_DUMP   /* twin diagnostic: totals at exit, to stderr */
+#include <stdio.h>
+static void __attribute__((destructor)) jctr_dump(void)
+{
+  u32 c[JCTR_N];
+  gpsp_jit_counters(c, JCTR_N);
+  fprintf(stderr, "jctr: arm_blocks=%u thumb_blocks=%u syncs=%u sync_bytes=%u "
+          "ram_flush=%u rom_flush=%u smc_flush=%u tag_flush=%u revived=%u "
+          "fw_xlat=%u relinked=%u link_syncs=%u src_changed=%u reclaims=%u "
+          "dc_hit=%u dc_put=%u\n", c[0], c[1], c[2],
+          c[3], c[4], c[5], c[6], c[7], c[8], c[9],
+          c[10], c[11], c[12], c[13], c[14], c[15]);
+}
+#endif
+
+#if defined(SMC_RANGE) && SMC_RANGE
+/* State the translator and the link patcher test (the rest is with
+ * smcr_lookup, below the deferred-exit queue). */
+static u32 smcr_on;          /* smc_partial in effect for the caches now     */
+static u32 smcr_xlat_real;   /* translate_block_* is emitting for smcr: no
+                              * tags, no code_min/max, exits recorded        */
+static u32 smcr_fw_xlat;     /* RAM translations of the full-flush build      */
+static void smcr_patch_note(u8 *src, const u32 *before);
+static void smcr_patch_sync(void);
+#define SMCR_REAL()   (smcr_xlat_real)
+#define SMCR_PATCH_SYNC() do { if (smcr_on) smcr_patch_sync(); } while (0)
+#else
+#define SMCR_REAL()   (0)
+#define SMCR_PATCH_SYNC() do { } while (0)
+#endif
+
+/* GPSP_DCACHE (WP3; ARM back end): a direct-mapped table pc -> translated
+ * entry that arm_stub.S's indirect-branch stubs probe before calling
+ * block_lookup_address_* (a bx lr, pop {pc} or ldr pc that lands where it
+ * has landed before costs ~12 instructions instead of a C lookup).  Only
+ * lookups WITHOUT side effects are entered: a ROM/BIOS block found in the
+ * hash, or a RAM block whose tag entry already holds its offset (the
+ * full-flush build's first block after a flush, at offset 0, is translated
+ * again at every lookup, and smc_partial re-enacts that: never cached).  The
+ * table is emptied with every flush of either cache, tag-only ones included,
+ * so a hit always returns what the lookup would.  Run-time switch
+ * dispatch_cache (gpsp_dispatch_cache_set; twins: GPSP_DISPATCH_CACHE). */
+#if defined(GPSP_DCACHE) && GPSP_DCACHE
+#define ADC_BITS 10
+#define ADC_SIZE (1u << ADC_BITS)
+uintptr_t adc_table_arm[ADC_SIZE * 2];     /* {key, entry} pairs (arm_stub.S) */
+uintptr_t adc_table_thumb[ADC_SIZE * 2];
+u32 adc_hits;                              /* counted by the stub */
+u32 dispatch_cache_on = 1;
+static void adc_clear(void)
+{
+  memset(adc_table_arm, 0xFF, sizeof(adc_table_arm));
+  memset(adc_table_thumb, 0xFF, sizeof(adc_table_thumb));
+}
+void gpsp_dispatch_cache_set(u32 on)
+{
+  dispatch_cache_on = on ? 1 : 0;
+  adc_clear();
+}
+#define ADC_CLEAR() adc_clear()
+#else
+#define ADC_CLEAR() do { } while (0)
 #endif
 
 /* Cache invalidation */
@@ -381,7 +635,9 @@ struct { u32 rom_pub, ram_pub, calls, lines; } jit_legacy_stats;
   }
 #elif defined(VITA)
   void platform_cache_sync(void *baseaddr, void *endptr) {
+    JD_SYNC_BEGIN();
     sceKernelSyncVMDomain(sceBlock, baseaddr, ((char*)endptr) - ((char*)baseaddr) + 64);
+    JD_SYNC_END(baseaddr, endptr);
   }
 #elif defined(_3DS)
   #include "3ds/3ds_utils.h"
@@ -390,7 +646,9 @@ struct { u32 rom_pub, ram_pub, calls, lines; } jit_legacy_stats;
   }
 #elif defined(ARM_ARCH) || defined(ARM64_ARCH)
   void platform_cache_sync(void *baseaddr, void *endptr) {
+    JD_SYNC_BEGIN();
     __clear_cache(baseaddr, endptr);
+    JD_SYNC_END(baseaddr, endptr);
   }
 #elif defined(MIPS_ARCH)
   void platform_cache_sync(void *baseaddr, void *endptr) {
@@ -399,7 +657,10 @@ struct { u32 rom_pub, ram_pub, calls, lines; } jit_legacy_stats;
   }
 #else
   /* x86 CPUs have icache consistency checks */
-  void platform_cache_sync(void *baseaddr, void *endptr) {}
+  void platform_cache_sync(void *baseaddr, void *endptr) {
+    JD_SYNC_BEGIN();
+    JD_SYNC_END(baseaddr, endptr);   /* counts only: the twin's sync count */
+  }
 #endif
 
 #ifndef JIT_CODE_DISCIPLINE
@@ -412,6 +673,7 @@ struct { u32 rom_pub, ram_pub, calls, lines; } jit_legacy_stats;
  * (Under JIT_CODE_DISCIPLINE the publish point owns this decision.) */
 static void translate_icache_sync_ranged(void) {
     if (last_rom_translation_ptr < rom_translation_ptr) {
+        JCTR_SYNC(last_rom_translation_ptr, rom_translation_ptr);
         platform_cache_sync(last_rom_translation_ptr, rom_translation_ptr);
         last_rom_translation_ptr = rom_translation_ptr;
     }
@@ -430,9 +692,11 @@ static void translate_icache_sync_ranged(void) {
         last_ram_translation_ptr = ram_translation_cache;
 #endif
     if (last_ram_translation_ptr < ram_translation_ptr) {
+        JCTR_SYNC(last_ram_translation_ptr, ram_translation_ptr);
         platform_cache_sync(last_ram_translation_ptr, ram_translation_ptr);
         last_ram_translation_ptr = ram_translation_ptr;
     }
+    SMCR_PATCH_SYNC();
 }
 #endif
 
@@ -452,11 +716,13 @@ static void jit_legacy_icache_sync(void)
             jit_code_stats.whole_i++;
         } else
 #endif
+        JCTR_SYNC(last_rom_translation_ptr, rom_translation_ptr);
         platform_cache_sync(last_rom_translation_ptr, rom_translation_ptr);
         last_rom_translation_ptr = rom_translation_ptr;
     }
     if (last_ram_translation_ptr < ram_translation_ptr) {
         jit_code_stats.publishes++;
+        JCTR_SYNC(last_ram_translation_ptr, ram_translation_ptr);
         platform_cache_sync(last_ram_translation_ptr, ram_translation_ptr);
         last_ram_translation_ptr = ram_translation_ptr;
     }
@@ -505,6 +771,7 @@ void translate_icache_sync() {
           (char *)rom_translation_ptr - (char *)last_rom_translation_ptr);
         sceKernelIcacheInvalidateAll();
 #else
+        JCTR_SYNC(last_rom_translation_ptr, rom_translation_ptr);
         platform_cache_sync(last_rom_translation_ptr, rom_translation_ptr);
 #endif
         last_rom_translation_ptr = rom_translation_ptr;
@@ -522,9 +789,11 @@ void translate_icache_sync() {
         last_ram_translation_ptr = ram_translation_cache;
 #endif
     if (last_ram_translation_ptr < ram_translation_ptr) {
+        JCTR_SYNC(last_ram_translation_ptr, ram_translation_ptr);
         platform_cache_sync(last_ram_translation_ptr, ram_translation_ptr);
         last_ram_translation_ptr = ram_translation_ptr;
     }
+    SMCR_PATCH_SYNC();
 #endif
 }
 
@@ -541,6 +810,57 @@ void translate_icache_sync() {
     if(!pc_address_block)                                                     \
       pc_address_block = load_gamepak_page(pc_region & 0x3FF);                \
   }                                                                           \
+
+/* NV_COND_FIX (GBAdhoc a8b9f52, issue #10).  Condition 0xF is "never" on the
+ * ARM7TDMI (reserved from ARMv3, a failed condition costs 1S).  There is no
+ * generate_condition case for it, so an NV word opened a "conditional run"
+ * with no skip branch: backpatch_address stayed NULL (a store to NULL when NV
+ * was the block's first condition) or stale (an earlier skip re-patched past
+ * it, and the word's code ran as if AL).  The scan (arm_load_opcode) turns the
+ * word into a plain AL no-op: no exit point, no block_exits[] entry, and it
+ * closes any open condition run.  The emit switch gives it no code: 0xC0 is a
+ * case the switch does not have (0xC0..0xEF is the coprocessor space).  The
+ * word's 1S stays (arm_base_cycles runs for every word).  Shared by every back
+ * end; blocks without NV words are unchanged.  -DGPSP_NO_NV_COND_FIX turns it
+ * off (the test ROM's mutant check). */
+#if !defined(GPSP_NO_NV_COND_FIX)
+#define arm_emit_case(op)   (((op) >> 28) == 0xF ? 0xC0 : (((op) >> 20) & 0xFF))
+#define arm_scan_nv_nop()                                                     \
+  if(condition == 0x0F)                                                       \
+  {                                                                           \
+    condition = 0x0E;                                                         \
+    opcode = 0;                                                               \
+  }
+#else
+#define arm_emit_case(op)   (((op) >> 20) & 0xFF)
+#define arm_scan_nv_nop()
+#endif
+
+#ifdef ARM_ARCH
+#define arm_ldr_pc_pool_or_mem(is_up, dir)                                    \
+  do {                                                                        \
+    u32 _ldr_rn = (opcode >> 16) & 0x0F;                                      \
+    u32 _ldr_off = opcode & 0x0FFF;                                           \
+    u32 _aoff = (is_up) ? (pc + 8 + _ldr_off) : (pc + 8 - _ldr_off);          \
+    if (!ram_region && (_ldr_rn == 15) &&                                     \
+        ((_aoff >> 15) == (pc >> 15)) &&                                      \
+        ((_aoff & 3) == 0) &&                                                 \
+        ((pc >> 24) != 0x0D) &&                                               \
+        (((pc >> 24) != 0x00) || ((pc < 0x4000) && (_aoff < 0x4000))) &&      \
+        !((_aoff >= 0x080000C0 && _aoff < 0x080000D0) ||                      \
+          (_aoff >= 0x0A0000C0 && _aoff < 0x0A0000D0) ||                      \
+          (_aoff >= 0x0C0000C0 && _aoff < 0x0C0000D0))) {                     \
+      u32 _ldr_rd = (opcode >> 12) & 0x0F;                                    \
+      u32 value = readaddress32(pc_address_block, (_aoff & 0x7FFF));          \
+      arm_load_pc_pool_const(_ldr_rd, value);                                 \
+    } else {                                                                  \
+      arm_access_memory(load, dir, pre, u32, imm);                            \
+    }                                                                         \
+  } while (0)
+#else
+#define arm_ldr_pc_pool_or_mem(is_up, dir)                                    \
+  arm_access_memory(load, dir, pre, u32, imm)
+#endif
 
 #define translate_arm_instruction()                                           \
   check_pc_region(pc);                                                        \
@@ -565,7 +885,7 @@ void translate_icache_sync() {
   }                                                                           \
   emit_trace_arm_instruction(pc);                                             \
                                                                               \
-  switch((opcode >> 20) & 0xFF)                                               \
+  switch(arm_emit_case(opcode))                                               \
   {                                                                           \
     case 0x00:                                                                \
       if((opcode & 0x90) == 0x90)                                             \
@@ -1574,7 +1894,7 @@ void translate_icache_sync() {
                                                                               \
     case 0x51:                                                                \
       /* LDR rd, [rn - imm] */                                                \
-      arm_access_memory(load, down, pre, u32, imm);                           \
+      arm_ldr_pc_pool_or_mem(0, down);                                        \
       break;                                                                  \
                                                                               \
     case 0x52:                                                                \
@@ -1614,7 +1934,7 @@ void translate_icache_sync() {
                                                                               \
     case 0x59:                                                                \
       /* LDR rd, [rn + imm] */                                                \
-      arm_access_memory(load, up, pre, u32, imm);                             \
+      arm_ldr_pc_pool_or_mem(1, up);                                          \
       break;                                                                  \
                                                                               \
     case 0x5A:                                                                \
@@ -3145,6 +3465,1557 @@ void xlat_depth_probe_reset(void)
 #define vram_lookup_region
 #endif
 
+/* XLAT_ITERATIVE (libretro/gpsp 70707ce): resolve a block's external exits
+ * from a worklist, not by recursing.
+ *
+ * Translating a block used to resolve each external branch target by calling
+ * block_lookup_translate on it, which translates that block and resolves ITS
+ * exits, and so on: one translate_block frame (the exits array alone is 256 to
+ * 384 bytes) plus one lookup frame per not-yet-translated block in a branch
+ * chain.  A long chain of first-visit blocks (straight-line code joined by
+ * unconditional branches, a big switch, a hot path met for the first time
+ * after a cache flush or a state load) nests as deep as the chain is long and
+ * overflows the 1 MiB main stack (plat_vita.c) at a few thousand blocks.
+ *
+ * Now translate_block_* queues the exits it would have resolved and the
+ * OUTERMOST lookup drains the queue once translate_block returns; lookups made
+ * while draining only translate their block and queue its exits, so the host
+ * stack depth is constant.  The exits are queued in reverse and popped from
+ * the end, which visits them in exactly the order the recursion did (a block's
+ * first exit, then everything that exit brought in, then its second exit...):
+ * the cache layout, the tag numbers and the moment a full cache is noticed are
+ * the same as before.  The failure contract is unchanged: when the queue
+ * cannot be completed (cache flushed, unmappable target) the outermost lookup
+ * answers NULL, the queue is dropped (its sources lie in a flushed cache) and
+ * block_lookup_address retries from scratch.  Nothing runs guest code between
+ * a block's publication and the drain, and translate_icache_sync covers the
+ * patched blocks because the lookups return only after the drain.
+ * -DGPSP_NO_XLAT_ITERATIVE restores the recursion. */
+#if !defined(GPSP_NO_XLAT_ITERATIVE)
+#define XLAT_ITERATIVE 1
+typedef struct
+{
+  u8 *branch_source;
+  u32 branch_target;
+  u32 thumb;
+} deferred_exit_type;
+
+static deferred_exit_type *deferred_exits = NULL;
+static u32 deferred_exit_count = 0;
+static u32 deferred_exit_capacity = 0;
+static u32 translate_depth = 0;
+u32 xlat_deferred_max = 0;           /* deepest the queue got (diagnostic) */
+
+u8 function_cc *block_lookup_translate_arm(u32 pc);
+u8 function_cc *block_lookup_translate_thumb(u32 pc);
+
+static bool defer_external_exit(u8 *branch_source, u32 branch_target,
+ u32 thumb)
+{
+  if(deferred_exit_count == deferred_exit_capacity)
+  {
+    u32 new_capacity = deferred_exit_capacity ? deferred_exit_capacity * 2
+                                              : 128;
+    deferred_exit_type *new_exits = (deferred_exit_type *)realloc(
+     deferred_exits, new_capacity * sizeof(deferred_exit_type));
+    if(!new_exits)
+      return false;
+    deferred_exits = new_exits;
+    deferred_exit_capacity = new_capacity;
+  }
+
+  deferred_exits[deferred_exit_count].branch_source = branch_source;
+  deferred_exits[deferred_exit_count].branch_target = branch_target;
+  deferred_exits[deferred_exit_count].thumb = thumb;
+  deferred_exit_count++;
+  if(deferred_exit_count > xlat_deferred_max)
+    xlat_deferred_max = deferred_exit_count;
+  return true;
+}
+
+/* LAZY EXITS (vita.ini jit_lazy_exits / jit_lazy_budget, ARM back end).
+ *
+ * An exit to code that is not translated used to translate it on the spot, and
+ * everything that block exits to, and so on: one cold lookup translated the
+ * whole statically reachable graph (the worst frames: 60-80% of the blocks
+ * translated were never asked for by the guest).  With the switch on, the
+ * drain below still links an exit at once when its target is already
+ * translated, and still translates up to jit_lazy_budget targets per
+ * outermost lookup (the nearest ones, in the old order), but once the budget
+ * is spent an exit to an untranslated ROM target is pointed at a 20-byte
+ * island emitted at the end of the ROM cache (generate_lazy_exit_island).
+ * The first time the guest takes that exit the island enters
+ * block_lookup_address_lazy_*, which translates the target like any
+ * indirect branch would and then re-points the exit's `b` at it, so every
+ * later pass is a direct branch again.
+ *
+ * Only ROM -> ROM exits are lazy: ROM blocks are never retired, so a
+ * patched link can only die with a whole ROM flush, which rom_flush_gen
+ * detects (a link is never written into a cache that was flushed during the
+ * lookup).  RAM blocks keep the eager links the SMC machinery tracks.  The
+ * re-pointed word is in published code, so it is synced on its own
+ * (platform_cache_sync; one more call, once per lazily taken exit).
+ * Guest-visible behaviour is the indirect branch's: same lookup, same
+ * cycles.  Twins: GPSP_LAZY_EXITS=0/1, GPSP_LAZY_BUDGET=n. */
+#if defined(GPSP_LAZY_EXITS)
+static u32 lz_spec;              /* translated at depth >= 2 since the outermost began */
+u32 rom_flush_gen;               /* bumped wherever the ROM cache is reset */
+#define LZ_NOTE_BLOCK() do { if (translate_depth >= 2) lz_spec++; } while (0)
+#define LZ_TOP_BEGIN()  do { lz_spec = 0; } while (0)
+#define LZ_FLUSHED()    (rom_flush_gen++)
+
+/* The ROM block for pc|thumb when the hash has it (the lookup's own walk,
+ * with nothing allocated). */
+static inline int lz_rom_has_block(u32 pc, u32 thumb)
+{
+  u32 key = pc | thumb;
+  u32 off = rom_branch_hash[((key * 2654435761U) >> (32 - ROM_BRANCH_HASH_BITS))
+                            & (ROM_BRANCH_HASH_SIZE - 1)];
+  while (off) {
+    hashhdr_type *h = (hashhdr_type *)&rom_translation_cache[off];
+    if (h->pc_value == key)
+      return 1;
+    off = h->next_entry;
+  }
+  return 0;
+}
+
+#if defined(SMC_RANGE) && SMC_RANGE
+#ifndef SMC_RANGE_CARVE
+#define SMC_RANGE_CARVE (1536u * 1024u)
+#endif
+#define LZ_SMC_CARVE SMC_RANGE_CARVE
+#else
+#define LZ_SMC_CARVE 0u
+#endif
+
+/* Called by the drain: true when the exit was pointed at an island. */
+static int lz_try_island(u8 *src, u32 target, u32 thumb)
+{
+  u32 region = GBA_PC(target) >> 24;
+  u8 *translation_ptr;
+  if (!jit_lazy_exits || lz_spec < jit_lazy_budget)
+    return 0;
+  if (!(region == 0x0 || (region >= 0x8 && region <= 0xD)) || target == 8)
+    return 0;
+  if (src < rom_translation_cache + rom_cache_watermark ||
+      src >= rom_translation_ptr)
+    return 0;                               /* a RAM or watermark block's exit: eager */
+  if (lz_rom_has_block(target, thumb))
+    return 0;                               /* already there: link it */
+  if (rom_translation_ptr + LAZY_ISLAND_BYTES + 64 >
+      rom_translation_cache + rom_translation_cache_size -
+      LZ_SMC_CARVE - TRANSLATION_CACHE_LIMIT_THRESHOLD)
+    return 0;
+  translation_ptr = rom_translation_ptr;
+  if (thumb) { generate_lazy_exit_island(thumb, target, src); }
+  else       { generate_lazy_exit_island(arm, target, src); }
+  generate_branch_patch_unconditional(src, translation_ptr - LAZY_ISLAND_BYTES);
+  rom_translation_ptr = translation_ptr;
+  lz_islands++;
+  return 1;
+}
+#else
+#define LZ_NOTE_BLOCK() do { } while (0)
+#define LZ_TOP_BEGIN()  do { } while (0)
+#define LZ_FLUSHED()    do { } while (0)
+#endif
+
+/* Runs at translate_depth == 1.  An entry is popped before its target is
+ * looked up, since the lookup can grow (and move) the queue. */
+static bool process_deferred_exits(void)
+{
+  while(deferred_exit_count)
+  {
+    u8 *branch_source;
+    u32 branch_target;
+    u32 thumb;
+    u8 *translation_target;
+
+    deferred_exit_count--;
+    branch_source = deferred_exits[deferred_exit_count].branch_source;
+    branch_target = deferred_exits[deferred_exit_count].branch_target;
+    thumb         = deferred_exits[deferred_exit_count].thumb;
+
+#if defined(GPSP_LAZY_EXITS)
+    if(branch_target != 0x00000008 &&
+       lz_try_island(branch_source, branch_target, thumb))
+      continue;
+#endif
+    if(branch_target == 0x00000008)
+      translation_target = bios_swi_entrypoint;
+    else if(thumb)
+      translation_target = block_lookup_translate_thumb(branch_target);
+    else
+      translation_target = block_lookup_translate_arm(branch_target);
+
+    /* The sentinel must never reach the patch (see the classifier in
+     * translate_block_*): aborting is the established safe path. */
+    if(!translation_target || translation_target == BLOCK_LOOKUP_UNMAPPABLE)
+      return false;
+
+#if defined(SMC_RANGE) && SMC_RANGE
+    if(smcr_on)
+    {
+      /* A kept block's link can already be published: note a change. */
+      u32 before[2];
+      memcpy(before, branch_source, sizeof(before));
+      JIT_PATCH_BRANCH(branch_source, translation_target);
+      smcr_patch_note(branch_source, before);
+      continue;
+    }
+#endif
+    JIT_PATCH_BRANCH(branch_source, translation_target);
+  }
+  return true;
+}
+
+#define XLAT_DEPTH_ENTER()                                                    \
+  do {                                                                        \
+    if(!translate_depth) { jd_xlat_t0 = JD_NOW_US();                          \
+                           jd_pages0 = gamepak_page_loads; LZ_TOP_BEGIN(); }  \
+    translate_depth++;                                                        \
+  } while(0)
+#define XLAT_DEPTH_LEAVE(result)                                              \
+  do {                                                                        \
+    if((result) && translate_depth == 1)                                      \
+      (result) = process_deferred_exits();                                    \
+    translate_depth--;                                                        \
+    if(!translate_depth) {                                                    \
+      jd_frame_t *jf_ = jd_frame();                                           \
+      jf_->xlat_us += JD_NOW_US() - jd_xlat_t0;                               \
+      jf_->pages += gamepak_page_loads - jd_pages0;                           \
+      jf_->tops++;                                                            \
+    }                                                                         \
+    if(!(result) && !translate_depth)                                         \
+      deferred_exit_count = 0;                                                \
+  } while(0)
+#else
+#define XLAT_DEPTH_ENTER()       do { } while(0)
+#define XLAT_DEPTH_LEAVE(result) do { } while(0)
+#define translate_depth 1
+#endif
+
+/* ===== SMC_RANGE: self-modifying RAM code without whole-cache flushes =====
+ *
+ * docs/TECHNICAL.md "Version 1.4: SMC without whole-cache flushes" has the
+ * argument; this is the short form.
+ *
+ * The full-flush build (smc_partial off, every line of the old code) throws
+ * the whole RAM translation cache away on a code write (SMC trap, DMA onto
+ * code) and when the cache is full, and translates again whatever runs next.
+ * Its TAGS (one u16 per RAM halfword, nonzero = translated code) decide which
+ * stores trap, and a trap is not free for the guest: the store exits its
+ * block at the next instruction and the cycles counted since the block's
+ * last update are dropped (as upstream gpSP always did).  So a build that
+ * kept more code tagged would trap where the full-flush build does not, and
+ * one that tagged less would miss traps -- both change timing.  To be
+ * bit-identical, smc_partial keeps the full-flush build's tag array EXACTLY,
+ * and keeps the CODE:
+ *
+ *  - every RAM translation is recorded as a descriptor: start pc and mode,
+ *    end, a copy of the guest source bytes [start, end) it was made from (the
+ *    translator reads nothing else for a RAM block), its emitted size, the
+ *    size before its tail, and its external exits;
+ *  - a "flush" is re-enacted on the tags and on a virtual cache pointer only
+ *    (the full-flush build's ram_translation_ptr), not on the code;
+ *  - where the full-flush build would TRANSLATE a block (the lookup finds no
+ *    translation for it in the current generation, at the dispatcher or while
+ *    resolving another block's exits eagerly), smcr_lookup does exactly what
+ *    that translation does to the tags, the code_min/max range, the tag
+ *    numbers and the virtual pointer (including the cache-full flush at the
+ *    same block), and queues the block's exits in the same order -- but takes
+ *    the code from a kept descriptor whose source bytes are byte-for-byte the
+ *    current memory, and translates only when there is none.  Same source,
+ *    same pc and mode: same translation.  Its exits are linked again by the
+ *    same eager resolution, so a kept block never jumps into a translation
+ *    whose source has changed;
+ *  - kept code that was translated from bytes that have since changed is
+ *    simply never revived (the source compare is exact: no hash, no page
+ *    index, no write tracking -- it also covers the writes that never trap:
+ *    STM's earlier words, DMA onto untagged code, C writers).
+ *
+ * The block currently executing when a code write traps leaves through the
+ * old path (resume at the next instruction via the dispatcher), unchanged.
+ * Space: kept code lives in a region that starts SMC_RANGE_CARVE below the
+ * RAM cache (taken from the end of the ROM cache) and ends where the RAM
+ * cache's tag table begins.  Before a top-level lookup at least one full RAM
+ * cache of room is kept free (everything one lookup can make the full-flush
+ * build translate fits in its cache); when it is not, the code of every block
+ * that is not live in the full-flush build's current generation is thrown
+ * away (smcr_reclaim: "RAM code reclaim", jctr[13]) and the live ones are
+ * translated again from their own source copy when next entered. */
+#if defined(SMC_RANGE) && SMC_RANGE
+
+#if !defined(XLAT_ITERATIVE)
+#error "SMC_RANGE re-enacts eager exit resolution through the XLAT_ITERATIVE queue"
+#endif
+#if !defined(ARM_ARCH) && !defined(X86_ARCH)
+#error "SMC_RANGE is written for the ARM and x86 back ends"
+#endif
+#if defined(SMC_PARTIAL) || defined(SMC_PARTIAL_SAFE) || defined(SMC_GATES) || \
+    defined(ENTRY_GATES) || defined(SMC_SCAN_SPCLAMP) || \
+    defined(JIT_CODE_DISCIPLINE) || defined(SMC_RETIRE_WINDOW) || \
+    defined(RUNTIME_JIT_CACHE) || defined(SMC_PARTIAL_DIRECT_GATE)
+#error "SMC_RANGE does not combine with the MIPS SMC machinery"
+#endif
+
+#ifndef SMC_PARTIAL_DEFAULT
+#define SMC_PARTIAL_DEFAULT 1
+#endif
+#ifndef SMC_RANGE_CARVE
+#define SMC_RANGE_CARVE (1536u * 1024u)
+#endif
+/* One lookup can need a whole RAM cache of new code (see above), plus the
+ * one block that is translated before the cache-full test finds it does not
+ * fit.  Blocks are at most MAX_BLOCK_SIZE instructions. */
+#define SMCR_RESERVE   (RAM_TRANSLATION_CACHE_SIZE + 256u * 1024u)
+#define SMCR_NOCODE    0xFFFFFFFFu
+#define SMCR_HASH_BITS 13
+#define SMCR_HASH_SIZE (1u << SMCR_HASH_BITS)
+#define SMCR_MAXVER    256        /* kept versions of one pc and mode (LRU via MTF; holds multi-variant SMC mixers/engines) */
+#define SMCR_CAP_DESC  65536u     /* reclaim beyond these (bookkeeping) */
+#define SMCR_CAP_SRC   (4u << 20)
+#define SMCR_CAP_EXITS (256u * 1024u)
+
+/* The run-time switch (vita.ini smc_partial, read by the frontend).  It takes
+ * effect at the next init_dynarec_caches / flush_dynarec_caches, i.e. when a
+ * game is loaded or reset: set it before loading.  The host twins also read
+ * GPSP_SMC_PARTIAL=0/1 from the environment once. */
+u32 smc_partial = SMC_PARTIAL_DEFAULT;
+extern u32 gbab_smc_partial __attribute__((weak));
+void gpsp_smc_partial_set(u32 on)  { smc_partial = on ? 1 : 0; }
+u32  gpsp_smc_partial_active(void) { return smcr_on; }
+/* Things that cannot happen (a real translation that does not fit the
+ * reserve, an allocation failure, a translation that comes out different
+ * from the kept one): each is handled by a full flush of everything, which is
+ * safe but is NOT the full-flush build's behaviour.  Must stay 0. */
+u32 smc_partial_emergencies;
+
+typedef struct
+{
+  u32 key;        /* canonical pc | thumb */
+  u32 end;        /* block_end_pc */
+  u32 src;        /* offset of the source copy in smcr_srcb */
+  u32 src_hash;   /* fast pre-filter hash of guest bytes [pc, end) */
+  u32 code;       /* offset of the entry from smcr_base, or SMCR_NOCODE */
+  u32 s_body;     /* bytes up to the end of the last instruction */
+  u32 s_total;    /* bytes emitted */
+  u32 exits;      /* first exit in smcr_x */
+  u32 next;       /* hash chain: index + 1, 0 ends it */
+  u32 gen;        /* virtual generation of its last (re)translation */
+  u16 n_exits;
+  u16 tag;        /* its tag in generation gen */
+  u32 gate;       /* the scan stopped at a translation gate (game_config):
+                   * the full-flush build also tags the word AT the gate
+                   * (smc_tag_gate_*_yes) */
+  u32 nins;       /* instructions; their update_cycles flags as the scan
+                   * left them follow the source copy (smcr_vb) */
+  u32 s_in;       /* the last instruction's update_cycles BEFORE the scan */
+} smcr_desc;
+
+typedef struct { u32 off; u32 target; } smcr_exit;
+
+static smcr_desc *smcr_d;  static u32 smcr_nd, smcr_capd;
+static u8 *smcr_srcb;      static u32 smcr_nsrc, smcr_capsrc;
+static smcr_exit *smcr_x;  static u32 smcr_nx, smcr_capx;
+static u32 smcr_hash[SMCR_HASH_SIZE];
+/* Which descriptor a live tag's ARM / Thumb translation is (index + 1).  The
+ * tag entries themselves (ramtag_type, at the end of the RAM cache) hold what
+ * the full-flush build holds there -- the cache offset the block was
+ * translated at, which is 0 for the first block after a flush, so that block
+ * counts as untranslated and is translated again at its next lookup; that is
+ * reproduced, so the entries cannot carry anything else. */
+static u32 smcr_tagd[0x8000][2];
+#define SMCR_TAGD(tag, thumb) (smcr_tagd[(u16)(tag) >> 1][(thumb)])
+static u8 *smcr_base;      /* start of the kept-code region */
+static u32 smcr_vptr;      /* the full-flush build's ram_translation_ptr */
+static u32 smcr_vgen = 1;  /* +1 per tag-only flush */
+static u32 smcr_env_read;
+static u32 smcr_verify_on; /* GPSP_SMC_VERIFY=1 (twins) */
+static u32 smcr_verifying; /* non-zero during in-place smcr_verify_revival */
+static u32 smcr_lookups;
+#include <stdio.h>
+static FILE *smcr_trace_f; /* GPSP_SMC_TRACE=file (twins): one line per flush
+                            * of the full-flush build, in both modes */
+/* FNV-1a of the machine's memory (EWRAM, IWRAM data, VRAM, OAM, palette,
+ * I/O) and r0-r15 as kept in reg[]: the identity check for runs without a
+ * picture (GBADHOC_SOFT_NORASTER under qemu). */
+static u32 smcr_state_hash(void)
+{
+  u32 h = 2166136261u, k, i;
+  const u8 *areas[6] = { ewram, iwram + 0x8000, vram, (const u8 *)oam_ram,
+                         (const u8 *)palette_ram, (const u8 *)io_registers };
+  const u32 sizes[6] = { 0x40000, 0x8000, 1024 * 96, 1024, 1024, 1024 };
+  for (k = 0; k < 6; k++)
+    for (i = 0; i < sizes[k]; i++)
+      h = (h ^ areas[k][i]) * 16777619u;
+  for (i = 0; i < 16; i++)
+    h = (h ^ reg[i]) * 16777619u;
+  return h;
+}
+static FILE *smcr_jlog_f;  /* GPSP_JCTR_LOG=file (twins): the counters at the
+                            * first lookup of every frame */
+static u32 smcr_jlog_frame = ~0u;
+static void smcr_jlog(void)
+{
+  u32 i;
+  if (frame_counter == smcr_jlog_frame)
+    return;
+  {
+  u32 c[JCTR_N];
+  smcr_jlog_frame = frame_counter;
+  gpsp_jit_counters(c, JCTR_N);
+  fprintf(smcr_jlog_f, "%u", (unsigned)frame_counter);
+  for (i = 0; i < JCTR_N; i++)
+    fprintf(smcr_jlog_f, " %u", (unsigned)c[i]);
+  /* Every 10th frame: FNV-1a of the machine's memory (EWRAM, IWRAM data,
+   * VRAM, OAM, palette, I/O) and the registers -- the identity check for
+   * runs without a picture (GBADHOC_SOFT_NORASTER under qemu). */
+  if (!(frame_counter % 10))
+    fprintf(smcr_jlog_f, " state=%08x", (unsigned)smcr_state_hash());
+  fprintf(smcr_jlog_f, "\n");
+  }
+}
+
+/* What translate_block_* leaves for smcr_translate (smcr_xlat_real). */
+static u32 smcr_last_end;
+static u32 smcr_last_gate;
+static u8 *smcr_last_body;
+static u32 smcr_xn;
+#define SMCR_XBUF 64        /* >= MAX_EXITS + entry gate, checked below */
+#define SMCR_SWAP 4112      /* >= MAX_BLOCK_SIZE * 4, checked below */
+static struct { u8 *src; u32 target; } smcr_xbuf[SMCR_XBUF];
+
+#define SMCR_ROM_SIZE \
+  (smcr_on ? rom_translation_cache_size - SMC_RANGE_CARVE : rom_translation_cache_size)
+
+static inline u32 smcr_hashf(u32 key)
+{
+  return (key * 2654435761u) >> (32 - SMCR_HASH_BITS);
+}
+
+/* Guest source bytes and tag bytes of a canonical RAM pc. */
+static inline u8 *smcr_mem(u32 pc)
+{
+  return (pc >> 24) == 3 ? iwram + 0x8000 + (pc & 0x7FFF)
+                         : ewram + (pc & 0x3FFFF);
+}
+static inline u8 *smcr_tagp(u32 pc)
+{
+  return (pc >> 24) == 3 ? iwram + (pc & 0x7FFF)
+                         : ewram + 0x40000 + (pc & 0x3FFFF);
+}
+
+/* [pc, pc+len) of guest RAM for a block that may run past the end of its
+ * region: RAM mirrors (IWRAM every 32 KiB, EWRAM every 256 KiB), the
+ * translator reads the mirrored bytes, and a block that starts near the end
+ * continues at the region's start.  smcr_mem(pc) + len would run off the end
+ * of the array (into the next object for IWRAM -- the fortify abort in
+ * smcr_translate on Driver 2 Advance -- and into the tag area for EWRAM), so
+ * the source copy, compare and swap go through these in two pieces. */
+static void smcr_mem_pieces(u32 pc, u32 len, u8 **a, u32 *alen, u8 **b)
+{
+  u32 size = (pc >> 24) == 3 ? 0x8000u : 0x40000u;
+  u32 first = size - (pc & (size - 1));
+  *a = smcr_mem(pc);
+  *alen = len < first ? len : first;
+  *b = smcr_mem(pc & ~(size - 1));      /* where the rest continues */
+}
+static void smcr_mem_read(u8 *dst, u32 pc, u32 len)
+{
+  u8 *a, *b; u32 n;
+  smcr_mem_pieces(pc, len, &a, &n, &b);
+  memcpy(dst, a, n);
+  if (len > n) memcpy(dst + n, b, len - n);
+}
+static void smcr_mem_write(u32 pc, const u8 *src, u32 len)
+{
+  u8 *a, *b; u32 n;
+  smcr_mem_pieces(pc, len, &a, &n, &b);
+  memcpy(a, src, n);
+  if (len > n) memcpy(b, src + n, len - n);
+}
+static int smcr_mem_cmp(u32 pc, const u8 *ref, u32 len)
+{
+  u8 *a, *b; u32 n; int r;
+  smcr_mem_pieces(pc, len, &a, &n, &b);
+  r = memcmp(a, ref, n);
+  if (!r && len > n) r = memcmp(b, ref + n, len - n);
+  return r;
+}
+
+static u32 smcr_xtrace_lo = ~0u, smcr_xtrace_hi;  /* GPSP_SMC_XTRACE=lo:hi */
+static void smcr_xtrace(u32 pc, u32 off, u32 where)
+{
+  if (smcr_trace_f && frame_counter >= smcr_xtrace_lo &&
+      frame_counter <= smcr_xtrace_hi)
+    fprintf(smcr_trace_f, "T %u %08x off=%u %u tag=%x\n",
+            (unsigned)frame_counter, (unsigned)pc, (unsigned)off,
+            (unsigned)smcr_fw_xlat, (unsigned)ram_block_tag);
+}
+static void smcr_trace(char kind)
+{
+  static u32 n;
+  if (!smcr_trace_f)
+    return;
+  /* Every 4th event also carries the machine state: the events are guest
+   * points common to both modes (the per-frame log samples at the first
+   * lookup of a frame, which a dispatch-cache hit can move). */
+  if (frame_counter >= smcr_xtrace_lo && frame_counter <= smcr_xtrace_hi) {
+    /* debug: per-area hashes and the registers */
+    const u8 *areas[6] = { ewram, iwram + 0x8000, vram, (const u8 *)oam_ram,
+                           (const u8 *)palette_ram, (const u8 *)io_registers };
+    const u32 sizes[6] = { 0x40000, 0x8000, 1024 * 96, 1024, 1024, 1024 };
+    u32 k, i;
+    fprintf(smcr_trace_f, "A");
+    for (k = 0; k < 6; k++) {
+      u32 h = 2166136261u;
+      for (i = 0; i < sizes[k]; i++)
+        h = (h ^ areas[k][i]) * 16777619u;
+      fprintf(smcr_trace_f, " %08x", (unsigned)h);
+    }
+    for (i = 0; i < 16; i++)
+      fprintf(smcr_trace_f, " r%u=%08x", (unsigned)i, (unsigned)reg[i]);
+    fprintf(smcr_trace_f, "\nIO");
+    for (i = 0; i < 0x110; i++)
+      fprintf(smcr_trace_f, " %03x:%04x", (unsigned)(i * 2), (unsigned)io_registers[i]);
+    fprintf(smcr_trace_f, "\n");
+  }
+  if (!(n++ & 3))
+    fprintf(smcr_trace_f, "%c %u %08x %u st=%08x\n", kind,
+            (unsigned)frame_counter, (unsigned)reg[REG_PC],
+            (unsigned)smcr_fw_xlat, (unsigned)smcr_state_hash());
+  else
+    fprintf(smcr_trace_f, "%c %u %08x %u\n", kind, (unsigned)frame_counter,
+            (unsigned)reg[REG_PC], (unsigned)smcr_fw_xlat);
+}
+
+/* ---- re-pointed links of published code -------------------------------- */
+#define SMCR_PATCH_SLOTS 16
+static u8 *smcr_plo[SMCR_PATCH_SLOTS], *smcr_phi[SMCR_PATCH_SLOTS];
+static u32 smcr_np, smcr_pover;
+static u8 *smcr_pmin, *smcr_pmax;
+
+static void smcr_patch_note(u8 *src, const u32 *before)
+{
+  u8 *lo, *hi;
+  u32 i;
+  /* ROM blocks are linked once, when new: their sync is the ROM one. */
+  if (src < smcr_base || src >= ram_translation_cache + ram_translation_cache_size)
+    return;
+  if (!memcmp(src, before, 8))
+    return;
+  JCTR(10);
+  /* Code emitted since the last publish is published by the ordinary
+   * [last, ptr) sync; only an older word needs its own. */
+  if (src >= last_ram_translation_ptr && src < ram_translation_ptr)
+    return;
+  lo = (u8 *)((uintptr_t)src & ~(uintptr_t)63);
+  hi = (u8 *)(((uintptr_t)src + 8 + 63) & ~(uintptr_t)63);
+  if (!smcr_pover) {
+    for (i = 0; i < smcr_np; i++)
+      if (lo <= smcr_phi[i] && hi >= smcr_plo[i]) {
+        if (lo < smcr_plo[i]) smcr_plo[i] = lo;
+        if (hi > smcr_phi[i]) smcr_phi[i] = hi;
+        goto merged;
+      }
+    if (smcr_np < SMCR_PATCH_SLOTS) {
+      smcr_plo[smcr_np] = lo;
+      smcr_phi[smcr_np] = hi;
+      smcr_np++;
+    } else
+      smcr_pover = 1;
+  }
+merged:
+  if (!smcr_pmin || lo < smcr_pmin) smcr_pmin = lo;
+  if (!smcr_pmax || hi > smcr_pmax) smcr_pmax = hi;
+}
+
+/* Before the dispatcher runs anything: one sync per re-pointed line range
+ * (sceKernelSyncVMDomain on the Vita), or one over all of them when there
+ * were more than SMCR_PATCH_SLOTS. */
+static void smcr_patch_sync(void)
+{
+  u32 i;
+  if (!smcr_pmin)
+    return;
+  if (smcr_pover) {
+    JCTR(11); JCTR_SYNC(smcr_pmin, smcr_pmax);
+    platform_cache_sync(smcr_pmin, smcr_pmax);
+  } else
+    for (i = 0; i < smcr_np; i++) {
+      JCTR(11); JCTR_SYNC(smcr_plo[i], smcr_phi[i]);
+      platform_cache_sync(smcr_plo[i], smcr_phi[i]);
+    }
+  smcr_np = smcr_pover = 0;
+  smcr_pmin = smcr_pmax = NULL;
+}
+
+/* ---- bookkeeping -------------------------------------------------------- */
+static int smcr_grow(void **p, u32 *cap, u32 need, u32 elem, u32 first)
+{
+  void *n;
+  u32 c = *cap ? *cap : first;
+  if (need <= *cap)
+    return 1;
+  while (c < need)
+    c *= 2;
+  n = realloc(*p, (size_t)c * elem);
+  if (!n)
+    return 0;
+  *p = n;
+  *cap = c;
+  return 1;
+}
+
+static void smcr_hash_rebuild(void)
+{
+  u32 i;
+  memset(smcr_hash, 0, sizeof(smcr_hash));
+  for (i = 0; i < smcr_nd; i++) {
+    u32 h = smcr_hashf(smcr_d[i].key);
+    smcr_d[i].next = smcr_hash[h];
+    smcr_hash[h] = i + 1;
+  }
+}
+
+static void smcr_drop_all(void)
+{
+  smcr_nd = smcr_nsrc = smcr_nx = 0;
+  memset(smcr_hash, 0, sizeof(smcr_hash));
+  smcr_np = smcr_pover = 0;
+  smcr_pmin = smcr_pmax = NULL;
+}
+
+static u8 *ram_tagtable_bottom(void)
+{
+  return ram_translation_cache + ram_translation_cache_size -
+         (0x10000 - ram_block_tag) / 2 * sizeof(ramtag_type);
+}
+
+/* The tag part of flush_translation_cache_ram, line for line (the full-flush
+ * build's flush as far as anything but the code is concerned). */
+static void smcr_flush_tags(void)
+{
+  u32 flush_t0;
+  flush_ram_count++;
+  flush_ram_total++;
+  flush_t0 = smc_prof_clock ? smc_prof_clock() : 0;
+  if (iwram_code_max) {
+    if(iwram_code_max > iwram_code_min) {
+      iwram_code_min &= ~15U;
+      iwram_code_max = MIN(iwram_code_max + 8, 0x8000);
+      memset(&iwram[iwram_code_min], 0, iwram_code_max - iwram_code_min);
+      smc_flush_bytes += iwram_code_max - iwram_code_min;
+    } else {
+      memset(iwram, 0, 0x8000);
+      smc_flush_bytes += 0x8000;
+      smc_flush_wide++;
+    }
+  }
+  if (ewram_code_max) {
+    if(ewram_code_max > ewram_code_min) {
+      ewram_code_min &= ~15U;
+      ewram_code_max = MIN(ewram_code_max + 8, 0x40000);
+      memset(&ewram[0x40000 + ewram_code_min], 0, ewram_code_max - ewram_code_min);
+      smc_flush_bytes += ewram_code_max - ewram_code_min;
+    } else {
+      memset(&ewram[0x40000], 0, 0x40000);
+      smc_flush_bytes += 0x40000;
+      smc_flush_wide++;
+    }
+  }
+  if (smc_prof_clock)
+    smc_flush_us += smc_prof_clock() - flush_t0;
+  iwram_code_min = ~0U;
+  iwram_code_max =  0U;
+  ewram_code_min = ~0U;
+  ewram_code_max =  0U;
+  ram_block_tag = INITIAL_TOP_TAG;
+  smcr_vptr = 0;
+  smcr_vgen++;
+}
+
+static void smcr_verify_state(const char *where);
+static void smcr_dc_clear(void);
+/* smcr_vb: see after block_data. */
+static void smcr_vb_load(void);
+static void smcr_vb_store(void);
+static u32  smcr_vb_get(u32 k);
+static void smcr_vb_set(u32 k, u32 v);
+static u32  smcr_bd_get(u32 k);
+static void smcr_bd_set(u32 k, u32 v);
+
+/* The full-flush build's flush, re-enacted: tags only, the code stays. */
+static void smcr_virtual_flush(void)
+{
+  if (smcr_verify_on)
+    smcr_verify_state("virtual flush");
+  JCTR(7);
+  smcr_dc_clear();
+  smcr_flush_tags();
+}
+
+/* flush_translation_cache_ram() while smc_partial is on: the callers outside
+ * the SMC paths (state load, cheats, reset, emitter rebuild) change what a
+ * translation would be, so everything goes. */
+static void smcr_full_flush(void)
+{
+  JCTR(4);
+  smcr_dc_clear();
+  smcr_flush_tags();
+  smcr_drop_all();
+  ARM_MEM_PC_RESET_RAM();
+  last_ram_translation_ptr = smcr_base;
+  ram_translation_ptr = smcr_base;
+}
+
+static u8 *smcr_emergency(const char *why)
+{
+  smc_partial_emergencies++;
+  if (smcr_trace_f)
+    fprintf(smcr_trace_f, "! emergency %s frame %u\n", why,
+            (unsigned)frame_counter);
+  if (smcr_verify_on) {
+    fprintf(stderr, "smc_partial: EMERGENCY %s (frame %u)\n", why,
+            (unsigned)frame_counter);
+    abort();
+  }
+  deferred_exit_count = 0;
+  smcr_full_flush();
+  return NULL;
+}
+
+/* Throw away the code of everything that is not live in the full-flush
+ * build's current generation; keep the live ones' descriptors, without code,
+ * to be translated again (from their own source copy) when entered.  Only at
+ * the top of a lookup, where no block is running and nothing is queued. */
+static void smcr_reclaim(void)
+{
+  u32 i, j = 0, src = 0, x = 0;
+  JCTR(4); JCTR(13);
+  if (smcr_verify_on)
+    smcr_verify_state("reclaim");
+  for (i = 0; i < smcr_nd; i++) {
+    smcr_desc d = smcr_d[i];
+    u32 len;
+    if (d.gen != smcr_vgen)
+      continue;
+    len = d.end - (d.key & ~1u) + d.nins;
+    memmove(smcr_srcb + src, smcr_srcb + d.src, len);
+    memmove(smcr_x + x, smcr_x + d.exits, d.n_exits * sizeof(smcr_exit));
+    d.src = src;
+    d.exits = x;
+    d.code = SMCR_NOCODE;
+    src += len;
+    x += d.n_exits;
+    smcr_d[j] = d;
+    /* (A live tag can have two live translations of one mode: the
+     * full-flush build's block at cache offset 0 is translated again at its
+     * next lookup.  The entry names the newer; keep it pointing there.) */
+    if (SMCR_TAGD(d.tag, d.key & 1) == i + 1)
+      SMCR_TAGD(d.tag, d.key & 1) = j + 1;
+    j++;
+  }
+  smcr_nd = j;
+  smcr_nsrc = src;
+  smcr_nx = x;
+  smcr_hash_rebuild();
+  smcr_dc_clear();
+  smcr_np = smcr_pover = 0;
+  smcr_pmin = smcr_pmax = NULL;
+  ARM_MEM_PC_RESET_RAM();
+  last_ram_translation_ptr = smcr_base;
+  ram_translation_ptr = smcr_base;
+}
+
+/* Top of every top-level lookup (translate_depth == 0). */
+static void smcr_depth0(void)
+{
+  if (ram_tagtable_bottom() - ram_translation_ptr < (ptrdiff_t)SMCR_RESERVE ||
+      smcr_nd > SMCR_CAP_DESC || smcr_nsrc > SMCR_CAP_SRC ||
+      smcr_nx > SMCR_CAP_EXITS)
+    smcr_reclaim();
+  if (smcr_verify_on && !(++smcr_lookups & 255))
+    smcr_verify_state("lookup");
+}
+
+static u32 smcr_hash_bytes(u32 h, const u8 *p, u32 len)
+{
+  while (len >= 4) {
+    u32 w;
+    memcpy(&w, p, 4);
+    h = (h ^ w) * 2654435761u;
+    p += 4;
+    len -= 4;
+  }
+  while (len--)
+    h = (h ^ *p++) * 16777619u;
+  return h;
+}
+
+static u32 smcr_mem_hash(u32 pc, u32 len)
+{
+  u8 *a, *b;
+  u32 n, h = 2166136261u ^ len;
+  smcr_mem_pieces(pc, len, &a, &n, &b);
+  h = smcr_hash_bytes(h, a, n);
+  if (len > n)
+    h = smcr_hash_bytes(h, b, len - n);
+  return h;
+}
+
+/* A kept translation of exactly the current bytes at pc, mode: index+1.
+ * Moves hits to the head of the hash chain so active versions are found in
+ * O(1) and smcr_trim() evicts true LRU versions rather than oldest-compiled. */
+static u32 smcr_find(u32 pc, u32 thumb, u32 *versions)
+{
+  u32 key = pc | thumb, i;
+  u32 h = smcr_hashf(key);
+  u32 *link = &smcr_hash[h];
+  u32 cached_len = 0, cached_hash = 0;
+  *versions = 0;
+  while ((i = *link) != 0) {
+    smcr_desc *d = &smcr_d[i - 1];
+    u32 len;
+    if (d->key != key) {
+      link = &d->next;
+      continue;
+    }
+    (*versions)++;
+    if (d->s_in != smcr_vb_get(d->nins - 1)) {
+      link = &d->next;
+      continue;
+    }
+    len = d->end - pc;
+    if (len != cached_len) {
+      cached_len = len;
+      cached_hash = smcr_mem_hash(pc, len);
+    }
+    if (d->src_hash == cached_hash &&
+        !smcr_mem_cmp(pc, smcr_srcb + d->src, len)) {
+      if (link != &smcr_hash[h]) {
+        *link = d->next;
+        d->next = smcr_hash[h];
+        smcr_hash[h] = i;
+      }
+      return i;
+    }
+    link = &d->next;
+  }
+  return 0;
+}
+
+/* Keep at most SMCR_MAXVER versions of one pc and mode in the chain (the
+ * newest are at its head); the others stay in the arrays until the next
+ * reclaim but can no longer be found.  A live one is never dropped. */
+static void smcr_trim(u32 key)
+{
+  u32 *link = &smcr_hash[smcr_hashf(key)], n = 0;
+  while (*link) {
+    smcr_desc *d = &smcr_d[*link - 1];
+    if (d->key == key && ++n > SMCR_MAXVER && d->gen != smcr_vgen) {
+      *link = d->next;
+      continue;
+    }
+    link = &d->next;
+  }
+}
+
+/* Translate pc (mode thumb) into the kept-code region.  redo: an existing
+ * descriptor that has no code (after a reclaim); its own source copy is put
+ * in guest memory for the translator if memory has changed since (a live
+ * block of the full-flush build is the translation of what was there when
+ * that build translated it).  Returns index+1, 0 when it did not fit. */
+static u32 smcr_translate(u32 pc, u32 thumb, u32 redo)
+{
+  static u8 swapbuf[SMCR_SWAP];
+  u8 *start = ram_translation_ptr;
+  u32 mem_pc_mark = ARM_MEM_PC_MARK_RAM();
+  u32 swaplen = 0, len, i, cph_t;
+  bool ok;
+
+  if (redo) {
+    const smcr_desc *r = &smcr_d[redo - 1];
+    len = r->end - pc;
+    if (len > SMCR_SWAP) {              /* cannot happen (checked at build) */
+      return 0;
+    }
+    if (smcr_mem_cmp(pc, smcr_srcb + r->src, len)) {
+      smcr_mem_read(swapbuf, pc, len);
+      smcr_mem_write(pc, smcr_srcb + r->src, len);
+      swaplen = len;
+    }
+  }
+  /* scan_block resets update_cycles for every instruction but the last, so
+   * the last one's flag is what the PREVIOUS translation left there
+   * (upstream behaviour; it decides a cycle update before the last
+   * instruction).  The full-flush build's value is smcr_vb; a re-translation
+   * reproduces the value the kept one was made with. */
+  if (redo)
+    smcr_bd_set(smcr_d[redo - 1].nins - 1, smcr_d[redo - 1].s_in);
+  else
+    smcr_vb_load();
+  smcr_xlat_real = 1;
+  smcr_xn = 0;
+  cph_t = core_phase_enter(CORE_PHASE_FINE);
+  ok = thumb ? translate_block_thumb(pc, true) : translate_block_arm(pc, true);
+  core_phase_leave(CORE_PHASE_FINE, &cph_jit, cph_t);
+  smcr_xlat_real = 0;
+  if (swaplen)
+    smcr_mem_write(pc, swapbuf, swaplen);
+  if (!ok) {
+    ram_translation_ptr = start;
+    ARM_MEM_PC_REWIND_RAM(mem_pc_mark);
+    return 0;
+  }
+
+  if (redo) {
+    smcr_desc *r = &smcr_d[redo - 1];
+    if (smcr_last_end != r->end || smcr_last_gate != r->gate ||
+        (u32)(smcr_last_body - start) != r->s_body ||
+        (u32)(ram_translation_ptr - start) != r->s_total ||
+        smcr_xn != r->n_exits) {
+      ram_translation_ptr = start;
+      ARM_MEM_PC_REWIND_RAM(mem_pc_mark);
+      return 0;
+    }
+    r->code = (u32)(start - smcr_base);
+    for (i = 0; i < smcr_xn; i++)
+      smcr_x[r->exits + i].off = (u32)(smcr_xbuf[i].src - start);
+    return redo;
+  }
+
+  len = smcr_last_end - pc;
+  {
+    u32 nins = len / (thumb ? 2 : 4);
+    if (!smcr_grow((void **)&smcr_d, &smcr_capd, smcr_nd + 1,
+                   sizeof(smcr_desc), 1024) ||
+        !smcr_grow((void **)&smcr_srcb, &smcr_capsrc, smcr_nsrc + len + nins,
+                   1, 64 * 1024)) {
+      ram_translation_ptr = start;
+      ARM_MEM_PC_REWIND_RAM(mem_pc_mark);
+      return 0;
+    }
+  }
+  if (
+      !smcr_grow((void **)&smcr_x, &smcr_capx, smcr_nx + smcr_xn,
+                 sizeof(smcr_exit), 4096)) {
+    ram_translation_ptr = start;
+    ARM_MEM_PC_REWIND_RAM(mem_pc_mark);
+    return 0;
+  }
+  {
+    smcr_desc *d = &smcr_d[smcr_nd];
+    u32 h = smcr_hashf(pc | thumb);
+    d->key = pc | thumb;
+    d->end = smcr_last_end;
+    d->src = smcr_nsrc;
+    d->code = (u32)(start - smcr_base);
+    d->s_body = (u32)(smcr_last_body - start);
+    d->s_total = (u32)(ram_translation_ptr - start);
+    d->exits = smcr_nx;
+    d->n_exits = (u16)smcr_xn;
+    d->gen = 0;
+    d->tag = 0;
+    d->gate = smcr_last_gate;
+    d->nins = len / (thumb ? 2 : 4);
+    d->s_in = smcr_vb_get(d->nins - 1);
+    d->src_hash = smcr_mem_hash(pc, len);
+    smcr_mem_read(smcr_srcb + smcr_nsrc, pc, len);
+    smcr_nsrc += len;
+    for (i = 0; i < d->nins; i++)
+      smcr_srcb[smcr_nsrc + i] = (u8)smcr_bd_get(i);
+    smcr_nsrc += d->nins;
+    for (i = 0; i < smcr_xn; i++) {
+      smcr_x[smcr_nx + i].off = (u32)(smcr_xbuf[i].src - start);
+      smcr_x[smcr_nx + i].target = smcr_xbuf[i].target;
+    }
+    smcr_nx += smcr_xn;
+    d->next = smcr_hash[h];
+    smcr_hash[h] = ++smcr_nd;
+    smcr_trim(pc | thumb);
+    return smcr_nd;
+  }
+}
+
+/* The tags and the code range the full-flush build's scan_block and
+ * update_pc_limits write for this block (smc_write_*_yes). */
+static void smcr_tag(const smcr_desc *d, u32 thumb)
+{
+  u32 pc = d->key & ~1u, a, last;
+  if (thumb) {
+    for (a = pc; a < d->end; a += 2) {
+      u16 *t = (u16 *)smcr_tagp(a);
+      if (!*t) *t = CODE_TAG_BLOCK16;
+    }
+    last = d->end - 2;
+  } else {
+    for (a = pc; a < d->end; a += 4) {
+      u32 *t = (u32 *)smcr_tagp(a);
+      if (!*t) *t = CODE_TAG_BLOCK32;
+    }
+    last = d->end - 4;
+  }
+  if (d->gate) {
+    /* smc_tag_gate_*_yes: the halfword(s) of the gate word itself */
+    u16 *t = (u16 *)smcr_tagp(d->end);
+    if (!*t) *t = CODE_TAG_BLOCK16;
+    if (!thumb) {
+      t = (u16 *)smcr_tagp(d->end + 2);
+      if (!*t) *t = CODE_TAG_BLOCK16;
+    }
+  }
+  if (pc >= 0x3000000) {
+    iwram_code_min = MIN(pc & 0x7FFF, iwram_code_min);
+    iwram_code_max = MAX(last & 0x7FFF, iwram_code_max);
+  } else {
+    ewram_code_min = MIN(pc & 0x3FFFF, ewram_code_min);
+    ewram_code_max = MAX(last & 0x3FFFF, ewram_code_max);
+  }
+}
+
+static int smcr_push_exits(const smcr_desc *d, u32 thumb)
+{
+  s32 i;
+  u8 *code = smcr_base + d->code;
+  for (i = (s32)d->n_exits - 1; i >= 0; i--) {
+    const smcr_exit *x = &smcr_x[d->exits + i];
+    if (!defer_external_exit(code + x->off, x->target, thumb))
+      return 0;
+  }
+  return 1;
+}
+
+static void smcr_verify_revival(u32 idx, u32 thumb);
+
+static u8 *smcr_lookup(u32 pc, u32 thumb, u16 *tagp)
+{
+  ramtag_type *te;
+  u32 *slot, idx, versions;
+  smcr_desc *d;
+
+  if (!VALID_TAG(*tagp)) {
+    if (thumb) {
+      allocate_tag_thumb(tagp);
+    } else {
+      allocate_tag_arm(tagp);
+    }
+    te = get_ram_tag(*tagp);
+    if ((u8 *)te < ram_translation_ptr)
+      return smcr_emergency("tag table met kept code");
+    te->offset_arm = 0;
+    te->offset_thumb = 0;
+  } else
+    te = get_ram_tag(*tagp);
+  slot = thumb ? &te->offset_thumb : &te->offset_arm;
+
+  if (*slot) {
+    /* Live in the full-flush build: no effect there.  Here it may need its
+     * code back after a reclaim, and its links with it. */
+    idx = SMCR_TAGD(*tagp, thumb);
+    if (smcr_d[idx - 1].code == SMCR_NOCODE) {
+      if (!smcr_translate(pc, thumb, idx))
+        return smcr_emergency("re-translation after reclaim");
+      if (!smcr_push_exits(&smcr_d[idx - 1], thumb))
+        return NULL;
+    }
+    return smcr_base + smcr_d[idx - 1].code;
+  }
+
+  /* The full-flush build translates this block now: it records the offset
+   * first (SMC_RAM_PREPARE_TRANSLATION), then translates. */
+  smcr_fw_xlat++;
+  JCTR(9);
+  smcr_xtrace(pc, smcr_vptr, 1);
+  *slot = smcr_vptr;
+  idx = smcr_find(pc, thumb, &versions);
+  if (idx) {
+    JCTR(8);
+    if (smcr_d[idx - 1].code == SMCR_NOCODE &&
+        !smcr_translate(pc, thumb, idx))
+      return smcr_emergency("re-translation of a kept block");
+    if (smcr_verify_on)
+      smcr_verify_revival(idx, thumb);
+  } else {
+    if (versions)
+      JCTR(12);
+    idx = smcr_translate(pc, thumb, 0);
+    if (!idx)
+      return smcr_emergency("translation does not fit");
+  }
+  d = &smcr_d[idx - 1];
+  /* The scan's update_cycles flags, as the full-flush build leaves them. */
+  {
+    u32 k;
+    const u8 *fl = smcr_srcb + d->src + (d->end - pc);
+    for (k = 0; k < d->nins; k++)
+      smcr_vb_set(k, fl[k]);
+  }
+  /* Its cache-full test, at the same block: translate_block_* checks after
+   * each instruction, the pointer only grows, and its limit is taken with
+   * this block's tag already allocated. */
+  if (smcr_vptr + d->s_body >
+      ram_translation_cache_size - TRANSLATION_CACHE_LIMIT_THRESHOLD -
+      (0x10000 - ram_block_tag) / 2 * sizeof(ramtag_type)) {
+    flush_ram_full++;
+    smcr_trace('F');
+    smcr_virtual_flush();
+    return NULL;
+  }
+  smcr_tag(d, thumb);
+  smcr_vptr += d->s_total;
+  SMCR_TAGD(*tagp, thumb) = idx;
+  d->gen = smcr_vgen;
+  d->tag = *tagp;
+  if (!smcr_push_exits(d, thumb))
+    return NULL;
+  return smcr_base + d->code;
+}
+
+/* The RAM case of block_lookup_translate_* while smc_partial is on. */
+static u8 *smcr_lookup_entry(u32 pc, u32 thumb, u16 *tagp)
+{
+  u8 *ret;
+  bool ok;
+  XLAT_DEPTH_ENTER();
+  ret = smcr_lookup(pc, thumb, tagp);
+  ok = ret != NULL;
+  XLAT_DEPTH_LEAVE(ok);
+  return ok ? ret : NULL;
+}
+
+/* init_dynarec_caches / flush_dynarec_caches: put smc_partial into effect. */
+static void smcr_apply(void)
+{
+  u32 want;
+  if (!smcr_env_read) {
+    const char *e = getenv("GPSP_SMC_PARTIAL");
+    smcr_env_read = 1;
+    if (e && *e)
+      smc_partial = atoi(e) ? 1 : 0;
+    e = getenv("GPSP_SMC_VERIFY");
+    smcr_verify_on = e && atoi(e);
+    e = getenv("GPSP_SMC_TRACE");
+    if (e && *e) {
+      char name[512];
+      /* Instance B (every global renamed gbab_*) writes its own file: only
+       * there is gbab_smc_partial this object's own variable. */
+      snprintf(name, sizeof(name), "%s%s", e,
+               &gbab_smc_partial == &smc_partial ? ".b" : "");
+      smcr_trace_f = fopen(name, "w");
+      if (smcr_trace_f)
+        setvbuf(smcr_trace_f, NULL, _IOLBF, 0);
+    }
+#if defined(GPSP_DCACHE) && GPSP_DCACHE
+    e = getenv("GPSP_DISPATCH_CACHE");
+    if (e && *e)
+      gpsp_dispatch_cache_set(atoi(e) ? 1 : 0);
+#endif
+    e = getenv("GPSP_LAZY_EXITS");
+    if (e && *e)
+      jit_lazy_exits = atoi(e) ? 1 : 0;
+    e = getenv("GPSP_LAZY_BUDGET");
+    if (e && *e)
+      jit_lazy_budget = (u32)atoi(e);
+    e = getenv("GPSP_SMC_XTRACE");
+    if (e && *e)
+      sscanf(e, "%u:%u", &smcr_xtrace_lo, &smcr_xtrace_hi);
+    e = getenv("GPSP_JCTR_LOG");
+    if (e && *e && &gbab_smc_partial != &smc_partial)
+      smcr_jlog_f = fopen(e, "w");
+  }
+  want = smc_partial && rom_translation_cache && ram_translation_cache &&
+         ram_translation_cache == rom_translation_cache +
+                                  rom_translation_cache_size &&
+         rom_translation_cache_size >= 4 * SMC_RANGE_CARVE;
+  smcr_drop_all();
+  ARM_MEM_PC_RESET_RAM();
+  smcr_vptr = 0;          /* init and flush both restart the RAM cache */
+  smcr_on = want;
+  smcr_base = want ? ram_translation_cache - SMC_RANGE_CARVE
+                   : ram_translation_cache;
+  if (want) {
+    ram_translation_ptr = smcr_base;
+    last_ram_translation_ptr = smcr_base;
+  }
+}
+
+/* ---- GPSP_SMC_VERIFY=1 (twins): run-time proof obligations --------------
+ * smcr_verify_state: the tag array is exactly the union of the extents of the
+ * blocks live in the current generation (every tagged halfword is covered by
+ * one, every live block is tagged and owns its tag entry).
+ * smcr_verify_revival: a kept translation that is about to be revived is
+ * translated again, in place, from the current memory and must come out the
+ * same byte for byte (exit branches aside: they are linked), with the same
+ * extent, sizes and exits.  Any difference aborts the process. */
+static void smcr_verify_fail(const char *where, const char *what, u32 a, u32 b)
+{
+  fprintf(stderr, "smc_partial VERIFY FAILED (%s): %s %08x %08x frame %u\n",
+          where, what, (unsigned)a, (unsigned)b, (unsigned)frame_counter);
+  abort();
+}
+
+static void smcr_verify_state(const char *where)
+{
+  static u8 cov[(0x8000 + 0x40000) / 2 / 8];
+  u32 i, a, h;
+  memset(cov, 0, sizeof(cov));
+  for (i = 0; i < smcr_nd; i++) {
+    const smcr_desc *d = &smcr_d[i];
+    u32 pc = d->key & ~1u, thumb = d->key & 1;
+    ramtag_type *te;
+    if (d->gen != smcr_vgen)
+      continue;
+    if (*(u16 *)smcr_tagp(pc) != d->tag)
+      smcr_verify_fail(where, "start tag", pc, d->tag);
+    te = get_ram_tag(d->tag);
+    (void)te;
+    {
+      u32 t = SMCR_TAGD(d->tag, thumb);
+      if (!t || t > smcr_nd || smcr_d[t - 1].key != d->key ||
+          smcr_d[t - 1].gen != smcr_vgen)
+        smcr_verify_fail(where, "tag descriptor", pc, i + 1);
+    }
+    for (a = pc; a < d->end + (d->gate ? (thumb ? 2 : 4) : 0); a += 2) {
+      h = ((a >> 24) == 3 ? (a & 0x7FFF) : 0x8000 + (a & 0x3FFFF)) >> 1;
+      if (!*(u16 *)smcr_tagp(a))
+        smcr_verify_fail(where, "untagged live code", a, pc);
+      cov[h >> 3] |= (u8)(1u << (h & 7));
+    }
+  }
+  for (h = 0; h < (0x8000 + 0x40000) / 2; h++) {
+    a = h < 0x4000 ? 0x3000000 + h * 2 : 0x2000000 + (h - 0x4000) * 2;
+    if (*(u16 *)smcr_tagp(a) && !(cov[h >> 3] & (1u << (h & 7))))
+      smcr_verify_fail(where, "tag without a live block", a,
+                       *(u16 *)smcr_tagp(a));
+  }
+}
+
+static void smcr_verify_revival(u32 idx, u32 thumb)
+{
+  smcr_desc d = smcr_d[idx - 1];
+  u8 *code = smcr_base + d.code;
+  u8 *save = (u8 *)malloc(d.s_total);
+  u8 *ptr = ram_translation_ptr;
+  u32 pc = d.key & ~1u, i, k, skip = 4;
+  bool ok;
+#if defined(ARM_ARCH) && defined(ARM_FAR_STUBS)
+  if (arm_far_split)
+    skip = 8;
+#endif
+  if (!save)
+    return;
+  memcpy(save, code, d.s_total);
+  ram_translation_ptr = code;
+  smcr_bd_set(d.nins - 1, d.s_in);
+  smcr_xlat_real = 1;
+  smcr_verifying = 1;
+  smcr_xn = 0;
+  ok = thumb ? translate_block_thumb(pc, true) : translate_block_arm(pc, true);
+  smcr_verifying = 0;
+  smcr_xlat_real = 0;
+  if (!ok || smcr_last_end != d.end || smcr_last_gate != d.gate ||
+      (u32)(smcr_last_body - code) != d.s_body ||
+      (u32)(ram_translation_ptr - code) != d.s_total || smcr_xn != d.n_exits) {
+    fprintf(stderr, "smc_partial VERIFY: %08x%s end %08x/%08x gate %u/%u "
+            "body %u/%u total %u/%u exits %u/%u\n", (unsigned)pc,
+            thumb ? " thumb" : "", (unsigned)d.end, (unsigned)smcr_last_end,
+            (unsigned)d.gate, (unsigned)smcr_last_gate, (unsigned)d.s_body,
+            (unsigned)(smcr_last_body - code), (unsigned)d.s_total,
+            (unsigned)(ram_translation_ptr - code), (unsigned)d.n_exits,
+            (unsigned)smcr_xn);
+    {
+      const char *dd = getenv("GPSP_SMC_VERIFY_DUMP");
+      if (dd) {
+        char nm[600];
+        FILE *f;
+        snprintf(nm, sizeof(nm), "%s.kept", dd);
+        if ((f = fopen(nm, "wb"))) { fwrite(save, 1, d.s_total, f); fclose(f); }
+        snprintf(nm, sizeof(nm), "%s.fresh", dd);
+        if ((f = fopen(nm, "wb"))) {
+          fwrite(code, 1, ram_translation_ptr - code, f); fclose(f); }
+        snprintf(nm, sizeof(nm), "%s.src", dd);
+        if ((f = fopen(nm, "wb"))) {
+          fwrite(smcr_mem(pc), 1, d.end - pc, f); fclose(f); }
+      }
+    }
+    smcr_verify_fail("revival", "different extent or size", pc,
+                     (u32)(ram_translation_ptr - code));
+  }
+  for (i = 0; i < smcr_xn; i++)
+    if ((u32)(smcr_xbuf[i].src - code) != smcr_x[d.exits + i].off ||
+        smcr_xbuf[i].target != smcr_x[d.exits + i].target)
+      smcr_verify_fail("revival", "different exits", pc, i);
+  for (k = 0; k < d.s_total; k++) {
+    int is_exit = 0;
+    for (i = 0; i < d.n_exits; i++)
+      if (k >= smcr_x[d.exits + i].off && k < smcr_x[d.exits + i].off + skip)
+        is_exit = 1;
+    if (!is_exit && code[k] != save[k])
+      smcr_verify_fail("revival", "different code", pc, k);
+  }
+  memcpy(code, save, d.s_total);
+  free(save);
+  ram_translation_ptr = ptr;
+  platform_cache_sync(code, code + d.s_total);
+}
+
+/* WP3's dispatch cache, when built, is emptied with every flush. */
+static void smcr_dc_clear(void)
+{
+  ADC_CLEAR();
+}
+/* Hooks in translate_block_* (locals: translation_ptr, block_end_pc, the
+ * external exits).  SMCR_REAL(): emitting for smcr_translate. */
+#define SMCR_COUNT_FW_XLAT() do { if (!smcr_on) { smcr_fw_xlat++; JCTR(9);   \
+    smcr_xtrace(pc, translation_ptr - ram_translation_cache, 0); } } while (0)
+#define SMCR_REAL_OVERFLOW() do { if (SMCR_REAL()) return false;               \
+                                 smcr_trace('F'); } while (0)
+#define SMCR_NOTE_BODY() do { if (SMCR_REAL()) {                              \
+    smcr_last_body = translation_ptr; smcr_last_end = block_end_pc;           \
+    smcr_last_gate = (scan_exit_reason == SMC_SCAN_GATE); } } while (0)
+#define SMCR_RECORD_EXITS() do { if (SMCR_REAL() && ram_region) {            \
+    for(i = 0; i < (s32)external_block_exit_position; i++) {                  \
+      if (!external_block_exits[i].branch_source)                             \
+        continue;                                                             \
+      smcr_xbuf[smcr_xn].src = external_block_exits[i].branch_source;         \
+      smcr_xbuf[smcr_xn].target = external_block_exits[i].branch_target;      \
+      smcr_xn++;                                                              \
+    }                                                                         \
+    return true; } } while (0)
+#define SMCR_ROM_XLAT_ENTER() do { if (smcr_on) smcr_vb_load(); } while (0)
+#define SMCR_ROM_XLAT_LEAVE() do { if (smcr_on) smcr_vb_store(); } while (0)
+#define SMCR_APPLY() smcr_apply()
+#define SMCR_TRACE(k) smcr_trace(k)
+/* The SMC trap and a DMA onto code: the full-flush build's flush, on the tags
+ * only. */
+#define SMCR_CODE_WRITE_FLUSH(k) do {                                          \
+  smcr_trace(k);                                                              \
+  if (smcr_on) { smcr_virtual_flush(); } else { flush_translation_cache_ram(); } \
+} while (0)
+#define SMCR_FULL_FLUSH_HOOK() do { if (smcr_on) { smcr_full_flush(); return; } } while (0)
+#define SMCR_DEPTH0() do {                                                     \
+  if (!translate_depth) {                                                     \
+    if (smcr_jlog_f) smcr_jlog();                                             \
+    if (smcr_on) smcr_depth0();                                               \
+  } } while (0)
+#define SMCR_RAM_LOOKUP(pc, tagp) do {                                        \
+  if (smcr_trace_f && frame_counter >= smcr_xtrace_lo &&                      \
+      frame_counter <= smcr_xtrace_hi) {                                      \
+    ramtag_type *xte_ = VALID_TAG(*(tagp)) ? get_ram_tag(*(tagp)) : NULL;    \
+    fprintf(smcr_trace_f, "L %u %08x tag=%04x slot=%u depth=%u\n",           \
+            (unsigned)frame_counter, (unsigned)((pc) | thumb),               \
+            (unsigned)*(tagp), xte_ ? (unsigned)(thumb ? xte_->offset_thumb != 0 \
+            : xte_->offset_arm != 0) : 9u, (unsigned)translate_depth);        \
+  }                                                                           \
+  if (smcr_on) return smcr_lookup_entry((pc), thumb, (tagp)); } while (0)
+
+#else  /* !SMC_RANGE */
+#define SMCR_ROM_SIZE rom_translation_cache_size
+#define SMCR_APPLY()                  do { } while (0)
+#define SMCR_DEPTH0()                 do { } while (0)
+#define SMCR_RAM_LOOKUP(pc, tagp)     do { } while (0)
+#define SMCR_COUNT_FW_XLAT()          do { } while (0)
+#define SMCR_REAL_OVERFLOW()          do { } while (0)
+#define SMCR_NOTE_BODY()              do { } while (0)
+#define SMCR_RECORD_EXITS()           do { } while (0)
+#define SMCR_TRACE(k)                 do { } while (0)
+#define SMCR_ROM_XLAT_ENTER()         do { } while (0)
+#define SMCR_ROM_XLAT_LEAVE()         do { } while (0)
+#define SMCR_CODE_WRITE_FLUSH(k)      flush_translation_cache_ram()
+#define SMCR_FULL_FLUSH_HOOK()        do { } while (0)
+#endif /* SMC_RANGE */
+
+#if defined(ARM_ARCH)
+/* Cold sorted per-cache side tables mapping host LR (return address after a
+ * memory load/store BLX) to the exact guest PC for slow/IO/BIOS/SMC paths.
+ *
+ * Every recorded load/store site emits >= 24 bytes in the translation cache
+ * (minimum is 24B for cached byte load/store; SWP emits 52B for 2 entries),
+ * so (cache_bytes / 24 + 64) strictly bounds the worst-case entry count
+ * without ever forcing an extra RAM flush.  Static .bss storage keeps both
+ * Instance A and Instance B isolated with zero heap lifecycle issues. */
+#ifdef ROM_TRANSLATION_CACHE_SIZE_LARGE
+#define ARM_ROM_MEM_PC_BYTES \
+  ((ROM_TRANSLATION_CACHE_SIZE_LARGE) > (ROM_TRANSLATION_CACHE_SIZE) ? \
+   (ROM_TRANSLATION_CACHE_SIZE_LARGE) : (ROM_TRANSLATION_CACHE_SIZE))
+#else
+#define ARM_ROM_MEM_PC_BYTES (ROM_TRANSLATION_CACHE_SIZE)
+#endif
+
+#ifdef RAM_TRANSLATION_CACHE_SIZE_LARGE
+#define ARM_RAM_MEM_PC_BYTES_BASE \
+  ((RAM_TRANSLATION_CACHE_SIZE_LARGE) > (RAM_TRANSLATION_CACHE_SIZE) ? \
+   (RAM_TRANSLATION_CACHE_SIZE_LARGE) : (RAM_TRANSLATION_CACHE_SIZE))
+#else
+#define ARM_RAM_MEM_PC_BYTES_BASE (RAM_TRANSLATION_CACHE_SIZE)
+#endif
+
+#if defined(SMC_RANGE) && SMC_RANGE
+#define ARM_RAM_MEM_PC_BYTES ((ARM_RAM_MEM_PC_BYTES_BASE) + (SMC_RANGE_CARVE))
+#else
+#define ARM_RAM_MEM_PC_BYTES (ARM_RAM_MEM_PC_BYTES_BASE)
+#endif
+
+#define ARM_ROM_MEM_PC_CAP (((u32)(ARM_ROM_MEM_PC_BYTES) / 24u) + 64u)
+#define ARM_RAM_MEM_PC_CAP (((u32)(ARM_RAM_MEM_PC_BYTES) / 24u) + 64u)
+
+typedef struct {
+  u32 lr_off;
+  u32 guest_pc;
+} arm_mem_pc_entry;
+
+static arm_mem_pc_entry rom_mem_pc[ARM_ROM_MEM_PC_CAP];
+static arm_mem_pc_entry ram_mem_pc[ARM_RAM_MEM_PC_CAP];
+static u32 rom_mem_pc_count;
+static u32 ram_mem_pc_count;
+
+static const u8 *arm_ram_cache_base(void)
+{
+#if defined(SMC_RANGE) && SMC_RANGE
+  return smcr_on ? smcr_base : ram_translation_cache;
+#else
+  return ram_translation_cache;
+#endif
+}
+
+static void arm_mem_pc_record(const u8 *lr_ptr, u32 guest_pc, bool ram_region)
+{
+  arm_mem_pc_entry *tbl;
+  u32 *cntp;
+  u32 cap, n, off;
+
+#if defined(SMC_RANGE) && SMC_RANGE
+  if (smcr_verifying)
+    return;
+#endif
+
+  if (ram_region) {
+    tbl = ram_mem_pc;
+    cntp = &ram_mem_pc_count;
+    cap = ARM_RAM_MEM_PC_CAP;
+    off = (u32)(lr_ptr - arm_ram_cache_base());
+  } else {
+    tbl = rom_mem_pc;
+    cntp = &rom_mem_pc_count;
+    cap = ARM_ROM_MEM_PC_CAP;
+    off = (u32)(lr_ptr - rom_translation_cache);
+  }
+
+  n = *cntp;
+  while (n > 0 && tbl[n - 1].lr_off >= off)
+    n--;
+  if (n < cap) {
+    tbl[n].lr_off = off;
+    tbl[n].guest_pc = guest_pc;
+    n++;
+  }
+  *cntp = n;
+}
+
+static void arm_mem_pc_reset_rom(void)
+{
+  rom_mem_pc_count = 0;
+}
+
+static void arm_mem_pc_truncate_rom(u32 watermark)
+{
+  while (rom_mem_pc_count > 0 &&
+         rom_mem_pc[rom_mem_pc_count - 1].lr_off >= watermark)
+    rom_mem_pc_count--;
+}
+
+static void arm_mem_pc_reset_ram(void)
+{
+  ram_mem_pc_count = 0;
+}
+
+#if defined(SMC_RANGE) && SMC_RANGE
+static u32 arm_mem_pc_mark_ram(void)
+{
+  return ram_mem_pc_count;
+}
+
+static void arm_mem_pc_rewind_ram(u32 mark)
+{
+  if (mark < ram_mem_pc_count)
+    ram_mem_pc_count = mark;
+}
+#endif
+
+static bool arm_rom_mem_pc_near_full(void)
+{
+  return rom_mem_pc_count >= ARM_ROM_MEM_PC_CAP - 32u;
+}
+
+static u32 arm_mem_pc_bsearch(const arm_mem_pc_entry *tbl, u32 count, u32 off)
+{
+  u32 lo = 0, hi = count;
+  while (lo < hi) {
+    u32 mid = lo + ((hi - lo) >> 1);
+    u32 v = tbl[mid].lr_off;
+    if (v < off)
+      lo = mid + 1;
+    else if (v > off)
+      hi = mid;
+    else
+      return tbl[mid].guest_pc;
+  }
+  return reg[REG_PC];
+}
+
+u32 function_cc arm_lookup_mem_pc(u32 host_lr)
+{
+  uintptr_t lr = (uintptr_t)host_lr;
+  uintptr_t rom_lo = (uintptr_t)rom_translation_cache;
+  uintptr_t rom_hi = rom_lo + (uintptr_t)SMCR_ROM_SIZE;
+
+  if (lr >= rom_lo && lr < rom_hi)
+    return arm_mem_pc_bsearch(rom_mem_pc, rom_mem_pc_count, (u32)(lr - rom_lo));
+
+  {
+    uintptr_t ram_lo = (uintptr_t)arm_ram_cache_base();
+    uintptr_t ram_hi = (uintptr_t)ram_translation_cache +
+                       (uintptr_t)ram_translation_cache_size;
+    if (lr >= ram_lo && lr < ram_hi)
+      return arm_mem_pc_bsearch(ram_mem_pc, ram_mem_pc_count, (u32)(lr - ram_lo));
+  }
+
+  return reg[REG_PC];
+}
+#endif /* ARM_ARCH */
+
+/* RAM_MIRROR_FIX (GBAdhoc d9052db, issue #10, The Morrow's Golden Country
+ * slows to ~2 s a frame a few combats in, then freezes).  IWRAM repeats every
+ * 32 KiB across region 3 and EWRAM every 256 KiB across region 2, so a RAM pc
+ * has many aliases.  The lookup below already gives them ONE tag (offset
+ * within the region), but it translated at whichever alias asked first, and
+ * that code carries its pc: `mov lr, pc`, `add rN, pc, #k`, its own exits.  A
+ * canonical caller that then met the tag ran the alias's code.  In the game, a
+ * mixer's eager exit links translate PCM samples behind it as code; one
+ * decodes as a branch to an alias, the mixer's blocks get translated at
+ * aliases, it stores a pc computed there and compares it with the canonical
+ * one, and re-pastes its loop on every mismatch (a RAM flush each time).
+ *
+ * The lookup now translates the CANONICAL pc for every alias (one AND in the
+ * RAM case), so the block, its extents and the pc values it computes are the
+ * same whichever alias reached it.  Code that really runs at an alias now sees
+ * canonical pc values where the GBA would show the alias; upstream took that
+ * trade and no game is known to depend on it.  Not ported: the second half of
+ * upstream's change (an exit to an aliased pc is linked lazily through a
+ * dispatch island), which is MIPS-only emitter work: here the eager link
+ * resolves to the canonical block, which is already translated or is the
+ * same translation the unfixed code would have made at the alias.
+ * -DGPSP_NO_RAM_MIRROR_FIX turns it off. */
+#if !defined(GPSP_NO_RAM_MIRROR_FIX)
+#define RAM_MIRROR_CANON(region, pc)                                          \
+  ((pc) &= ((region) == 2) ? 0x0203FFFFu : 0x03007FFFu)
+#else
+#define RAM_MIRROR_CANON(region, pc) ((void)0)
+#endif
+
 #define block_lookup_translate_builder(type)                                  \
 u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
 {                                                                             \
@@ -3153,15 +5024,18 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
   u32 block_tag;                                                              \
                                                                               \
   block_lookup_address_pc_##type();                                           \
+  SMCR_DEPTH0();                                                              \
                                                                               \
   switch(pcregion)                                                            \
   {                                                                           \
     case 0x2:                                                                 \
     case 0x3:                                                                 \
     {                                                                         \
+      RAM_MIRROR_CANON(pcregion, pc);                                         \
       u16* tagp = (pcregion == 2) ? (u16 *)(ewram + (pc & 0x3FFFF) + 0x40000) \
                                   : (u16 *)(iwram + (pc & 0x7FFF));           \
       ramtag_type* trentry;                                                   \
+      SMCR_RAM_LOOKUP(pc, tagp);                                              \
       SMC_RESTORE_RETIRED_TAG_##type(pc, tagp);                               \
       /* Allocate a tag if not a valid one, and initialize header */          \
       if (!VALID_TAG(*tagp)) {                                                \
@@ -3187,7 +5061,9 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         XLAT_PROBE_ENTER();                                                   \
         DRPROF_ZONE_ENTER(DRZ_XLAT);                                          \
         DRPROF_XLAT_PC_PUSH(pc | thumb);                                      \
+        XLAT_DEPTH_ENTER();                                                   \
         result = translate_block_##type(pc, true);                            \
+        XLAT_DEPTH_LEAVE(result);                                             \
         DRPROF_XLAT_PC_POP();                                                 \
         DRPROF_ZONE_LEAVE(DRZ_XLAT);                                          \
         XLAT_PROBE_LEAVE();                                                   \
@@ -3243,7 +5119,11 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         XLAT_PROBE_ENTER();                                                   \
         DRPROF_ZONE_ENTER(DRZ_XLAT);                                          \
         DRPROF_XLAT_PC_PUSH(pc | thumb);                                      \
+        XLAT_DEPTH_ENTER();                                                   \
+        SMCR_ROM_XLAT_ENTER();                                                \
         result = translate_block_##type(pc, false);                           \
+        SMCR_ROM_XLAT_LEAVE();                                                \
+        XLAT_DEPTH_LEAVE(result);                                             \
         DRPROF_XLAT_PC_POP();                                                 \
         DRPROF_ZONE_LEAVE(DRZ_XLAT);                                          \
         XLAT_PROBE_LEAVE();                                                   \
@@ -3716,8 +5596,8 @@ u32 dispatch_cache_thumb[2 << DISPATCH_CACHE_BITS] __attribute__((aligned(64)));
 #define DC_MASK ((1u << DISPATCH_CACHE_BITS) - 1)
 void dispatch_cache_clear(void)
 {
-  memset(dispatch_cache_arm, 0xFF, sizeof(dispatch_cache_arm));
-  memset(dispatch_cache_thumb, 0xFF, sizeof(dispatch_cache_thumb));
+  memset(adc_table_arm, 0xFF, sizeof(adc_table_arm));
+  memset(adc_table_thumb, 0xFF, sizeof(adc_table_thumb));
 }
 #define DC_PUT(tbl, key, ptr) do {                                            \
   u32 k_ = (key), i_ = (k_ & DC_MASK) * 2;                                    \
@@ -3725,6 +5605,41 @@ void dispatch_cache_clear(void)
 } while (0)
 #else
 #define DC_PUT(tbl, key, ptr) do { } while (0)
+#endif
+
+#if defined(GPSP_DCACHE) && GPSP_DCACHE
+/* Enter a lookup that had no side effects (see GPSP_DCACHE above). */
+static void adc_put(u32 thumb, u32 pc, u8 *ret)
+{
+  u32 key, idx, region;
+  uintptr_t *tbl;
+  if (!dispatch_cache_on || ret == BLOCK_LOOKUP_UNMAPPABLE)
+    return;
+  key = GBA_PC(pc) & (thumb ? ~1u : ~3u);
+  region = key >> 24;
+  if (region == 2 || region == 3) {
+    u32 c = key;
+    u16 *tagp;
+    ramtag_type *te;
+    RAM_MIRROR_CANON(region, c);
+    tagp = region == 2 ? (u16 *)(ewram + (c & 0x3FFFF) + 0x40000)
+                       : (u16 *)(iwram + (c & 0x7FFF));
+    if (!VALID_TAG(*tagp))
+      return;
+    te = get_ram_tag(*tagp);
+    if (!(thumb ? te->offset_thumb : te->offset_arm))
+      return;
+  } else if (region != 0 && (region < 5 || region > 0xD || region == 4))
+    return;
+  tbl = thumb ? adc_table_thumb : adc_table_arm;
+  idx = (key >> (thumb ? 1 : 2)) & (ADC_SIZE - 1);
+  tbl[idx * 2 + 1] = (uintptr_t)ret;
+  tbl[idx * 2] = key;
+  JCTR(15);
+}
+#define ADC_PUT(thumb, pc, ret) adc_put((thumb), (pc), (ret))
+#else
+#define ADC_PUT(thumb, pc, ret) do { } while (0)
 #endif
 
 u8 function_cc *block_lookup_address_arm(u32 pc)
@@ -3743,6 +5658,7 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
       translate_icache_sync_ranged(); BADJUMP_NOTE_PC(pc);
 #endif
       DC_PUT(dispatch_cache_arm, DC_KEY_ARM(pc), ret);
+      ADC_PUT(0, pc, ret);
       return ret;
     }
   }
@@ -3756,6 +5672,43 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   BADJUMP_EXHAUSTED(pc);
 }
 
+#if defined(GPSP_LAZY_EXITS)
+/* The first execution of a lazy exit (arm_lazy_exit_*): look the target up
+ * as an indirect branch would, then point the exit's `b` at it.  Nothing is
+ * written when the ROM cache was reset meanwhile (src then lies in a cache
+ * that is being refilled), when the answer is not a block of the ROM cache's
+ * translated area (BADJUMP recovery answers the BIOS stub), or when the
+ * switch has been turned off. */
+static void lz_link(u8 *src, u8 *ret, u32 gen)
+{
+  if (!jit_lazy_exits || gen != rom_flush_gen || !ret ||
+      ret == BLOCK_LOOKUP_UNMAPPABLE ||
+      ret < rom_translation_cache + rom_cache_watermark ||
+      ret >= rom_translation_ptr ||
+      src < rom_translation_cache + rom_cache_watermark ||
+      src >= rom_translation_ptr)
+    return;
+  generate_branch_patch_unconditional(src, ret);
+  JCTR_SYNC(src, src + 8);
+  platform_cache_sync(src, src + 8);
+  lz_resolved++;
+}
+u8 function_cc *block_lookup_address_lazy_arm(u32 pc, u8 *src)
+{
+  u32 gen = rom_flush_gen;
+  u8 *ret = block_lookup_address_arm(pc);
+  lz_link(src, ret, gen);
+  return ret;
+}
+u8 function_cc *block_lookup_address_lazy_thumb(u32 pc, u8 *src)
+{
+  u32 gen = rom_flush_gen;
+  u8 *ret = block_lookup_address_thumb(pc);
+  lz_link(src, ret, gen);
+  return ret;
+}
+#endif
+
 u8 function_cc *block_lookup_address_thumb(u32 pc)
 {
   unsigned i;
@@ -3768,6 +5721,7 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
       translate_icache_sync(); BADJUMP_NOTE_PC(pc);
       JIT_CODE_CHECK_ENTRY(ret);
       DC_PUT(dispatch_cache_thumb, DC_KEY_THUMB(pc), ret);
+      ADC_PUT(1, pc, ret);
       return ret;
     }
   }
@@ -3812,6 +5766,7 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
   condition = opcode >> 28;                                                   \
                                                                               \
   opcode &= 0xFFFFFFF;                                                        \
+  arm_scan_nv_nop();                                                          \
                                                                               \
   block_end_pc += 4                                                           \
 
@@ -3987,6 +5942,10 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
 
 #define MAX_BLOCK_SIZE   1024   // 2/4KiB blocks max
 #define MAX_EXITS          32   // This covers 99% blocks
+#if defined(SMC_RANGE) && SMC_RANGE && \
+    (MAX_EXITS + 2 > SMCR_XBUF || MAX_BLOCK_SIZE * 4 > SMCR_SWAP)
+#error "SMC_RANGE buffers are sized for MAX_EXITS/MAX_BLOCK_SIZE"
+#endif
 
 /* SMC_GATE_CHARGE: charge a gated block's tail before its exit.
  *
@@ -4047,9 +6006,33 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
  * with nothing emitted there is nothing to reserve for.) */
 
 block_data_type block_data[MAX_BLOCK_SIZE];
+#if defined(SMC_RANGE) && SMC_RANGE
+/* smcr_vb: block_data[].update_cycles as the full-flush build would have it
+ * now (only the last instruction's flag of a block leaks from one
+ * translation into the next, see smcr_translate).  Loaded into block_data
+ * before every translation that the full-flush build also makes (ROM, and a
+ * RAM block with no kept version) and read back after it. */
+static u8 smcr_vb[MAX_BLOCK_SIZE];
+static void smcr_vb_load(void)
+{
+  u32 k;
+  for (k = 0; k < MAX_BLOCK_SIZE; k++)
+    block_data[k].update_cycles = smcr_vb[k];
+}
+static void smcr_vb_store(void)
+{
+  u32 k;
+  for (k = 0; k < MAX_BLOCK_SIZE; k++)
+    smcr_vb[k] = block_data[k].update_cycles;
+}
+static u32  smcr_vb_get(u32 k)        { return smcr_vb[k]; }
+static void smcr_vb_set(u32 k, u32 v) { smcr_vb[k] = (u8)v; }
+static u32  smcr_bd_get(u32 k)        { return block_data[k].update_cycles; }
+static void smcr_bd_set(u32 k, u32 v) { block_data[k].update_cycles = (u8)v; }
+#endif
 block_exit_type block_exits[MAX_EXITS];
 
-#define smc_write_arm_yes() {                                                 \
+#define smc_write_arm_yes() if(!SMCR_REAL()) {                                \
   intptr_t offset = (pc < 0x03000000) ? 0x40000 : -0x8000;                    \
   if(address32(pc_address_block, (block_end_pc & 0x7FFF) + offset) == 0)      \
   {                                                                           \
@@ -4058,7 +6041,7 @@ block_exit_type block_exits[MAX_EXITS];
   }                                                                           \
 }
 
-#define smc_write_thumb_yes() {                                               \
+#define smc_write_thumb_yes() if(!SMCR_REAL()) {                              \
   intptr_t offset = (pc < 0x03000000) ? 0x40000 : -0x8000;                    \
   if(address16(pc_address_block, (block_end_pc & 0x7FFF) + offset) == 0)      \
   {                                                                           \
@@ -4099,7 +6082,7 @@ block_exit_type block_exits[MAX_EXITS];
  * still happens only when the gate block itself is looked up) makes the final
  * word's check fire whenever a live block precedes it.  Words already tagged
  * are left alone, ROM scans are unaffected, and ungated scans never get here. */
-#define smc_tag_gate_arm_yes() {                                              \
+#define smc_tag_gate_arm_yes() if(!SMCR_REAL()) {                             \
   intptr_t offset = (pc < 0x03000000) ? 0x40000 : -0x8000;                    \
   check_pc_region(block_end_pc);                                              \
   if(address16(pc_address_block, (block_end_pc & 0x7FFF) + offset) == 0)      \
@@ -4110,7 +6093,7 @@ block_exit_type block_exits[MAX_EXITS];
       CODE_TAG_BLOCK16;                                                       \
 }
 
-#define smc_tag_gate_thumb_yes() {                                            \
+#define smc_tag_gate_thumb_yes() if(!SMCR_REAL()) {                           \
   intptr_t offset = (pc < 0x03000000) ? 0x40000 : -0x8000;                    \
   check_pc_region(block_end_pc);                                              \
   if(address16(pc_address_block, (block_end_pc & 0x7FFF) + offset) == 0)      \
@@ -4374,7 +6357,7 @@ static inline int entry_gate_has(u32 pc)
   pc &= ~0x01                                                                 \
 
 #define update_pc_limits()                                                    \
-if (ram_region) {                                                             \
+if (ram_region && !SMCR_REAL()) {                                             \
   if (pc >= 0x3000000) {                                                      \
     iwram_code_min = MIN(pc & 0x7FFF, iwram_code_min);                        \
     iwram_code_max = MAX(pc & 0x7FFF, iwram_code_max);                        \
@@ -4391,7 +6374,7 @@ if (ram_region) {                                                             \
 #define translate_vram_entry(type)                                           \
   if (GBA_PC_UNCACHED(pc)) {                                                 \
     translation_ptr = rom_translation_ptr;                                   \
-    if (translation_ptr > rom_translation_cache + ROM_TRANSLATION_CACHE_SIZE \
+    if (translation_ptr > rom_translation_cache + SMCR_ROM_SIZE              \
                           - TRANSLATION_CACHE_LIMIT_THRESHOLD) {             \
       flush_translation_cache_rom();                                         \
       return false;                                                          \
@@ -4407,6 +6390,9 @@ if (ram_region) {                                                             \
 bool translate_block_arm(u32 pc, bool ram_region)
 {
   DRPH_SCOPE(DRPH_XLAT);
+  JCTR(0);
+  JD_BLOCK(translate_depth);
+  LZ_NOTE_BLOCK();
   u32 opcode = 0;
   u32 last_opcode;
   u32 condition;
@@ -4446,6 +6432,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
     pc_address_block = load_gamepak_page(pc_region & 0x3FF);
 
   if (ram_region) {
+    SMCR_COUNT_FW_XLAT();
     translation_ptr = ram_translation_ptr;
     translation_cache_limit = &ram_translation_cache[
        ram_translation_cache_size - TRANSLATION_CACHE_LIMIT_THRESHOLD
@@ -4453,7 +6440,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
   } else {
     translation_ptr = rom_translation_ptr;
     translation_cache_limit =
-     rom_translation_cache + rom_translation_cache_size -
+     rom_translation_cache + SMCR_ROM_SIZE -
      TRANSLATION_CACHE_LIMIT_THRESHOLD;
   }
 
@@ -4536,8 +6523,10 @@ bool translate_block_arm(u32 pc, bool ram_region)
        a simple recursive call here won't work, it has to pedal out to
        the beginning. */
 
-    if(translation_ptr > translation_cache_limit) {
+    if(translation_ptr > translation_cache_limit ||
+       (!ram_region && ARM_ROM_MEM_PC_NEAR_FULL())) {
       if (ram_region) {
+        SMCR_REAL_OVERFLOW();
         flush_ram_full++;
 #ifdef ENTRY_GATES
         entry_gates_harvest();
@@ -4558,6 +6547,8 @@ bool translate_block_arm(u32 pc, bool ram_region)
       generate_cycle_update();
     }
   }
+
+  SMCR_NOTE_BODY();
 
   /* This can happen if the last instruction is *not* inconditional */
   if ((last_condition & 0x0F) != 0x0E) {
@@ -4707,6 +6698,20 @@ bool translate_block_arm(u32 pc, bool ram_region)
   }
 #endif
 
+#ifdef XLAT_ITERATIVE
+  SMCR_RECORD_EXITS();
+  /* Queued in reverse: the end of the queue is popped first, so the exits are
+   * resolved in their own order (see XLAT_ITERATIVE above). */
+  for(i = (s32)external_block_exit_position - 1; i >= 0; i--)
+  {
+    if (!external_block_exits[i].branch_source)
+      continue;
+    if (!defer_external_exit(external_block_exits[i].branch_source,
+                             external_block_exits[i].branch_target, 0))
+      return false;
+  }
+  return true;
+#else
   for(i = 0; i < external_block_exit_position; i++)
   {
     if (!external_block_exits[i].branch_source)
@@ -4726,11 +6731,15 @@ bool translate_block_arm(u32 pc, bool ram_region)
                      translation_target);
   }
   return true;
+#endif
 }
 
 bool translate_block_thumb(u32 pc, bool ram_region)
 {
   DRPH_SCOPE(DRPH_XLAT);
+  JCTR(1);
+  JD_BLOCK(translate_depth);
+  LZ_NOTE_BLOCK();
   u32 opcode = 0;
   u32 last_opcode;
   u32 condition;
@@ -4769,6 +6778,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
     pc_address_block = load_gamepak_page(pc_region & 0x3FF);
 
   if (ram_region) {
+    SMCR_COUNT_FW_XLAT();
     translation_ptr = ram_translation_ptr;
     translation_cache_limit = &ram_translation_cache[
        ram_translation_cache_size - TRANSLATION_CACHE_LIMIT_THRESHOLD
@@ -4776,7 +6786,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   } else {
     translation_ptr = rom_translation_ptr;
     translation_cache_limit = &rom_translation_cache[
-       rom_translation_cache_size - TRANSLATION_CACHE_LIMIT_THRESHOLD];
+       SMCR_ROM_SIZE - TRANSLATION_CACHE_LIMIT_THRESHOLD];
   }
 
 #ifdef JIT_CODE_DISCIPLINE
@@ -4850,9 +6860,11 @@ bool translate_block_thumb(u32 pc, bool ram_region)
        a simple recursive call here won't work, it has to pedal out to
        the beginning. */
 
-    if(translation_ptr > translation_cache_limit)
+    if(translation_ptr > translation_cache_limit ||
+       (!ram_region && ARM_ROM_MEM_PC_NEAR_FULL()))
     {
       if (ram_region) {
+        SMCR_REAL_OVERFLOW();
         flush_ram_full++;
 #ifdef ENTRY_GATES
         entry_gates_harvest();
@@ -4873,6 +6885,8 @@ bool translate_block_thumb(u32 pc, bool ram_region)
       generate_cycle_update();
     }
   }
+
+  SMCR_NOTE_BODY();
 
   /* Unconditionally generate translation targets. In case we hit one or
      in the unlikely case that block was too big (and not finalized) */
@@ -5011,6 +7025,20 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   }
 #endif
 
+#ifdef XLAT_ITERATIVE
+  SMCR_RECORD_EXITS();
+  /* Queued in reverse: the end of the queue is popped first, so the exits are
+   * resolved in their own order (see XLAT_ITERATIVE above). */
+  for(i = (s32)external_block_exit_position - 1; i >= 0; i--)
+  {
+    if (!external_block_exits[i].branch_source)
+      continue;
+    if (!defer_external_exit(external_block_exits[i].branch_source,
+                             external_block_exits[i].branch_target, 1))
+      return false;
+  }
+  return true;
+#else
   for(i = 0; i < external_block_exit_position; i++)
   {
     if (!external_block_exits[i].branch_source)
@@ -5030,6 +7058,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
                      translation_target);
   }
   return true;
+#endif
 }
 
 void init_bios_hooks(void)
@@ -5063,7 +7092,14 @@ void init_bios_hooks(void)
 #ifdef DRPROF_TWIN
   drprof_stub_end = rom_translation_ptr;   /* emitter stubs end here */
 #endif
-  bios_swi_entrypoint = block_lookup_address_arm(0x8);
+  {
+    /* Permanent BIOS SWI hook lives below rom_cache_watermark: always link
+     * its exits eagerly so a ROM flush can never invalidate its target. */
+    u32 saved_lazy = jit_lazy_exits;
+    jit_lazy_exits = 0;
+    bios_swi_entrypoint = block_lookup_address_arm(0x8);
+    jit_lazy_exits = saved_lazy;
+  }
   rom_cache_watermark = (u32)(rom_translation_ptr - rom_translation_cache);
 #ifdef JIT_CODE_DISCIPLINE
   /* The STUB zone now ends here and is immutable until the next rebuild. */
@@ -5075,6 +7111,8 @@ void init_bios_hooks(void)
 void flush_translation_cache_ram(void)
 {
   DRPH_SCOPE(DRPH_FLUSH);
+  SMCR_FULL_FLUSH_HOOK();
+  JCTR(4);
   DRPROF_ZONE_ENTER(DRZ_FLUSH);
 #ifdef JIT_CODE_DISCIPLINE
   /* The RAM zone's addresses are about to hold a new generation of code. */
@@ -5086,6 +7124,7 @@ void flush_translation_cache_ram(void)
 #ifdef DISPATCH_CACHE
   dispatch_cache_clear();
 #endif
+  ADC_CLEAR();
   /* Flushes RAM caches avoiding doing too much work (ie. wiping unused memory) */
   flush_ram_count++;
   flush_ram_total++;
@@ -5105,6 +7144,7 @@ void flush_translation_cache_ram(void)
   smc_max_extent[0] = smc_max_extent[1] = 0;
 #endif
 
+  ARM_MEM_PC_RESET_RAM();
   last_ram_translation_ptr = ram_translation_cache;
   ram_translation_ptr = ram_translation_cache;
 
@@ -6731,6 +8771,7 @@ static void smc_histo_note(u32 addr, u32 storepc)
 void flush_translation_cache_ram_smc(void)
 {
   DRPH_SCOPE(DRPH_FLUSH);
+  JCTR(6);
 #ifdef SMC_PARTIAL_SAFE
   u32 partial_low = 0, partial_high = 0;
   int range_safe = smc_writer_safe_range(&partial_low, &partial_high);
@@ -6797,7 +8838,7 @@ void flush_translation_cache_ram_smc(void)
   else
     flush_translation_cache_ram_block(smc_last_write_addr);
 #else
-  flush_translation_cache_ram();
+  SMCR_CODE_WRITE_FLUSH('S');
 #endif
   DRPROF_ZONE_LEAVE(DRZ_FLUSH);
 }
@@ -6805,7 +8846,7 @@ void flush_translation_cache_ram_smc(void)
 void flush_translation_cache_ram_dma(void)
 {
   flush_ram_dma++;
-  flush_translation_cache_ram();
+  SMCR_CODE_WRITE_FLUSH('D');
 }
 
 void flush_translation_cache_rom(void)
@@ -6814,11 +8855,14 @@ void flush_translation_cache_rom(void)
   /* We flush the generated code except for everything below the watermark. */
   DRPROF_ZONE_ENTER(DRZ_FLUSH);
   flush_rom_total++;
+  JCTR(5);
 #ifdef JIT_CODE_DISCIPLINE
   /* The ROM zone's addresses are about to hold a new generation of code
    * (state load, ROM load, cheats, a full cache, SMC partial activation). */
   jit_code_owner_changed(JOWN_ROM_FLUSH);
 #endif
+  LZ_FLUSHED();
+  ARM_MEM_PC_TRUNCATE_ROM(rom_cache_watermark);
   last_rom_translation_ptr = &rom_translation_cache[rom_cache_watermark];
   rom_translation_ptr      = &rom_translation_cache[rom_cache_watermark];
 
@@ -6826,6 +8870,7 @@ void flush_translation_cache_rom(void)
 #ifdef DISPATCH_CACHE
   dispatch_cache_clear();
 #endif
+  ADC_CLEAR();
 #ifdef DRPROF_TWIN
   drprof_forget_rom(rom_translation_ptr);
 #endif
@@ -6850,6 +8895,9 @@ void init_dynarec_caches(void)
 #ifdef JIT_CODE_DISCIPLINE
   jit_code_owner_changed(JOWN_INIT);
 #endif
+  LZ_FLUSHED();
+  ARM_MEM_PC_RESET_ROM();
+  ARM_MEM_PC_RESET_RAM();
   rom_translation_ptr = last_rom_translation_ptr = &rom_translation_cache[0];
   memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
 
@@ -6870,6 +8918,8 @@ void init_dynarec_caches(void)
   ewram_code_max = 0x40000;
   iwram_code_min = 0;
   iwram_code_max = 0x8000;
+  SMCR_APPLY();
+  ADC_CLEAR();
   /* NO smc_gates_reset() HERE.  See flush_dynarec_caches below: a reset keeps
    * the same ROM, and ROM load already resets the table. */
 }
@@ -6959,6 +9009,9 @@ static void jit_small_rebase(void)
   skip &= ~63u;                       /* keep the zones line-exact */
   rom_translation_cache = rom_translation_cache_static + skip;
   ram_translation_cache = ram_translation_cache_static + skip;
+  LZ_FLUSHED();
+  ARM_MEM_PC_RESET_ROM();
+  ARM_MEM_PC_RESET_RAM();
   rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
   ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
 }
@@ -7061,6 +9114,9 @@ void dynarec_select_translation_caches(void)
                                ROM_TRANSLATION_CACHE_SIZE_LARGE;
   rom_translation_cache_size = ROM_TRANSLATION_CACHE_SIZE_LARGE;
   ram_translation_cache_size = RAM_TRANSLATION_CACHE_SIZE_LARGE;
+  LZ_FLUSHED();
+  ARM_MEM_PC_RESET_ROM();
+  ARM_MEM_PC_RESET_RAM();
   rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
   ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
   jit_cache_tier   = JIT_CACHE_LARGE;
@@ -7118,6 +9174,9 @@ void dynarec_release_translation_caches(void)
   ram_translation_cache      = ram_translation_cache_static;
   rom_translation_cache_size = ROM_TRANSLATION_CACHE_SIZE;
   ram_translation_cache_size = RAM_TRANSLATION_CACHE_SIZE;
+  LZ_FLUSHED();
+  ARM_MEM_PC_RESET_ROM();
+  ARM_MEM_PC_RESET_RAM();
   rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
   ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
   gamepak_spare_pool       = NULL;
@@ -7161,6 +9220,8 @@ void dynarec_release_translation_caches(void)
 void flush_dynarec_caches(void)
 {
   IRQCHK_RESET();
+  SMCR_APPLY();
+  SMCR_TRACE('X');
   /* Flush ROM and RAM caches. */
   flush_translation_cache_rom();
   ewram_code_min = 0;
@@ -7177,6 +9238,7 @@ void flush_dynarec_caches(void)
 void flush_dynarec_caches_ram(void)
 {
   IRQCHK_RESET();
+  SMCR_TRACE('X');
   ewram_code_min = 0;
   ewram_code_max = 0x40000;
   iwram_code_min = 0;

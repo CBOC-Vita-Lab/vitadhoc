@@ -562,31 +562,37 @@ static int run_periodic_flush(int threaded)
    if (threaded)
       fe_host_set_io(&writer_iface);
 
-   /* A burst of changes, then still: no write at the first check that sees
-    * it (300), one at the next (600). */
+   /* fe_host.c looks at a Game Boy's battery RAM every GB_SAVE_CHECK_INTERVAL
+    * (60) frames and writes once it has held still for a check, or has been
+    * different for GB_SAVE_MAX_DELAY (6 x 300 = 1800) frames.
+    *
+    * A burst of changes (A held until frame 100), then still: the checks at
+    * 60 and 120 both see it moving, so nothing is written by frame 150; the
+    * check at 180 finds it unchanged and writes. */
    scratch_pad = 1u << RETRO_DEVICE_ID_JOYPAD_A;
    frames_to(100);
    scratch_pad = 0;
-   frames_to(450);
+   frames_to(150);
    CHECK(access(save_path, F_OK) != 0);
-   frames_to(650);
+   frames_to(200);
    CHECK(read_file(save_path, a, sizeof(a)) == 0);
    if (threaded)
       CHECK(writer_wakes > 0);
 
-   /* Changing at every check: held back until ~30 s after it first
-    * differed (900 + 1800), not rewritten every 5 s. */
+   /* Changing at every check: the first one that sees it is frame 240, and
+    * nothing is written until it has been different for 1800 frames, i.e.
+    * the check at 2040 -- not rewritten every second. */
    scratch_pad = 1u << RETRO_DEVICE_ID_JOYPAD_A;
-   frames_to(2650);
+   frames_to(2000);
    CHECK(read_file(save_path, b, sizeof(b)) == 0);
    CHECK(memcmp(a, b, sizeof(a)) == 0);
-   frames_to(2750);
+   frames_to(2100);
    CHECK(read_file(save_path, b, sizeof(b)) == 0);
    CHECK(memcmp(a, b, sizeof(a)) != 0);
 
    /* Exit does not wait for anything to settle. */
    memcpy(a, b, sizeof(a));
-   frames_to(2800);
+   frames_to(2160);
    scratch_pad = 0;
    if (threaded)
       fe_host_set_io(NULL);              /* as io_thread_stop does */

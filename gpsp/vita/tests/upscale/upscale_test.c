@@ -19,6 +19,7 @@
 #include <time.h>
 
 #include "upscale_vita.h"
+#include "mmpx_vita.h"
 
 void xbrz_c_init(void);
 void xbrz_c_scale(int factor, const uint32_t *src, uint32_t *dst,
@@ -143,9 +144,12 @@ static void epx_ref(const uint16_t *src, int w, int h, int f, uint32_t *dst)
       }
 }
 
-static int run(int kind, int f, int w, int mode, int frames, int async)
+/* 1: xBRZ-kind pictures made at 2x are MMPX's (the governor's Auto step) */
+static int g_mmpx;
+static uint32_t g_lut565[65536];
+
+static int run(int kind, int f, int w, int h, int mode, int frames, int async)
 {
-   const int h = 160;
    const size_t big = (size_t)f * w * f * h;
    const size_t pitch = (size_t)f * w * 4 + 64;  /* a texture's own pitch */
    uint16_t *pic = malloc((size_t)w * h * 2);
@@ -160,6 +164,7 @@ static int run(int kind, int f, int w, int mode, int frames, int async)
    upscale_stats_t st;
 
    upscale_forget(0);
+   mmpx_set_auto(g_mmpx);
    upscale_slide_mode(mode);
    upscale_stats(&st);
    for (fr = 0; fr < frames; fr++)
@@ -226,7 +231,9 @@ static int run(int kind, int f, int w, int mode, int frames, int async)
 
       for (i = 0; i < w * h; i++)
          s32[i] = lut0(pic[i]);
-      if (kind == UPSCALE_XBRZ)
+      if (kind == UPSCALE_XBRZ && ff == 2 && g_mmpx)
+         mmpx_rect(pic, w, h, g_lut565, ref, (size_t)2 * w, 0, h, 0, w);
+      else if (kind == UPSCALE_XBRZ)
          xbrz_c_scale(ff, s32, ref, w, h, 0, h);
       else
          epx_ref(pic, w, h, ff, ref);
@@ -255,9 +262,11 @@ static int run(int kind, int f, int w, int mode, int frames, int async)
    }
    upscale_stats(&st);
    slid += (int)st.slid_pct;
-   printf("%-5s f=%d w=%d mode=%d async=%d: %d frames, %d wrong, slid %s, "
+   if (g_mmpx)
+      mmpx_set_auto(0);
+   printf("%-5s f=%d %dx%d mode=%d async=%d: %d frames, %d wrong, slid %s, "
           "%d at a smaller factor\n",
-          kind == UPSCALE_XBRZ ? "xbrz" : "scale", f, w, mode, async, frames,
+          kind == UPSCALE_XBRZ ? (g_mmpx && f == 2 ? "mmpx" : "xbrz") : "scale", f, w, h, mode, async, frames,
           bad, slid ? "yes" : "no", small);
    free(pic); free(s32); free(ref); free(tex[0]); free(tex[1]);
    /* the fade: every one of its 4x pictures at 2x, and 4x again some time
@@ -397,21 +406,186 @@ static int gov_test(void)
    return fails;
 }
 
+/* ---- MMPX: pieces equal the whole, on every size ----------------------------
+ * mmpx_rect on the whole picture, then the same picture cut into stripes and
+ * odd rectangles (as the helpers do), then a flat picture.  Sizes with a side
+ * of 1 or 3 pixels, where every read is in the border, and the largest the
+ * upscaler takes.  (The rules themselves are checked against the authors'
+ * reference outside this file: docs/DEFAULTS-1.4.md.) */
+static int mmpx_sizes(void)
+{
+   static const int sz[][2] = { { 1, 1 }, { 1, 37 }, { 41, 1 }, { 2, 2 }, { 3, 3 }, { 5, 4 },
+                                { 37, 23 }, { 240, 160 }, { 282, 160 }, { 320, 256 },
+                                { 424, 224 }, { 424, 240 }, { 448, 256 } };
+   int k, fails = 0;
+   for (k = 0; k < (int)(sizeof(sz) / sizeof(sz[0])); k++)
+   {
+      const int w = sz[k][0], h = sz[k][1];
+      uint16_t *pic = malloc((size_t)w * h * 2);
+      uint32_t *a = malloc((size_t)w * h * 16), *b = calloc((size_t)w * h * 4, 4);
+      int x, y, i;
+      for (i = 0; i < w * h; i++)           /* few colours in blocks and lines: edges everywhere */
+      {
+         const int px = i % w, py = i / w;
+         const unsigned v = (unsigned)((px / 3 + py / 2) * 7 + ((px ^ py) & 1) * ((px + py) % 5 == 0)) % 6;
+         pic[i] = (uint16_t)(v * 11111u + 777u);
+      }
+      mmpx_rect(pic, w, h, g_lut565, a, (size_t)2 * w, 0, h, 0, w);
+      for (y = 0; y < h; y += 8)
+         for (x = 0; x < w; x += 37)
+         {
+            const int y1 = y + 8 > h ? h : y + 8, x1 = x + 37 > w ? w : x + 37;
+            mmpx_rect(pic, w, h, g_lut565, b + 2 * ((size_t)y * 2 * w + x), (size_t)2 * w,
+                      y, y1, x, x1);
+         }
+      if (memcmp(a, b, (size_t)w * h * 16))
+      {
+         fprintf(stderr, "  mmpx %dx%d: stripes differ from the whole\n", w, h);
+         fails++;
+      }
+      /* flat: every output pixel is the colour */
+      for (i = 0; i < w * h; i++)
+         pic[i] = 0x1234;
+      mmpx_rect(pic, w, h, g_lut565, a, (size_t)2 * w, 0, h, 0, w);
+      for (i = 0; i < w * h * 4; i++)
+         if (a[i] != g_lut565[0x1234])
+         {
+            fprintf(stderr, "  mmpx %dx%d: flat picture changed\n", w, h);
+            fails++;
+            break;
+         }
+      free(pic); free(a); free(b);
+   }
+   printf("mmpx sizes: %d failed\n", fails);
+   return fails;
+}
+
+/* ---- MMPX: the NEON loop equals the C loop, pixel for pixel ------------------
+ * (on a build without NEON both runs are the C loop: it still checks that the
+ * switch changes nothing.)  Pictures: noise in few colours, flat areas with
+ * thin lines and single pixels, widths that are not a multiple of 8, and
+ * stripes cut at odd columns so groups of 8 start anywhere. */
+static int mmpx_neon_same(void)
+{
+   static const int sz[][2] = { { 7, 9 }, { 8, 8 }, { 9, 5 }, { 15, 16 }, { 16, 3 }, { 33, 17 },
+                                { 240, 160 }, { 282, 160 }, { 320, 256 }, { 160, 144 }, { 256, 224 },
+                                { 424, 224 }, { 424, 240 }, { 448, 256 } };
+   int k, kind, fails = 0;
+   unsigned rs = 12345u;
+   for (k = 0; k < (int)(sizeof(sz) / sizeof(sz[0])); k++)
+      for (kind = 0; kind < 4; kind++)
+      {
+         const int w = sz[k][0], h = sz[k][1];
+         uint16_t *pic = malloc((size_t)w * h * 2);
+         uint32_t *a = malloc((size_t)w * h * 16), *b = malloc((size_t)w * h * 16);
+         int i, x, y;
+         for (i = 0; i < w * h; i++)
+         {
+            const int px = i % w, py = i / w;
+            rs = rs * 1664525u + 1013904223u;
+            switch (kind)
+            {
+               case 0:  pic[i] = (uint16_t)((rs >> 16) % 5u * 9001u); break;            /* noise, 5 colours */
+               case 1:  pic[i] = (uint16_t)(((rs >> 20) % 97u) ? 0x4208u : 0xF800u); break; /* flat + specks */
+               case 2:  pic[i] = (uint16_t)((px % 17 == 3 || py % 11 == 5) ? 0x07E0u : 0x0841u); break; /* lines */
+               default: pic[i] = (uint16_t)(rs >> 16); break;                           /* all colours */
+            }
+         }
+         memset(a, 0xA5, (size_t)w * h * 16);
+         memset(b, 0xA5, (size_t)w * h * 16);
+         mmpx_test_c_only(1);
+         mmpx_rect(pic, w, h, g_lut565, a, (size_t)2 * w, 0, h, 0, w);
+         mmpx_test_c_only(0);
+         mmpx_rect(pic, w, h, g_lut565, b, (size_t)2 * w, 0, h, 0, w);
+         if (memcmp(a, b, (size_t)w * h * 16))
+         {
+            fprintf(stderr, "  mmpx %dx%d kind %d: the NEON loop differs from the C loop\n", w, h, kind);
+            fails++;
+         }
+         /* pieces cut at odd columns: the groups of 8 start anywhere */
+         memset(b, 0xA5, (size_t)w * h * 16);
+         for (y = 0; y < h; y += 8)
+            for (x = 0; x < w; x += 29)
+            {
+               const int y1 = y + 8 > h ? h : y + 8, x1 = x + 29 > w ? w : x + 29;
+               mmpx_rect(pic, w, h, g_lut565, b + 2 * ((size_t)y * 2 * w + x), (size_t)2 * w, y, y1, x, x1);
+            }
+         if (memcmp(a, b, (size_t)w * h * 16))
+         {
+            fprintf(stderr, "  mmpx %dx%d kind %d: NEON pieces differ from the C whole\n", w, h, kind);
+            fails++;
+         }
+         free(pic); free(a); free(b);
+      }
+   printf("mmpx neon vs c: %d failed\n", fails);
+   return fails;
+}
+
+static int wide_limits_test(void)
+{
+   int fails = 0;
+   static uint16_t pic[450 * 260];
+   static uint32_t tex0[450 * 260 * 4], tex1[450 * 260 * 4];
+   void *out[2] = { tex0, tex1 };
+   upscale_forget(0);
+   upscale_quality(0);
+   upscale_look_cap(0);
+   if (upscale_factor(0, UPSCALE_XBRZ, 424, 224, 960) != 2) { fprintf(stderr, "  factor 424x224 != 2\n"); fails++; }
+   if (upscale_factor(0, UPSCALE_XBRZ, 424, 240, 960) != 2) { fprintf(stderr, "  factor 424x240 != 2\n"); fails++; }
+   if (upscale_factor(0, UPSCALE_XBRZ, 448, 256, 896) != 2) { fprintf(stderr, "  factor 448x256 != 2\n"); fails++; }
+   if (upscale_factor(0, UPSCALE_XBRZ, 449, 256, 960) != 0) { fprintf(stderr, "  factor 449x256 != 0\n"); fails++; }
+   if (upscale_factor(0, UPSCALE_XBRZ, 424, 257, 960) != 0) { fprintf(stderr, "  factor 424x257 != 0\n"); fails++; }
+   if (upscale_submit(0, UPSCALE_XBRZ, 2, pic, 449, 256, 449 * 2, 0, out, 449 * 2 * 4, 0) != -1) {
+      fprintf(stderr, "  submit 449x256 did not fail\n"); fails++;
+   }
+   if (upscale_submit(0, UPSCALE_XBRZ, 2, pic, 424, 257, 424 * 2, 0, out, 424 * 2 * 4, 0) != -1) {
+      fprintf(stderr, "  submit 424x257 did not fail\n"); fails++;
+   }
+   printf("wide limits: %s\n", fails ? "FAIL" : "ok");
+   return fails;
+}
+
 int main(int argc, char **argv)
 {
    int fails = 0, mode, f, wi, async = getenv("GBADHOC_UPSCALE_ASYNC") != NULL;
    const int widths[2] = { 240, 282 };
+   static const int wide_sz[][2] = { { 424, 224 }, { 424, 240 }, { 448, 256 } };
    int frames = argc > 1 ? atoi(argv[1]) : 200;
    world_make();
    xbrz_c_init();
+   {
+      unsigned v;
+      for (v = 0; v < 65536; v++)
+         g_lut565[v] = lut0((uint16_t)v);
+   }
    for (mode = 0; mode <= 2; mode++)
       for (wi = 0; wi < 2; wi++)
       {
          for (f = 2; f <= 4; f++)
-            fails += run(UPSCALE_XBRZ, f, widths[wi], mode, frames, async);
+            fails += run(UPSCALE_XBRZ, f, widths[wi], 160, mode, frames, async);
          for (f = 2; f <= 3; f++)
-            fails += run(UPSCALE_SCALE, f, widths[wi], mode, frames, async);
+            fails += run(UPSCALE_SCALE, f, widths[wi], 160, mode, frames, async);
       }
+   /* NES Wide 2x and UP_MAX_W=448 (UP_WORDS=14) across xBRZ, Scale2x, and MMPX */
+   for (mode = 0; mode <= 2; mode++)
+      for (wi = 0; wi < (int)(sizeof(wide_sz) / sizeof(wide_sz[0])); wi++)
+      {
+         fails += run(UPSCALE_XBRZ, 2, wide_sz[wi][0], wide_sz[wi][1], mode, frames, async);
+         fails += run(UPSCALE_SCALE, 2, wide_sz[wi][0], wide_sz[wi][1], mode, frames, async);
+      }
+   /* MMPX 2x in the xBRZ slot (the governor's Auto step): every slide mode, all widths */
+   g_mmpx = 1;
+   for (mode = 0; mode <= 2; mode++)
+   {
+      for (wi = 0; wi < 2; wi++)
+         fails += run(UPSCALE_XBRZ, 2, widths[wi], 160, mode, frames, async);
+      for (wi = 0; wi < (int)(sizeof(wide_sz) / sizeof(wide_sz[0])); wi++)
+         fails += run(UPSCALE_XBRZ, 2, wide_sz[wi][0], wide_sz[wi][1], mode, frames, async);
+   }
+   g_mmpx = 0;
+   fails += wide_limits_test();
+   fails += mmpx_sizes();
+   fails += mmpx_neon_same();
    fails += band_split();
    fails += gov_test();
    upscale_shutdown();

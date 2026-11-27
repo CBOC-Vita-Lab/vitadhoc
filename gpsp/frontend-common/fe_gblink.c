@@ -1174,7 +1174,15 @@ void fe_gblink_destroy(fe_gblink *s)
    if (s->hash_f) fclose(s->hash_f);
    if (s->verify_f) fclose(s->verify_f);
    if (s->m && s->m_running)
+   {
+      if (s->m->keep_host &&
+          (s->state == FE_GBLINK_DONE ||
+           s->error == FE_GBLINK_E_PEER_LOST ||
+           (s->error == FE_GBLINK_E_PEER_ABORT &&
+            s->peer_reason == FE_GBLINK_E_PEER_LOST)))
+         s->m->keep_host(s->m->user);
       s->m->stop(s->m->user);
+   }
    /* The partner's machine back on the player's own cartridge. */
    if (s->m && s->partner_set && s->m->partner_rom)
       s->m->partner_rom(s->m->user, NULL);

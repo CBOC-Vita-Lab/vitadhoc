@@ -69,6 +69,8 @@ int upscale_factor(int slot, int kind, unsigned w, unsigned h, int dw);
 /* 0 retains width-derived auto quality, 1 bypasses enhancement, 2/3 select
  * an intermediate factor without changing destination geometry. */
 void upscale_quality(int quality);
+/* the look governor's limit on Auto (look_glue.h): largest factor, 0 none */
+void upscale_look_cap(int max_factor);
 
 /* The factor the picture last submitted to `slot` is scaled by: the one
  * passed to upscale_submit, or less while the screen is changing whole
@@ -112,7 +114,9 @@ int upscale_busy(int slot);
 /* Wait for the slot's picture in the works, then forget everything about
  * the slot's textures and its last picture: before the textures are
  * destroyed or the picture's size or filter changes. */
-void upscale_forget(int slot);
+/* 1 = done; 0 = a helper never let go (the slot is dead): the caller must NOT
+ * free the slot's textures. */
+int upscale_forget(int slot);
 
 /* ---- the governor ----------------------------------------------------------
  * Keep full speed's other half: when frames keep missing the display while
@@ -144,7 +148,7 @@ void upscale_gov_reset(void);        /* a new game */
 int upscale_gov_frame(int work_late);
 void upscale_gov_miss(void);         /* (the upscaler's own: a picture missed) */
 int upscale_gov_level(void);
-/* One line for the in-game menu, or NULL while smoothing is at full. */
+/* One line for the in-game menu (a catalogue key, i18n.h), or NULL while smoothing is at full. */
 const char *upscale_gov_note(void);
 
 /* The caller has up to `max_us` microseconds with nothing to do (the game's

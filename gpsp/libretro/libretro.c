@@ -787,6 +787,11 @@ void retro_init(void)
 #else
       gba_screen_pixels = (uint16_t*)malloc(GBA_SCREEN_BUFFER_SIZE);
 #endif
+   /* A game now starts on line 0x7E (cpu.cc), so the first frame has no
+    * lines 0..125: black, not whatever the heap held (a flash of old
+    * memory on screen, a different picture every run). */
+   if (gba_screen_pixels)
+      memset(gba_screen_pixels, 0, GBA_SCREEN_BUFFER_SIZE);
 
    /* gba_screen_pixels is dereferenced unconditionally by both the
     * renderer (writes from update_scanline) and the post-process /
@@ -1838,7 +1843,7 @@ bool retro_load_game(const struct retro_game_info* info)
 
    if (!bios_loaded) {
      /* Load the built-in BIOS */
-     memcpy(bios_rom, open_gba_bios_rom, sizeof(bios_rom));
+     memcpy(bios_rom, open_gba_bios_rom, sizeof(open_gba_bios_rom));
    }
 
    memset(gamepak_backup, 0xff, sizeof(gamepak_backup));
@@ -1851,7 +1856,7 @@ bool retro_load_game(const struct retro_game_info* info)
    if (selected_bios != builtin_bios && gamepak_header_nonstandard)
    {
       show_warning_message("Non-standard ROM header detected, using built-in BIOS", 2500);
-      memcpy(bios_rom, open_gba_bios_rom, sizeof(bios_rom));
+      memcpy(bios_rom, open_gba_bios_rom, sizeof(open_gba_bios_rom));
    }
 
    extern bool require_m1_hle_bios;
@@ -1859,7 +1864,7 @@ bool retro_load_game(const struct retro_game_info* info)
    if (selected_bios != builtin_bios && require_m1_hle_bios)
    {
       show_warning_message("Pokemon ROM Hack (M1) detected, forcing built-in BIOS", 2500);
-      memcpy(bios_rom, open_gba_bios_rom, sizeof(bios_rom));
+      memcpy(bios_rom, open_gba_bios_rom, sizeof(open_gba_bios_rom));
    }
 
 #ifdef HAVE_DYNAREC

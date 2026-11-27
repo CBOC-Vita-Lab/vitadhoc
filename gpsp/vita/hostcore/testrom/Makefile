@@ -29,6 +29,15 @@ gbadhoc-audio.gba: crt0.S audio.c gba.ld
 	$(CROSS)objcopy -O binary gbadhoc-audio.elf $@
 	@ls -l $@
 
+# A cartridge that leaves its PCM mixing to the BIOS sound driver (app_tests.py, biossound).
+biossound: gbadhoc-biossound.gba
+.PHONY: biossound
+gbadhoc-biossound.gba: crt0.S biossound.c gba.ld
+	$(CROSS)gcc $(CFLAGS) -nostdlib -nostartfiles -T gba.ld -o gbadhoc-biossound.elf \
+	  crt0.S biossound.c -lgcc
+	$(CROSS)objcopy -O binary gbadhoc-biossound.elf $@
+	@ls -l $@
+
 # The wide picture's "Mode 7" floor (app_tests.py, wide): see wide7.c.
 wide: gbadhoc-wide.gba
 gbadhoc-wide.gba: crt0.S wide7.c gba.ld
@@ -125,3 +134,39 @@ clean:
 .PHONY: clean gb cgb
 
 .PHONY: wide scroll top gb sensors
+
+# XLAT_ITERATIVE (app_tests.py, chain): a chain of thousands of first-visit
+# blocks, chain.c.
+.PHONY: chain
+chain: gbadhoc-chain.gba
+gbadhoc-chain.gba: crt0.S chain.c gba.ld
+	$(CROSS)gcc $(CFLAGS) -nostdlib -nostartfiles -T gba.ld -o gbadhoc-chain.elf \
+	  crt0.S chain.c -lgcc
+	$(CROSS)objcopy -O binary gbadhoc-chain.elf $@
+	@ls -l $@
+
+# OBJ_EXACT (app_tests.py, objprio): sprites out of priority order, objprio.c.
+.PHONY: objprio
+objprio: gbadhoc-objprio.gba
+gbadhoc-objprio.gba: crt0.S objprio.c gba.ld
+	$(CROSS)gcc $(CFLAGS) -nostdlib -nostartfiles -T gba.ld -o gbadhoc-objprio.elf \
+	  crt0.S objprio.c -lgcc
+	$(CROSS)objcopy -O binary gbadhoc-objprio.elf $@
+
+# The sprite rules checked pixel by pixel (app_tests.py, objrand): objrand.c.
+.PHONY: objrand
+objrand: gbadhoc-objrand.gba
+gbadhoc-objrand.gba: crt0.S objrand.c gba.ld
+	$(CROSS)gcc $(CFLAGS) -nostdlib -nostartfiles -T gba.ld -o gbadhoc-objrand.elf \
+	  crt0.S objrand.c -lgcc
+	$(CROSS)objcopy -O binary gbadhoc-objrand.elf $@
+	@ls -l $@
+
+# Self-modifying RAM code (app_tests.py, smc; SMC_RANGE): see smc.c.
+.PHONY: smc
+smc: gbadhoc-smc.gba
+gbadhoc-smc.gba: crt0.S smc.c gba.ld
+	$(CROSS)gcc $(CFLAGS) -nostdlib -nostartfiles -T gba.ld -o gbadhoc-smc.elf \
+	  crt0.S smc.c -lgcc
+	$(CROSS)objcopy -O binary gbadhoc-smc.elf $@
+	@ls -l $@

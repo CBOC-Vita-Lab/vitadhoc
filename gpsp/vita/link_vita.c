@@ -29,8 +29,19 @@
  *              then PDP datagrams (transport_vadhoc).  No room list: the
  *              joiner's JOIN is a broadcast and the protocol string decides
  *              who answers.
+ *   Online     (2.0, config.ini net_conn = 3) over the internet with a
+ *              five-character room code.  The same transport, but its
+ *              address comes from online_vita.c (the room service, STUN,
+ *              a punched hole or the relay): this file only opens the
+ *              transport with LAN_F_NO_DISCOVERY, hands it to
+ *              online_host / online_join, steps online_step() once a frame
+ *              and, when the peer is reachable, goes on exactly as the
+ *              Internet connection does (netdrv, the session).  Nothing
+ *              above the transport knows the difference, which is why the
+ *              mirror's frame loop is untouched.  The one Online-only rule
+ *              is the input delay's ceiling (12 frames, delay_pick).
  *
- * THREE KINDS (the game decides, docs/GBA-LINK-UI.md):
+ * FOUR KINDS (the game decides, docs/GBA-LINK-UI.md):
  *
  *   GBA Link Cable    the mirror: each console runs BOTH GBAs with the cable
  *                     between them, only buttons cross (fe_gblink over
@@ -39,6 +50,13 @@
  *   GBA Wireless      one core per console; the game's own adapter protocol
  *   Adapter           rides netdrv (fe_np_start) and pairs the players.
  *   GB / GBC cable    the mirror with two Game Boys per console.
+   Two players       (2.0) a NES or WonderSwan game: both consoles run the
+                     SAME machine, the host's pad on port 1, the guest's on
+                     port 2 (the WonderSwan's one pad takes both).  Only
+                     buttons cross, as in the mirror (fe_gblink over
+                     fe_padpair's machines); the host's state and battery
+                     start both, the guest's own game is set aside and put
+                     back, and both need the same game file.
  *
  * WHO MAY LINK WITH WHOM.  The mirror is only a mirror if both consoles
  * compute the same machines cycle for cycle: the same build, the same CPU
@@ -72,6 +90,18 @@
  *   link_absorb = 0        no stall absorption
  *   link_copies = N        frames of buttons per unreliable datagram (4)
  *   link_nack = 0          no resend requests
+ *   online_url = URL       the room service (default the shipped one;
+ *                          http://127.0.0.1:PORT for the dev server)
+ *   online_stun = H:P,H:P  STUN servers ("off": no STUN, the address is the
+ *                          console's own)
+ *   online_lan = 0         do not offer the LAN address (same-router pairs)
+ *   online_force_relay = 1 / online_no_relay = 1   tests: relay only / never
+ *   online_punch_ms = N    the punch race's length instead of the service's
+ *   link_natsim = IP:PORT  every datagram of an Online transport goes
+ *   link_natsim_id = N     through the NAT simulator (twin only)
+ *   link_direct = 1        the typed-address connection ("Direct address")
+ *                          stays in the menus; a saved Internet choice is
+ *                          kept (otherwise config load makes it Online)
  *   link_peek = ADDR:N     log N 32-bit words of the player's machine's
  *                          memory at hexadecimal ADDR (EVT link_peek) when a
  *                          session starts running, every ten seconds of it
@@ -121,6 +151,7 @@
 
 #include <arpa/inet.h>
 
+#include "i18n.h"
 #include "fe_host.h"
 #include "fe_evt.h"
 #include "fe_util.h"
@@ -140,14 +171,20 @@
 #include "ui_host_hooks.h"
 #include "cheats_vita.h"
 #include "net_vita.h"
+#include "online_vita.h"
+#include "update_check.h"
+#include "link_snes.h"
 #include "transport_lan.h"
 #include "transport_vadhoc.h"
 #include "upnp_igd.h"
+#include "disc_id.h"
 
 /* The room kinds are one vocabulary in three headers. */
 typedef char link_kinds_agree[((int)LAN_KIND_GBA_WIRELESS == (int)ROOM_ADAPTER &&
                                (int)LAN_KIND_GBA_CABLE == (int)ROOM_CABLE_GBA &&
-                               (int)LAN_KIND_GB_CABLE == (int)ROOM_CABLE_GB)
+                               (int)LAN_KIND_GB_CABLE == (int)ROOM_CABLE_GB &&
+                               (int)LAN_KIND_SHARE == (int)ROOM_SHARE &&
+                               (int)LAN_KIND_PAD == (int)ROOM_PAD)
                               ? 1 : -1];
 
 /* ---- numbers ------------------------------------------------------------------ */
@@ -159,6 +196,9 @@ typedef char link_kinds_agree[((int)LAN_KIND_GBA_WIRELESS == (int)ROOM_ADAPTER &
                                   * hoc radio; the PSP's needs 4 at a third of
                                   * the CPU.  Read EVT gblink_win lead_min. */
 #define DELAY_MAX         PCFG_LINK_DELAY_MAX
+/* Online's own ceiling for the MEASURED delay (the player's fixed setting
+ * stays 1..8): a transatlantic path with some spread asks for 9..12. */
+#define DELAY_ONLINE_MAX  PCFG_LINK_DELAY_ONLINE_MAX
 /* Auto: echoes sent (one a frame) and frames waited for their answers. */
 #define MEASURE_ECHOES    6
 #define MEASURE_FRAMES    24
@@ -187,12 +227,15 @@ typedef char link_kinds_agree[((int)LAN_KIND_GBA_WIRELESS == (int)ROOM_ADAPTER &
 
 /* The link session's bulk lane: 1024 data + 13 header (psp/main_psp.c). */
 #define BULK_BYTES        1037u
+/* A WonderSwan frame is 13.25 ms, a display refresh 16.7: the input delay is
+ * counted in emulated frames, so the same time is 126 % of them. */
+#define WS_DELAY_NUM      126u
 /* Scanlines slot 0 may run ahead while the GB cable is quiet (GB-LINK.md 8). */
 #define GB_BATCH          154u
 
 /* ---- state -------------------------------------------------------------------- */
 
-enum { LK_NONE = 0, LK_ADAPTER, LK_CABLE, LK_GB };
+enum { LK_NONE = 0, LK_ADAPTER, LK_CABLE, LK_GB, LK_PAD };
 
 enum
 {
@@ -202,7 +245,9 @@ enum
    PH_HOSTING,       /* the room is open, nobody in it; the game runs        */
    PH_MEASURE,       /* cable host: a console arrived, timing the way to it  */
    PH_LINKED,        /* adapter: in the room.  cable / GB: the session       */
-   PH_FAILED         /* a join that did not link: its two lines, until O     */
+   PH_FAILED,        /* a join that did not link: its two lines, until O     */
+   PH_ONLINE         /* Online joiner: the room service, the punch or relay
+                      * (last, so the numbers the logs and tests know stay) */
 };
 
 /* Why a link did not form or did not last, beyond what the session knows. */
@@ -220,7 +265,9 @@ static struct
    lan_transport *lan;
    unsigned ticks;                /* the clock, in sixtieths of a second     */
    unsigned t_phase;              /* ...when this phase began                */
-   unsigned t_watch, t_peek, t_win;
+   unsigned t_watch, t_peek, t_win, t_census;
+   uint32_t retx_prev;            /* link census: netdrv retransmits so far  */
+   int      census_on;
    unsigned prev_pad;
    int  screen;                   /* the LINKING screen is up this iteration */
    int  screen_drew;              /* ...and was drawn last iteration         */
@@ -254,6 +301,14 @@ static struct
    int  stalled;
    int  stall_told;
    int  end_asked;
+
+   /* Online (2.0) */
+   int  on_live;                  /* online_host / online_join began, and
+                                   * net_down has not ended it              */
+   int  on_stage;                 /* online_step()'s answer this frame      */
+   int  on_toast;                 /* host: the quality toast is still to say */
+   int  on_failed;                /* the fail (online_view.fail) this link
+                                   * ended with, for the logs               */
 
    /* watching the radio */
    int  strikes, signal_pct;
@@ -289,15 +344,47 @@ static struct
    unsigned peek_addr, peek_words;
    int      drc;
    int      up;                   /* net_vita_init succeeded                 */
-   uint32_t compat[3];            /* by LAN_KIND_*                           */
-   char     proto_cable[ND_PROTO_LEN], proto_gb[ND_PROTO_LEN];
+   uint32_t compat[6];            /* by LAN_KIND_*; 3 is unused, 4 share,
+                                   * 5 two players (NES / WonderSwan)        */
+   /* Online (vita.ini; docs/ONLINE-PLAY.md) */
+   char     on_url[96], on_stun[96];
+   int      on_lan, on_force_relay, on_no_relay, on_punch_ms;
+   char     natsim[32];           /* link_natsim = ip:port: the NAT simulator */
+   int      natsim_id;
+   int      direct, direct_read;  /* link_direct = 1: the typed address     */
+   int      on_set;               /* online_setup ran                        */
+   char     proto_cable[ND_PROTO_LEN], proto_gb[ND_PROTO_LEN],
+            proto_pad[ND_PROTO_LEN];
    int      exit_assist;
 } S;
 
 /* The Join page's scan (ui_host_rooms_*). */
 static struct { lan_scan *scan; int claimed; } R;
 
+/* SNES (2.0, B3): the link of a game that is not running here.  link_snes_* at the end of this file. */
+static struct
+{
+   int      on;                   /* a SNES link is being formed: the game is a file, not a core */
+   int      phase;                /* LSN_*                                  */
+   int      sub;                  /* 0 forming, 1 guest: waiting for the host's netdrv, 2 ready to hand over */
+   char     game[9];              /* the room's game id: the file's CRC     */
+   char     console[5];           /* the room's console: "snes", "md", "sms", "sg" (md.bin plays the Sega ones) */
+   char     title[40];
+   char     rom[APP_PATH_CAP];
+   int      fail;                 /* UI_FAIL_*                              */
+   uint32_t peer_ip_be;           /* guest on Same Wi-Fi: the host's address */
+   uint16_t peer_port;
+   unsigned delay;                /* the host's input delay                 */
+   unsigned t_seen;               /* the tick the host's netdrv answered    */
+   int      seen;
+   int      peer_heard;           /* netdrv said the other console connected (snes_np_peer), even if it left again */
+   int      said;                 /* the link's end was already told in a toast (the code expired): no "Link cancelled." */
+   unsigned t_begin, prev_pad;
+   link_snes_link link;
+} SL;
+
 static void link_teardown(void);
+static void after_transport(void);
 static void chip_update(void);
 static void win_note(int final);
 
@@ -317,7 +404,38 @@ uint32_t gpsp_rfu_now_us(void)
 
 static int is_gba(void)
 {
-   return g_game.console == FE_CONSOLE_GBA;
+   return !SL.on && g_game.console == FE_CONSOLE_GBA;
+}
+
+/* A NES or WonderSwan game: the only link it has is Two players. */
+static int is_pad_game(void)
+{
+   return SL.on || g_game.console == FE_CONSOLE_NES ||
+          g_game.console == FE_CONSOLE_WSWAN;
+}
+
+/* The game's identity for a Two players room: the 8 hex digits of its file's
+ * CRC (the same text on both consoles), and the 4 the room list shows. */
+static void pad_game8(char out[9])
+{
+   if (SL.on)
+   {
+      snprintf(out, 9, "%s", SL.game);
+      return;
+   }
+   if (fe_host_pad_game_id(out) != 0)         /* 0 = the id is in `out` (-1: not such a game) */
+      snprintf(out, 9, "00000000");
+   for (int i = 0; out[i]; i++)
+      out[i] = (char)((out[i] >= 'a' && out[i] <= 'z') ? out[i] - 32
+                                                       : out[i]);
+}
+
+static void pad_room_code(char code[5])
+{
+   char g[9];
+   pad_game8(g);
+   memcpy(code, g, 4);
+   code[4] = '\0';
 }
 
 static void phase_set(int ph)
@@ -338,8 +456,8 @@ static unsigned phase_age(void)
  * covers it: a game nobody can see must not play on. */
 static void hold_game(int on)
 {
-   if (L.held == on)
-      return;
+   if (L.held == on || SL.on)
+      return;                        /* (a SNES link has no game here to hold) */
    L.held = on;
    fe_host_gblink_hold(on);
    if (on)
@@ -350,7 +468,7 @@ static void hold_game(int on)
 
 static void cheats_off(int on)
 {
-   if (L.cheats_off == on)
+   if (L.cheats_off == on || SL.on)
       return;
    L.cheats_off = on;
    cheats_suspend(on);
@@ -370,13 +488,15 @@ static const char *fail_line(int code)
 
 static const char *backend_name(void)
 {
+   return S.drc ?
 #if defined(__arm__)
-   return S.drc ? "arm" : "arm-interp";
+      "arm"
 #elif defined(__x86_64__) || defined(__i386__)
-   return S.drc ? "x86" : "x86-interp";
+      "x86"
 #else
-   return "interp";
+      "interp"
 #endif
+      : "interp";
 }
 
 /* The GBA BIOS the core will run: the player's file, or the built-in one.
@@ -413,6 +533,19 @@ static void compat_make(void)
             (unsigned)(S.compat[LAN_KIND_GBA_CABLE] & 0xFFFFFFu));
    snprintf(S.proto_gb, sizeof(S.proto_gb), "GBAdhoc GB link v2/%04x",
             (unsigned)(S.compat[LAN_KIND_GB_CABLE] & 0xFFFFu));
+   /* Share game data: the build alone. */
+   snprintf(build, sizeof(build), "%s|%s|%s", GBADHOC_VERSION, LINK_ABI,
+            S.build);
+   S.compat[LAN_KIND_SHARE] = lan_compat_hash("GBAdhoc share", build);
+   /* Two players (NES / WonderSwan): the build and the pad session's own
+    * version.  The machine is the player's own core in both consoles and
+    * the options that would change it are pinned for the session
+    * (fe_host.c pad_link_start), so nothing else tells two builds apart. */
+   snprintf(build, sizeof(build), "%s|%s|%s|pad v1", GBADHOC_VERSION,
+            LINK_ABI, S.build);
+   S.compat[LAN_KIND_PAD] = lan_compat_hash("GBAdhoc pad v1", build);
+   snprintf(S.proto_pad, sizeof(S.proto_pad), "GBAdhoc pad v1/%04x",
+            (unsigned)(S.compat[LAN_KIND_PAD] & 0xFFFFu));
    fe_evt("link_compat backend=%s adapter=%08x cable=%08x gb=%08x",
           backend_name(), (unsigned)S.compat[0], (unsigned)S.compat[1],
           (unsigned)S.compat[2]);
@@ -463,6 +596,26 @@ void link_boot(void)
    /* The PSP's player build has the exit assist on (PLAY_EXIT_ASSIST). */
    S.exit_assist = (int)fe_ini_get_int(ini, "rfu_exit_assist", 1) != 0;
 
+   /* Online play (2.0): every switch is for tests or for a fork of the
+    * service; the defaults are the shipped service and Cloudflare's STUN. */
+   if (!fe_ini_get(ini, "online_url", S.on_url, sizeof(S.on_url)))
+      S.on_url[0] = '\0';
+   if (!fe_ini_get(ini, "online_stun", S.on_stun, sizeof(S.on_stun)))
+      S.on_stun[0] = '\0';
+   S.on_lan = (int)fe_ini_get_int(ini, "online_lan", 1) != 0;
+   S.on_force_relay = (int)fe_ini_get_int(ini, "online_force_relay", 0) != 0;
+   S.on_no_relay = (int)fe_ini_get_int(ini, "online_no_relay", 0) != 0;
+   S.on_punch_ms = (int)fe_ini_get_int(ini, "online_punch_ms", 0);
+   if (S.on_punch_ms < 0)
+      S.on_punch_ms = 0;
+   if (!fe_ini_get(ini, "link_natsim", S.natsim, sizeof(S.natsim)))
+      S.natsim[0] = '\0';
+   S.natsim_id = (int)fe_ini_get_int(ini, "link_natsim_id", 0);
+   if (S.natsim_id < 0 || S.natsim_id > 255)
+      S.natsim_id = 0;
+   S.direct = (int)fe_ini_get_int(ini, "link_direct", 0) != 0;
+   S.direct_read = 1;
+
    rc = net_vita_init();
    S.up = rc == 0;
    fe_evt("link_boot net=%d sce=0x%08x port=%d fault=%d/%d/%d/%d absorb=%d "
@@ -470,11 +623,65 @@ void link_boot(void)
           S.port ? S.port : LAN_PORT_DEFAULT, S.loss, S.dup, S.latency,
           S.jitter, S.absorb, S.copies, S.nack);
    compat_make();
+   /* After net_vita_init, on this thread: the room client's worker calls
+    * the resolver and the clock lazily and expects the stack to be up. */
+   {
+      online_cfg oc;
+      memset(&oc, 0, sizeof(oc));
+      oc.url = S.on_url[0] ? S.on_url : NULL;
+      oc.stun = S.on_stun[0] ? S.on_stun : NULL;
+      oc.post_lan = S.on_lan;
+      oc.force_relay = S.on_force_relay;
+      oc.no_relay = S.on_no_relay;
+      oc.punch_ms = (unsigned)S.on_punch_ms;
+      oc.now_us = plat_time_us;
+      oc.entropy = net_vita_entropy;
+      online_setup(&oc);
+      S.on_set = 1;
+      fe_evt("online_boot url=%s stun=%s lan=%d force_relay=%d no_relay=%d "
+             "punch_ms=%d natsim=%s direct=%d",
+             oc.url ? oc.url : ONLINE_URL_DEFAULT,
+             oc.stun ? oc.stun : ONLINE_STUN_DEFAULT, S.on_lan,
+             S.on_force_relay, S.on_no_relay, S.on_punch_ms,
+             S.natsim[0] ? S.natsim : "-", S.direct);
+   }
+}
+
+/* vita.ini link_direct = 1: the typed address ("Direct address") is shown.
+ * config load asks BEFORE link_boot has run (the main loop loads
+ * config.ini first), so the first answer reads the file itself. */
+int ui_host_link_direct(void)
+{
+   if (!S.direct_read)
+   {
+      char ini[APP_PATH_CAP + 16];
+      snprintf(ini, sizeof(ini), "%s/vita.ini", g_app_root);
+      S.direct = (int)fe_ini_get_int(ini, "link_direct", 0) != 0;
+      S.direct_read = 1;
+   }
+   return S.direct;
 }
 
 void link_shutdown(void)
 {
+   int was_online = L.on_live;
+
    link_teardown();
+   if (S.on_set)
+   {
+      /* A room's close is one request: give it a moment to leave (the
+       * worker is told to stop at exit, which cancels what is running). */
+      if (was_online)
+      {
+         int i;
+         for (i = 0; i < 25; i++)
+         {
+            (void)online_step();
+            plat_sleep_us(10000);
+         }
+      }
+      online_http_shutdown();
+   }
    if (R.scan)
       ui_host_rooms_end();
    if (L.igd)
@@ -718,6 +925,28 @@ static unsigned lan_flags(uint32_t ip_be)
    return (ntohl(ip_be) >> 24) == 127 ? LAN_F_LOOPBACK : 0;
 }
 
+/* What an Online transport is: not announced on the network (the room
+ * service is how it is found), and, in a test build with vita.ini
+ * link_natsim, every datagram goes through the NAT simulator.  Also what
+ * Share game data (share_vita.c) opens its Online room with. */
+void link_online_config(struct lan_config *c)
+{
+   c->flags |= LAN_F_NO_DISCOVERY;
+   if (S.natsim[0])
+   {
+      uint32_t ip = 0;
+      uint16_t port = 0;
+      if (lan_parse_addr(S.natsim, &ip, &port, 0) == 0 && port)
+      {
+         c->sim_ip_be = ip;
+         c->sim_port = port;
+         c->sim_id = (uint8_t)S.natsim_id;
+         /* the port this console declares inside the simulated LAN */
+         c->sim_lan_port = (uint16_t)(S.port ? S.port : LAN_PORT_DEFAULT);
+      }
+   }
+}
+
 /* Wi-Fi / Internet: the socket.  0, or a UI_FAIL_* code + 1 negated. */
 static int infra_open(int is_host, uint32_t target_ip_be, uint16_t target_port)
 {
@@ -733,9 +962,13 @@ static int infra_open(int is_host, uint32_t target_ip_be, uint16_t target_port)
    c.disc_port = (uint16_t)S.port;
    c.local_ip_be = w.ip_be;
    c.netmask_be = w.netmask_be;
-   c.flags = lan_flags(w.ip_be);
+   /* The I/O thread keeps the partner's liveness fresh: a state save or a
+    * card stall on THIS console's main thread must not read as "gone". */
+   c.flags = lan_flags(w.ip_be) | LAN_F_IO_KEEPALIVE;
    c.target_ip_be = target_ip_be;
    c.target_port = target_port;
+   if (L.conn == LINK_CONN_ONLINE)
+      link_online_config(&c);
    L.lan = lan_transport_create(&c);
    if (!L.lan)
    {
@@ -767,9 +1000,13 @@ static void announce(int players, int open)
       return;
    L.players = players;
    L.open = open;
+   if (L.conn == LINK_CONN_ONLINE)
+      return;                        /* the room service is the room list */
    memset(&ri, 0, sizeof(ri));
    if (L.room_kind == LAN_KIND_GB_CABLE)
       room_code_gb(g_game.gb_title, sizeof(g_game.gb_title), code);
+   else if (L.room_kind == LAN_KIND_PAD)
+      pad_room_code(code);
    else
       room_code_gba(g_game.code, code);
    room_make(L.room_kind, L.number, code, ri.name, sizeof(ri.name));
@@ -779,7 +1016,7 @@ static void announce(int players, int open)
    ri.max_players = L.kind == LK_ADAPTER ? ND_MAX_CLIENTS : 2;
    ri.flags = open ? LAN_ROOM_F_OPEN : LAN_ROOM_F_BUSY;
    snprintf(ri.nick, sizeof(ri.nick), "%.15s", g_pcfg.nick);
-   snprintf(ri.title, sizeof(ri.title), "%.19s", g_game.name);
+   snprintf(ri.title, sizeof(ri.title), "%.19s", SL.on ? SL.title : g_game.name);
    memcpy(ri.code, code, sizeof(ri.code));
    ri.compat = S.compat[L.room_kind];
    lan_transport_announce(L.lan, &ri);
@@ -916,7 +1153,8 @@ static int np_start(void)
    if (net_vita_link_iface(&tp) != 0)
       return -1;
    net_vita_arq_profile(L.transport == TR_ADHOC ? NET_VITA_LINK_ADHOC
-                        : L.conn == LINK_CONN_INTERNET ? NET_VITA_LINK_INTERNET
+                        : L.conn == LINK_CONN_INTERNET ||
+                          L.conn == LINK_CONN_ONLINE ? NET_VITA_LINK_INTERNET
                                                        : NET_VITA_LINK_LAN,
                         &first, &floor_us);
    fe_np_set_arq_timers(first, floor_us);
@@ -938,7 +1176,8 @@ static int np_start(void)
              ride_max);
    }
    fe_np_set_gb_protocol(L.kind == LK_CABLE ? S.proto_cable
-                         : L.kind == LK_GB ? S.proto_gb : NULL);
+                         : L.kind == LK_GB ? S.proto_gb
+                         : L.kind == LK_PAD ? S.proto_pad : NULL);
    memset(&npc, 0, sizeof(npc));
    npc.transport = &tp;
    npc.is_host = L.is_host;
@@ -954,7 +1193,7 @@ static int np_start(void)
    fe_evt("link_net_up kind=%d host=%d arq=%u/%u proto=\"%s\"", L.kind,
           L.is_host, (unsigned)first, (unsigned)floor_us,
           L.kind == LK_CABLE ? S.proto_cable : L.kind == LK_GB ? S.proto_gb
-                                                               : "core");
+                                  : L.kind == LK_PAD ? S.proto_pad : "core");
    return 0;
 }
 
@@ -996,7 +1235,16 @@ static void np_stop(void)
  * one of its poll slices (50 ms; ad hoc 250 ms). */
 static void net_down(void)
 {
-   np_stop();
+   np_stop();                        /* its BYE needs the relay still up */
+   if (L.on_live || online_active())
+   {
+      /* The room is closed (cancel / failed, or nothing for a link that
+       * formed), the punch and the relay stop.  A close that did not get
+       * out is retried from online_step() every frame. */
+      online_stop();
+   }
+   L.on_live = 0;
+   L.on_toast = 0;
    net_vita_bulk_enable(0);
    net_vita_link_none();
    if (L.transport == TR_LAN)
@@ -1049,6 +1297,16 @@ static void link_off(void)
 static void bringup_failed(int code)
 {
    fe_evt("link_failed code=%d host=%d phase=%d", code, L.is_host, L.phase);
+   if (SL.on)
+   {
+      /* SNES: the modal page in main_vita.c shows the sentence; nothing here to hold or draw over */
+      net_down();
+      link_off();
+      L.error = fail_line(code);
+      SL.fail = code;
+      SL.phase = LSN_FAILED;
+      return;
+   }
    net_down();
    if (L.is_host)
    {
@@ -1066,11 +1324,408 @@ static void bringup_failed(int code)
    phase_set(PH_FAILED);
 }
 
+/* ---- Online (2.0): the room service decides who is where ---------------------------
+ * online_vita.c does everything that needs the internet; what is here is
+ * what only this file knows: the game's description for the room, the
+ * sentences, and what each phase does when the peer is reachable. */
+
+/* "2.0.1" against "2.0": > 0 when a is newer.  Missing parts are zero. */
+static int ver_cmp(const char *a, const char *b)
+{
+   int i;
+   for (i = 0; i < 4; i++)
+   {
+      long x = 0, y = 0;
+      if (*a)
+      {
+         x = strtol(a, (char **)&a, 10);
+         if (*a == '.')
+            a++;
+      }
+      if (*b)
+      {
+         y = strtol(b, (char **)&b, 10);
+         if (*b == '.')
+            b++;
+      }
+      if (x != y)
+         return x > y ? 1 : -1;
+   }
+   return 0;
+}
+
+/* online_view.fail -> the UI's sentence.  *toast_only: the host's code
+ * expired: a toast, no error line. */
+static int online_ui_fail(const online_view *v, int *toast_only)
+{
+   if (toast_only)
+      *toast_only = 0;
+   switch (v->fail)
+   {
+   case ONLINE_FAIL_CODE:        return UI_FAIL_ONLINE_CODE;
+   case ONLINE_FAIL_UPDATE:      return UI_FAIL_ONLINE_UPDATE;
+   case ONLINE_FAIL_VERSION:
+   {
+      /* who has to update: the host's version against ours */
+      int c = ver_cmp(v->host_ver, ONLINE_APP_VERSION);
+      return c > 0 ? UI_FAIL_ONLINE_VER_OLD_HERE
+           : c < 0 ? UI_FAIL_ONLINE_VER_OLD_THERE : UI_FAIL_ONLINE_SETUP;
+   }
+   case ONLINE_FAIL_FULL:        return UI_FAIL_ONLINE_FULL;
+   case ONLINE_FAIL_UNREACHABLE: return UI_FAIL_ONLINE_UNREACHABLE;
+   case ONLINE_FAIL_BUSY:        return UI_FAIL_ONLINE_BUSY;
+   case ONLINE_FAIL_SLOW:        return UI_FAIL_ONLINE_SLOW;   /* a short rate limit: "Too many tries from this network." */
+   case ONLINE_FAIL_CLOSED:      return UI_FAIL_ONLINE_CLOSED;
+   case ONLINE_FAIL_CLOCK:       return UI_FAIL_ONLINE_CLOCK;
+   case ONLINE_FAIL_CONSOLE:     return UI_FAIL_ONLINE_CONSOLE;
+   case ONLINE_FAIL_EXPIRED:
+      if (toast_only && L.is_host)
+         *toast_only = 1;
+      return UI_FAIL_ONLINE_CODE;
+   case ONLINE_FAIL_SERVICE:
+   default:                      return UI_FAIL_ONLINE_SERVICE;
+   }
+}
+
+/* The identity of a game file as the room carries it (plan 1.1 `rom`): a
+ * CRC-32 over the size and 64 slices of 4 KiB spread over the file (the
+ * whole file under 256 KiB).  Both consoles compute it the same way, so two
+ * copies of one cartridge match and a hack of it does not. */
+static int rom_identity(const char *path, char out[9])
+{
+   FILE *f = fopen(path, "rb");
+   uint8_t buf[4096], le[4];
+   long size;
+   uint32_t crc;
+   int i;
+
+   if (!f)
+      return -1;
+   if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) <= 0)
+   {
+      fclose(f);
+      return -1;
+   }
+   le[0] = (uint8_t)size;
+   le[1] = (uint8_t)(size >> 8);
+   le[2] = (uint8_t)(size >> 16);
+   le[3] = (uint8_t)(size >> 24);
+   crc = fe_crc32(0, le, 4);
+   if (size < 256 * 1024)
+   {
+      size_t n;
+      rewind(f);
+      while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+         crc = fe_crc32(crc, buf, n);
+   }
+   else
+   {
+      long step = (size - 4096) / 63;
+      for (i = 0; i < 64; i++)
+      {
+         if (fseek(f, step * i, SEEK_SET) != 0 ||
+             fread(buf, 1, sizeof(buf), f) != sizeof(buf))
+         {
+            fclose(f);
+            return -1;
+         }
+         crc = fe_crc32(crc, buf, sizeof(buf));
+      }
+   }
+   fclose(f);
+   snprintf(out, 9, "%08x", (unsigned)crc);
+   return 0;
+}
+
+/* Settings > Join online and the host's own description.  The RUNNING game
+ * is identified from the image the core loads (its patched copy or its
+ * unzipped file: g_game.boot_path); a library file from itself, or, when a
+ * patch sits beside it, from the patched copy kept under patched/ when that
+ * is still current; a zip and a patch that was never applied are "unknown"
+ * (-1: the host's description then says "" and the match falls back to the
+ * game code). */
+int ui_host_pad_game(char out[9])
+{
+   if (!is_pad_game())
+      return 0;
+   pad_game8(out);
+   return 1;
+}
+
+int ui_host_online_rom_id(const char *path, char out[9])
+{
+   static const char *const pext[] = { ".ips", ".bps", ".ups" };
+   char use[APP_PATH_CAP], pp[APP_PATH_CAP];
+   const char *dot, *slash;
+   struct stat so, sp, sc;
+   size_t stem, i;
+   int has_patch = 0;
+
+   if (out)
+      out[0] = '\0';
+   if (!path || !path[0] || !out)
+      return -1;
+   if (g_game.rom_path[0] && g_game.boot_path[0] &&
+       !strcmp(path, g_game.rom_path))
+      return rom_identity(g_game.boot_path, out);
+   dot = strrchr(path, '.');
+   if (!dot || !strcasecmp(dot, ".zip") || !strcasecmp(dot, ".7z"))
+      return -1;
+   stem = (size_t)(dot - path);
+   for (i = 0; i < 3 && !has_patch; i++)
+      if (stem + 5 < sizeof(pp))
+      {
+         memcpy(pp, path, stem);
+         strcpy(pp + stem, pext[i]);
+         has_patch = stat(pp, &sp) == 0;
+      }
+   if (!has_patch)
+      return rom_identity(path, out);
+   slash = strrchr(path, '/');
+   if (snprintf(use, sizeof(use), "%s/patched/%s", g_app_root,
+                slash ? slash + 1 : path) >= (int)sizeof(use) ||
+       stat(use, &sc) != 0 || stat(path, &so) != 0 ||
+       sc.st_mtime < so.st_mtime || sc.st_mtime < sp.st_mtime)
+      return -1;
+   return rom_identity(use, out);
+}
+
+static void put_text(char *dst, size_t cap, const char *src)
+{
+   size_t n = 0;
+   for (; src && *src && n + 1 < cap; src++)
+      dst[n++] = (*src < 0x20 || *src > 0x7E || *src == '"' || *src == '\\')
+                 ? '?' : *src;
+   dst[n] = '\0';
+}
+
+/* What this console tells the room service about itself and its game.  A
+ * host's `rom` is its own file's identity; a joiner's kind, console, title
+ * and rom are ignored by the service (the host's decide). */
+static void online_desc_make(online_desc *d)
+{
+   char code[5];
+   int i;
+
+   memset(d, 0, sizeof(*d));
+   d->kind = L.room_kind;
+   snprintf(d->console, sizeof(d->console), "%s",
+            SL.on ? SL.console
+            : g_game.console == FE_CONSOLE_GBC ? "gbc"
+            : g_game.console == FE_CONSOLE_GB ? "gb"
+            : g_game.console == FE_CONSOLE_NES ? "nes"
+            : g_game.console == FE_CONSOLE_WSWAN ? "ws" : "gba");
+   if (L.room_kind == LAN_KIND_PAD)
+   {
+      /* the whole file's CRC: two different games never meet by a code */
+      pad_game8(d->game);
+   }
+   else
+   {
+      if (L.room_kind == LAN_KIND_GB_CABLE)
+         room_code_gb(g_game.gb_title, sizeof(g_game.gb_title), code);
+      else
+         room_code_gba(g_game.code, code);
+      for (i = 0; i < 4; i++)
+         code[i] = (char)((code[i] >= 'a' && code[i] <= 'z') ? code[i] - 32
+                                                             : code[i]);
+      memcpy(d->game, code, 5);
+   }
+   put_text(d->title, sizeof(d->title), SL.on ? SL.title : g_game.name);
+   put_text(d->nick, sizeof(d->nick), g_pcfg.nick);
+   if (!d->nick[0])
+      snprintf(d->nick, sizeof(d->nick), "Vita");
+   d->compat = S.compat[L.room_kind];
+   d->relay_only = g_pcfg.online_relay != 0;
+   if (SL.on)
+   {
+      /* (the CRC is the whole identity.)  `game` is upper-case, `rom` must be LOWER-case hex: the room service
+       * refuses a create whose rom has an A..F (400), which was nearly every SNES game. */
+      snprintf(d->rom, sizeof(d->rom), "%s", SL.game);
+      for (i = 0; d->rom[i]; i++)
+         if (d->rom[i] >= 'A' && d->rom[i] <= 'F')
+            d->rom[i] = (char)(d->rom[i] + 32);
+   }
+   else if (L.is_host)
+      (void)ui_host_online_rom_id(g_game.rom_path, d->rom);
+}
+
+/* The other console is in (host): the room is closed on the service and the
+ * quality toast is owed once the measurement is done. */
+static void online_arrived(void)
+{
+   if (!L.on_live)
+      return;
+   online_linked();
+   L.on_toast = 1;
+}
+
+/* Once per frame, while an Online link is being made or is up. */
+static void online_service(unsigned pad_new)
+{
+   online_view v;
+   int ui, toast_only = 0;
+
+   if (!L.on_live)
+      return;
+   online_get(&v);
+   if (L.on_toast)
+   {
+      if (v.stage == ON_CONNECTED)
+      {
+         L.on_toast = 0;
+         ui_online_connected_toast(v.peer_nick[0] ? v.peer_nick : L.peer,
+                                   v.quality);
+      }
+      else if (v.stage == ON_FAILED)
+         L.on_toast = 0;
+   }
+   if (L.is_host)
+   {
+      /* A host whose room failed before anybody came: the page says why.
+       * After somebody came the room is no longer needed. */
+      if (v.stage == ON_FAILED && L.phase == PH_HOSTING &&
+          !fe_host_gblink_active())
+      {
+         ui = online_ui_fail(&v, &toast_only);
+         fe_evt("link_online_failed why=%d ui=%d host=1", v.fail, ui);
+         if (toast_only)
+         {
+            net_down();
+            link_off();
+            osd_toast(tr("toast.the_code_expired_host_again_for"));
+            if (SL.on)
+               SL.said = 1;
+         }
+         else
+            bringup_failed(ui);
+      }
+      return;
+   }
+   if (L.phase != PH_ONLINE)
+      return;
+   if (pad_new & CTL_CIRCLE)
+   {
+      fe_evt("link_cancel phase=online stage=%d", v.stage);
+      net_down();
+      link_off();
+      osd_toast(tr("toast.link_cancelled"));
+      return;
+   }
+   if (v.stage == ON_CONNECTED)
+   {
+      /* The peer answers: from here it is the Internet connection's way
+       * (netdrv, then the session). */
+      if (v.peer_nick[0])
+         snprintf(L.peer, sizeof(L.peer), "%.15s", v.peer_nick);
+      ui_online_connected_toast(L.peer, v.quality);
+      fe_evt("link_online_up relayed=%d rtt_ms=%d q=%d", v.relayed, v.rtt_ms,
+             v.quality);
+      after_transport();
+   }
+   else if (v.stage == ON_FAILED)
+   {
+      ui = online_ui_fail(&v, NULL);
+      fe_evt("link_online_failed why=%d ui=%d host=0", v.fail, ui);
+      bringup_failed(ui);
+   }
+}
+
+/* ---- who asks: is a session linked? ---------------------------------------
+
+ * The fetchers (cover art, achievements) and anything else that wants the
+ * radio and the card to itself while two consoles play asks this: a linked
+ * session has twenty seconds of patience, not unlimited, and every socket
+ * and every card read is a thing its frame loop competes with.  True from
+ * the moment the partner has arrived (timing the way to it, or running)
+ * until the session is gone; not while a host merely waits. */
+int link_is_active(void)
+{
+   return L.phase == PH_MEASURE || L.phase == PH_LINKED ||
+          fe_host_gblink_active();
+}
+
+/* ---- the census: once a second while linked ---------------------------------
+ * What the wire did, counted by the transport's I/O thread (so a stalled
+ * main thread does not hide anything):
+ *   EVT link_census in= out= keep_in= keep_out= worst_gap_ms= retx= path=
+ * in/out are datagrams from/to the partner this second (netdrv frames, the
+ * bulk lane and keepalives), keep_* the transport's own keepalives among
+ * them, worst_gap_ms the longest silence from the partner inside the second,
+ * retx netdrv's retransmissions in it, path lan | direct | adhoc.  Ad hoc
+ * has no I/O-thread counters: only retx and the path. */
+static void census_tick(void)
+{
+   uint32_t retx = fe_np_retx();
+
+   if (!link_is_active())
+   {
+      L.census_on = 0;
+      return;
+   }
+   if (L.transport == TR_LAN && L.lan)
+   {
+      lan_census c;
+      if (!L.census_on)
+      {
+         lan_transport_census(L.lan, &c, 1);      /* a clean baseline */
+         L.census_on = 1;
+         L.t_census = L.ticks;
+         L.retx_prev = retx;
+         return;
+      }
+      if (L.ticks - L.t_census < 60u)
+         return;
+      L.t_census = L.ticks;
+      lan_transport_census(L.lan, &c, 1);
+      fe_evt("link_census in=%u out=%u keep_in=%u keep_out=%u "
+             "worst_gap_ms=%u retx=%u path=%s", c.pkts_in, c.pkts_out,
+             c.keep_in, c.keep_out, c.worst_gap_us / 1000u,
+             (unsigned)(retx - L.retx_prev), c.path);
+   }
+   else if (L.transport == TR_ADHOC)
+   {
+      if (!L.census_on)
+      {
+         L.census_on = 1;
+         L.t_census = L.ticks;
+         L.retx_prev = retx;
+         return;
+      }
+      if (L.ticks - L.t_census < 60u)
+         return;
+      L.t_census = L.ticks;
+      fe_evt("link_census retx=%u path=adhoc", (unsigned)(retx - L.retx_prev));
+   }
+   else
+      return;
+   L.retx_prev = retx;
+}
+
 /* ---- the session (cable / GB): start ------------------------------------------------------- */
+
+/* A WonderSwan's inputs are counted in its own frames (13.25 ms, not the
+ * 16.7 of a display refresh), so the same time is more of them.  The
+ * player's fixed setting is left as it is. */
+static unsigned ws_delay(unsigned d, unsigned cap)
+{
+   if (L.kind != LK_PAD || g_game.console != FE_CONSOLE_WSWAN)
+      return d;
+   d = (d * WS_DELAY_NUM + 99u) / 100u;
+   return d > cap ? cap : d;
+}
 
 static unsigned delay_pick(const char **how)
 {
-   unsigned d, base = L.conn == LINK_CONN_INTERNET ? DELAY_INTERNET
+   /* Online is the Internet case, with a ceiling of its own: what a
+    * measured trip over the internet asks for may be more than the 8 the
+    * other connections stop at (round trip 150 ms with 20 ms of spread
+    * already asks for 8, 200 ms for 10).  The player's fixed setting stays
+    * 1..8 everywhere. */
+   const int inet = L.conn == LINK_CONN_INTERNET || L.conn == LINK_CONN_ONLINE;
+   const unsigned cap = L.conn == LINK_CONN_ONLINE ? DELAY_ONLINE_MAX
+                                                    : DELAY_MAX;
+   unsigned d, want, base = inet ? DELAY_INTERNET
                     : L.conn == LINK_CONN_ADHOC ? DELAY_ADHOC : DELAY_WIFI;
    uint32_t mn = 0, mx = 0, last = 0;
    int n;
@@ -1083,7 +1738,7 @@ static unsigned delay_pick(const char **how)
    n = L.transport == TR_LAN
           ? lan_transport_echo_result(L.lan, &mn, &mx, &last) : 0;
    if (n < 2)
-      return base;
+      return ws_delay(base, cap);
    /* One frame for the two consoles' phase (they are not synchronised: up
     * to a frame apart), plus what the trip one way and its spread need.
     * The spread is taken from the round trips, so it is counted twice over:
@@ -1092,14 +1747,15 @@ static unsigned delay_pick(const char **how)
    if (d < 2)
       d = 2;
    /* An internet path's quiet moment is not its evening. */
-   if (L.conn == LINK_CONN_INTERNET && d < 3)
+   if (inet && d < 3)
       d = 3;
-   if (d > DELAY_MAX)
-      d = DELAY_MAX;
+   want = d;
+   if (d > cap)
+      d = cap;
    *how = "measured";
-   fe_evt("link_rtt n=%d min_us=%u max_us=%u last_us=%u", n, (unsigned)mn,
-          (unsigned)mx, (unsigned)last);
-   return d;
+   fe_evt("link_rtt n=%d min_us=%u max_us=%u last_us=%u want=%u", n,
+          (unsigned)mn, (unsigned)mx, (unsigned)last, want);
+   return ws_delay(d, cap);
 }
 
 /* Start the link session over the driver that is up (psp/main_psp.c
@@ -1108,6 +1764,25 @@ static int session_begin(void)
 {
    const char *how = "host";
    int rc;
+
+   if (SL.on)
+   {
+      /* SNES / MD: the session is pk_link's.  With Auto delay (< 1), leave SL.delay = 0 so
+       * pk_link runs its own PAL-aware RTT calibration; fixed delays (>= 1) are forwarded. */
+      if (L.is_host && g_pcfg.link_delay >= 1)
+         SL.delay = delay_pick(&how);
+      else
+      {
+         SL.delay = 0;
+         if (L.is_host)
+            how = "auto";
+      }
+      fe_evt("link_snes_session role=%s delay=%u how=%s", L.is_host ? "host" : "guest", SL.delay, how);
+      SL.sub = L.is_host ? 2 : 1;
+      SL.t_seen = L.ticks;
+      phase_set(PH_LINKED);
+      return 0;
+   }
 
    if (ui_active())
       ui_close();                    /* the session's setup needs the screen */
@@ -1131,6 +1806,8 @@ static int session_begin(void)
    fe_evt("fast_link_setting own=%d role=%s", g_pcfg.fast_link,
           L.is_host ? "host" : "guest");
    rc = fe_host_gblink_start(L.is_host, L.delay, 0);
+   if (fe_host_gb_core_notice_take() == 2)
+      osd_toast(tr("toast.link_play_uses_the_standard_gb_core"));
    app_frame_forget();               /* the single machine's frame is gone */
    app_audio_flush();
    app_pace_reset();
@@ -1141,7 +1818,7 @@ static int session_begin(void)
       /* the game could not be put back: nothing to return to */
       net_down();
       link_off();
-      app_quit_game("The link could not start and the game had to close.");
+      app_quit_game(tr("link.the_link_could_not_start_and"));
       return rc;
    }
    if (rc != 0)
@@ -1150,7 +1827,7 @@ static int session_begin(void)
       link_off();
       if (L.is_host)
          L.error = fail_line(UI_FAIL_MEMORY);
-      osd_toast("The link could not start");
+      osd_toast(tr("toast.the_link_could_not_start"));
       return rc;
    }
    L.screen = 1;
@@ -1259,7 +1936,7 @@ static void adhoc_dialog_done(int st)
       net_down();
       link_off();
       if (!L.is_host)
-         osd_toast("Link cancelled.");
+         osd_toast(tr("toast.link_cancelled"));
       return;
    }
    if (st != VADHOC_DLG_OK)
@@ -1298,7 +1975,7 @@ void link_action(int is_host)
    if (L.phase != PH_OFF || fe_host_gblink_active())
    {
       if (!is_host)
-         osd_toast("Already linked. Disconnect first.");
+         osd_toast(tr("toast.already_linked_disconnect_first"));
       return;
    }
    L.is_host = is_host;
@@ -1307,8 +1984,9 @@ void link_action(int is_host)
       L.conn = LINK_CONN_WIFI;
    if (is_host)
    {
-      rk = !gba ? ROOM_CABLE_GB : ui_host_cable() ? ROOM_CABLE_GBA
-                                                  : ROOM_ADAPTER;
+      rk = is_pad_game() ? ROOM_PAD
+           : !gba ? ROOM_CABLE_GB : ui_host_cable() ? ROOM_CABLE_GBA
+                                                    : ROOM_ADAPTER;
       L.number = room_number(ui_group());
    }
    else
@@ -1322,23 +2000,28 @@ void link_action(int is_host)
    /* An ad hoc joiner has no list to learn the host's room number from:
     * its screens name the connection instead of guessing a room. */
    if (!is_host && L.conn == LINK_CONN_ADHOC)
-      snprintf(L.room, sizeof(L.room), "Ad hoc");
+      snprintf(L.room, sizeof(L.room), tr("link.ad_hoc"));
+   else if (L.conn == LINK_CONN_ONLINE)
+      snprintf(L.room, sizeof(L.room), tr("link.online"));
    else
-      snprintf(L.room, sizeof(L.room), ROOM_LABEL_WORD " %d", L.number);
+      snprintf(L.room, sizeof(L.room), tr("link.room"), L.number);
    /* What the room is and what this game can be in it: the Join list has
     * already refused the pairs that cannot work; a room that is not this
     * console's kind at all is refused here too. */
-   if (rk != ROOM_ADAPTER && rk != ROOM_CABLE_GBA && rk != ROOM_CABLE_GB)
-      rk = gba ? ROOM_ADAPTER : ROOM_CABLE_GB;
-   if ((rk == ROOM_CABLE_GB) != !gba)
+   if (rk != ROOM_ADAPTER && rk != ROOM_CABLE_GBA && rk != ROOM_CABLE_GB &&
+       rk != ROOM_PAD)
+      rk = is_pad_game() ? ROOM_PAD : gba ? ROOM_ADAPTER : ROOM_CABLE_GB;
+   if ((rk == ROOM_PAD) != is_pad_game() ||
+       (rk == ROOM_CABLE_GB && gba) ||
+       ((rk == ROOM_ADAPTER || rk == ROOM_CABLE_GBA) && !gba))
    {
       L.kind = LK_NONE;
       bringup_failed(UI_FAIL_GAME);
       return;
    }
    L.room_kind = rk;
-   L.kind = rk == ROOM_CABLE_GB ? LK_GB : rk == ROOM_CABLE_GBA ? LK_CABLE
-                                                               : LK_ADAPTER;
+   L.kind = rk == ROOM_PAD ? LK_PAD : rk == ROOM_CABLE_GB ? LK_GB
+            : rk == ROOM_CABLE_GBA ? LK_CABLE : LK_ADAPTER;
    L.flips = 0;
    L.flip_now = 0;
    L.can_flip = !is_host && L.conn == LINK_CONN_ADHOC && gba &&
@@ -1354,7 +2037,14 @@ void link_action(int is_host)
       bringup_failed(UI_FAIL_MEMORY);
       return;
    }
-   if (!is_host)
+   if (L.kind == LK_PAD && !SL.on && !fe_host_pad_ready())
+   {
+      /* a core that cannot take part (an older core build, a game that is
+       * not running): nothing was started */
+      bringup_failed(UI_FAIL_GAME);
+      return;
+   }
+   if (!is_host && !SL.on)
    {
       app_snapshot_take();
       app_backdrop_from_snapshot();
@@ -1363,6 +2053,52 @@ void link_action(int is_host)
    if (L.conn == LINK_CONN_ADHOC)
    {
       adhoc_start();
+      return;
+   }
+   if (L.conn == LINK_CONN_ONLINE)
+   {
+      /* Drop any background update check before hitting np_https for the room service. */
+      upd_stop();
+      /* No target and no list: the room service finds the other console. */
+      rc = infra_open(is_host, 0, 0);
+      if (rc != 0)
+      {
+         bringup_failed(-rc - 1);
+         return;
+      }
+      if (is_host)
+      {
+         /* The game keeps running and netdrv listens as for any host; the
+          * room is asked for beside it (link_service steps it). */
+         after_transport();
+         if (L.phase == PH_HOSTING)
+         {
+            online_desc d;
+            online_desc_make(&d);
+            if (online_host(L.lan, &d) != 0)
+            {
+               bringup_failed(UI_FAIL_ONLINE_SERVICE);
+               return;
+            }
+            L.on_live = 1;
+            L.on_toast = 0;
+         }
+      }
+      else
+      {
+         online_desc d;
+         L.screen = 1;
+         hold_game(1);
+         online_desc_make(&d);
+         if (!t->online_code[0] ||
+             online_join(L.lan, t->online_code, &d) != 0)
+         {
+            bringup_failed(UI_FAIL_ONLINE_CODE);
+            return;
+         }
+         L.on_live = 1;
+         phase_set(PH_ONLINE);
+      }
       return;
    }
    if (is_host)
@@ -1378,6 +2114,8 @@ void link_action(int is_host)
          bringup_failed(UI_FAIL_ADDRESS);
          return;
       }
+      SL.peer_ip_be = ip;
+      SL.peer_port = port;
       rc = infra_open(0, ip, port);
    }
    if (rc != 0)
@@ -1418,7 +2156,7 @@ void link_disconnect(void)
       if (ui_active())
          ui_close();
       if (st == FE_GBLINK_RUNNING)
-         osd_toast("Ending the link...");
+         osd_toast(tr("toast.ending_the_link"));
       return;
    }
    if (L.phase == PH_OFF)
@@ -1431,9 +2169,9 @@ void link_disconnect(void)
       net_down();
       link_off();
       if (hosting)
-         osd_toast("Stopped hosting %s", room);
+         osd_toast(tr("toast.stopped_hosting"), room);
       else
-         osd_toast("Disconnected");
+         osd_toast(tr("toast.disconnected"));
    }
 }
 
@@ -1504,8 +2242,8 @@ void link_power(int resumed)
    if (L.resume_note)
    {
       osd_toast("%s", L.resume_note == LW_SLEEP
-                ? "The link ended when the Vita went to sleep."
-                : "The room was closed when the Vita went to sleep.");
+                ? tr("toast.the_link_ended_when_the_vita")
+                : tr("toast.the_room_was_closed_when_the"));
       fe_evt("link_resume note=%s", L.resume_note == LW_SLEEP ? "sleep"
                                                                : "room");
       L.resume_note = 0;
@@ -1576,7 +2314,7 @@ static int session_fail_code(const fe_gblink_progress *pr)
    if (e == FE_GBLINK_E_PROTO)
       return UI_FAIL_VERSION;
    if (e == FE_GBLINK_E_ROM_MISSING || e == FE_GBLINK_E_ROM_BAD)
-      return UI_FAIL_GAME;
+      return L.kind == LK_PAD ? UI_FAIL_ONLINE_GAME : UI_FAIL_GAME;
    if (e == FE_GBLINK_E_MEMORY || e == FE_GBLINK_E_START)
       return UI_FAIL_MEMORY;
    if (L.why == LW_NOANSWER || e == FE_GBLINK_E_NO_PEER)
@@ -1616,13 +2354,15 @@ static void link_end(int st, unsigned pad_new)
 {
    fe_gblink_progress pr;
    int fail_screen, keep_room, desync, was_cable, why = L.why;
+   const int was_pad = L.kind == LK_PAD, was_host = L.is_host;
 
    fe_host_gblink_facts(&pr);
    desync = pr.error == FE_GBLINK_E_DESYNC ||
             (pr.error == FE_GBLINK_E_PEER_ABORT &&
              pr.peer_reason == FE_GBLINK_E_DESYNC);
+   /* (an Online room is closed at the link: its code is no use again) */
    keep_room = st == FE_GBLINK_FAILED && !pr.ran && L.is_host &&
-               why == LW_NONE && L.net_up;
+               why == LW_NONE && L.net_up && L.conn != LINK_CONN_ONLINE;
    fail_screen = st == FE_GBLINK_FAILED && !pr.ran && !keep_room &&
                  why != LW_CANCEL && !L.is_host && !L.flip_now;
    if (!L.ended)
@@ -1672,7 +2412,7 @@ static void link_end(int st, unsigned pad_new)
    {
       net_down();
       link_off();
-      app_quit_game("The game could not be reloaded after the link.");
+      app_quit_game(tr("link.the_game_could_not_be_reloaded"));
       return;
    }
    app_frame_forget();
@@ -1693,30 +2433,39 @@ static void link_end(int st, unsigned pad_new)
       announce(1, 1);
       phase_set(PH_HOSTING);
       osd_toast("%s", e == FE_GBLINK_E_ROM_MISSING || e == FE_GBLINK_E_ROM_BAD
-                ? "The other Vita could not set up the game."
-                : "The other Vita left before the link started.");
+                ? tr("toast.the_other_vita_could_not_set")
+                : tr("toast.the_other_vita_left_before_the"));
       fe_evt("link_host_keeps_room room=\"%s\"", L.room);
       return;
    }
    link_off();
-   if (st == FE_GBLINK_DONE)
-      osd_toast("Link ended. Game saved.");
+   if (was_pad && st == FE_GBLINK_DONE)
+      osd_toast(was_host ? tr("toast.link_ended_game_saved")
+                          : tr("toast.link_ended_your_own_game_is"));
+   else if (was_pad && pr.ran)
+      osd_toast(desync
+                ? tr("toast.the_games_fell_out_of_step")
+                : was_host
+                  ? tr("toast.link_lost_the_other_vita_is_2")
+                  : tr("toast.link_lost_the_other_vita_is"));
+   else if (st == FE_GBLINK_DONE)
+      osd_toast(tr("toast.link_ended_game_saved"));
    else if (why == LW_CANCEL)
-      osd_toast("Link cancelled.");
+      osd_toast(tr("toast.link_cancelled"));
    else if (fail_screen)
       ;                              /* its two lines were the answer */
    else if (!pr.ran)
-      osd_toast(why == LW_WIFI ? "Wi-Fi was lost. The link did not start."
-                               : "The link did not start.");
+      osd_toast(why == LW_WIFI ? tr("toast.wi_fi_was_lost_the_link")
+                               : tr("toast.the_link_did_not_start"));
    else if (desync)
-      osd_toast("The games fell out of step. Link ended, nothing saved.");
+      osd_toast(tr("toast.the_games_fell_out_of_step_2"));
    else if (why == LW_WIFI)
-      osd_toast(was_cable ? "Wi-Fi was lost. Link ended; your game carries on."
-                          : "Wi-Fi was lost. Link ended, nothing saved.");
+      osd_toast(was_cable ? tr("toast.wi_fi_was_lost_link_ended")
+                          : tr("toast.wi_fi_was_lost_link_ended_2"));
    else
       osd_toast(was_cable
-                ? "Link lost: the other Vita is gone. Your game carries on."
-                : "Link lost: the other Vita is gone. Nothing saved.");
+                ? tr("toast.link_lost_the_other_vita_is_2")
+                : tr("toast.link_lost_the_other_vita_is_3"));
 }
 
 /* ---- once per loop iteration --------------------------------------------------------------- */
@@ -1744,13 +2493,13 @@ static void link_lost(int why)
       {
          if (hosting)
             L.error = fail_line(UI_FAIL_NO_WIFI);
-         osd_toast("Wi-Fi was lost. %s", hosting ? "The room is closed."
-                                                  : "The link has ended.");
+         osd_toast(tr("toast.wi_fi_was_lost"), hosting ? tr("toast.the_room_is_closed")
+                                                  : tr("toast.the_link_has_ended"));
       }
       else if (why == LW_OVERLOAD)
-         osd_toast("Link error: the connection could not keep up.");
+         osd_toast(tr("toast.link_error_the_connection_could_not"));
       else
-         osd_toast("The connection was lost. The link has ended.");
+         osd_toast(tr("toast.the_connection_was_lost_the_link"));
    }
 }
 
@@ -1789,7 +2538,15 @@ static void peer_name_take(void)
          n = vp[0].nick;
    }
    if (n && n[0])
+   {
+      size_t i;
       snprintf(L.peer, sizeof(L.peer), "%.23s", n);
+      /* The other console's text: it goes on the screen and into the log, so
+       * printable ASCII only (the room lists and the online card do the same). */
+      for (i = 0; L.peer[i]; i++)
+         if ((unsigned char)L.peer[i] < 0x20 || (unsigned char)L.peer[i] > 0x7E)
+            L.peer[i] = '?';
+   }
 }
 
 /* The Wireless Adapter kind: netdrv carries the game's own protocol. */
@@ -1803,7 +2560,7 @@ static void adapter_service(unsigned pad_new)
          hold_game(0);
          phase_set(PH_LINKED);
          peer_name_take();
-         osd_toast("Joined %s", L.room);
+         osd_toast(tr("toast.joined"), L.room);
          return;
       }
       if (pad_new & CTL_CIRCLE)
@@ -1811,7 +2568,7 @@ static void adapter_service(unsigned pad_new)
          fe_evt("link_cancel phase=joining");
          net_down();
          link_off();
-         osd_toast("Link cancelled.");
+         osd_toast(tr("toast.link_cancelled"));
          return;
       }
       if (fe_np_stop_reason() == ND_STOP_REFUSED)
@@ -1844,11 +2601,12 @@ static void adapter_service(unsigned pad_new)
          if (n > was)
          {
             peer_name_take();
-            osd_toast("%s joined %s", L.peer[0] ? L.peer : "A player",
+            online_arrived();
+            osd_toast(tr("toast.joined_2"), L.peer[0] ? L.peer : tr("toast.a_player"),
                       L.room);
          }
          else
-            osd_toast("A player left %s", L.room);
+            osd_toast(tr("toast.a_player_left"), L.room);
       }
       phase_set(n > 0 ? PH_LINKED : PH_HOSTING);
    }
@@ -1858,8 +2616,8 @@ static void adapter_service(unsigned pad_new)
       fe_evt("link_adapter_end stop=%d", r);
       net_down();
       link_off();
-      osd_toast("%s", r == ND_STOP_HOST_BYE ? "The host closed the room."
-                : "Link lost: the other Vita is gone.");
+      osd_toast("%s", r == ND_STOP_HOST_BYE ? tr("toast.the_host_closed_the_room")
+                : tr("toast.link_lost_the_other_vita_is_4"));
       return;
    }
    exit_assist_frame();
@@ -1931,13 +2689,20 @@ static void mirror_service(unsigned pad_new)
             phase_set(PH_HOSTING);
          return;
       }
+      if (L.conn == LINK_CONN_ONLINE && L.on_live && L.on_stage != ON_CONNECTED)
+         return;
       if (L.phase == PH_HOSTING)
       {
          peer_name_take();
+         online_arrived();
          announce(2, 0);
          fe_evt("link_host_peer room=\"%s\" peer=\"%s\"", L.room, L.peer);
          L.echoes = 0;
-         if (L.transport == TR_LAN && g_pcfg.link_delay < 1)
+         /* (a SNES link measures too: its delay goes into the launch file, and without this a relayed or Same
+          * Wi-Fi SNES game ran on the connection's fixed guess whatever the path was) */
+         if (L.transport == TR_LAN && g_pcfg.link_delay < 1 && !SL.on &&
+             !(L.conn == LINK_CONN_ONLINE && L.on_live &&
+               lan_transport_echo_result(L.lan, NULL, NULL, NULL) >= 2))
          {
             lan_transport_echo_reset(L.lan);
             phase_set(PH_MEASURE);
@@ -2004,7 +2769,7 @@ static void mirror_service(unsigned pad_new)
          else if (L.ticks - L.t_stall >= T_STALL_NOTE && !L.stall_told)
          {
             L.stall_told = 1;
-            osd_toast("Waiting for the other Vita...");
+            osd_toast(tr("toast.waiting_for_the_other_vita"));
             fe_evt("link_stall_note frames=%u", frames);
          }
       }
@@ -2055,9 +2820,23 @@ static void link_service(unsigned pad_new)
          link_off();
       return;
    }
+   online_service(pad_new);
+   if (L.phase == PH_ONLINE)
+   {
+      /* An Online joiner: the screen is up while the room service, the
+       * punch and the relay do their work.  The Wi-Fi is still watched. */
+      L.screen = 1;
+      if (L.ticks - L.t_watch >= WATCH_EVERY)
+      {
+         L.t_watch = L.ticks;
+         radio_watch();
+      }
+      return;
+   }
    if (L.net_up)
    {
       fe_np_pump();
+      census_tick();
       if (fe_np_failed())
          link_lost(LW_OVERLOAD);
       else if (L.ticks - L.t_watch >= WATCH_EVERY)
@@ -2090,6 +2869,10 @@ void link_frame(void)
    if (ui_active() || ui_typing())
       pad_new = 0;
 
+   /* EVERY frame, even with nothing Online going on: a room's close that
+    * did not get out (the worker was busy, a request was dropped with the
+    * link) is retried from here, after online_stop(). */
+   L.on_stage = online_step();
    igd_service();                    /* also the last room's goodbye */
    if (L.phase != PH_OFF || fe_host_gblink_active())
       link_service(pad_new);
@@ -2117,11 +2900,11 @@ static void amount_text(char *out, size_t cap, uint32_t done, uint32_t total)
    {
       unsigned d = (unsigned)(((uint64_t)done * 10u + 524288u) >> 20);
       unsigned t = (unsigned)(((uint64_t)total * 10u + 524288u) >> 20);
-      snprintf(out, cap, "%u.%u / %u.%u MB", d / 10u, d % 10u, t / 10u,
+      snprintf(out, cap, tr("link.mb"), d / 10u, d % 10u, t / 10u,
                t % 10u);
    }
    else
-      snprintf(out, cap, "%u / %u KB", (unsigned)((done + 512u) >> 10),
+      snprintf(out, cap, tr("link.kb"), (unsigned)((done + 512u) >> 10),
                (unsigned)((total + 512u) >> 10));
 }
 
@@ -2144,8 +2927,8 @@ static void linking_view(ui_linking_view *v, char *l1, size_t c1, char *l2,
 
    if (L.phase == PH_DIALOG)
    {
-      snprintf(l1, c1, "Connecting to the other Vita");
-      snprintf(l2, c2, "Follow the Vita's connection screen.");
+      snprintf(l1, c1, tr("link.connecting_to_the_other_vita"));
+      snprintf(l2, c2, tr("link.follow_the_vita_s_connection_screen"));
       v->footer = "";               /* the dialog has its own Cancel */
       return;
    }
@@ -2158,15 +2941,29 @@ static void linking_view(ui_linking_view *v, char *l1, size_t c1, char *l2,
       v->busy = 0;
       return;
    }
+   if (L.phase == PH_ONLINE)
+   {
+      online_view ov;
+      online_get(&ov);
+      snprintf(l1, c1, tr("link.joining"), ov.code[0] ? ov.code : tr("link.the_room"));
+      if (ov.stage >= ON_RELAY_CREDS && ov.stage <= ON_RELAY_WAIT)
+         snprintf(l2, c2, tr("link.connecting_through_the_relay"));
+      else if (ov.stage == ON_PUNCH || ov.stage == ON_MEASURE ||
+               ov.stage == ON_CONNECTED)
+         snprintf(l2, c2, tr("link.connecting"));
+      else
+         snprintf(l2, c2, tr("link.finding_your_friend"));
+      return;
+   }
    if (L.phase == PH_JOINING)
    {
-      snprintf(l1, c1, "Joining %s by Wireless Adapter", L.room);
-      snprintf(l2, c2, "Finding the room...");
+      snprintf(l1, c1, tr("link.joining_by_wireless_adapter"), L.room);
+      snprintf(l2, c2, tr("link.finding_the_room"));
       return;
    }
 
    fe_host_gblink_facts(&pr);
-   snprintf(l1, c1, "Linking with %s", L.peer[0] ? L.peer : "the other Vita");
+   snprintf(l1, c1, tr("link.linking_with"), L.peer[0] ? L.peer : tr("link.the_other_vita"));
    /* A different game on the other Vita (Ruby with Sapphire): "Ruby <->
     * Sapphire" once its header is here. */
    if (!gb && pr.partner_other && pr.have_peer_header)
@@ -2177,97 +2974,97 @@ static void linking_view(ui_linking_view *v, char *l1, size_t c1, char *l2,
       pc[4] = '\0';
       t = link_game_title(pc);
       snprintf(nm, sizeof(nm), "%s", t ? t : pr.peer_title[0] ? pr.peer_title
-                                                          : "another game");
+                                                          : tr("link.another_game"));
       snprintf(l3, c3, "%.38s  <->  %.38s", g_game.name, nm);
       v->l3 = l3;
    }
    switch (pr.phase)
    {
    case FE_GBLINK_PH_CHECK:
-      snprintf(l2, c2, "Checking the game...");
+      snprintf(l2, c2, tr("link.checking_the_game"));
       if (pr.total)
          v->frac = (int)((uint64_t)pr.done * 100u / pr.total);
       break;
    case FE_GBLINK_PH_WAIT_PEER:
-      snprintf(l2, c2, L.is_host ? "Waiting for the other Vita..."
-                                 : "Finding the room...");
+      snprintf(l2, c2, L.is_host ? tr("link.waiting_for_the_other_vita")
+                                 : tr("link.finding_the_room"));
       break;
    case FE_GBLINK_PH_HELLO:
-      snprintf(l2, c2, "Checking the game...");
+      snprintf(l2, c2, tr("link.checking_the_game"));
       v->frac = 100;
       break;
    case FE_GBLINK_PH_ROM_RX:
    case FE_GBLINK_PH_ROM_TX:
       snprintf(l2, c2, "%s %s...",
-               pr.phase == FE_GBLINK_PH_ROM_RX ? "Receiving" : "Sending",
+               pr.phase == FE_GBLINK_PH_ROM_RX ? tr("link.receiving") : tr("link.sending"),
                pr.phase == FE_GBLINK_PH_ROM_RX
-                  ? (pr.peer_title[0] ? pr.peer_title : "the game")
-                  : (gb ? (g_game.gb_title[0] ? g_game.gb_title : "your game")
-                        : (g_game.name[0] ? g_game.name : "your game")));
+                  ? (pr.peer_title[0] ? pr.peer_title : tr("link.the_game"))
+                  : (gb ? (g_game.gb_title[0] ? g_game.gb_title : tr("link.your_game"))
+                        : (g_game.name[0] ? g_game.name : tr("link.your_game"))));
       amount_text(amt, ca, pr.done, pr.total);
       v->amount = amt;
       v->frac = pr.total ? (int)((uint64_t)pr.done * 1000u / pr.total) : 0;
       if (gb)
-         snprintf(l3, c3, "The game is kept in memory, not on the memory "
-                  "card.");
+         snprintf(l3, c3, tr("link.the_game_is_kept_in_memory")
+);
       else if (pr.eta_s)
       {
          /* once per game: the copy is kept for the next time */
          char left[24];
          if (pr.eta_s >= 90)
-            snprintf(left, sizeof(left), "about %u min", (pr.eta_s + 59) / 60);
+            snprintf(left, sizeof(left), tr("link.about_min"), (pr.eta_s + 59) / 60);
          else
-            snprintf(left, sizeof(left), "about %u s", pr.eta_s);
-         snprintf(l3, c3, "%s left. First time only. Cancel to stop.",
+            snprintf(left, sizeof(left), tr("link.about_s"), pr.eta_s);
+         snprintf(l3, c3, tr("link.left_first_time_only_cancel_to"),
                   left);
       }
       else
-         snprintf(l3, c3, "First time with this game only. Cancel to "
-                  "stop.");
+         snprintf(l3, c3, tr("link.first_time_with_this_game_only")
+);
       v->l3 = l3;
       break;
    case FE_GBLINK_PH_STORE:
-      snprintf(l2, c2, "Keeping a copy of %s...",
-               pr.peer_title[0] ? pr.peer_title : "the game");
+      snprintf(l2, c2, tr("link.keeping_a_copy_of"),
+               pr.peer_title[0] ? pr.peer_title : tr("link.the_game"));
       amount_text(amt, ca, pr.done, pr.total);
       v->amount = amt;
       v->frac = pr.total ? (int)((uint64_t)pr.done * 1000u / pr.total) : 0;
       break;
    case FE_GBLINK_PH_VERIFY:
-      snprintf(l2, c2, "Checking %s...",
-               pr.peer_title[0] ? pr.peer_title : "the other game");
+      snprintf(l2, c2, tr("link.checking"),
+               pr.peer_title[0] ? pr.peer_title : tr("link.the_other_game"));
       v->frac = pr.total ? (int)((uint64_t)pr.done * 1000u / pr.total) : 0;
       break;
    case FE_GBLINK_PH_SHARE:
-      snprintf(l2, c2, "%s", gb ? "Exchanging saves..."
-                                : "Sharing where you are...");
+      snprintf(l2, c2, "%s", gb ? tr("link.exchanging_saves")
+                                : tr("link.sharing_where_you_are"));
       amount_text(amt, ca, pr.done, pr.total);
       v->amount = amt;
       v->frac = pr.total ? (int)((uint64_t)pr.done * 1000u / pr.total) : 0;
       if (!gb && !v->l3)
       {
-         snprintf(l3, c3, "Both games carry on from where they are.");
+         snprintf(l3, c3, tr("link.both_games_carry_on_from_where"));
          v->l3 = l3;
       }
       break;
    case FE_GBLINK_PH_START:
    case FE_GBLINK_PH_RUNNING:
-      snprintf(l2, c2, "Starting together...");
+      snprintf(l2, c2, tr("link.starting_together"));
       v->frac = 1000;
       break;
    case FE_GBLINK_PH_ENDING:
    case FE_GBLINK_PH_DONE:
-      snprintf(l1, c1, "Ending the link...");
+      snprintf(l1, c1, tr("link.ending_the_link"));
       snprintf(l2, c2, "%s", pr.phase == FE_GBLINK_PH_DONE
-               ? "Link ended. Game saved."
-               : "Both Vitas agree where to stop.");
+               ? tr("link.link_ended_game_saved")
+               : tr("link.both_vitas_agree_where_to_stop"));
       v->footer = "";
       break;
    default:
       /* failed, and not (yet) a failure screen: a cancel, a host whose
        * visitor left, the wait for the last acknowledgement */
-      snprintf(l1, c1, "%s", L.why == LW_CANCEL ? "Link cancelled."
-                                                 : "Ending the link...");
+      snprintf(l1, c1, "%s", L.why == LW_CANCEL ? tr("link.link_cancelled")
+                                                 : tr("link.ending_the_link"));
       v->footer = "";
       break;
    }
@@ -2338,14 +3135,40 @@ static void chip_update(void)
    s[0] = '\0';
    if (L.screen || L.phase == PH_OFF || L.phase == PH_DIALOG)
       ;
+   /* Online, once linked, the quality badge follows: the room word ("Online") is left out so the
+    * chip still fits the screen with "Great (relay)" at its end. */
+   else if (L.kind == LK_ADAPTER && L.conn == LINK_CONN_ONLINE && L.phase != PH_HOSTING)
+      snprintf(s, sizeof(s), tr("link.wireless_adapter"));
    else if (L.kind == LK_ADAPTER)
-      snprintf(s, sizeof(s), "Wireless Adapter  %s%s", L.room,
+      snprintf(s, sizeof(s), tr("link.wireless_adapter_2"), L.room,
                L.phase == PH_HOSTING ? "  waiting" : "");
    else if (L.phase == PH_HOSTING || L.phase == PH_MEASURE)
-      snprintf(s, sizeof(s), "Link Cable  %s  waiting", L.room);
+      snprintf(s, sizeof(s), tr("link.waiting"),
+               L.kind == LK_PAD ? tr("link.two_players") : tr("link.link_cable"), L.room);
+   else if ((st == FE_GBLINK_RUNNING || st == FE_GBLINK_ENDING) && L.conn == LINK_CONN_ONLINE)
+      snprintf(s, sizeof(s), "%s  P%d",
+               L.kind == LK_PAD ? tr("link.two_players") : tr("link.link_cable"), L.is_host ? 1 : 2);
    else if (st == FE_GBLINK_RUNNING || st == FE_GBLINK_ENDING)
-      snprintf(s, sizeof(s), "Link Cable  %s  P%d", L.room,
+      snprintf(s, sizeof(s), "%s  %s  P%d",
+               L.kind == LK_PAD ? tr("link.two_players") : tr("link.link_cable"), L.room,
                L.is_host ? 1 : 2);
+   /* The quality badge of an Online link (80 / 120 ms, online_vita.c): the
+    * chip names it, so a slow line is no surprise when the game stutters. */
+   if (s[0] && L.conn == LINK_CONN_ONLINE && L.on_live &&
+       (st == FE_GBLINK_RUNNING || st == FE_GBLINK_ENDING ||
+        L.kind == LK_ADAPTER))
+   {
+      online_view ov;
+      online_get(&ov);
+      if (ov.quality != ONLINE_Q_NONE && ov.stage == ON_CONNECTED)
+      {
+         size_t n = strlen(s);
+         snprintf(s + n, sizeof(s) - n, "  %s%s",
+                  ov.quality == ONLINE_Q_GREAT ? tr("link.great")
+                  : ov.quality == ONLINE_Q_GOOD ? tr("link.good") : tr("link.slow"),
+                  ov.relayed ? tr("link.relay") : "");
+      }
+   }
    if (strcmp(s, L.info) != 0)
    {
       snprintf(L.info, sizeof(L.info), "%s", s);
@@ -2366,7 +3189,7 @@ void link_ui_view(ui_link_view *v)
    if (L.phase == PH_HOSTING || L.phase == PH_MEASURE)
       v->state = UI_LINK_HOSTING;
    else if (L.phase == PH_LINKED || L.phase == PH_JOINING ||
-            fe_host_gblink_active())
+            L.phase == PH_ONLINE || fe_host_gblink_active())
       v->state = UI_LINK_LINKED;
    else
    {
@@ -2388,6 +3211,22 @@ void link_ui_view(ui_link_view *v)
       v->rtt_ms = srtt ? (int)((srtt + 500u) / 1000u) : -1;
    }
    v->signal_pct = L.transport == TR_LAN ? L.signal_pct : -1;
+   if (L.conn == LINK_CONN_ONLINE && L.on_live)
+   {
+      /* the code, how long it lives, whether the relay carries the link and
+       * how good the line is (the waiting page and the chip say so) */
+      static char code[6];
+      online_view ov;
+      online_get(&ov);
+      snprintf(code, sizeof(code), "%s", L.is_host ? ov.code : "");
+      v->online_code = code[0] && ov.stage >= ON_WAITING ? code : NULL;
+      v->online_stage = ov.stage;
+      v->online_ttl_s = ov.ttl_s > ov.waited_s ? (int)(ov.ttl_s - ov.waited_s)
+                                               : 0;
+      v->relay = ov.relayed ||
+                 (ov.stage >= ON_RELAY_CREDS && ov.stage <= ON_RELAY_WAIT);
+      v->quality = ov.quality;
+   }
 }
 
 /* ---- ui_host_hooks.h section 3: the network's state ------------------------------------------- */
@@ -2524,7 +3363,8 @@ int ui_host_rooms_poll(ui_room *out, int max)
       o->players = r->info.players;
       o->max_players = r->info.max_players;
       o->open = (r->info.flags & LAN_ROOM_F_OPEN) != 0;
-      o->compatible = kind >= 0 && kind <= LAN_KIND_GB_CABLE &&
+      o->compatible = kind >= 0 &&
+                      (kind <= LAN_KIND_GB_CABLE || kind == LAN_KIND_PAD) &&
                       r->info.compat == S.compat[kind];
       o->rtt_ms = r->rtt_ms;
       snprintf(o->addr, sizeof(o->addr), "%s", r->addr);
@@ -2542,4 +3382,527 @@ int ui_host_rooms_poll(ui_room *out, int max)
                 out[i].nick);
    }
    return n;
+}
+
+
+/* ---- ui_host_hooks.h section 4b: Online ---------------------------------------------------------
+ * The room card: what a code is (the game, the host, the build), asked of
+ * the room service without a transport.  One lookup at a time. */
+
+static struct
+{
+   int            asked;           /* a lookup is out or its answer is held */
+   int            have;
+   ui_online_card card;
+} C;
+
+int ui_host_online_available(void)
+{
+   net_vita_wifi w;
+   if (!S.up || !net_vita_wifi_status(&w))
+      return 0;
+   /* the radio must be free for the internet: not ad hoc, not in a link */
+   if (net_vita_use() == NET_VITA_ADHOC || L.phase != PH_OFF ||
+       fe_host_gblink_active())
+      return 0;
+   return 1;
+}
+
+int ui_host_online_lookup(const char *code)
+{
+   net_vita_wifi w;
+
+   online_card_cancel();
+   C.asked = C.have = 0;
+   memset(&C.card, 0, sizeof(C.card));
+   if (!code || !code[0])
+      return UI_ROOMS_E_ADDRESS;
+   if (L.phase != PH_OFF || fe_host_gblink_active() ||
+       net_vita_use() == NET_VITA_ADHOC)
+      return UI_ROOMS_E_BUSY;
+   if (!S.up || !net_vita_wifi_status(&w))
+      return UI_ROOMS_E_NO_WIFI;
+   upd_stop();
+   if (online_card_begin(code) != 0)
+      return UI_ROOMS_E_FAILED;
+   C.asked = 1;
+   fe_evt("online_card ask code=%.5s", code);
+   return 0;
+}
+
+/* A room card from the service, as the page reads it. */
+static void card_from_reply(const online_reply *r)
+{
+   ui_online_card *c = &C.card;
+   int cmp;
+
+   memset(c, 0, sizeof(*c));
+   if (r->err != ONLINE_E_NONE)
+   {
+      c->state = 2;
+      switch (r->err)
+      {
+      case ONLINE_E_NOT_FOUND:  c->fail = UI_FAIL_ONLINE_CODE; break;
+      case ONLINE_E_UPDATE:     c->fail = UI_FAIL_ONLINE_UPDATE; break;
+      case ONLINE_E_BUSY:       c->fail = UI_FAIL_ONLINE_BUSY; break;
+      /* A short rate limit (it clears within 2 minutes) is "wait a minute", as for the host's create
+       * (online_vita.c); only a long or unknown wait reads "busy for today". */
+      case ONLINE_E_RATE:       c->fail = (r->retry_after > 0 && r->retry_after <= 120) ? UI_FAIL_ONLINE_SLOW : UI_FAIL_ONLINE_BUSY; break;
+      case ONLINE_E_CLOCK:      c->fail = UI_FAIL_ONLINE_CLOCK; break;
+      case ONLINE_E_CONSOLE:    c->fail = UI_FAIL_ONLINE_CONSOLE; break;
+      default:                  c->fail = UI_FAIL_ONLINE_SERVICE; break;
+      }
+      return;
+   }
+   c->state = 1;
+   c->kind = r->card.kind;
+   snprintf(c->console, sizeof(c->console), "%s", r->card.console);
+   snprintf(c->game, sizeof(c->game), "%s", r->card.game);
+   snprintf(c->rom, sizeof(c->rom), "%s", r->card.rom);
+   snprintf(c->title, sizeof(c->title), "%s", r->card.title);
+   snprintf(c->nick, sizeof(c->nick), "%s", r->card.nick);
+   snprintf(c->ver, sizeof(c->ver), "%s", r->card.ver);
+   c->full = r->state != ONLINE_ROOM_OPEN;
+   /* WHO has to act (plan 1.6): the version first, then the build word */
+   cmp = ver_cmp(r->card.ver, ONLINE_APP_VERSION);
+   if (cmp > 0)
+      c->fail = UI_FAIL_ONLINE_VER_OLD_HERE;
+   else if (cmp < 0)
+      c->fail = UI_FAIL_ONLINE_VER_OLD_THERE;
+   else if (r->card.kind < 0 || r->card.kind > 5 ||
+            r->card.compat != S.compat[r->card.kind])
+      c->fail = UI_FAIL_ONLINE_SETUP;
+   c->compatible = c->fail == 0;
+}
+
+void ui_host_online_card(ui_online_card *out)
+{
+   if (!out)
+      return;
+   if (C.asked && !C.have)
+   {
+      online_reply r;
+      if (online_card_poll(&r))
+      {
+         card_from_reply(&r);
+         C.have = 1;
+         C.asked = 0;
+         fe_evt("online_card state=%d fail=%d kind=%d game=%s compatible=%d "
+                "full=%d ver=%s", C.card.state, C.card.fail, C.card.kind,
+                C.card.game, C.card.compatible, C.card.full, C.card.ver);
+      }
+   }
+   if (C.have)
+      *out = C.card;
+   else
+   {
+      memset(out, 0, sizeof(*out));
+      out->state = C.asked ? 0 : 2;
+      if (!C.asked)
+         out->fail = UI_FAIL_ONLINE_SERVICE;
+   }
+}
+
+void ui_host_online_cancel(void)
+{
+   online_card_cancel();
+   C.asked = C.have = 0;
+}
+
+/* ---- SNES (2.0, B3): the app forms the link, snes.bin plays it ---------------------------
+ * link_snes.h says what and why.  Everything above is the NES / WonderSwan "Two players" link made with no game running:
+ * is_pad_game() is true, the game's identity is SL.game (the file's CRC), session_begin() stops at SL instead of starting
+ * fe_gblink, bringup_failed() records the sentence instead of holding a screen.  What is added here is the watching
+ * (link_snes_frame), the values for the launch file (snes_fill) and the end. */
+#define T_SNES_SEEN_LAN     60u        /* the guest leaves a second after the host's netdrv answered: the host has
+                                        * seen it too by then (it answers in the same frame) */
+#define T_SNES_SEEN_ONLINE  180u       /* ...three seconds Online: the host's room service stage may lag a little */
+#define T_SNES_SEEN_WAIT    (15u * 60u)/* the host's netdrv never answered */
+#define T_SNES_FILL_WAIT    (8u * 60u) /* Online: the stage did not reach CONNECTED */
+
+static void snes_addr(char *out, size_t cap, uint32_t ip_be, uint16_t port)
+{
+   snprintf(out, cap, "%u.%u.%u.%u:%u", (unsigned)(ip_be & 255u), (unsigned)(ip_be >> 8 & 255u),
+            (unsigned)(ip_be >> 16 & 255u), (unsigned)(ip_be >> 24 & 255u), (unsigned)port);
+}
+
+/* The values for the launch file; 0 = not yet (Online: the room service has not said CONNECTED). */
+static int snes_fill(void)
+{
+   link_snes_link *k = &SL.link;
+
+   memset(k, 0, sizeof(*k));
+   snprintf(k->role, sizeof(k->role), "%s", L.is_host ? "host" : "guest");
+   k->delay = SL.delay;
+   snprintf(k->compat, sizeof(k->compat), "%08x", (unsigned)S.compat[LAN_KIND_PAD]);
+   snprintf(k->nick, sizeof(k->nick), "%.15s", g_pcfg.nick);
+   k->wait_s = 90;
+   if (L.conn == LINK_CONN_ONLINE)
+   {
+      online_handoff h;
+      int i;
+      if (online_handoff_get(&h) != 0)
+         return 0;
+      k->local_port = h.local_port;
+      snprintf(k->punch_key, sizeof(k->punch_key), "%s", h.key);
+      if (h.relayed)
+      {
+         snprintf(k->mode, sizeof(k->mode), "relay");
+         snes_addr(k->relay_server, sizeof(k->relay_server), h.relay.server_ip_be, 0);
+         for (i = 0; k->relay_server[i] && k->relay_server[i] != ':'; i++)
+            ;
+         k->relay_server[i] = '\0';
+         snprintf(k->relay_ports, sizeof(k->relay_ports), "%u", (unsigned)h.relay.server_port);
+         snprintf(k->relay_user, sizeof(k->relay_user), "%s", h.relay.user);
+         snprintf(k->relay_pass, sizeof(k->relay_pass), "%s", h.relay.pass);
+         snes_addr(k->relay_addr, sizeof(k->relay_addr), h.relay.relay_ip_be, h.relay.relay_port);
+         snes_addr(k->relay_peer, sizeof(k->relay_peer), h.relay.peer_ip_be, h.relay.peer_port);
+      }
+      else
+      {
+         snprintf(k->mode, sizeof(k->mode), "punch");
+         snes_addr(k->peer, sizeof(k->peer), h.peer_ip_be, h.peer_port);
+         snprintf(k->peer_lan, sizeof(k->peer_lan), "%s", h.peer_lan);
+      }
+      if (h.peer_nick[0])
+         snprintf(L.peer, sizeof(L.peer), "%.15s", h.peer_nick);
+      fe_evt("link_snes_fill mode=%s port=%u peer=%s relay=%s", k->mode, k->local_port,
+             k->peer[0] ? k->peer : k->relay_peer, h.relayed ? k->relay_addr : "-");
+      return 1;
+   }
+   snprintf(k->mode, sizeof(k->mode), "lan");
+   k->local_port = L.lan ? lan_transport_port(L.lan) : 0;
+   if (!L.is_host)
+      snes_addr(k->peer, sizeof(k->peer), SL.peer_ip_be, SL.peer_port);
+   fe_evt("link_snes_fill mode=lan port=%u peer=%s", k->local_port, k->peer[0] ? k->peer : "-");
+   return 1;
+}
+
+/* After link_frame(): what the link layer's work means for the hand-over. */
+static void snes_watch(void)
+{
+   if (SL.phase != LSN_WORKING)
+      return;
+   if (L.phase == PH_OFF)
+   {
+      /* a cancel (the guest's O in online_service), a code that expired, the Wi-Fi going: nothing to hand over */
+      SL.phase = LSN_CANCELLED;
+      return;
+   }
+   if (SL.sub == 1)
+   {
+      const unsigned need = L.conn == LINK_CONN_ONLINE ? T_SNES_SEEN_ONLINE : T_SNES_SEEN_LAN;
+      /* (the callback's latch too: a host that hands over at once says BYE one frame, 17 ms, after its answer, and
+       * a guest whose one pump takes in both never reads "ready" here, then waited 15 s for nothing and failed) */
+      if (!SL.seen && (SL.peer_heard || fe_np_gb_peer_ready(NULL)))
+      {
+         SL.seen = 1;
+         SL.t_seen = L.ticks;
+         fe_evt("link_snes_peer_seen after=%u", L.ticks - SL.t_begin);
+      }
+      if (!SL.seen)
+      {
+         if (L.ticks - SL.t_seen > T_SNES_SEEN_WAIT)
+            bringup_failed(L.conn == LINK_CONN_ONLINE ? UI_FAIL_ONLINE_UNREACHABLE : UI_FAIL_HOST_LEFT);
+         return;
+      }
+      if (L.ticks - SL.t_seen < need)
+         return;
+      SL.sub = 2;
+      SL.t_seen = L.ticks;
+   }
+   if (SL.sub == 2)
+   {
+      if (snes_fill())
+         SL.phase = LSN_READY;
+      else if (L.ticks - SL.t_seen > T_SNES_FILL_WAIT)
+         bringup_failed(UI_FAIL_ONLINE_UNREACHABLE);
+   }
+}
+
+/* No core runs while the app forms a SNES link, so nobody has told the netpacket layer where a game's messages go (a NES or
+ * Game Boy game does that when it boots): without a receiver fe_np_start_gb refuses ("no GB receive callback") and the link
+ * never starts.  The app only needs the handshake and the peer to be seen; snes.bin makes the real session afterwards. */
+static void snes_np_rx(void *user, const void *payload, size_t len, uint8_t src)
+{
+   (void)user; (void)payload; (void)len; (void)src;
+}
+
+static void snes_np_peer(void *user, uint8_t id, int connected)
+{
+   (void)user; (void)id;
+   if (connected)
+      SL.peer_heard = 1;
+}
+
+/* The console id of a library file: md.bin's consoles by extension, else the SNES. */
+const char *link_snes_console_of_file(const char *rom_path)
+{
+   const char *dot = rom_path ? strrchr(rom_path, '.') : NULL;
+   if (dot && (!strcasecmp(dot, ".md") || !strcasecmp(dot, ".gen") || !strcasecmp(dot, ".smd") || !strcasecmp(dot, ".bin") || !strcasecmp(dot, ".68k")))
+      return "md";
+   if (dot && !strcasecmp(dot, ".sms"))
+      return "sms";
+   if (dot && !strcasecmp(dot, ".gg"))
+      return "gg";
+   if (dot && (!strcasecmp(dot, ".sg") || !strcasecmp(dot, ".sc")))
+      return "sg";
+   if (dot && (!strcasecmp(dot, ".cue") || !strcasecmp(dot, ".chd") || !strcasecmp(dot, ".iso") || !strcasecmp(dot, ".m3u")))
+      return "scd";
+   return "snes";
+}
+
+/* What a console's games are called in a sentence ("Genesis game"): the same on every console. */
+const char *link_snes_console_name(const char *id)
+{
+   if (id && !strcmp(id, "md"))
+      return "Genesis";
+   if (id && !strcmp(id, "sms"))
+      return "Master System";
+   if (id && !strcmp(id, "gg"))
+      return "Game Gear";
+   if (id && !strcmp(id, "sg"))
+      return "SG-1000";
+   if (id && !strcmp(id, "scd"))
+      return "Sega CD";
+   return "SNES";
+}
+
+int link_snes_begin(int is_host, const char *rom_path, const char *title)
+{
+   const ui_join_info *t = ui_join_target();
+   int conn = is_host ? g_pcfg.net_conn : t->conn;
+
+   if (!rom_path || !rom_path[0])
+      return UI_FAIL_GAME;
+   if (L.phase != PH_OFF || fe_host_gblink_active() || SL.on)
+      return UI_FAIL_RADIO_BUSY;
+   if (conn == LINK_CONN_ADHOC)
+      return -2;                           /* Nearby: not for SNES in 2.0 */
+   /* link_frame() keeps the link's clock, and no frame has run since the program started (the game list): a joiner would
+    * find its wait for the host already long over on its first frame */
+   L.ticks = (unsigned)(link_now_us() * 3u / 50000u);
+   memset(&SL, 0, sizeof(SL));
+   if (!link_snes_game_id(rom_path, SL.game))
+      return UI_FAIL_GAME;
+   snprintf(SL.console, sizeof(SL.console), "%s", link_snes_console_of_file(rom_path));
+   if (!strcmp(SL.console, "gg"))
+   {
+      memset(&SL, 0, sizeof(SL));          /* the Game Gear has one controller: no Two players, no room */
+      return UI_FAIL_GAME;
+   }
+   snprintf(SL.rom, sizeof(SL.rom), "%s", rom_path);
+   if (title && title[0])
+      snprintf(SL.title, sizeof(SL.title), "%.39s", title);
+   else
+      snprintf(SL.title, sizeof(SL.title), tr("link.game"), link_snes_console_name(SL.console));
+   SL.on = 1;
+   SL.phase = LSN_WORKING;
+   SL.t_begin = SL.t_seen = L.ticks;
+   SL.prev_pad = g_app_pad;
+   fe_evt("link_snes_begin role=%s conn=%d game=%s console=%s", is_host ? "host" : "guest", conn, SL.game, SL.console);
+   fe_np_gb_set_receive(snes_np_rx, NULL);
+   fe_np_gb_set_peer_callback(snes_np_peer, NULL);
+   link_action(is_host);
+   /* a failure to even start was recorded by bringup_failed (SL.phase == LSN_FAILED): the caller reads it */
+   return 0;
+}
+
+int link_snes_frame(unsigned pad)
+{
+   unsigned edge;
+
+   if (!SL.on)
+      return LSN_IDLE;
+   edge = pad & ~SL.prev_pad;
+   SL.prev_pad = pad;
+   if (SL.phase != LSN_WORKING)
+      return SL.phase;
+   g_app_pad = pad;
+   link_frame();
+   snes_watch();
+   if (SL.phase == LSN_WORKING && (edge & CTL_CIRCLE))
+   {
+      fe_evt("link_snes_cancel phase=%d", L.phase);
+      net_down();
+      link_off();
+      SL.phase = LSN_CANCELLED;
+   }
+   return SL.phase;
+}
+
+int link_snes_take(link_snes_link *out)
+{
+   if (!SL.on || SL.phase != LSN_READY || !out)
+      return -1;
+   *out = SL.link;
+   /* The room is closed on the service (online_linked, at the host's arrival) and the transport goes; a relayed link's
+    * allocation was detached from the transport by snes_fill and stays on the server for snes.bin. */
+   net_down();
+   link_off();
+   SL.on = 0;
+   SL.phase = LSN_IDLE;
+   fe_evt("link_snes_take mode=%s role=%s", out->mode, out->role);
+   return 0;
+}
+
+void link_snes_end(void)
+{
+   if (SL.on)
+   {
+      if (L.phase != PH_OFF || L.transport != TR_NONE || L.on_live)
+      {
+         net_down();
+         link_off();
+      }
+      SL.on = 0;
+      SL.phase = LSN_IDLE;
+   }
+}
+
+int link_snes_fail_code(void)
+{
+   return SL.fail;
+}
+
+int link_snes_end_said(void)
+{
+   return SL.said;
+}
+
+/* The status page: the LINKING screen's own look, with what a SNES link is doing. */
+void link_snes_draw(void)
+{
+   static char l1[96], l2[96];
+   ui_linking_view v;
+   const char *a, *b;
+
+   if (!SL.on)
+      return;
+   memset(&v, 0, sizeof(v));
+   v.room = L.room;
+   v.game = SL.title;
+   v.frac = -1;
+   v.busy = 1;
+   v.l1 = l1;
+   v.l2 = l2;
+   l1[0] = l2[0] = '\0';
+   if (SL.phase == LSN_FAILED)
+   {
+      ui_link_fail_text(SL.fail, &a, &b);
+      snprintf(l1, sizeof(l1), "%s", a);
+      snprintf(l2, sizeof(l2), "%s", b);
+      v.fail = 1;
+      v.busy = 0;
+   }
+   else if (L.is_host)
+   {
+      if (L.conn == LINK_CONN_ONLINE)
+      {
+         online_view ov;
+         online_get(&ov);
+         if (ov.code[0])
+            snprintf(l1, sizeof(l1), tr("link.room_code"), ov.code);
+         else
+            snprintf(l1, sizeof(l1), tr("link.opening_the_room"));
+      }
+      else
+         snprintf(l1, sizeof(l1), tr("link.waiting_for_the_other_vita_in"), L.room);
+      snprintf(l2, sizeof(l2), SL.sub ? tr("link.starting_two_players") : tr("link.tell_your_friend_to_join_o"));
+   }
+   else
+   {
+      snprintf(l1, sizeof(l1), tr("link.joining"), L.conn == LINK_CONN_ONLINE ? tr("link.the_room") : L.room);
+      snprintf(l2, sizeof(l2), SL.sub ? tr("link.starting_two_players") : tr("link.finding_your_friend"));
+   }
+   ui_linking_draw(&v);
+}
+
+static uint32_t disc_crc(uint32_t c, const uint8_t *p, size_t n) { return (uint32_t)fe_crc32(c, p, n); }
+
+/* The game id of a SNES file, as online_lib.c computes it for a library match. */
+int link_snes_game_id(const char *rom_path, char out[9])
+{
+   FILE *f;
+   if (disc_is_image(rom_path))          /* a Sega CD disc: its first sector (disc_id.h) */
+      return disc_game_id(rom_path, out, disc_crc);
+   f = rom_path ? fopen(rom_path, "rb") : NULL;
+   uint8_t buf[8192];
+   uint32_t crc = 0;
+   long size, from = 0;
+   size_t n;
+
+   if (out)
+      out[0] = '\0';
+   if (!f || !out)
+      return 0;
+   if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) <= 0)
+   {
+      fclose(f);
+      return 0;
+   }
+   if (size % 1024 == 512)
+      from = 512;                        /* a copier header is not part of the game */
+   if (fseek(f, from, SEEK_SET) != 0)
+   {
+      fclose(f);
+      return 0;
+   }
+   while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+      crc = (uint32_t)fe_crc32(crc, buf, n);
+   fclose(f);
+   snprintf(out, 9, "%08X", (unsigned)crc);
+   return 1;
+}
+
+int link_snes_ended(int was_host, int online, const char *result, int error, const char *name, int peer_reason,
+                    const char *console, int frames, char *toast, unsigned toast_cap)
+{
+   int ui = 0;
+   int gerr_known = name && name[0] && strcmp(name, "ok") != 0;
+   (void)console;                       /* every console reads the same sentences */
+   const int asleep = error == 12 || (gerr_known && !strcmp(name, "suspend"));       /* pk_link LE_SUSPEND */
+   /* the other console ended it and said why (pk_link LE_ROM_MISSING 2 / LE_ROM_BAD 3: it plays another game): the guest
+    * reads that as the host's own refusal */
+   const int other_game = (error == 8 || (gerr_known && !strcmp(name, "peer_abort"))) && (peer_reason == 2 || peer_reason == 3);
+
+   if (toast && toast_cap)
+      toast[0] = '\0';
+   if (!result || !result[0])
+      return 0;
+   if (!strcmp(result, "done"))
+   {
+      snprintf(toast, toast_cap, "%s", was_host ? tr("link.link_ended_game_saved") : tr("link.link_ended_your_own_game_is"));
+      return 0;
+   }
+   if (asleep)
+   {
+      snprintf(toast, toast_cap, "%s", tr("link.this_vita_went_to_sleep_so"));
+      return 0;
+   }
+   if (frames > 0)
+   {
+      /* it ran, and then it did not last (as link_end says it for the other games) */
+      snprintf(toast, toast_cap, "%s",
+               gerr_known && !strcmp(name, "desync") ? tr("link.the_games_fell_out_of_step")
+                                                     : tr("link.link_lost_the_other_vita_is"));
+      return 0;
+   }
+   /* it never started: the joiner reads two lines (link_end's fail_screen), the host a toast */
+   if (other_game || (gerr_known && (strstr(name, "rom_") != NULL || strstr(name, "missing") != NULL)))
+      ui = UI_FAIL_ONLINE_GAME;
+   else if (gerr_known && !strcmp(name, "proto"))
+      ui = UI_FAIL_VERSION;
+   else if (!gerr_known && !strcmp(result, "never") && error == 1)
+      ui = UI_FAIL_NO_WIFI;
+   else
+      ui = online ? UI_FAIL_ONLINE_UNREACHABLE : was_host ? 0 : UI_FAIL_HOST_LEFT;
+   if (was_host || ui == 0)
+   {
+      /* the host keeps no failure screen: its toast (link_end's) */
+      snprintf(toast, toast_cap, "%s",
+               ui == UI_FAIL_ONLINE_GAME ? tr("link.the_other_vita_has_a_different") : tr("link.the_link_did_not_start"));
+      return was_host ? 0 : ui;
+   }
+   return ui;
 }

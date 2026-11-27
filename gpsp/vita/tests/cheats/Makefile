@@ -87,7 +87,10 @@ $(B)/list/cheat_engine.o: $(GP)/cheat_engine.c $(GP)/cheat_engine.h
 $(B)/list/test_list.o: test_list.c $(GP)/vita/cheats_vita.h $(GP)/vita/cheatdb.h
 	@mkdir -p $(dir $@)
 	$(CC) $(TEST_FLAGS) -c -o $@ $<
-$(B)/test_list: $(addprefix $(B)/list/,test_list.o cheats_vita.o cheatdb.o cheat_engine.o)
+$(B)/list/i18n.o: $(GP)/vita/i18n.c $(GP)/vita/i18n.h $(GP)/vita/lang_en.h
+	@mkdir -p $(dir $@)
+	$(CC) $(TEST_FLAGS) -c -o $@ $<
+$(B)/test_list: $(addprefix $(B)/list/,test_list.o cheats_vita.o cheatdb.o cheat_engine.o i18n.o)
 	$(CC) $(CORE_ARCH_FLAGS) $(LDFLAGS_ARCH) -o $@ $^
 
 # A database of the two test cartridges, built by the real tool from
@@ -105,9 +108,10 @@ rom/cheatrom.gba rom/gbcheat.gb: rom/crt0.S rom/main.c rom/gba.ld rom/gbcheat.as
 unit: $(B)/test_engine $(B)/test_list build/fixture.db
 	$(RUN) $(B)/test_engine
 	$(RUN) $(B)/test_list $(GP)/vita/assets/cheats.db build/fixture.db build/work-$(ARCH)
+	python3 test_sega_codes.py
 
 # ---- end to end -----------------------------------------------------------------
-E2E_OBJS := $(addprefix $(B)/app/,cheat_e2e.o fe_core_shim.o $(CHEATS_SRCS:.c=.o))
+E2E_OBJS := $(addprefix $(B)/app/,cheat_e2e.o fe_core_shim.o i18n.o gamedb.o $(CHEATS_SRCS:.c=.o))
 $(B)/app/cheat_e2e.o: cheat_e2e.c $(APP_STAMP)
 	@mkdir -p $(dir $@)
 	$(CC) $(APP_FLAGS) -MMD -MP -c -o $@ $<
@@ -117,7 +121,7 @@ $(B)/app/%.o: $(GP)/vita/%.c $(APP_STAMP)
 
 $(B)/cheat_e2e: $(E2E_OBJS) $(FE_OBJS) $(GB_OBJS) $(CORE_A) $(CORE_B)
 	$(CC) $(CORE_ARCH_FLAGS) $(LDFLAGS_ARCH) -o $@ $(E2E_OBJS) $(FE_OBJS) \
-	  $(GB_OBJS) $(CORE_B) $(CORE_A) -lm -lpthread
+	  $(GB_OBJS) $(CORE_B) $(CORE_A) -lstdc++ -lm -lpthread
 
 -include $(E2E_OBJS:.o=.d)
 

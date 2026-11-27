@@ -1,0 +1,3472 @@
+# context: snprintf in main_vita.c, update_say
+app.a_newer_vitadhoc_is_out	Hay una versión nueva de VitAdhoc
+# context: main_vita.c, patch_prepare
+app.a_path_too_long	una ruta demasiado larga
+# context: snprintf in main_vita.c, save_import
+app.a_save_was_found_but_could	Se encontró una partida guardada, pero no se pudo copiar
+# context: main_vita.c, ui_host_btn_read
+app.a_tap_opens_the_menu	Un toque abre el menú
+# context: main_vita.c, ui_host_btn_read
+app.aims_and_fires_zapper	Apunta y dispara (Zapper)
+# context: snprintf in main_vita.c, ui_host_look_label
+app.auto_eased	Auto (%s, suave)
+# context: ui_loading_update in main_vita.c, loading_progress
+app.checking_cartridge	Comprobando cartucho
+# context: main_vita.c, patch_prepare
+app.could_not_be_read	no se pudo leer
+# context: snprintf in main_vita.c, update_say
+app.could_not_check_for_updates	No se pudo buscar actualizaciones
+# context: main_vita.c, menu_action
+app.end_the_network_game_first	Termina primero la partida en red.
+# context: snprintf in main_vita.c, fps_chip_frame
+app.fps	%u.%u fps (%u)
+# context: main_vita.c, zip_unpack
+app.it_is_damaged_or_packed_in	Está dañado o comprimido de una forma que esta app no puede leer.
+# context: snprintf in main_vita.c, zip_unpack
+app.it_is_encrypted_or_packed_in	Está cifrado o comprimido de una forma que esta app no puede leer.
+# context: snprintf in main_vita.c, zip_unpack
+app.its_block_is_over_mb_too	Su bloque supera %lu MB: es demasiado grande para descomprimir.
+# context: snprintf in main_vita.c, snes_link_page
+app.nearby_isn_t_available_for_games	Nearby no está disponible para juegos de %s
+# context: snprintf in main_vita.c, zip_unpack
+app.no_game_this_app_can_start	No se encontró ningún juego que esta app pueda iniciar.
+# context: snprintf in main_vita.c, patch_prepare
+app.not_a_patch	no es un parche
+# context: main_vita.c, patch_prepare
+app.not_enough_memory	memoria insuficiente
+# context: main_vita.c, ui_host_btn_read
+app.nothing	Nada
+# context: snprintf in main_vita.c, patch_prepare
+app.patched_with	Parcheado con %s
+# context: main_vita.c, app_notice
+app.press_any_button_for_the_game	Pulsa cualquier botón para ver los juegos
+# context: ui_loading_update in main_vita.c, loading_progress
+app.reading_rom	Leyendo ROM
+# context: ds_failed_line in main_vita.c, game_loop
+app.save	Guardar
+# context: snprintf in main_vita.c, save_import
+app.save_from_retroarch_kept_in_sync	Partida de RetroArch: se mantiene sincronizada
+# context: snprintf in main_vita.c, save_import
+app.save_imported_from	Partida importada de %s
+# context: main_vita.c, menu_action
+app.stop_mystery_gift_first	Detén primero Mystery Gift.
+# context: main_vita.c, menu_action
+app.stop_the_two_player_game_on	Detén primero la partida de dos jugadores en esta Vita.
+# context: main_vita.c, arc_note
+app.the_7z_file_could_not_be	No se pudo abrir el archivo .7z.
+# context: main_vita.c, patch_prepare
+app.the_game_could_not_be_read	no se pudo leer el juego
+# context: snprintf in main_vita.c, zip_unpack
+app.the_game_in_it_could_not	No se pudo descomprimir el juego que contiene.
+# context: main_vita.c, zip_unpack
+app.the_game_in_it_is_damaged	El juego que contiene está dañado (suma de control).
+# context: snprintf in main_vita.c, zip_unpack
+app.the_game_in_it_is_for	El juego que contiene es de otra consola.
+# context: snprintf in main_vita.c, zip_unpack
+app.the_game_in_it_is_over	El juego que contiene supera %lu MB: es demasiado grande para descomprimir.
+# context: ds_failed_line in main_vita.c, patch_prepare
+app.the_patched_game	el juego parcheado
+# context: snprintf in main_vita.c, rom_from_launch
+app.the_path_is_too_long	La ruta es demasiado larga.
+# context: main_vita.c, arc_note
+app.the_zip_file_could_not_be	No se pudo abrir el archivo zip.
+# context: TRY in main_vita.c, save_import
+app.this_folder	esta carpeta
+# context: main_vita.c, patch_prepare
+app.too_large	demasiado grande
+# context: ui_loading_update in main_vita.c, zip_unpack
+app.unpacking_game	Descomprimiendo juego
+# context: snprintf in update_check.c, upd_notice_text
+app.vitadhoc_is_out_get_it_with	Ya está VitAdhoc %s: consíguelo con CBOC Vita Installer o en GitHub
+# context: snprintf in main_vita.c, update_say
+app.vitadhoc_is_up_to_date	VitAdhoc está al día
+# context: snprintf in main_vita.c, rom_from_launch
+app.was_not_found	No se encontró %.180s.
+# context: snprintf in ui_vita_browser.h, vita_extra_note
+browse.also_looked_in	También se buscó en %s
+# context: snprintf in ui_vita_browser.h, vita_extra_note
+browse.also_looked_in_and_more	También se buscó en %s y %d más
+# context: snprintf in ui_vita_browser.h, vita_browser_empty
+browse.copy_your_files_into_this_folder	Copia tus archivos .%s en esta carpeta de la tarjeta de memoria:
+# context: empty game list, under the folder path
+browse.games_go_there_then_press	Los juegos .gba, .gb, .gbc, .sfc y .nes van ahí. Luego pulsa {x}.
+# context: snprintf in ui_vita_browser.h, vita_browser_empty
+browse.no_games_yet	Aún no hay juegos de %s
+# context: plural of the line above
+browse.other_game_many	{tri} muestra tus otros %d juegos
+# context: shown in the game list; %d is how many
+browse.other_game_one	{tri} muestra tu otro juego (%d)
+# context: vw_head in ui_vita_btntest.h, screen_btntest
+btntest.button_test	PRUEBA DE BOTONES
+# context: vid_text in ui_vita_btntest.h, screen_btntest
+btntest.buttons	BOTONES
+# context: snprintf in ui_vita_btntest.h, bt_action_text
+btntest.chord	 (combinación)
+# context: bt_row in ui_vita_btntest.h, screen_btntest
+btntest.front_touch	TÁCTIL FRONTAL
+# context: Button test: row label
+btntest.left_stick	PALANCA IZQ.
+# context: vid_text in ui_vita_btntest.h, screen_btntest
+btntest.left_stick_moves_like_the_d	Palanca izquierda: se mueve como la cruceta
+# context: snprintf in ui_vita_btntest.h, screen_btntest
+btntest.not_set	sin asignar
+# context: Button test: a corner of the rear touch panel
+btntest.rear_bottom_left	TRASERO INF. IZQ.
+# context: Button test: a corner of the rear touch panel
+btntest.rear_bottom_right	TRASERO INF. DER.
+# context: Button test: a corner of the rear touch panel
+btntest.rear_top_left	TRASERO SUP. IZQ.
+# context: Button test: a corner of the rear touch panel
+btntest.rear_top_right	TRASERO SUP. DER.
+# context: vid_text in ui_vita_btntest.h, screen_btntest
+btntest.right_left_rewind_right_fast_forward	Derecha: izquierda Rebobinar, derecha Avance rápido
+# context: Button test: row label
+btntest.right_stick	PALANCA DER.
+# context: vid_text in ui_vita_btntest.h, screen_btntest
+btntest.sticks_and_touch	PALANCAS Y TÁCTIL
+# context: cheats_vita.c, cheats_format_hint
+cheats.6_or_8_letters_game_genie	6 u 8 letras (Game Genie) o AAAA:VV (RAM). + entre códigos.
+# context: cheats_vita.c, cheats_format_hint
+cheats.8_digits_gameshark_or_3_3	8 dígitos (GameShark) o 3-3-3 dígitos (Game Genie). + entre códigos.
+# context: cheats_vita.c, cheats_format_hint
+cheats.8_digits_space_4_digits_codebreaker	8 dígitos, espacio, 4 dígitos (CodeBreaker) u 8 dígitos (GameShark, Action Replay). + entre líneas.
+# context: cheats_vita.c, cheats_error_text
+cheats.a_built_in_cheat_cannot_be	Un truco incluido no se puede borrar. Desactívalo.
+# context: snprintf in ui_vita_cheats.h, screen_cheat_search_page
+cheats.a_number	%s (un número)
+# context: vw_clip in ui_vita_cheats.h, screen_cheat_add_page
+cheats.a_number_unless_named	un número, salvo que tenga nombre
+# context: snprintf in ui_vita_cheats.h, screen_cheat_search_page
+cheats.a_number_you_type	Un número que escribes
+# context: cheats_vita.c, cheats_format_hint
+cheats.aaaa_vv_or_aaaa_vv_cc	AAAA:VV o AAAA:VV:CC: una dirección, un byte y un byte de comparación, en hex.
+# context: cheats_vita.c, cheats_format_hint
+cheats.aaaaa_vv_a_ram_address_and	AAAAA:VV: una dirección de RAM y un byte, en hex. + entre códigos.
+# context: cheats_vita.c, cheats_format_hint
+cheats.aaaaaa_vvvv_an_address_and_a	AAAAAA:VVVV: una dirección y una palabra, en hex. + entre códigos.
+# context: cheats_vita.c, cheats_kind_name
+cheats.action_replay	Action Replay
+# context: cheats_vita.c, cheats_note
+cheats.acts_while_the_cheat_button_is	Actúa mientras se mantiene el botón de trucos.
+# context: vw_head in ui_vita_cheats.h, screen_cheat_add_page
+cheats.add_a_cheat	AÑADIR TRUCO
+# context: snprintf in ui_vita_cheats.h, screen_cheat_add_page
+cheats.added_and_switched_on	Añadido y activado
+# context: cheats_vita.c, cheats_note
+cheats.an_enable_code_not_needed_on	Un código de activación. No hace falta en esta consola; no hace daño si está activo.
+# context: snprintf in ui_vita_cheats.h, ch_summary
+cheats.available	%d disponibles
+# context: snprintf in ui_vita_cheats.h, screen_cheats_page
+cheats.built_in_cheats_cannot_be_deleted	Los trucos incluidos no se pueden borrar, solo dejar desactivados.
+# context: cheats_vita.c, cheats_note
+cheats.changes_the_game_s_program	Cambia el programa del juego.
+# context: snprintf in cheats_vita.c, cht_read
+cheats.cheat	Truco %d
+# context: cs_note in ui_vita_cheats.h, cs_add
+cheats.cheat_added_and_on	Truco añadido y activado: %s
+# context: ui_text_open in ui_vita_cheats.h, screen_cheat_add_page
+cheats.cheat_code	Código del truco
+# context: ui_text_open in ui_vita_cheats.h, screen_cheat_add_page
+cheats.cheat_name	Nombre del truco
+# context: vw_head in ui_vita_cheats.h, screen_cheats_page
+cheats.cheats	TRUCOS
+# context: snprintf in ui_vita_cheats.h, screen_cheats_page
+cheats.cheats_are_off_in_hardcore_mode	Los trucos están desactivados en modo Hardcore (RetroAchievements).
+# context: snprintf in ui_vita_cheats.h, screen_cheats_page
+cheats.cheats_are_off_while_linked_to	Los trucos están desactivados mientras estás conectado a otra consola.
+# context: cheats_vita.c, cheats_error_text
+cheats.cheats_are_off_while_playing_over	Los trucos están desactivados al jugar por conexión.
+# context: ui_vita_cheats.h, screen_cheat_search_page
+cheats.choose_a_result_to_make_it	Elige un resultado para convertirlo en truco.
+# context: cheats_vita.c, cheats_kind_name
+cheats.codebreaker	CodeBreaker
+# context: snprintf in ui_vita_cheats.h, screen_cheat_add_page
+cheats.codes	Códigos %s: %s
+# context: ui_vita_cheats.h, screen_cheat_search_page
+cheats.compared_with_the_memory_at_the	Comparado con la memoria del último paso.
+# context: ui_vita_cheats.h, screen_cheats_page
+cheats.del	Borr
+# context: snprintf in ui_vita_cheats.h, screen_cheats_page
+cheats.delete_x_delete_o_keep	¿Borrar "%s"?      {x} borrar     {o} conservar
+# context: snprintf in ui_vita_cheats.h, screen_cheats_page
+cheats.deleted	Borrado
+# context: cheats_vita.c, cheats_error_text
+cheats.encrypted_add_this_game_s_master	Cifrado: añade antes el código maestro de este juego.
+# context: ui_text_open in ui_vita_cheats.h, screen_cheats_page
+cheats.find_a_cheat	Buscar un truco
+# context: snprintf in ui_vita_cheats.h, cs_add
+cheats.found_at	Encontrado en %s
+# context: snprintf in ui_vita_cheats.h, ch_open
+cheats.found_by_the_game_s_title	Encontrado por el título del juego: estos códigos pueden ser de otra región.
+# context: cheats_vita.c, cheats_kind_name
+cheats.game_genie	Game Genie
+# context: cheats_vita.c, cheats_kind_name
+cheats.gameshark	GameShark
+# context: cheats_vita.c, cheats_error_text
+cheats.incomplete_replace_xx_with_the_value	Incompleto: cambia ?? / XX por el valor que quieras.
+# context: ui_vita_cheats.h, screen_cheat_search_page
+cheats.keeps_the_places_that_match_the	Conserva los lugares que coinciden con el número que escribes.
+# context: ui_vita_cheats.h, screen_cheats_page
+cheats.line	Línea
+# context: plural of the line above
+cheats.line_many	%s, %d líneas
+# context: a cheat code: its kind, then its number of lines
+cheats.line_one	%s, %d línea
+# context: snprintf in ui_vita_cheats.h, screen_cheat_search_page
+cheats.look_at_the_game_s_memory	Mirar la memoria del juego ahora
+# context: ui_vita_cheats.h, screen_cheat_search_page
+cheats.makes_a_cheat_that_keeps_this	Crea un truco que mantiene este valor.
+# context: ui_vita_cheats.h, screen_cheat_search_page
+cheats.most_counters_are_1_byte_money	Casi todos los contadores son de 1 byte; dinero y puntos suelen ser de 2. Cualquier dirección mira también lugares raros.
+# context: ui_vita_cheats.h, screen_cheat_search_page
+cheats.most_counters_are_1_byte_money_2	Casi todos los contadores son de 1 byte; dinero y puntos suelen ser de 2.
+# context: Add a code: the title over the name field
+cheats.name_title	NOMBRE
+# context: ui_vita_cheats.h, screen_cheat_search_page
+cheats.narrow_it_down_to_50_or	Redúcelos a 50 o menos para verlos.
+# context: snprintf in ui_vita_cheats.h, screen_cheat_search_page
+cheats.new_search	Búsqueda nueva
+# context: snprintf in ui_vita_cheats.h, screen_cheats_page
+cheats.no_cheat_s_name_contains	Ningún truco tiene "%s" en el nombre.
+# context: vid_text in ui_vita_cheats.h, screen_cheats_page
+cheats.no_cheats_for_this_game_yet	Aún no hay trucos para este juego.
+# context: snprintf in ui_vita_cheats.h, screen_cheat_add_page
+cheats.no_keyboard_the_cheat_gets_a	Sin teclado: el truco recibe un número como nombre.
+# context: snprintf in ui_vita_cheats.h, screen_cheat_add_page
+cheats.no_keyboard_use_the_keys	Sin teclado: usa los botones.
+# context: snprintf in ui_vita_cheats.h, screen_cheats_page
+cheats.no_name	(sin nombre)
+# context: cs_note in ui_vita_cheats.h, cs_step
+cheats.no_results_start_a_new_search	Sin resultados. Empieza una búsqueda nueva
+# context: cheats_vita.c, cheats_error_text
+cheats.no_room_for_more_cheats	No hay espacio para más trucos.
+# context: cheats_vita.c, cheats_error_text
+cheats.no_such_cheat	Ese truco no existe.
+# context: in-game menu: beside Cheats when the game has none (like "%d available")
+cheats.none	ninguno
+# context: vid_text in ui_vita_cheats.h, screen_cheat_add_page
+cheats.not_a_whole_code_yet	aún no es un código completo
+# context: ui_vita_cheats.h, screen_cheat_search_page
+cheats.nothing_matched_start_a_new_search	Sin coincidencias: empieza una búsqueda nueva.
+# context: snprintf in ui_vita_cheats.h, screen_cheats_page
+cheats.of	"%s": %d de %d
+# context: snprintf in ui_vita_cheats.h, ch_summary
+cheats.on	%d activos
+# context: snprintf in ui_vita_cheats.h, screen_cheats_page
+cheats.on_in_all	%d activos  -  %d en total
+# context: cheats_vita.c, cheats_kind_name
+cheats.raw	Sin formato
+# context: vid_text in ui_vita_cheats.h, screen_cheat_add_page
+cheats.ready_to_save	listo para guardar
+# context: vid_text in ui_vita_cheats.h, screen_cheat_add_page
+cheats.recognised_not_supported	reconocido, no compatible
+# context: ui_vita_cheats.h, screen_cheat_search_page
+cheats.remember_the_memory_play_on_then	Recuerda la memoria, sigue jugando y luego redúcela.
+# context: Search memory: how many places are left, any other number
+cheats.result_many	%d resultados
+# context: Search memory: how many places are left, exactly 1
+cheats.result_one	%d resultado
+# context: snprintf in ui_vita_cheats.h, screen_cheat_search_page
+cheats.results	Resultados
+# context: ui_vita_cheats.h, screen_cheats_page
+cheats.save	Guardar
+# context: vw_head in ui_vita_cheats.h, screen_cheat_search_page
+cheats.search_memory	BUSCAR EN MEMORIA
+# context: cs_note in ui_vita_cheats.h, cs_open
+cheats.search_memory_is_not_available_in	Buscar en memoria no está disponible en modo de dos jugadores
+# context: cs_note in ui_vita_cheats.h, screen_cheat_search_page
+cheats.search_started_places_play_on_then	Búsqueda iniciada: %d lugares. Sigue jugando y luego redúcela
+# context: vid_text in ui_vita_cheats.h, screen_cheats_page
+cheats.select_shows_the_whole_list_again	SELECT muestra de nuevo toda la lista.
+# context: snprintf in ui_vita_cheats.h, screen_cheat_search_page
+cheats.since_the_last_step	Desde el último paso
+# context: snprintf in ui_vita_cheats.h, screen_cheat_search_page
+cheats.size_of_the_number	Tamaño del número
+# context: ui_vita_cheats.h, screen_cheats_page
+cheats.space	Espacio
+# context: snprintf in ui_vita_cheats.h, screen_cheat_search_page
+cheats.start_again	Empezar de nuevo
+# context: Cheats page: top right while cheats are off (Hardcore or linked)
+cheats.status_off	INACTIVOS
+# context: Cheats page with no cheats; cheats and roms are folder names
+cheats.the_built_in_list_has_none_for	La lista incluida no tiene ninguno. Añade un código propio con {tri}, o copia un archivo .cht en la carpeta cheats junto a roms.
+# context: cheats_vita.c, cheats_error_text
+cheats.the_cheat_could_not_be_used	No se pudo usar el truco.
+# context: cheats_vita.c, cheats_error_text
+cheats.the_cheat_file_could_not_be	No se pudo guardar el archivo de trucos.
+# context: vid_text in ui_vita_cheats.h, screen_cheat_add_page
+cheats.the_code	el código
+# context: cheats_vita.c, cheats_error_text
+cheats.the_code_is_too_long	El código es demasiado largo.
+# context: snprintf in ui_vita_cheats.h, screen_cheat_add_page
+cheats.the_dash_belongs_to_game_boy	El guion es propio de los códigos Game Genie de Game Boy.
+# context: snprintf in ui_vita_cheats.h, screen_cheats_page
+cheats.the_keyboard_is_not_available	El teclado no está disponible.
+# context: cs_note in ui_vita_cheats.h, screen_cheat_search_page
+cheats.the_search_could_not_start_not	No se pudo iniciar la búsqueda: memoria insuficiente
+# context: cs_note in ui_vita_cheats.h, cs_open
+cheats.there_is_no_memory_to_search	Este juego no tiene memoria donde buscar
+# context: cs_note in ui_vita_cheats.h, cs_step
+cheats.there_is_no_search_to_narrow	No hay ninguna búsqueda que reducir
+# context: vw_clip in ui_vita_cheats.h, screen_cheats_page
+cheats.this_code	este código
+# context: snprintf in ui_vita_cheats.h, screen_cheats_page
+cheats.this_code_cannot_be_run_by	Este emulador no puede ejecutar este código de %s.
+# context: cheats_vita.c, cheats_error_text
+cheats.this_is_not_a_code_for	Este código no es para esta consola.
+# context: cheats_vita.c, cheats_error_text
+cheats.this_kind_of_code_cannot_be	Aquí no se puede usar este tipo de código.
+# context: cs_note in ui_vita_cheats.h, cs_add
+cheats.this_place_cannot_be_made_into	Aquí este lugar no se puede convertir en truco
+# context: ov_plate in ui_vita_cheats.h, screen_cheat_add_page
+cheats.throw_this_code_away_x_discard	¿Descartar este código?      {x} descartar     {o} seguir escribiendo
+# context: cs_note in ui_vita_cheats.h, screen_cheat_search_page
+cheats.type_a_whole_number_from_0	Escribe un número entero de 0 a %u (o 0x y hex)
+# context: snprintf in ui_vita_cheats.h, screen_cheat_add_page
+cheats.type_the_code_first	Escribe primero el código.
+# context: cheats_vita.c, cheats_kind_name
+cheats.unknown	Desconocido
+# context: cheat list: a code this app cannot run (right of the name)
+cheats.unsupported	no compatible
+# context: cheat list: a code the player added (right of the name)
+cheats.yours	tuyo
+# context: vw_wrap in ui_vita_cover.h, cv_screen
+cover.a_cover_you_pick_always_wins	La portada que eliges siempre prevalece sobre la descargada. También se usa un PNG o JPG en covers/ con el nombre del juego.
+# context: snprintf in ui_vita_cover.h, cv_automatic
+cover.automatic_a_cover_is_downloaded_when	Automático. Se descarga una portada cuando hay Wi-Fi.
+# context: ui_vita_cover.h, cv_screen
+cover.automatic_download	Automático (descarga)
+# context: ui_vita_cover.h, cv_screen
+cover.choose_a_picture	Elegir una imagen...
+# context: vw_head in ui_vita_cover.h, cv_screen
+cover.cover_picture	IMAGEN DE PORTADA
+# context: snprintf in ui_vita_cover.h, cv_apply
+cover.cover_set_it_shows_at_once	Portada establecida. Se ve al instante.
+# context: ui_vita_cover.h, cv_screen
+cover.in_use	en uso
+# context: snprintf in ui_vita_cover.h, cv_automatic
+cover.it_is_automatic_already	Ya es automática.
+# context: vid_text in ui_vita_cover.h, cv_screen
+cover.no_pictures_found	No se encontraron imágenes.
+# context: ui_vita_cover.h, cv_preview_draw
+cover.no_preview	Sin vista previa
+# context: snprintf in ui_vita_cover.h, cv_screen
+cover.no_screenshot_of_this_game_yet	Aún no hay captura de este juego.
+# context: snprintf in cover_custom.c, decode_file
+cover.not_enough_memory_for_that_picture	Memoria insuficiente para esa imagen.
+# context: vid_text in ui_vita_cover.h, cv_screen
+cover.now_automatic	Ahora: automática
+# context: vid_text in ui_vita_cover.h, cv_screen
+cover.now_your_own_picture	Ahora: tu propia imagen
+# context: snprintf in ui_vita_cover.h, cv_screen
+cover.of	%d de %d
+# context: snprintf in cover_custom.c, cover_game_picture
+cover.shot	%.*s%d.shot
+# context: vw_wrap in ui_vita_cover.h, cv_screen
+cover.take_a_screenshot_or_copy_a	Haz una captura o copia un PNG o JPG en ux0:data/GBAdhoc/covers/ desde un ordenador.
+# context: snprintf in ui_vita_cover.h, cv_automatic
+cover.that_did_not_work	Eso no ha funcionado.
+# context: snprintf in cover_custom.c, set_from
+cover.that_game_has_no_name_to	Ese juego no tiene nombre con el que guardar una imagen.
+# context: snprintf in cover_custom.c, set_from
+cover.that_game_s_name_is_too	El nombre de ese juego es demasiado largo.
+# context: snprintf in cover_custom.c, decode_file
+cover.that_is_not_a_png_or	Eso no es una imagen PNG o JPG.
+# context: snprintf in cover_custom.c, decode_file
+cover.that_picture_could_not_be_opened	No se pudo abrir esa imagen.
+# context: snprintf in cover_custom.c, decode_file
+cover.that_picture_could_not_be_read	No se pudo leer esa imagen.
+# context: snprintf in cover_custom.c, decode_file
+cover.that_picture_is_too_big_8	Esa imagen es demasiado grande (8 megapíxeles como máximo).
+# context: snprintf in ui_vita_cover.h, cv_automatic
+cover.the_downloaded_cover_is_back	Vuelve la portada descargada.
+# context: snprintf in cover_custom.c, set_from
+cover.the_old_cover_could_not_be	No se pudo apartar la portada anterior.
+# context: snprintf in cover_custom.c, set_from
+cover.the_picture_could_not_be_saved	No se pudo guardar la imagen. Comprueba que la tarjeta tenga espacio.
+# context: snprintf in cover_custom.c, set_from
+cover.the_picture_could_not_be_saved_2	No se pudo guardar la imagen.
+# context: ui_vita_cover.h, cv_screen
+cover.use_a_screenshot_of_the_game	Usar una captura del juego
+# context: snprintf in ui_vita_cover.h, cv_screen
+cover.use_this_as_the_cover_for	¿Usar esto como portada de %s?
+# context: ctl_map.c, ctl_error_text
+ctl.at_most_4_buttons	máximo 4 botones
+# context: ctl_map.c
+ctl.crash_self_test	Autoprueba de fallo
+# context: ctl_map.c
+ctl.fast_forward	Avance rápido
+# context: ctl_map.c
+ctl.mystery_gift	Mystery Gift
+# context: ctl_map.c, ctl_error_text
+ctl.not_available_in_this_build	no disponible en esta versión
+# context: ctl_map.c
+ctl.pause_screen	Pantalla de pausa
+# context: ctl_map.c
+ctl.quick_load	Carga rápida
+# context: ctl_map.c
+ctl.quick_save	Guardado rápido
+# context: ctl_map.c
+ctl.rewind	Rebobinar
+# context: ctl_map.c
+ctl.screenshot	Captura de pantalla
+# context: ctl_map.c, ctl_error_text
+ctl.start_select_is_reserved_for_the	START+SELECT está reservado para el menú
+# context: ctl_map.c, ctl_error_text
+ctl.that_button_cannot_be_bound	ese botón no se puede asignar
+# context: ctl_map.c, ctl_error_text
+ctl.this_one_takes_a_single_button	este admite un solo botón
+# context: ctl_map.c
+ctl.turbo_a	Turbo A
+# context: ctl_map.c
+ctl.turbo_a_2	Turbo A (2)
+# context: ctl_map.c
+ctl.turbo_b	Turbo B
+# context: ctl_map.c
+ctl.turbo_b_2	Turbo B (2)
+# context: ctl_map.c
+ctl.video_preset	Ajuste de vídeo
+# context: footer in ui_psp.c, screen_wireless
+hint.dpad_change_o_back	DPAD cambiar   {o} atrás
+# context: footer in ui_vita_online.h, screen_online_code
+hint.dpad_letter_move_x_pad_sq	DPAD letra, mover   {x} teclado   {sq} borrar   {tri} unir   {o} atrás
+# context: footer in ui_vita_cheats.h, screen_cheats_page
+hint.l_r_page_o_back	L/R página   {o} atrás
+# context: footer in ui_psp.c, ui_linking_draw
+hint.o_back	{o} atrás
+# context: footer in ui_psp.c, ui_linking_draw
+hint.o_cancel	{o} cancelar
+# context: footer in ui_psp.c, screen_state_slots
+hint.sq_save_r_undo_o_back	{sq} guardar   R deshacer   {o} atrás
+# context: footer in ui_vita_btntest.h, screen_btntest
+hint.to_leave_hold_start_select_or	Para salir: mantén Start + Select, o pon un dedo en esta línea
+# context: footer in ui_vita_cheats.h, screen_cheats_page
+hint.tri_add_a_code_select_find	{tri} añadir código   SELECT buscar   START búsqueda   {o} atrás
+# context: footer in ui_vita_ra.h, screen_ra
+hint.up_down_scroll_l_r_page	ARR/ABA desplazar   L/R página   {o} atrás
+# context: footer in ui_vita_lists.h, ls_screen
+hint.x_add_remove_sq_rename_tri	{x} añadir/quitar   {sq} renombrar   {tri} borrar   {o} atrás
+# context: footer in ui_vita_play.h, screen_mgift
+hint.x_back_o_back	{x} atrás   {o} atrás
+# context: footer in ui_psp.c, screen_settings_page
+hint.x_change_dpad_move_change_o	{x} cambiar   DPAD mover/cambiar   {o} atrás
+# context: footer in ui_vita_play.h, screen_local
+hint.x_change_o_back	{x} cambiar   {o} atrás
+# context: footer in ui_psp.c, screen_turbo
+hint.x_change_tri_default_o_back	{x} cambiar   {tri} predet.   {o} atrás
+# context: footer in ui_psp.c, screen_settings_page
+hint.x_check_now_dpad_change_o	{x} buscar ya   DPAD cambiar   {o} atrás
+# context: footer in ui_vita_play.h, screen_play_page
+hint.x_choose_dpad_change_o_back	{x} elegir   DPAD cambiar   {o} atrás
+# context: footer in ui_vita_play.h, local_pick
+hint.x_choose_l_r_page_o	{x} elegir   L/R página   {o} atrás
+# context: footer in ui_vita_play.h, local_pick
+hint.x_choose_o_back	{x} elegir   {o} atrás
+# context: footer in ui_psp.c, screen_settings_page
+hint.x_export_dpad_move_choose_o	{x} exportar   DPAD mover/elegir   {o} atrás
+# context: footer in ui_vita_play.h, screen_play_page
+hint.x_host_dpad_room_number_o	{x} crear   DPAD n.º de sala   {o} atrás
+# context: footer in ui_psp.c, screen_host
+hint.x_host_o_back	{x} crear   {o} atrás
+# context: footer in ui_psp.c, screen_joinask
+hint.x_join_o_back	{x} unirse   {o} atrás
+# context: footer in ui_psp.c, screen_state_slots
+hint.x_load_sq_save_tri_delete	{x} cargar   {sq} guardar   {tri} borrar   L fijar   R deshacer   {o} atrás
+# context: footer in ui_vita_cover.h, cv_screen
+hint.x_look_dpad_move_l_r	{x} ver   DPAD mover   L R página   {o} atrás
+# context: footer in ui_vita_cheats.h, screen_cheat_add_page
+hint.x_name_it_tri_save_o	{x} nombrar   {tri} guardar   {o} atrás
+# context: footer in ui_vita_lists.h, ls_screen
+hint.x_new_collection_o_back	{x} nueva colección   {o} atrás
+# context: footer in ui_psp.c, screen_cheats
+hint.x_on_off_o_back	{x} act/desact     {o} atrás
+# context: footer in ui_psp.c, screen_cheats
+hint.x_on_off_sq_all_off	{x} act/desact     {sq} desact. todo     {o} atrás
+# context: footer in ui_vita_cheats.h, screen_cheats_page
+hint.x_on_off_tri_add_select	{x} act/des   {tri} añadir   SELECT buscar   START memoria   {o} atrás
+# context: footer in ui_vita_cheats.h, screen_cheats_page
+hint.x_on_off_tri_add_sq	{x} act/des   {tri} añadir   {sq} borrar   SELECT buscar   START memoria
+# context: footer in ui_vita_online.h, screen_online_card
+hint.x_open_and_join_o_back	{x} abrir y unirse   {o} atrás
+# context: footer in ui_psp.c, screen_settings_page
+hint.x_open_dpad_move_o_back	{x} abrir   DPAD mover   {o} atrás
+# context: footer in ui_psp.c, screen_controls
+hint.x_open_o_back_auto_fire	{x} abrir   {o} atrás      turbo para A y B
+# context: footer in ui_psp.c, screen_turbo
+hint.x_rebind_sq_none_tri_default	{x} reasignar   {sq} ninguno   {tri} predet.   {o} atrás      vacío = sin uso
+# context: footer in ui_psp.c, screen_controls
+hint.x_reset_o_back_blank_disabled	{x} restablecer   {o} atrás      vacío = inactivo
+# context: footer in ui_psp.c, screen_settings_page
+hint.x_retry_missing_dpad_move_o	{x} reintentar   DPAD mover   {o} atrás
+# context: footer in ui_psp.c, ui_wake_menu
+hint.x_select_dpad_change_o_resume	{x} elegir   DPAD cambiar   {o} reanudar
+# context: footer in ui_vita_cover.h, cv_screen
+hint.x_select_dpad_move_o_back	{x} elegir   DPAD mover   {o} atrás
+# context: footer in ui_psp.c, wl_session
+hint.x_select_o_back	{x} elegir   {o} atrás
+# context: footer in ui_psp.c, screen_menu
+hint.x_select_o_resume	{x} elegir     {o} reanudar
+# context: footer in ui_psp.c, screen_settings_page
+hint.x_set_level_now_dpad_move	{x} fijar nivel ya   DPAD mover   {o} atrás
+# context: footer in ui_vita_play.h, screen_local
+hint.x_start_o_back	{x} iniciar   {o} atrás
+# context: footer in ui_vita_play.h, screen_mgift
+hint.x_stop_o_back_keeps_listening	{x} detener   {o} atrás (sigue escuchando)
+# context: footer in ui_vita_play.h, screen_help
+hint.x_the_steps_o_back	{x} los pasos   {o} atrás
+# context: footer in ui_vita_cheats.h, screen_cheat_add_page
+hint.x_type_sq_delete_l_keyboard	{x} letra   {sq} borrar   L teclado   SELECT nombre   {tri} listo   {o} atrás
+# context: footer in ui_vita_play.h, screen_addr
+hint.x_type_sq_delete_tri_join	{x} escribir   {sq} borrar   {tri} unir   {o} atrás
+# context: footer in ui_vita_cover.h, cv_screen
+hint.x_use_it_o_back	{x} usarlo   {o} atrás
+# context: footer in ui_vita_play.h, screen_help
+hint.x_which_connection_o_back	{x} ¿qué conexión?   {o} atrás
+# context: snprintf in ui_vita_home.h, home_empty
+home.1_game_matches_in_all_games	1 juego coincide en Todos los juegos
+# context: vs_text_c in ui_vita_home.h, home_empty
+home.a_retroarch_playlist_it_lists_games	Una lista de RetroArch: muestra juegos, aquí no se puede cambiar.
+# context: vs_text_w in ui_vita_home.h, home_empty
+home.all_games	Todos los juegos
+# context: month name for home.in_month
+home.april	abril
+# context: month name for home.in_month
+home.august	agosto
+# context: ui_vita_home.h, shell_home
+home.back	Atrás
+# context: hm_chip in ui_vita_home.h, hm_focus
+home.battery_save	Partida de batería
+# context: hm_hint_word in ui_vita_home.h, hm_home_hints
+home.cancel	Cancelar
+# context: ui_vita_home.h, hm_cards
+home.checking	Comprobando...
+# context: snprintf in ui_vita_home.h, hm_topbar
+home.checking_covers_of	Comprobando portadas: %d de %d
+# context: snprintf in ui_vita_home.h, home_empty
+home.choose_another_console	Elegir otra consola
+# context: ui_vita_home.h, hm_home_hints
+home.clear	Borrar
+# context: hm_button in ui_vita_home.h, hm_focus
+home.continue	Continuar
+# context: snprintf in ui_vita_home.h, home_empty
+home.copy_your_files_into_this_folder	Copia tus archivos .%s en esta carpeta de la tarjeta de memoria:
+# context: hm_button in ui_vita_home.h, hm_focus
+home.cover	Portada
+# context: fills the first %s of home.played (2 to 13 days)
+home.days_ago	hace %ld días
+# context: month name for home.in_month
+home.december	diciembre
+# context: ui_vita_home.h, shell_home
+home.delete	Eliminar
+# context: snprintf in ui_vita_home.h, shell_home
+home.delete_the_state_in_slot	¿Eliminar el estado de la ranura %d?
+# context: ui_vita_home.h, hm_cards
+home.empty	Vacía
+# context: snprintf in ui_vita_home.h, home_empty
+home.every_game_has_been_played	Ya se jugó a todos los juegos de %s
+# context: month name for home.in_month
+home.february	febrero
+# context: ui_vita_home.h, hm_home_hints
+home.find	Buscar
+# context: hm_chip in ui_vita_home.h, hm_focus
+home.from_wikipedia	De Wikipedia
+# context: ui_vita_home.h, hm_topbar
+home.games	Juegos
+# context: snprintf in ui_vita_home.h, home_empty
+home.games_match_in_all_games	%d juegos coinciden en Todos los juegos
+# context: how long a game was played
+home.hours	%u h
+# context: how long a game was played
+home.hours_minutes	%u h %u min
+# context: fills the first %s of home.played; %s is a month name (home.january...)
+home.in_month	en %s
+# context: fills the first %s of home.played; a month name and a year
+home.in_month_year	en %s de %ld
+# context: month name for home.in_month
+home.january	enero
+# context: month name for home.in_month
+home.july	julio
+# context: month name for home.in_month
+home.june	junio
+# context: hm_hint_word in ui_vita_home.h, hm_home_hints
+home.keep	Conservar
+# context: vs_text_w in ui_vita_home.h, hm_home_hints
+home.lists	Listas
+# context: ui_vita_home.h, shell_home
+home.load	Cargar
+# context: vs_text_w in ui_vita_home.h, home_empty
+home.look_again	Buscar otra vez
+# context: month name for home.in_month
+home.march	marzo
+# context: month name for home.in_month
+home.may	mayo
+# context: how long a game was played
+home.minutes	%u min
+# context: fills %s of home.played_2
+home.never	nunca
+# context: hm_hint_word in ui_vita_home.h, hm_home_hints
+home.next	Siguiente
+# context: vs_text_c in ui_vita_home.h, home_empty
+home.no_games_match	Ningún juego coincide
+# context: snprintf in ui_vita_home.h, home_empty
+home.no_games_played_yet	Aún no has jugado a juegos de %s
+# context: snprintf in ui_vita_home.h, home_empty
+home.no_games_yet	Aún no hay juegos de %s
+# context: hm_chip in ui_vita_home.h, hm_focus
+home.no_save_yet	Aún sin partida guardada
+# context: snprintf in ui_vita_home.h, home_empty
+home.no_starred_games_yet	Aún no hay juegos de %s con estrella
+# context: snprintf in ui_vita_home.h, home_empty
+home.nothing_of_on	Nada de %s en %s
+# context: month name for home.in_month
+home.november	noviembre
+# context: month name for home.in_month
+home.october	octubre
+# context: snprintf in ui_vita_home.h, hm_topbar
+home.of	%d de %d
+# context: hm_chip in ui_vita_home.h, hm_focus
+home.patched_bps	Parcheado (BPS)
+# context: hm_chip in ui_vita_home.h, hm_focus
+home.patched_ips	Parcheado (IPS)
+# context: hm_chip in ui_vita_home.h, hm_focus
+home.patched_ups	Parcheado (UPS)
+# context: vs_text_w in ui_vita_home.h, hm_home_hints
+home.play	Jugar
+# context: snprintf in ui_vita_home.h, hm_focus
+home.played	Jugado %s, %s
+# context: snprintf in ui_vita_home.h, hm_focus
+home.played_2	Jugado %s
+# context: vs_text_c in ui_vita_home.h, home_empty
+home.press_select_and_square_on_a	Pulsa select y cuadrado en un juego para añadirlo.
+# context: vs_text_c in ui_vita_home.h, home_empty
+home.press_square_on_a_game_to	Pulsa cuadrado en un juego para marcarlo con estrella.
+# context: ui_vita_home.h, hm_topbar
+home.recent	Recientes
+# context: snprintf in ui_vita_home.h, hm_focus
+home.save_state	%d estado guardado
+# context: snprintf in ui_vita_home.h, hm_focus
+home.save_states	%d estados guardados
+# context: hm_button in ui_vita_home.h, hm_focus
+home.save_states_2	Estados guardados
+# context: snprintf in ui_vita_home.h, hm_cards
+home.save_states_of	Estados guardados   %d-%d de %d
+# context: ui_vita_home.h, hm_cards
+home.saved	Guardado
+# context: month name for home.in_month
+home.september	septiembre
+# context: vs_text_w in ui_vita_home.h, hm_home_hints
+home.settings	Ajustes
+# context: snprintf in ui_vita_home.h, hm_cards
+home.slot	Ranura %d
+# context: vs_text_w in ui_vita_home.h, hm_home_hints
+home.star	Favorito
+# context: ui_vita_home.h, hm_topbar
+home.starred	Favoritos
+# context: hm_button in ui_vita_home.h, hm_focus
+home.start_over	Empezar de nuevo
+# context: hm_hint_word in ui_vita_home.h, hm_home_hints
+home.step	Paso
+# context: vs_text_c in ui_vita_home.h, home_empty
+home.the_games_you_have_not_started	Los juegos que no has empezado aparecen aquí.
+# context: vs_text_c in ui_vita_home.h, home_empty
+home.the_games_you_play_show_up	Los juegos a los que juegas aparecen aquí, el último primero.
+# context: vs_text_c in ui_vita_home.h, home_empty
+home.the_games_you_play_show_up_2	Los juegos a los que juegas aparecen aquí, el más jugado primero.
+# context: fills the first %s of home.played / home.played_2
+home.today	hoy
+# context: vs_text_c in ui_vita_home.h, home_empty
+home.try_fewer_words_or_part_of	Prueba con menos palabras o parte de una palabra.
+# context: how long a game was played, second %s of home.played
+home.under_a_minute	menos de un minuto
+# context: vs_text_w in ui_vita_home.h, hm_home_hints
+home.views	Vistas
+# context: fills the first %s of home.played (2 to 8 weeks)
+home.weeks_ago	hace %ld semanas
+# context: fills the first %s of home.played
+home.yesterday	ayer
+# context: ui_vita_library.h, lib_view_name
+lib.games	Juegos
+# context: ui_vita_library.h, lib_view_name
+lib.most_played	Más jugados
+# context: ui_vita_library.h, lib_view_name
+lib.not_played_yet	Sin jugar aún
+# context: ui_vita_library.h, lib_view_name
+lib.recent	Recientes
+# context: ui_vita_library.h, lib_view_name
+lib.starred	Favoritos
+# context: snprintf in link_vita.c, linking_view
+link.about_min	unos %u min
+# context: snprintf in link_vita.c, linking_view
+link.about_s	unos %u s
+# context: snprintf in link_vita.c, link_action
+link.ad_hoc	Ad hoc
+# context: snprintf in link_vita.c, linking_view
+link.another_game	otro juego
+# context: snprintf in link_vita.c, linking_view
+link.both_games_carry_on_from_where	Ambos juegos continúan desde donde están.
+# context: snprintf in link_vita.c, linking_view
+link.both_vitas_agree_where_to_stop	Ambas Vitas acuerdan dónde parar.
+# context: snprintf in link_vita.c, linking_view
+link.checking	Comprobando %s...
+# context: snprintf in link_vita.c, linking_view
+link.checking_the_game	Comprobando el juego...
+# context: snprintf in link_vita.c, linking_view
+link.connecting	Conectando...
+# context: snprintf in link_vita.c, linking_view
+link.connecting_through_the_relay	Conectando mediante el relé.
+# context: snprintf in link_vita.c, linking_view
+link.connecting_to_the_other_vita	Conectando con la otra Vita
+# context: snprintf in link_vita.c, linking_view
+link.ending_the_link	Cerrando la conexión...
+# context: snprintf in link_vita.c, linking_view
+link.exchanging_saves	Intercambiando partidas...
+# context: snprintf in link_vita.c, linking_view
+link.finding_the_room	Buscando la sala...
+# context: snprintf in link_vita.c, linking_view
+link.finding_your_friend	Buscando a tu amigo...
+# context: snprintf in link_vita.c, linking_view
+link.first_time_with_this_game_only	Solo la primera vez con este juego. Cancela para parar.
+# context: snprintf in link_vita.c, linking_view
+link.follow_the_vita_s_connection_screen	Sigue la pantalla de conexión de la Vita.
+# context: snprintf in link_vita.c, link_snes_begin
+link.game	Juego de %s
+# context: snprintf in link_vita.c, chip_update
+link.good	Buena
+# context: snprintf in link_vita.c, chip_update
+link.great	Excelente
+# context: snprintf in link_vita.c, linking_view
+link.joining	Uniéndose a %s
+# context: snprintf in link_vita.c, linking_view
+link.joining_by_wireless_adapter	Uniéndose a %s por Adaptador inalámbrico
+# context: snprintf in link_vita.c, amount_text
+link.kb	%u / %u KB
+# context: snprintf in link_vita.c, linking_view
+link.keeping_a_copy_of	Guardando una copia de %s...
+# context: snprintf in link_vita.c, linking_view
+link.left_first_time_only_cancel_to	Faltan %s. Solo la primera vez. Cancela para parar.
+# context: snprintf in link_vita.c, chip_update
+link.link_cable	Cable Link
+# context: snprintf in link_vita.c, linking_view
+link.link_cancelled	Conexión cancelada.
+# context: snprintf in link_vita.c, linking_view
+link.link_ended_game_saved	Conexión terminada. Partida guardada.
+# context: snprintf in link_vita.c, link_snes_ended
+link.link_ended_your_own_game_is	Conexión terminada. Vuelve tu propio juego.
+# context: snprintf in link_vita.c, link_snes_ended
+link.link_lost_the_other_vita_is	Conexión perdida: la otra Vita ya no está. No se guardó nada.
+# context: snprintf in link_vita.c, linking_view
+link.linking_with	Conectado con %s
+# context: snprintf in link_vita.c, amount_text
+link.mb	%u.%u / %u.%u MB
+# context: snprintf in link_vita.c, link_action
+link.online	En línea
+# context: snprintf in link_vita.c, link_snes_draw
+link.opening_the_room	Abriendo la sala...
+# context: snprintf in link_vita.c, linking_view
+link.receiving	Recibiendo
+# context: snprintf in link_vita.c, chip_update
+link.relay	 (relé)
+# context: snprintf in link_vita.c, link_action
+link.room	Sala %d
+# context: snprintf in link_vita.c, link_snes_draw
+link.room_code	Código de sala  %s
+# context: snprintf in link_vita.c, linking_view
+link.sending	Enviando
+# context: snprintf in link_vita.c, linking_view
+link.sharing_where_you_are	Compartiendo dónde estás...
+# context: snprintf in link_vita.c, chip_update
+link.slow	Lenta
+# context: snprintf in link_vita.c, linking_view
+link.starting_together	Empezando juntos...
+# context: snprintf in link_vita.c, link_snes_draw
+link.starting_two_players	Empezando Dos jugadores...
+# context: snprintf in link_vita.c, link_snes_draw
+link.tell_your_friend_to_join_o	Dile a tu amigo que se una. O cancela.
+# context: link_vita.c, linking_view
+link.the_game	el juego
+# context: app_quit_game in link_vita.c, link_end
+link.the_game_could_not_be_reloaded	No se pudo recargar el juego tras la conexión.
+# context: snprintf in link_vita.c, linking_view
+link.the_game_is_kept_in_memory	El juego se guarda en memoria, no en la tarjeta de memoria.
+# context: snprintf in link_vita.c, link_snes_ended
+link.the_games_fell_out_of_step	Los juegos se desincronizaron. Conexión terminada, no se guardó nada.
+# context: app_quit_game in link_vita.c, session_begin
+link.the_link_could_not_start_and	La conexión no pudo empezar y hubo que cerrar el juego.
+# context: snprintf in link_vita.c, link_snes_ended
+link.the_link_did_not_start	La conexión no empezó.
+# context: snprintf in link_vita.c, linking_view
+link.the_other_game	el otro juego
+# context: snprintf in link_vita.c, linking_view
+link.the_other_vita	la otra Vita
+# context: snprintf in link_vita.c, link_snes_ended
+link.the_other_vita_has_a_different	La otra Vita tiene un juego distinto.
+# context: snprintf in link_vita.c, linking_view
+link.the_room	la sala
+# context: snprintf in link_vita.c, link_snes_ended
+link.this_vita_went_to_sleep_so	Esta Vita entró en reposo, así que la conexión terminó.
+# context: snprintf in link_vita.c, chip_update
+link.two_players	Dos jugadores
+# context: snprintf in link_vita.c, chip_update
+link.waiting	%s  %s  esperando
+# context: snprintf in link_vita.c, linking_view
+link.waiting_for_the_other_vita	Esperando a la otra Vita...
+# context: snprintf in link_vita.c, link_snes_draw
+link.waiting_for_the_other_vita_in	Esperando a la otra Vita en %s
+# context: snprintf in link_vita.c, chip_update
+link.wireless_adapter	Adaptador inalámbrico
+# context: snprintf in link_vita.c, chip_update
+link.wireless_adapter_2	Adaptador inalámbrico  %s%s
+# context: link_vita.c, linking_view
+link.your_game	tu juego
+# context: snprintf in ui_vita_lists.h, ls_screen
+list.a_collection_needs_a_name	Una colección necesita un nombre
+# context: vw_row in ui_vita_lists.h, ls_screen
+list.added	Añadido
+# context: snprintf in ui_vita_lists.h, ls_toggle
+list.added_to	Añadido a "%s"
+# context: ui_text_open in ui_vita_lists.h, ls_screen
+list.collection_name	Nombre de la colección
+# context: vw_head in ui_vita_lists.h, ls_screen
+list.collections	COLECCIONES
+# context: vw_wrap in ui_vita_lists.h, ls_screen
+list.collections_are_lists_of_your_own	Las colecciones son listas tuyas, de todas las consolas. Crea una para meter este juego.
+# context: snprintf in ui_vita_lists.h, ls_save
+list.could_not_save_the_collections	No se pudieron guardar las colecciones
+# context: snprintf in ui_vita_lists.h, ls_screen
+list.delete_x_delete_o_keep	¿Borrar "%s"?      {x} borrar     {o} conservar
+# context: snprintf in ui_vita_lists.h, ls_screen
+list.deleted	"%s" borrada
+# context: vw_row in ui_vita_lists.h, ls_screen
+list.new_collection	Nueva colección
+# context: snprintf in ui_vita_lists.h, ls_screen
+list.no_room_for_another_collection	No hay espacio para otra colección
+# context: snprintf in ui_vita_lists.h, ls_toggle
+list.no_room_for_more_games	No hay espacio para más juegos
+# context: snprintf in ui_vita_lists.h, ls_toggle
+list.removed_from	Quitado de "%s"
+# context: ui_text_open in ui_vita_lists.h, ls_screen
+list.rename_collection	Renombrar colección
+# context: snprintf in ui_vita_lists.h, ls_screen
+list.renamed_to	Renombrada a "%s"
+# context: snprintf in ui_vita_lists.h, ls_save
+list.the_collections_file_cannot_be_changed	El archivo de colecciones no se puede cambiar con seguridad
+# context: snprintf in ui_vita_lists.h, ls_screen
+list.the_keyboard_is_not_available	El teclado no está disponible
+# context: snprintf in ui_vita_lists.h, ls_screen
+list.there_is_one_with_that_name	Ya hay una con ese nombre
+# context: vid_text in local_vita.c, link_local_present
+local.a_tap_switch	un toque: cambiar
+# context: err_set in local_vita.c, save_keep_old
+local.cannot_be_read	no se puede leer
+# context: local_vita.c, link_local_present
+local.controller_2	mando 2
+# context: local_vita.c, link_local_present
+local.controller_2_sound	mando 2  (sonido)
+# context: local_vita.c, start_now
+local.end_the_network_game_first	Termina primero la partida en red.
+# context: local_vita.c, link_local_present
+local.pad_1	mando 1
+# context: local_vita.c, link_local_present
+local.pad_2	mando 2
+# context: local_vita.c, link_local_present
+local.partner_s_game	juego del compañero
+# context: local_vita.c, link_local_present
+local.partner_s_game_playing	juego del compañero  (jugando)
+# context: err_set in local_vita.c, copy_file_verified
+local.path_too_long	ruta demasiado larga
+# context: local_vita.c, link_local_present
+local.playing	< jugando
+# context: local_vita.c, link_local_present
+local.playing_2	jugando >
+# context: err_set in local_vita.c, copy_file_verified
+local.read_error	error de lectura
+# context: vid_text in local_vita.c, link_local_present
+local.right_stick_or	Palanca derecha o
+# context: vid_text_center in local_vita.c, link_local_present
+local.right_stick_or_a_tap_the	Palanca derecha o un toque: el otro juego
+# context: local_vita.c, link_local_present
+local.sound	< sonido
+# context: local_vita.c, link_local_present
+local.sound_2	sonido >
+# context: err_set in local_vita.c, copy_file_verified
+local.the_copy_did_not_read_back	la copia no se leyó completa
+# context: local_vita.c, start_now
+local.the_partner_s_game_could_not	No se pudo cargar el juego del compañero.
+# context: local_vita.c, ui_host_local_state
+local.the_second_game_could_not_be	No se pudo preparar el segundo juego para este juego.
+# context: local_vita.c, link_local_present
+local.this_console	esta consola
+# context: local_vita.c, link_local_present
+local.this_console_sound	esta consola  (sonido)
+# context: local_vita.c, start_now
+local.this_game_cannot_be_linked_on	Este juego no se puede conectar en una sola consola.
+# context: local_vita.c, link_local_present
+local.touch_sound	táctil  (sonido)
+# context: snprintf in local_vita.c, err_set
+local.write_incomplete	escritura incompleta
+# context: local_vita.c, link_local_present
+local.your_game	tu juego
+# context: local_vita.c, link_local_present
+local.your_game_playing	tu juego  (jugando)
+look.auto	Auto (%s)
+look.auto_eased	Auto (%s, suave)
+# context: snprintf in ui_vita_menu.h, cc_says
+menu.back_to_the_game	Volver al juego
+# context: ui_vita_menu.h
+menu.cheats	Trucos
+# context: snprintf in ui_vita_menu.h, cc_says
+menu.cheats_2	Trucos: %s
+# context: snprintf in ui_vita_menu.h, cc_says
+menu.cheats_are_off_while_linked	Los trucos están desactivados mientras hay conexión
+# context: snprintf in ui_vita_menu.h, cc_says
+menu.close_vitadhoc	Cerrar VitAdhoc
+# context: ui_vita_menu.h
+menu.exit	Salir
+# context: ui_vita_menu.h
+menu.game_list	Lista de juegos
+# context: hm_chip in ui_vita_menu.h, cc_draw
+menu.hosting	Creando partida
+# context: snprintf in ui_vita_menu.h, cc_says
+menu.hosting_waiting_for_the_other_player	Creando %s, esperando al otro jugador
+# context: snprintf in ui_vita_menu.h, cc_says
+menu.leave_this_game_for_the_game	Salir de este juego a la lista de juegos
+# context: snprintf in ui_vita_menu.h, cc_says
+menu.link_up_over_wi_fi_ad	Conéctate por Wi-Fi, ad hoc o en esta Vita
+# context: hm_chip in ui_vita_menu.h, cc_draw
+menu.linked	Conectado
+# context: snprintf in ui_vita_menu.h, cc_says
+menu.linked_to_another_console	Conectado a otra consola
+# context: snprintf in ui_vita_menu.h, cc_says
+menu.linked_you_are_player	Conectado: eres el jugador %d
+# context: snprintf in ui_vita_menu.h, cc_says
+menu.picture_controls_and_more	Imagen, controles y más
+# context: ui_vita_menu.h
+menu.play_together	Jugar juntos
+# context: vs_text in ui_vita_menu.h, cc_plate
+menu.progress_the_game_has_not_saved	Se pierde el progreso que el juego no haya guardado.
+# context: ui_vita_menu.h, cc_plate
+menu.quit	Salir
+# context: ui_vita_menu.h
+menu.resume	Reanudar
+# context: ui_vita_menu.h
+menu.save_clip	Guardar clip
+# context: snprintf in ui_vita_menu.h, cc_says
+menu.save_or_load_the_game_of	Guardar o cargar: %d de %d ranuras usadas
+# context: ui_vita_menu.h
+menu.save_states	Estados guardados
+# context: snprintf in ui_vita_menu.h, cc_says
+menu.save_states_are_off_while_linked	Los estados guardados están desactivados mientras hay conexión
+# context: snprintf in ui_vita_menu.h, cc_says
+menu.save_the_last_ten_seconds_as	Guarda los últimos 10 segundos como animación
+# context: ui_vita_menu.h, cc_draw
+menu.select	Elegir
+# context: ui_vita_menu.h
+menu.settings	Ajustes
+# context: ui_vita_menu.h, cc_plate
+menu.stay	Quedarse
+# context: vs_text in ui_vita_menu.h, cc_plate
+menu.this_ends_the_link_for_both	Esto termina la conexión para los dos jugadores.
+# context: snprintf in ui_vita_menu.h, cc_says
+menu.two_players_on_this	Dos jugadores en esta Vita
+# context: snprintf in ui_vita_menu.h, cc_says
+menu.two_players_over_wi_fi_ad	Dos jugadores por Wi-Fi, ad hoc o En línea
+# context: refuse in mgift_vita.c, mgift_vita_start
+mgift.connect_to_wi_fi_first	Conéctate primero al Wi-Fi
+# context: refuse in mgift_vita.c, mgift_vita_start
+mgift.could_not_open_the_socket	No se pudo abrir el socket
+# context: snprintf in mgift_vita.c, mgift_vita_start
+mgift.game	%s  juego %s
+# context: snprintf in mgift_vita.c, mgift_vita_frame
+mgift.game_connected	Juego conectado
+# context: snprintf in mgift_vita.c, mgift_vita_frame
+mgift.game_no_gift_yet	%s  juego %s  aún sin regalo
+# context: snprintf in mgift_vita.c, mgift_vita_frame
+mgift.gift_ready	Regalo listo
+# context: refuse in mgift_vita.c, mgift_vita_start
+mgift.join_the_phone_s_hotspot_in	Únete al punto de acceso del móvil en los Ajustes de la Vita
+# context: refuse in mgift_vita.c, mgift_vita_start
+mgift.leave_ad_hoc_first	Sal primero del modo ad hoc
+# context: refuse in mgift_vita.c, mgift_vita_start
+mgift.leave_the_link_session_first	Sal primero de la sesión de conexión
+# context: snprintf in mgift_vita.c, chip
+mgift.mystery_gift	Mystery Gift
+# context: refuse in mgift_vita.c, mgift_vita_start
+mgift.mystery_gift_needs_firered_leafgreen_or	Mystery Gift necesita FireRed, LeafGreen o Emerald
+# context: snprintf in mgift_vita.c, mgift_vita_stop
+mgift.not_listening	Sin escuchar
+# context: snprintf in mgift_vita.c, mgift_vita_frame
+mgift.open_mystery_gift_in_the_game	Abre MYSTERY GIFT en el juego
+# context: refuse in mgift_vita.c, mgift_vita_start
+mgift.this_game_has_no_wireless	Este juego no tiene conexión inalámbrica
+# context: snprintf in mgift_vita.c, mgift_vita_start
+mgift.waiting_for_a_gift	Esperando un regalo
+# context: app_notice in main_vita.c, main
+notice.please_try_again_in_a_moment	Inténtalo de nuevo en un momento.
+# context: app_notice in main_vita.c, main
+notice.storage_is_still_busy	El almacenamiento sigue ocupado
+# context: app_notice in main_vita.c, main
+notice.the_file_may_be_damaged_or	El archivo puede estar dañado o no ser un juego de esta consola.
+# context: app_notice in main_vita.c, main
+notice.the_game_was_closed	Se cerró el juego
+# context: app_notice in main_vita.c, main
+notice.the_launch_file_could_not_be	No se pudo escribir el archivo de inicio.
+# context: app_notice in main_vita.c, main
+notice.the_launcher_s_path_was_used	Se usó la ruta del lanzador tal como está escrita.
+# context: app_notice in main_vita.c, main
+notice.the_two_player_game_could_not	No se pudo iniciar el juego de dos jugadores
+# context: app_notice in main_vita.c, main
+notice.this_game_could_not_be_started	No se pudo iniciar este juego
+# context: app_notice in main_vita.c, snes_link_page
+notice.use_same_wi_fi_or_online	Usa Mismo Wi-Fi o En línea para dos jugadores.
+# context: Online: why a game in an archive was not found
+online.a_compressed_zip_or_7z_cannot_be	Un .zip o .7z comprimido no se puede comprobar aquí. Descomprime el juego en tu carpeta de juegos.
+# context: vw_clip in ui_vita_online.h, oc_title_of
+online.a_game	un juego
+# context: snprintf in ui_vita_online.h, screen_online_card
+online.a_player	un jugador
+# context: snprintf in ui_vita_online.h, ui_online_fail_text
+online.add_to_this_vita_to_join	Añade %s a esta Vita para unirte.
+# context: ui_vita_online.h, ui_online_fail_text
+online.ask_them_to_host_again	Pídele que cree la partida otra vez.
+# context: snprintf in ui_vita_online.h, ui_online_fail_text
+online.ask_them_to_update_to_then	Pídele que actualice a %s y que cree la partida otra vez.
+# context: ui_vita_online.h, ui_online_fail_text
+online.ask_your_friend_to_host_again	Pídele a tu amigo que cree la partida otra vez.
+# context: ui_vita_online.h, online_host_page
+online.asking_for_a_code	Pidiendo un código...
+# context: ui_vita_online.h, ui_online_fail_text
+online.both_run_the_same_vitadhoc_but	Ambos usan el mismo VitAdhoc, pero la configuración de Game Boy Advance es distinta.
+# context: ui_vita_online.h, ui_online_fail_text
+online.check_this_vita_s_internet_connection	Revisa la conexión a internet de esta Vita e inténtalo de nuevo.
+# context: ui_vita_online.h, online_host_page
+online.checking_your_connection	Comprobando tu conexión...
+# context: ui_vita_online.h, ui_online_fail_text
+online.codes_last_10_minutes_ask_your	Los códigos duran 10 minutos. Pídele uno nuevo a tu amigo.
+# context: vid_text_center in ui_vita_online.h, online_host_page
+online.connecting_through_the_relay	Conectando mediante el relé.
+# context: ui_vita_online.h, ui_online_fail_text
+online.couldn_t_reach_your_friend	No se pudo contactar con tu amigo.
+# context: ui_vita_online.h, oc_init_keys
+online.del	Borr
+# context: snprintf in ui_vita_online.h, online_host_page
+online.expires_in	caduca en %d:%02d
+# context: ui_vita_online.h, online_host_page
+online.finding_the_service	Buscando el servicio...
+# context: vid_text_center in ui_vita_online.h, online_host_page
+online.getting_a_code	Obteniendo un código...
+# context: vid_text_center in ui_vita_online.h, online_host_page
+online.give_this_code_to_your_friend	Dale este código a tu amigo
+# context: ui_vita_online.h, ui_online_connected_toast
+online.good	Buena
+# context: ui_vita_online.h, ui_online_connected_toast
+online.great	Excelente
+# context: snprintf in ui_vita_online.h, screen_online_card
+online.hosted_by	%s  -  creada por %s
+# context: ui_vita_online.h, ui_online_fail_text
+online.install_the_latest_version_on_this	Instala la última versión en esta Vita e inténtalo de nuevo.
+# context: ui_vita_online.h, oc_init_keys
+online.join	Unirse
+# context: vw_head in ui_vita_online.h, screen_online_code
+online.join_online	UNIRSE EN LÍNEA
+# context: vid_text in ui_vita_online.h, screen_online_card
+online.looking_for_the_room	Buscando la sala...
+# context: vid_text in ui_vita_online.h, screen_online_card
+online.looking_in_your_games	Buscando en tus juegos...
+# context: snprintf in ui_vita_online.h, screen_online_code
+online.of	%d de %d
+# context: ui_vita_online.h, ui_online_fail_text
+online.online_play_is_busy_for_today	El juego en línea está saturado por hoy.
+# context: ui_vita_online.h, ui_online_fail_text
+online.online_play_is_not_ready_for	El juego en línea aún no está listo para esta consola.
+# context: snprintf in ui_vita_online.h, screen_online_card
+online.open_and_join	Abrir %s y unirse
+# context: snprintf in ui_vita_online.h, screen_online_card
+online.patched	parcheado  -  %s
+# context: vw_line in ui_vita_online.h, screen_online_card
+online.pick_the_one_to_open	Elige cuál abrir.
+# context: ui_vita_online.h, ui_online_fail_text
+online.set_the_date_and_time_in	Ajusta la fecha y la hora en Ajustes e inténtalo de nuevo.
+# context: ui_vita_online.h, ui_online_connected_toast
+online.slow	Lenta
+# context: ui_vita_online.h, ui_online_fail_text
+online.somebody_already_joined_that_room	Alguien ya se unió a esa sala.
+# context: ui_vita_online.h, ui_online_fail_text
+online.that_code_is_wrong_or_has	Ese código es incorrecto o ha caducado.
+# context: ui_vita_online.h, ui_online_fail_text
+online.the_link_checks_it_when_it	La conexión lo comprueba al empezar.
+# context: ui_vita_online.h, ui_online_fail_text
+online.the_online_service_could_not_be	No se pudo contactar con el servicio en línea.
+# context: ui_vita_online.h, ui_online_fail_text
+online.the_online_service_must_be_updated	Hay que actualizar el servicio en línea. Por ahora usa Mismo Wi-Fi.
+# context: ui_vita_online.h, ui_online_fail_text
+online.this_version_of_vitadhoc_is_too	Esta versión de VitAdhoc es demasiado antigua para jugar en línea.
+# context: ui_vita_online.h, ui_online_fail_text
+online.this_vita_s_date_is_wrong	La fecha de esta Vita es incorrecta.
+# context: ui_vita_online.h, ui_online_fail_text
+online.too_many_tries_from_this_network	Demasiados intentos desde esta red.
+# context: ui_vita_online.h, ui_online_fail_text
+online.try_again_or_both_use_same	Inténtalo de nuevo, o usad los dos Mismo Wi-Fi.
+# context: ui_vita_online.h, ui_online_fail_text
+online.try_again_tomorrow_or_both_use	Inténtalo mañana, o usad los dos Mismo Wi-Fi.
+# context: snprintf in ui_vita_online.h, screen_online_code
+online.type_all_five_characters_like_k7m4q	Escribe los cinco caracteres, como K7M4Q.
+# context: ui_vita_online.h, ui_online_fail_text
+online.update_this_vita_to_the_same	Actualiza esta Vita a la misma versión y vuelve a unirte.
+# context: ui_vita_online.h, ui_online_fail_text
+online.use_the_same_bios_file_and	Usad el mismo archivo BIOS y el mismo ajuste de CPU, y vuelve a intentarlo.
+# context: ui_vita_online.h, ui_online_fail_text
+online.wait_a_minute_and_try_again	Espera un minuto e inténtalo de nuevo.
+# context: vid_text_center in ui_vita_online.h, online_host_page
+online.waiting_for_your_friend	Esperando a tu amigo...
+# context: snprintf in ui_vita_online.h, screen_online_card
+online.you_have_more_than_one_copy	Tienes más de una copia de %s.
+# context: vw_line in ui_vita_online.h, screen_online_card
+online.you_have_this_game_it_starts	Tienes este juego. Se inicia y luego se une.
+# context: snprintf in ui_vita_online.h, ui_online_fail_text
+online.your_copy_of_is_a_different	Tu copia de %s es un archivo distinto al de tu amigo.
+# context: vw_clip in ui_vita_online.h, ui_online_connected_toast
+online.your_friend	tu amigo
+# context: ui_vita_online.h, ui_online_fail_text
+online.your_friend_closed_the_room	Tu amigo cerró la sala.
+# context: snprintf in ui_vita_online.h, ui_online_fail_text
+online.your_friend_has_a_newer_vitadhoc	Tu amigo tiene un VitAdhoc más reciente (%s).
+# context: snprintf in ui_vita_online.h, ui_online_fail_text
+online.your_friend_has_an_older_vitadhoc	Tu amigo tiene un VitAdhoc más antiguo (%s).
+# context: vid_text_center in ui_vita_online.h, online_host_page
+online.your_friend_is_joining	Tu amigo se está uniendo...
+# context: ui_vita_online.h, ui_online_fail_text
+online.your_friend_is_playing_a_different	Tu amigo está jugando a otro juego.
+# context: vw_wrap in ui_vita_online.h, screen_online_code
+online.your_friend_s_screen_shows_five	La pantalla de tu amigo muestra cinco letras y números. No hay I, L, O, 0 ni 1.
+# context: vw_line in ui_vita_online.h, screen_online_card
+online.your_game_can_enter_this_room	Tu juego puede entrar en esta sala.
+# context: snprintf in ui_vita_play.h, play_host_value
+play.a_code_for_your_friend	un código para tu amigo
+# context: vw_row in ui_vita_play.h, local_pick
+play.a_copy_or_a_second_save	una copia, o una segunda partida guardada
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.a_different_game	un juego distinto
+# context: ui_vita_play.h, join_title
+play.a_game	un juego
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.a_game_boy_advance_room	una sala de Game Boy Advance
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.a_game_boy_room	una sala de Game Boy
+# context: snprintf in ui_vita_play.h, play_session
+play.a_link_session_is_running	Hay una sesión de conexión en curso.
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.a_nes_wonderswan_room	una sala de NES / WonderSwan
+# context: snprintf in ui_vita_play.h, screen_join
+play.a_player	un jugador
+# context: ui_vita_play.h, ui_link_fail_text
+play.a_room_takes_two_players_ask	Una sala admite dos jugadores. Pide al anfitrión que abra otra.
+# context: vw_row in ui_vita_play.h, screen_play_page
+play.a_vita_nearby	una Vita cercana
+# context: vw_head in ui_vita_play.h, screen_adhoc
+play.ad_hoc	AD HOC
+# context: snprintf in ui_vita_play.h, play_status_line
+play.ad_hoc_the_two_vitas_connect	Ad hoc: las dos Vitas se conectan directamente, sin router.
+# context: ui_vita_play.h, screen_conn
+play.advanced_the_joiner_types_the_address	Avanzado: quien se une escribe la dirección que ve el anfitrión.
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.already_playing	ya está jugando
+# context: vw_row in ui_vita_play.h, screen_conn
+play.always_use_the_relay	Usar siempre el relé
+# context: ui_vita_play.h, ui_link_fail_text
+play.ask_them_to_choose_host_a	Pídele que elija Crear partida otra vez.
+# context: snprintf in ui_vita_play.h, play_session
+play.asking_your_router_to_let_the	Pidiendo a tu router que deje entrar al otro jugador...
+# context: ui_vita_play.h, delay_name
+play.auto	Auto
+# context: vw_line in ui_vita_play.h, screen_conn
+play.auto_picks_it_from_the_connection	Auto lo elige según la conexión. Vale lo que elija el anfitrión.
+# context: vw_row in ui_vita_play.h, screen_adhoc
+play.back	Atrás
+# context: vw_row in ui_vita_play.h, play_session
+play.back_to_the_game	Volver al juego
+# context: snprintf in ui_vita_play.h, screen_join
+play.both_consoles_on_the_same_wi	¿Las dos consolas están en el mismo Wi-Fi? ¿La otra está creando la partida?
+# context: vw_wrap in ui_vita_play.h, screen_local
+play.both_games_run_here_joined_by	Los dos juegos se ejecutan aquí, unidos por un cable Link.
+# context: ui_vita_play.h, screen_help
+play.both_games_run_on_this_console	Los dos juegos se ejecutan en esta consola: intercambia contigo mismo, sin una segunda Vita.
+# context: ui_vita_play.h, screen_help
+play.both_players_open_their_game_the	Los dos jugadores abren su juego: el mismo, o la otra versión (Ruby y Sapphire, FireRed y LeafGreen).
+# context: snprintf in ui_vita_play.h, play_session
+play.by_link_cable	por Cable Link
+# context: snprintf in ui_vita_play.h, play_session
+play.by_wireless_adapter_the_game_pairs	%s, por Adaptador inalámbrico. El juego empareja a los jugadores.
+# context: snprintf in ui_vita_play.h, play_host_value
+play.cable_or_adapter	Cable o Adaptador
+# context: vw_row in ui_vita_play.h, play_session
+play.cancel	Cancelar
+# context: Two players: the second game picked in the list
+play.chosen	elegido
+# context: ui_vita_play.h, ui_link_fail_text
+play.connect_in_the_vita_s_settings	Conéctate en Ajustes > Red de la Vita e inténtalo de nuevo.
+# context: snprintf in ui_vita_play.h, screen_join
+play.connect_in_the_vita_s_settings_2	Conéctate en Ajustes > Red de la Vita. Esta página sigue sola en cuanto lo estés.
+# context: network line: shown in place of the Wi-Fi name when it is not known
+play.connected	conectado
+# context: snprintf in ui_vita_play.h, play_status_line
+play.connecting_to_wi_fi	%s: conectando al Wi-Fi...
+# context: vw_row in ui_vita_play.h, screen_play_page
+play.connection	Conexión
+# context: vw_head in ui_vita_play.h, screen_conn
+play.connection_2	CONEXIÓN
+# context: snprintf in ui_vita_play.h, play_session
+play.connection_ad_hoc_then_play_together	Conexión: Ad hoc, luego Jugar juntos > Unirse a una partida.
+# context: vw_row in ui_vita_play.h, screen_adhoc
+play.continue	Continuar
+# context: ui_vita_play.h, screen_join
+play.del	Borr
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.different_version	versión distinta
+# context: ui_vita_play.h, conn_name
+play.direct_address	Dirección directa
+# context: vw_row in ui_vita_play.h, play_session
+play.disconnect	Desconectar
+# context: snprintf in ui_vita_play.h, screen_join
+play.end_it_first_play_together_disconnect	Termínala primero (Jugar juntos > Desconectar).
+# context: ui_vita_play.h, ui_link_fail_text
+play.end_the_current_link_first	Termina primero la conexión actual.
+# context: ui_vita_play.h, screen_conn
+play.far_apart_host_shows_a_code	Lejos: el anfitrión muestra un código y tu amigo lo escribe.
+# context: vw_line in ui_vita_play.h, screen_conn
+play.fewer_frames_react_faster_more_ride	Menos fotogramas reaccionan antes; más aguantan una conexión lenta.
+# context: link quality, fills the second %s of play.ms_round_trip_2
+play.fine	buena
+# context: vw_head in ui_vita_play.h, screen_mgift
+play.firered_leafgreen_and_emerald_from_a	FireRed, LeafGreen y Emerald, desde un móvil
+# context: ui_vita_play.h, screen_help
+play.for_a_friend_far_away_the	Para un amigo lejano. La pantalla del anfitrión muestra un código de cinco caracteres; quien se une lo escribe.
+# context: snprintf in ui_vita_play.h, screen_join
+play.found	%d ENCONTRADAS
+# context: snprintf in ui_vita_play.h, delay_name
+play.frame	%d fotograma
+# context: snprintf in ui_vita_play.h, delay_name
+play.frames	%d fotogramas
+# context: vw_row in ui_vita_play.h, screen_play_page
+play.from_a_phone	desde un móvil
+# context: a room that cannot be joined: it has all its players (short, like "a different game")
+play.full	llena
+# context: ui_vita_play.h, screen_mgift
+play.game	Juego
+# context: ui_vita_play.h, kind_name
+play.gb_link_cable	Cable Link GB
+# context: ui_vita_play.h, play_session
+play.good	Buena
+# context: ui_vita_play.h, play_session
+play.great	Excelente
+# context: ui_vita_play.h, screen_mgift
+play.here	Aquí
+# context: vw_line in ui_vita_play.h, screen_conn
+play.hides_your_internet_address_from_the	Oculta tu dirección de internet al otro jugador. Algo más lenta.
+# context: vw_row in ui_vita_play.h, screen_play_page
+play.host_a_game	Crear partida
+# context: snprintf in ui_vita_play.h, play_session
+play.hosting_by	Creando %s de %s
+# context: vw_head in ui_vita_play.h, screen_help
+play.how_to_play	CÓMO JUGAR
+# context: vw_row in ui_vita_play.h, screen_play_page
+play.how_to_play_together	Cómo jugar juntos
+# context: vw_line in ui_vita_play.h, screen_local
+play.in_the_game_right_stick_sideways	En el juego: la palanca derecha de lado o un toque cambia el sonido.
+# context: vw_line in ui_vita_play.h, screen_local
+play.in_the_game_right_stick_sideways_2	En el juego: la palanca derecha de lado o un toque en una imagen cambia.
+# context: ui_vita_play.h, ui_link_fail_text
+play.install_the_same_version_on_both	Instala la misma versión en ambas y vuelve a conectar.
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.is_a_game_boy_advance_room	%s es una sala de Game Boy Advance.
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.is_a_game_boy_room	%s es una sala de Game Boy.
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.is_a_link_cable_room_restart	%s es una sala de Cable Link. Reinicia el juego para conectar.
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.is_a_link_cable_room_this	%s es una sala de Cable Link. Este juego se conecta por adaptador.
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.is_a_two_players_room_for	%s es una sala de Dos jugadores para un juego de NES o WonderSwan.
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.is_a_wireless_adapter_room_this	%s es una sala de Adaptador inalámbrico. Este juego se conecta por cable.
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.is_full_a_room_takes_players	%s está llena: una sala admite %d jugadores.
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.is_in_the_middle_of_a	%s está en plena partida.
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.is_not_a_two_players_room	%s no es una sala de Dos jugadores.
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.is_playing_open_the_same_game	%s está jugando a %s. Abre el mismo juego para unirte.
+# context: snprintf in ui_vita_play.h, screen_join
+play.is_the_address_right_and_is	¿Es correcta la dirección y el otro jugador está creando la partida con Conexión en Internet? Su router debe dejar pasar el puerto UDP 19019.
+# context: ui_vita_play.h, ui_link_fail_text
+play.is_the_other_vita_hosting_and	¿La otra Vita está creando la partida y en la misma red?
+# context: vw_wrap in ui_vita_play.h, screen_adhoc
+play.it_links_the_two_vitas_directly	Conecta las dos Vitas directamente, sin router. Síguelo para crear la conexión; la otra Vita se une desde la misma pantalla. Al terminar vuelves al juego.
+# context: vw_wrap in ui_vita_play.h, screen_adhoc
+play.it_links_the_two_vitas_directly_2	Conecta las dos Vitas directamente, sin router. Síguelo para unirte a la conexión que creó la otra Vita. Al terminar vuelves al juego.
+# context: ui_vita_play.h, ui_link_fail_text
+play.it_looks_like_192_168_1	Es algo como 192.168.1.23 o 203.0.113.9:19019.
+# context: snprintf in ui_vita_play.h, play_session
+play.its_address	su dirección
+# context: ui_vita_play.h, screen_join
+play.join	Unirse
+# context: vw_row in ui_vita_play.h, screen_play_page
+play.join_a_game	Unirse a una partida
+# context: vw_head in ui_vita_play.h, screen_join
+play.join_a_game_2	UNIRSE A UNA PARTIDA
+# context: vw_row in ui_vita_play.h, play_session
+play.keep_playing	Seguir jugando
+# context: ui_vita_play.h, layout_name
+play.large_small	grande + pequeña
+# context: vw_row in ui_vita_play.h, screen_local
+play.layout	Disposición
+# context: ov_text_right in ui_vita_play.h, screen_addr
+play.like_203_0_113_9_19019	como 203.0.113.9:19019
+# context: ui_vita_play.h, kind_name
+play.link_cable	Cable Link
+# context: wl_line_name in ui_vita_play.h, play_game_line
+play.link_cable_game_each_vita_plays	Juego con Cable Link. Cada Vita juega su juego; se envía %s.
+# context: wl_line_name in ui_vita_play.h, play_game_line
+play.link_cable_game_player_2_needs	Juego con Cable Link. El jugador 2 necesita %s, o se le envía.
+# context: vw_row in ui_vita_play.h, screen_conn
+play.link_delay	Retardo de conexión
+# context: ui_vita_play.h, ui_link_fail_text
+play.link_lost_the_other_vita_is	Conexión perdida: la otra Vita ya no está.
+# context: snprintf in ui_vita_play.h, screen_local
+play.linked_by_cable_with	Conectado por cable con %s
+# context: snprintf in ui_vita_play.h, play_session
+play.linked_with	Conectado con %s
+# context: snprintf in ui_vita_play.h, play_session
+play.linked_with_the_other	Conectado con la otra Vita
+# context: snprintf in ui_vita_play.h, play_game_line
+play.links_by_link_cable_or_wireless	Se conecta por Cable Link o Adaptador inalámbrico: elige el anfitrión.
+# context: ov_status_right in ui_vita_play.h, screen_mgift
+play.listening	ESCUCHANDO
+# context: Play together row value: Mystery Gift is listening for a phone
+play.listening_value	escuchando
+# context: snprintf in ui_vita_play.h, screen_join
+play.looking_for_a_game_at_that	Buscando un juego en esa dirección...
+# context: snprintf in ui_vita_play.h, screen_join
+play.looking_for_games_on_this_wi	Buscando juegos en este Wi-Fi...
+# context: ov_text_right in ui_vita_play.h, screen_addr
+play.looks_right	parece correcto
+# context: snprintf in ui_vita_play.h, play_session
+play.ms_round_trip	 (%d ms de ida y vuelta)
+# context: snprintf in ui_vita_play.h, play_session
+play.ms_round_trip_2	%s   %s (%d ms de ida y vuelta)
+# context: vw_row in ui_vita_play.h, screen_play_page
+play.mystery_gift	Mystery Gift
+# context: vw_head in ui_vita_play.h, screen_mgift
+play.mystery_gift_2	MYSTERY GIFT
+# context: ui_vita_play.h, screen_mgift
+play.mystery_gift_on_the_title_screen	MYSTERY GIFT en la pantalla de título.
+# context: ui_vita_play.h, screen_mgift
+play.mystery_gift_station_pick_a_gift	Mystery Gift Station: elige un regalo.
+# context: ui_vita_play.h, conn_name
+play.nearby	Nearby
+# context: vid_text in ui_vita_play.h, screen_adhoc
+play.next_the_vita_s_own_connection	Después: la pantalla de conexión propia de la Vita.
+# context: a room found nearby: who, which room
+play.nick_room	%s  -  Sala %d
+# context: a room found nearby: who, which room, how fast the connection is
+play.nick_room_ms	%s  -  Sala %d  -  %d ms
+# context: snprintf in ui_vita_play.h, screen_join
+play.no_answer_from_yet	%s aún no responde.
+# context: snprintf in ui_vita_play.h, screen_join
+play.no_games_found_yet	Aún no se encontraron juegos.
+# context: vw_wrap in ui_vita_play.h, local_pick
+play.no_other_game_for_this_console	No hay otro juego de esta consola en tu lista de juegos.
+# context: ui_vita_play.h, screen_help
+play.no_router_anywhere_the_two_vitas	¿Sin router? Las dos Vitas se conectan directamente, con la pantalla de conexión de la Vita.
+# context: ui_vita_play.h, screen_conn
+play.no_router_the_two_vitas_connect	Sin router: las dos Vitas se conectan directamente, una junto a otra.
+# context: vw_wrap in ui_vita_play.h, screen_local
+play.no_second_controller_player_2_plays	¿Sin segundo mando? El jugador 2 juega en la pantalla frontal: los botones se dibujan en su mitad.
+# context: snprintf in ui_vita_play.h, play_status_line
+play.no_wi_fi_connect_in_the	Sin Wi-Fi. Conéctate en Ajustes > Red de la Vita.
+# context: ui_vita_play.h, ui_link_fail_text
+play.nobody_answered	Nadie respondió.
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.not_a_two_players_room	no es una sala de Dos jugadores
+# context: ov_text_right in ui_vita_play.h, screen_addr
+play.not_a_whole_address_yet	aún no es una dirección completa
+# context: snprintf in ui_vita_play.h, screen_addr
+play.not_a_whole_address_yet_example	Aún no es una dirección completa. Ejemplo: 203.0.113.9:19019
+# context: ui_vita_play.h, ui_link_fail_text
+play.not_enough_memory_to_link_this	Memoria insuficiente para conectar este juego.
+# context: vw_row in ui_vita_play.h, screen_play_page
+play.not_for_this_game	no es para este juego
+# context: snprintf in ui_vita_play.h, play_session
+play.not_listed_connection_internet_type	¿No aparece? Conexión: Internet, escribe %s
+# context: vw_line in ui_vita_play.h, screen_mgift
+play.not_listening	Sin escuchar
+# context: ui_vita_play.h, ui_link_fail_text
+play.nothing_was_changed_choose_host_or	No se cambió nada. Elige Crear o Unirse para reintentar.
+# context: Two players: row value, whose game the buttons play now
+play.now_the_partner_s	ahora: el del otro
+# context: Two players: row value, whose game the buttons play now
+play.now_yours	ahora: el tuyo
+# context: vw_row in ui_vita_play.h, screen_conn
+play.off	Desactivado
+# context: vw_row in ui_vita_play.h, screen_conn
+play.on	Activado
+# context: ui_vita_play.h, screen_local
+play.on_pad_in_use	activado (mando en uso)
+# context: wl_line_name in ui_vita_play.h, play_session
+play.on_the_other_vita_open	En la otra Vita, abre %s.
+# context: ui_vita_play.h, screen_help
+play.one_chooses_play_together_host_a	Uno elige Jugar juntos > Crear partida.
+# context: snprintf in ui_vita_play.h, play_session
+play.one_moment	Un momento.
+# context: ui_vita_play.h, conn_name
+play.online	En línea
+# context: snprintf in ui_vita_play.h, play_session
+play.opening	Abriendo %s...
+# context: vw_head in ui_vita_play.h, local_pick
+play.partner_s_game	JUEGO DEL COMPAÑERO
+# context: vw_row in ui_vita_play.h, screen_local
+play.partner_s_game_2	Juego del compañero
+# context: ui_vita_play.h, screen_mgift
+play.phone	Móvil
+# context: vw_head in ui_vita_play.h, play_session
+play.play_together	JUGAR JUNTOS
+# context: vw_row in ui_vita_play.h, screen_local
+play.player_2_on_the_touch_screen	Jugador 2 en la pantalla táctil
+# context: vw_line in ui_vita_play.h, screen_local
+play.player_2_plays_on_the_front	El jugador 2 juega en la pantalla frontal mientras no haya mando emparejado.
+# context: link quality, fills the second %s of play.ms_round_trip_2 (the others: "fine", "slow, expect delay")
+play.quick	rápida
+# context: ui_vita_play.h, ui_link_fail_text
+play.quit_to_the_game_list_open	Sal a la lista de juegos, abre el juego otra vez y conecta primero.
+# context: vid_text_w in ui_vita_play.h, screen_addr
+play.recent	RECIENTES
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.restart_the_game_to_link	reinicia el juego para conectar
+# context: vw_row in ui_vita_play.h, screen_play_page
+play.rooms_on_this_wi_fi	salas en este Wi-Fi
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.runs_a_different_version_of_vitadhoc	%s usa otra versión de VitAdhoc.
+# context: vw_row in ui_vita_play.h, screen_local
+play.same_game_only	solo el mismo juego
+# context: ui_vita_play.h, screen_help
+play.same_network_or_a_phone_s	Misma red o punto de acceso del móvil. Las salas aparecen solas. La más fácil.
+# context: ui_vita_play.h, conn_name
+play.same_wi_fi	Mismo Wi-Fi
+# context: ui_vita_play.h, screen_conn
+play.same_wi_fi_or_hotspot_rooms	Mismo Wi-Fi o punto de acceso. Las salas se encuentran solas.
+# context: vw_row in ui_vita_play.h, screen_local
+play.save_found	partida encontrada
+# context: snprintf in ui_vita_play.h, play_session
+play.save_states_and_cheats_are_off	Estados guardados y trucos desactivados mientras hay conexión. Desconectar termina la conexión para ambos: cada juego guarda y sigue solo.
+# context: snprintf in ui_vita_play.h, play_session
+play.save_states_cheats_rewind_and_fast	Estados guardados, trucos, rebobinado y avance rápido desactivados mientras hay conexión. El jugador 2 juega el juego del 1; al terminar, vuelve el juego del 2 como estaba y el del 1 continúa.
+# context: snprintf in ui_vita_play.h, screen_join
+play.searching	BUSCANDO
+# context: ui_vita_play.h, screen_mgift
+play.settings_network_join_the_wi_fi	Ajustes > Red: únete al Wi-Fi de Mystery Gift.
+# context: ui_vita_play.h, layout_name
+play.side_by_side	en paralelo
+# context: vw_wrap in ui_vita_play.h, screen_local
+play.side_by_side_two_equal_pictures	En paralelo: dos imágenes iguales. Grande + pequeña: el juego que manejas es el grande.
+# context: vw_row in ui_vita_play.h, screen_local
+play.side_by_side_two_players	en paralelo (dos jugadores)
+# context: link page: label before the Wi-Fi signal bars
+play.signal	señal
+# context: ui_vita_play.h, play_session
+play.slow	Lenta
+# context: snprintf in ui_vita_play.h, play_session
+play.slow_expect_delay	lenta, habrá retardo
+# context: vw_row in ui_vita_play.h, screen_mgift
+play.start_listening	Empezar a escuchar
+# context: ui_vita_play.h, screen_mgift
+play.start_listening_or_select_down_in	Empieza a escuchar, o Select + Abajo en el juego.
+# context: vw_row in ui_vita_play.h, screen_local
+play.start_the_partner_copies_my_save	Start: el compañero copia mi partida
+# context: snprintf in ui_vita_play.h, screen_local
+play.start_the_partner_plays_its_game	Start: el compañero juega su juego
+# context: snprintf in ui_vita_play.h, screen_local
+play.start_the_partner_uses_its_own	Start: el compañero usa su propia partida
+# context: vw_wrap in ui_vita_play.h, screen_local
+play.starting_the_second_game	Iniciando el segundo juego...
+# context: vw_row in ui_vita_play.h, screen_local
+play.starts_a_new_game	empieza un juego nuevo
+# context: Mystery Gift page: status at the top right when not listening (the other is LISTENING)
+play.status_off	INACTIVO
+# context: snprintf in ui_vita_play.h, screen_join
+play.still_trying	Sigue intentándolo.
+# context: vw_row in ui_vita_play.h, screen_local
+play.stop	Parar
+# context: vw_row in ui_vita_play.h, play_session
+play.stop_hosting	Dejar de crear
+# context: vw_line in ui_vita_play.h, screen_local
+play.stop_it_first_to_host_or	Páralo primero para crear o unirte a una partida en red.
+# context: vw_row in ui_vita_play.h, screen_mgift
+play.stop_listening	Dejar de escuchar
+# context: vw_row in ui_vita_play.h, screen_local
+play.swap_controlled_game	Cambiar juego controlado
+# context: vw_row in ui_vita_play.h, screen_local
+play.swap_sound_and_large_picture	Cambiar sonido e imagen grande
+# context: snprintf in ui_vita_play.h, play_session
+play.tell_the_other_player_this_address	Dile al otro jugador esta dirección:
+# context: snprintf in ui_vita_play.h, local_pick
+play.that_game_could_not_be_chosen	No se pudo elegir ese juego.
+# context: ui_vita_play.h, ui_link_fail_text
+play.that_is_not_an_address	Eso no es una dirección.
+# context: ui_vita_play.h, ui_link_fail_text
+play.that_room_is_full	Esa sala está llena.
+# context: vid_text in ui_vita_play.h, screen_local
+play.the_buttons_drive_the_partner_s	Los botones manejan el juego del compañero.
+# context: vid_text in ui_vita_play.h, screen_local
+play.the_buttons_drive_your_game	Los botones manejan tu juego.
+# context: ui_vita_play.h, ui_link_fail_text
+play.the_connection_screen_was_closed	Se cerró la pantalla de conexión.
+# context: vw_head in ui_vita_play.h, screen_help
+play.the_four_steps	Los cuatro pasos
+# context: snprintf in ui_vita_play.h, play_session
+play.the_host	 (el anfitrión)
+# context: vw_wrap in ui_vita_play.h, screen_addr
+play.the_host_chooses_play_together_host	El anfitrión elige Jugar juntos > Crear partida con Conexión en Internet. Su pantalla muestra la dirección que hay que escribir aquí.
+# context: ui_vita_play.h, ui_link_fail_text
+play.the_host_closed_the_room	El anfitrión cerró la sala.
+# context: ui_vita_play.h, ui_link_fail_text
+play.the_link_ended_and_nothing_was	La conexión terminó y no se guardó nada. Conecta de nuevo para reintentar.
+# context: ui_vita_play.h, screen_help
+play.the_other_chooses_play_together_join	El otro elige Jugar juntos > Unirse a una partida y escoge la sala de la lista.
+# context: ui_vita_play.h, ui_link_fail_text
+play.the_other_player_s_game_did	El juego del otro jugador no llegó.
+# context: ui_vita_play.h, ui_link_fail_text
+play.the_other_vita_runs_a_different	La otra Vita usa otra versión de VitAdhoc.
+# context: ui_vita_play.h, ui_link_fail_text
+play.the_port_may_be_in_use	Puede que el puerto esté en uso. Inténtalo en un momento.
+# context: snprintf in ui_vita_play.h, screen_join
+play.the_radio_is_busy_with_another	La radio está ocupada con otra conexión.
+# context: snprintf in ui_vita_play.h, play_status_line
+play.the_radio_is_in_ad_hoc	%s: la radio está en uso ad hoc.
+# context: ui_vita_play.h, ui_link_fail_text
+play.the_room_could_not_be_opened	No se pudo abrir la sala en esta red.
+# context: snprintf in ui_vita_play.h, screen_play_page
+play.the_room_did_not_open_check	La sala no se abrió. Revisa la conexión e inténtalo de nuevo.
+# context: vw_wrap in ui_vita_play.h, screen_local
+play.the_same_game_twice_or_the	El mismo juego dos veces, o su otra versión en la segunda máquina.
+# context: snprintf in ui_vita_play.h, screen_join
+play.the_search_could_not_start	No se pudo iniciar la búsqueda.
+# context: vw_wrap in ui_vita_play.h, screen_local
+play.the_second_game_begins_as_a	El segundo juego empieza como una copia del tuyo, justo donde estás. Si guarda, esa es la segunda partida.
+# context: ui_vita_play.h, screen_local
+play.the_second_game_starts_from_its	El segundo juego parte de su propia partida guardada, como un segundo cartucho. Se guarda junto a la tuya.
+# context: ui_vita_play.h, ui_link_fail_text
+play.the_second_game_would_not_start	El segundo juego no quiso iniciarse.
+# context: ui_vita_play.h, screen_local
+play.the_second_machine_boots_that_game	La segunda máquina arranca ese juego con su propia partida, la que usas tú.
+# context: vw_wrap in ui_vita_play.h, local_pick
+play.the_second_machine_can_hold_another	La segunda máquina puede tener otro juego: la otra versión, con tu partida de ese juego.
+# context: ui_vita_play.h, ui_link_fail_text
+play.the_two_games_fell_out_of	Los dos juegos se desincronizaron.
+# context: snprintf in ui_vita_play.h, play_session
+play.the_vita_s_connection_screen_comes	Ahora aparece la pantalla de conexión de la Vita.
+# context: snprintf in ui_vita_play.h, play_session
+play.then_play_together_join_a_game	Luego Jugar juntos > Unirse a una partida: elige la sala de %s.
+# context: snprintf in ui_vita_play.h, play_session
+play.they_choose_play_together_join_a	Eligen Jugar juntos > Unirse a una partida y la escriben.
+# context: ui_vita_play.h, local_pick
+play.this_game	Este juego
+# context: ui_vita_play.h, ui_link_fail_text
+play.this_game_cannot_run_twice_on	Este juego no puede ejecutarse dos veces en una Vita.
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.this_game_links_by_adapter	este juego se conecta por adaptador
+# context: JOIN_NO in ui_vita_play.h, join_decide
+play.this_game_links_by_cable	este juego se conecta por cable
+# context: vw_row in ui_vita_play.h, screen_local
+play.this_one	este
+# context: stands for the player's name when none is set, in "On the other Vita ... pick <name>'s room"
+play.this_vita	esta Vita
+# context: ui_vita_play.h, ui_link_fail_text
+play.this_vita_is_not_connected_to	Esta Vita no está conectada al Wi-Fi.
+# context: snprintf in ui_vita_play.h, screen_join
+play.this_vita_is_on_still_looking	Esta Vita está en %s (%s). Sigue buscando.
+# context: snprintf in ui_vita_play.h, play_session
+play.through_the_relay	, mediante el relé
+# context: ui_vita_play.h, screen_help
+play.to_stop_either_player_chooses_play	Para parar, cualquiera elige Jugar juntos > Desconectar. Ambos juegos guardan y siguen solos.
+# context: ui_vita_play.h, ui_link_fail_text
+play.try_again_if_it_keeps_happening	Inténtalo de nuevo. Si sigue pasando, revisa que la tarjeta tenga espacio.
+# context: snprintf in ui_vita_play.h, screen_join
+play.trying_again_by_itself_if_this	Reintentando solo. Si sigue, revisa el Wi-Fi de la Vita.
+# context: snprintf in ui_vita_play.h, screen_local
+play.two_games_are_running_on_this	Hay dos juegos en esta Vita, conectados por cable.
+# context: ui_vita_play.h, kind_name
+play.two_players	Dos jugadores
+# context: vw_head in ui_vita_play.h, screen_local
+play.two_players_2	DOS JUGADORES
+# context: wl_line_name in ui_vita_play.h, play_game_line
+play.two_players_both_vitas_need	Dos jugadores: las dos Vitas necesitan %s abierto.
+# context: vw_row in ui_vita_play.h, screen_play_page
+play.two_players_on_this	Dos jugadores en esta Vita
+# context: vw_wrap in ui_vita_play.h, play_session
+play.two_players_on_this_vita_after	Dos jugadores en esta Vita: cuando esto haya terminado.
+# context: vw_head in ui_vita_play.h, screen_addr
+play.type_the_address_the_host_s	Escribe la dirección que muestra la pantalla del anfitrión.
+# context: vw_row in ui_vita_play.h, screen_play_page
+play.type_the_host_s_address	escribe la dirección del anfitrión
+# context: vw_row in ui_vita_play.h, screen_play_page
+play.type_your_friend_s_code	escribe el código de tu amigo
+# context: snprintf in ui_vita_play.h, screen_join
+play.waiting	ESPERANDO
+# context: snprintf in ui_vita_play.h, play_session
+play.waiting_for_player_2_you_can	Esperando al jugador 2. Puedes seguir jugando mientras.
+# context: ui_vita_play.h, screen_help
+play.when_it_says_linked_use_the	Cuando diga Conectado, usa la función de conexión del juego: centro de intercambios, combate por cable, club del cable.
+# context: vw_head in ui_vita_play.h, screen_help
+play.which_connection	¿Qué conexión?
+# context: ui_vita_play.h, ui_link_fail_text
+play.wi_fi_and_ad_hoc_cannot	No se pueden usar a la vez Wi-Fi y ad hoc.
+# context: vid_text in ui_vita_play.h, screen_adhoc
+play.wi_fi_is_set_aside_while	El Wi-Fi se aparta mientras hay conexión y vuelve después.
+# context: ui_vita_play.h, kind_name
+play.wireless_adapter	Adaptador inalámbrico
+# context: snprintf in ui_vita_play.h, play_game_line
+play.wireless_adapter_game_the_game_itself	Juego con Adaptador inalámbrico: el propio juego empareja a los jugadores.
+# context: snprintf in ui_vita_play.h, play_session
+play.you_are_player	Eres el jugador %d%s, %s.
+# context: snprintf in ui_vita_play.h, play_session
+play.you_are_player_in	Eres el jugador %d%s en %s, %s.
+# context: vid_text in ui_vita_play.h, screen_local
+play.your_buttons_your_game_second_controller	Tus botones: tu juego. Segundo mando: el del compañero.
+# context: vw_row in ui_vita_play.h, screen_local
+play.your_game_carries_on_alone	tu juego sigue solo
+# context: ui_vita_play.h, ui_link_fail_text
+play.your_game_carries_on_save_as	Tu juego continúa. Guarda como siempre.
+# context: snprintf in ui_vita_play.h, play_session
+play.your_router_did_not_open_the	Tu router no abrió la entrada solo. En sus ajustes, redirige el puerto UDP %s a esta Vita (%s). El otro jugador escribe entonces tu dirección pública%s%s.
+# context: snprintf in ui_vita_play.h, play_session
+play.your_router_opened_the_way_in	Tu router abrió la entrada, pero no dio su dirección pública. Búscala (con un móvil en este Wi-Fi: "cuál es mi IP"). El otro jugador escribe esa dirección, luego %s.
+# context: vw_head in ui_vita_ra.h, screen_ra
+ra.achievements	LOGROS
+# context: snprintf in ui_vita_ra.h, screen_ra
+ra.hardcore	 - Hardcore
+# context: vid_text in ui_vita_ra.h, screen_ra
+ra.no_achievements_to_show	No hay logros que mostrar.
+# context: snprintf in ra_vita.c, game_done
+ra.of_achievements	%u de %u logros%s
+# context: snprintf in ui_vita_ra.h, screen_ra
+ra.pts	%u / %u   %u / %u pts
+# context: snprintf in ra_vita.c, on_event
+ra.rank_of	Puesto %u de %u
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
+search.1_byte	1 byte
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
+search.2_bytes	2 bytes
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
+search.2_bytes_any_address	2 bytes, cualquier dirección
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
+search.4_bytes	4 bytes
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
+search.4_bytes_any_address	4 bytes, cualquier dirección
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
+search.changed	Cambió
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
+search.decreased	Disminuyó
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
+search.equal_to	Igual a
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
+search.greater_than	Mayor que
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
+search.increased	Aumentó
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
+search.less_than	Menor que
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
+search.not_equal_to	Distinto de
+# context: cheat search, pk_csearch.h (the main app reads it through tr)
+search.unchanged	Sin cambios
+# context: ui_psp.c, ff_step_now
+settings.a_and_b_buttons	Botones A y B
+# context: ui_psp.c, ff_step_now
+settings.about	ACERCA DE
+# context: ui_psp.c, ff_step_now
+settings.account	Cuenta
+# context: ui_psp.c, ff_step_now
+settings.achievement_indicators	Indicadores de logros
+# context: ui_psp.c, ff_step_now
+settings.achievements	Logros
+# context: ui_psp.c, ff_step_now
+settings.ambient_glow	Brillo ambiental
+# context: ui_psp.c, ff_step_now
+settings.button_mapping	Asignación de botones
+# context: ui_psp.c, ff_step_now
+settings.button_test	Prueba de botones
+# context: ui_psp.c, ff_step_now
+settings.camera	Cámara
+# context: ui_psp.c, ff_step_now
+settings.check_for_updates	Buscar actualizaciones
+# context: ui_psp.c, ff_step_now
+settings.clock_rtc	Reloj (RTC)
+# context: ui_psp.c, ff_step_now
+settings.connection	Conexión
+# context: ui_psp.c, ff_step_now
+settings.controls	CONTROLES
+# context: ui_psp.c, ff_step_now
+settings.cover_picture	Imagen de portada
+# context: ui_psp.c, ff_step_now
+settings.covers	Portadas
+# context: ui_psp.c, ff_step_now
+settings.cpu_speed	Velocidad de CPU
+# context: ui_psp.c, ff_step_now
+settings.crt_mask	Máscara CRT
+# context: ui_psp.c, ff_step_now
+settings.direction	Dirección
+# context: ui_psp.c, ff_step_now
+settings.display	PANTALLA
+# context: ui_psp.c, ff_step_now
+settings.display_settings	Ajustes de pantalla
+# context: ui_psp.c, ff_step_now
+settings.export_save_for_other_emulators	Exportar a otro emulador
+# context: ui_psp.c, ff_step_now
+settings.extra_cpu_core	Núcleo de CPU extra
+# context: ui_psp.c, ff_step_now
+settings.fast_forward	Avance rápido
+# context: ui_psp.c, ff_step_now
+settings.fast_link	Conexión rápida
+# context: ui_psp.c, ff_step_now
+settings.ff_button_square	Botón avance (Cuadrado)
+# context: ui_psp.c, ff_step_now
+settings.fourth_core	Cuarto núcleo
+# context: ui_psp.c, ff_step_now
+settings.fps_counter	Contador de FPS
+# context: ui_psp.c, ff_step_now
+settings.game_boy_colours	Colores de Game Boy
+# context: Settings row (Gameplay, and This game for a running Game Boy game): which Game Boy emulator runs the games
+settings.game_boy_core	Núcleo de Game Boy
+# context: ui_psp.c, ff_step_now
+settings.game_boy_printer	Game Boy Printer
+# context: ui_psp.c, ff_step_now
+settings.game_boy_type	Tipo de Game Boy
+# context: ui_psp.c, ff_step_now
+settings.game_folders	Carpetas de juegos
+# context: ui_psp.c, ff_step_now
+settings.game_list	Lista de juegos
+# context: ui_psp.c, ff_step_now
+settings.game_names	Nombres de juegos
+# context: ui_psp.c, ff_step_now
+settings.game_order	Orden de juegos
+# context: ui_psp.c, ff_step_now
+settings.game_previews	Vistas previas
+# context: ui_psp.c, ff_step_now
+settings.gameplay	JUGABILIDAD
+# context: ui_psp.c, ff_step_now
+settings.hardcore	Hardcore
+# context: ui_psp.c, set_help
+settings.help.a_faint_pixel_grid_like_a	Una tenue rejilla de píxeles, como una portátil. 1 tenue, 10 fuerte.
+# context: ui_psp.c, set_help
+settings.help.a_game_boy_s_picture_has	La imagen de una Game Boy no tiene más que mostrar.
+# context: ui_psp.c, set_help
+settings.help.a_number_that_tells_rooms_apart	Un número que distingue las salas cuando varios crean partida.
+# context: ui_psp.c, set_help
+settings.help.a_soft_glow_beside_the_picture	Un suave brillo junto a la imagen en vez de bandas negras. 1 tenue, 10 vivo.
+# context: ui_psp.c, set_help
+settings.help.a_tap_on_the_game_opens	Un toque en el juego abre el menú. Start + Select siempre lo hace.
+# context: ui_psp.c, set_help
+settings.help.a_vita_on_the_same_wi	Una Vita en el mismo Wi-Fi puede copiar tus partidas y estados.
+# context: help line under Game Boy core when Accurate is chosen
+settings.help.accurate_gambatte_closer_to_a_real	Preciso: Gambatte, más fiel a una Game Boy real, más pesado. Sin conexión, Cámara ni marco. Próximo juego.
+# context: ui_psp.c, set_help
+settings.help.adds_the_handheld_screen_s_grid	Añade la rejilla de puntos de la pantalla de una portátil.
+# context: ui_psp.c, set_help
+settings.help.advanced_the_joiner_types_the_host	Avanzado: quien se une escribe la dirección del anfitrión.
+# context: ui_psp.c, set_help
+settings.help.also_widens_rotating_3d_tracks_sprites	También ensancha circuitos 3D giratorios. Pueden colarse sprites.
+# context: ui_psp.c, set_help
+settings.help.always_the_16_9_picture_unknown	Siempre la imagen 16:9; los lados desconocidos se difuminan.
+# context: ui_psp.c, set_help
+settings.help.an_original_game_boy_s_shades	Los tonos de una Game Boy original son sus colores, arriba.
+# context: ui_psp.c, set_help
+settings.help.any_game_shows_what_it_has	Cualquier juego: muestra lo dibujado junto a la pantalla. Puede errar.
+# context: ui_psp.c, set_help
+settings.help.as_a_television_showed_them_a	Como las mostraba una tele: algo más suave y profundo.
+# context: ui_psp.c, set_help
+settings.help.as_on_a_game_boy_color	Como en la pantalla de una Game Boy Color.
+# context: ui_psp.c, set_help
+settings.help.as_on_a_wonderswan_s_screen	Como la pantalla de una WonderSwan: más suave, negros algo altos.
+# context: ui_psp.c, set_help
+settings.help.auto_adapts_to_keep_60_fps	Auto se adapta para mantener 60 fps; suaviza si puede.
+# context: ui_psp.c, set_help
+settings.help.auto_follows_the_cartridge_takes_effect	Auto sigue al cartucho. Surte efecto al próximo inicio.
+# context: ui_psp.c, set_help
+settings.help.auto_follows_the_game_some_turn	Auto sigue al juego (algunos giran a mitad). Solo este juego.
+# context: ui_psp.c, set_help
+settings.help.auto_games_that_use_the_zapper	Auto: los juegos con Zapper lo usan en la pantalla táctil. Al iniciar el juego.
+# context: ui_psp.c, set_help
+settings.help.auto_on_where_the_game_has	Auto: activo donde el juego lo tiene. Al próximo inicio.
+# context: ui_psp.c, set_help
+settings.help.auto_suits_most_fewer_frames_react	Auto sirve a casi todos. Menos fotogramas: más rápido; más: más fluido.
+# context: ui_psp.c, set_help
+settings.help.auto_uses_the_vita_s_fourth	Auto: usa el cuarto núcleo de la Vita si funciona. Próximo juego.
+# context: ui_psp.c, set_help
+settings.help.bigger_text_in_the_menus_of	Texto más grande en los menús de la app y los reproductores.
+# context: ui_psp.c, set_help
+settings.help.black_and_white_games_grey_or	Blanco y negro: gris o el tono del LCD original. Los de color no cambian.
+# context: ui_psp.c, set_help
+settings.help.brighter_text_and_clearer_edges_in	Texto más claro y bordes nítidos en los menús de la app y reproductores.
+# context: ui_psp.c, set_help
+settings.help.busy_moments_show_every_second_frame	En picos de carga muestra un fotograma de cada dos, a toda velocidad.
+# context: ui_psp.c, set_help
+settings.help.busy_moments_skip_a_frame_game	En picos de carga salta un fotograma; juego y sonido, a su ritmo.
+# context: ui_psp.c, set_help
+settings.help.busy_moments_slow_the_game_and	En momentos de carga ralentiza el juego y su sonido.
+# context: help line of CPU speed
+settings.help.cannot_write_the_psvshell_profile	No se puede escribir el perfil de PSVshell
+# context: ui_psp.c, set_help
+settings.help.choose_just_this_game_to_give	Elige "solo este juego" para darle un aspecto propio.
+# context: ui_psp.c, set_help
+settings.help.circle_is_a_and_confirms_in	Círculo es A y confirma en los menús. Cruz es B.
+# context: ui_psp.c, set_help
+settings.help.coloured_stripes_like_a_crt_tube	Rayas de color como un tubo CRT. Oscurece algo la imagen. 1 tenue, 10 fuerte.
+# context: ui_psp.c, set_help
+settings.help.colours_exactly_as_the_game_sends	Colores tal como los envía el juego.
+# context: ui_psp.c, set_help
+settings.help.controller_a_zapper_game_is_played	Mando: un juego con Zapper se juega con el mando. Al iniciar el juego.
+# context: ui_psp.c, set_help
+settings.help.copy_saves_and_states_from_the	Copia partidas y estados de la Vita que comparte en tu Sala.
+# context: ui_psp.c, set_help
+settings.help.cross_is_a_and_confirms_in	Cruz es A y confirma en los menús. Círculo es B.
+# context: ui_psp.c, set_help
+settings.help.dark_lines_between_the_rows_like	Líneas oscuras entre las filas, como una tele. 1 tenue, 10 fuerte.
+# context: ui_psp.c, set_help
+settings.help.dark_or_light_menus	Menús oscuros o claros.
+# context: ui_psp.c, set_help
+settings.help.darkens_a_thin_line_under_every	Oscurece una línea fina bajo cada fila de píxeles.
+# context: ui_psp.c, set_help
+settings.help.display_changes_made_now_apply_to	Los cambios de pantalla de ahora valen solo para este juego.
+# context: ui_psp.c, set_help
+settings.help.drawn_on_a_second_core_heavy	Se dibuja en otro núcleo: los efectos pesados no frenan el juego.
+# context: ui_psp.c, set_help
+settings.help.each_game_shows_its_file_name	Cada juego muestra su nombre de archivo, como está en la tarjeta.
+# context: ui_psp.c, set_help
+settings.help.each_game_shows_its_title_games	Cada juego muestra su título; si coinciden, también el nombre de archivo.
+# context: ui_psp.c, set_help
+settings.help.each_save_also_goes_where_retroarch	Cada partida también va donde mira RetroArch, siempre sincronizada.
+# context: ui_psp.c, set_help
+settings.help.european_games_run_at_50_hz	Europa va a 50 Hz. 50 Hz suave mantiene su velocidad y alisa la imagen: un refresco de seis mezcla dos fotogramas.
+# context: ui_psp.c, set_help
+settings.help.european_games_run_at_50_hz_2	Europa va a 50 Hz. 50 Hz real los juega a su velocidad y repite un fotograma de seis.
+# context: ui_psp.c, set_help
+settings.help.every_frame_when_it_can_be	Cada fotograma si puede; en momentos de carga se pierden sin orden.
+# context: ui_psp.c, set_help
+settings.help.exact_pixels_sharpest_at_2x_3x	Píxeles exactos. Más nítido a 2x, 3x y 4x.
+# context: ui_psp.c, set_help
+settings.help.exact_pixels_with_softened_edges_at	Píxeles exactos con bordes suavizados, a cualquier tamaño.
+# context: ui_psp.c, set_help
+settings.help.far_apart_the_host_shows_a	Lejos: el anfitrión muestra un código y tu amigo lo escribe.
+# context: ui_psp.c, set_help
+settings.help.faster_link_play_on_a_strong	Más rápido con buena conexión. Vale el ajuste del anfitrión.
+# context: ui_psp.c, set_help
+settings.help.follows_the_vita_s_own_enter	Sigue el botón Aceptar de la propia Vita. Púlsalo para cambiarlo.
+# context: ui_psp.c, set_row_shown
+settings.help.for_a_strong_connection_slightly_faster	Para buena conexión: juego en conexión algo más rápido.
+# context: ui_psp.c, set_help
+settings.help.for_rom_hacks_takes_effect_at	Para hacks de ROM. Surte efecto al próximo inicio.
+# context: ui_psp.c, set_help
+settings.help.gbc_auto_the_colours_a_game	GBC auto: los colores que una Game Boy Color daba a este juego.
+# context: snprintf in ui_psp.c, set_help
+settings.help.hold_or_the_right_stick_left	Mantén %s o la palanca derecha a la izquierda para retroceder.
+# context: ui_psp.c, set_help
+settings.help.hold_the_button_to_fast_forward	Mantén el botón para avanzar rápido, o púlsalo para alternar.
+# context: snprintf in ui_psp.c, set_help
+settings.help.hold_the_right_stick_left_to	Mantén la palanca derecha a la izquierda para retroceder en el tiempo.
+# context: ui_psp.c, set_help
+settings.help.hold_the_right_stick_left_to_2	Mantén la palanca derecha a la izquierda para rebobinar.
+# context: ui_psp.c, set_help
+settings.help.hold_the_vita_as_level_should	Sujeta la Vita nivelada y pulsa X.
+# context: snprintf in ui_psp.c, set_help
+settings.help.hold_to_go_back_in_time	Mantén %s para retroceder en el tiempo.
+# context: ui_psp.c, set_help
+settings.help.how_fast_it_runs_2x_and	A qué velocidad corre. 2x y 3x aceleran el sonido o mantienen el tono.
+# context: ui_psp.c, set_help
+settings.help.how_its_pixels_are_drawn	Cómo se dibujan sus píxeles.
+# context: ui_psp.c, set_help
+settings.help.how_large_the_game_is_drawn	Qué tamaño tiene el juego. 3x es exacto y el más nítido.
+# context: ui_psp.c, set_help
+settings.help.how_much_sunlight_the_cartridge_s	Cuánta luz solar ve el sensor solar del cartucho.
+# context: ui_psp.c, set_help
+settings.help.how_strongly_a_turn_or_a	Con qué fuerza se nota un giro o una inclinación.
+# context: ui_psp.c, set_help
+settings.help.how_this_game_links_link_cable	Cómo conecta este juego: Cable Link o Adaptador inalámbrico.
+# context: help line of CPU speed; %s is empty or settings.help.restart_the_app_to_apply
+settings.help.measured_mhz	Medido: %u MHz%s
+# context: help line of CPU speed
+settings.help.measured_not_known	Medido: desconocido
+# context: ui_psp.c, set_help
+settings.help.mmpx_at_twice_its_size_crisp	MMPX al doble de tamaño: pixel art nítido, ligero para la Vita.
+# context: ui_psp.c, set_help
+settings.help.more_of_the_map_beside_the	Más mapa junto a la imagen, en los juegos que conoce.
+# context: ui_psp.c, set_help
+settings.help.muted_and_dark_as_on_the	Apagado y oscuro, como la pantalla sin luz de la primera GBA.
+# context: ui_psp.c, set_help
+settings.help.muted_as_on_a_gba_s	Apagado, como en una GBA: para lo que se hizo el arte.
+# context: help line of CPU speed
+settings.help.needs_an_overclock_plugin_such_as	Necesita un plugin de overclock como PSVshell
+# context: ui_psp.c, set_help
+settings.help.no_marks_over_the_game_unlocks	Sin marcas sobre el juego. Los logros siguen apareciendo.
+# context: ui_psp.c, set_help
+settings.help.no_router_the_two_vitas_connect	Sin router: las dos Vitas se conectan directamente.
+# context: ui_psp.c, set_help
+settings.help.no_states_rewind_or_cheats_from	Sin estados, rebobinado ni trucos. Desde el próximo juego.
+# context: ui_psp.c, set_help
+settings.help.off_games_find_no_printer	Desactivado: los juegos no encuentran impresora.
+# context: ui_psp.c, set_help
+settings.help.off_the_app_stays_on_the	Desactivado: la app se queda en los tres núcleos que le dan.
+# context: ui_psp.c, set_help
+settings.help.off_try_this_if_the_picture	Desactivado: prueba esto si la imagen falla alguna vez.
+# context: ui_psp.c, set_help
+settings.help.only_start_select_or_l_r	Solo Start + Select (o L + R + Start) abre el menú.
+# context: ui_psp.c, set_help
+settings.help.pictures_a_game_prints_are_saved	Las imágenes impresas se guardan en prints/. No durante una conexión.
+# context: ui_psp.c, set_help
+settings.help.play_this_game_with_a_friend	Juega con un amigo: uno crea la partida y el otro se une. Ambos necesitan el mismo juego.
+# context: ui_psp.c, set_help
+settings.help.put_a_png_in_ux0_data	Pon un PNG en ux0:data/GBAdhoc/overlays/ para enmarcar el juego.
+# context: ui_psp.c, set_help
+settings.help.redraws_curves_and_diagonals_smoothly_the	Redibuja curvas y diagonales con suavidad. El más pesado.
+# context: ui_psp.c, set_help
+settings.help.rest_on_a_game_in_the	Al detenerte en un juego, detrás se reproducen tus últimos diez segundos.
+# context: end of settings.help.measured_mhz (starts with its own full stop)
+settings.help.restart_the_app_to_apply	. Reinicia la app para aplicarlo
+# context: ui_psp.c, set_help
+settings.help.retroarch_s_files_are_left_alone	Los archivos de RetroArch no se tocan; Exportar partida copia una.
+# context: ui_psp.c, set_help
+settings.help.retry_missing_box_art_and_title	Reintenta por Wi-Fi las carátulas y pantallas de título que faltan.
+# context: ui_psp.c, set_help
+settings.help.rounds_stair_steps_only_light_adds	Solo redondea los escalones. Ligero, no añade colores.
+# context: ui_psp.c, set_help
+settings.help.running_the_game_backwards_is_switched	Jugar hacia atrás está desactivado.
+# context: ui_psp.c, set_help
+settings.help.same_wi_fi_or_phone_hotspot	Mismo Wi-Fi o punto de acceso del móvil: las salas aparecen solas.
+# context: ui_psp.c, set_help
+settings.help.screens_with_no_more_to_show	Las pantallas sin más que mostrar se estiran hasta los bordes.
+# context: ui_psp.c, set_help
+settings.help.screens_with_no_more_to_show_2	Las pantallas sin más que mostrar se difuminan en los lados.
+# context: ui_psp.c, set_help
+settings.help.screens_with_no_more_to_show_3	Las pantallas sin más que mostrar mantienen bandas negras.
+# context: ui_psp.c, set_help
+settings.help.set_by_image_quality_choosing_one	Lo fija Calidad de imagen. Elegir uno lo pasa a Auto.
+# context: ui_psp.c, set_help
+settings.help.shot_with_the_buttons_set_in	Captura con los botones asignados en Asignación de botones.
+# context: ui_psp.c, set_help
+settings.help.shows_each_button_stick_and_touch	Muestra cada botón, palanca y pantalla táctil al pulsarse, y qué hace.
+# context: ui_psp.c, set_help
+settings.help.shows_the_game_s_speed_in	Muestra la velocidad del juego en una esquina.
+# context: ui_psp.c, set_help
+settings.help.shows_what_you_press_one_frame	Muestra antes lo que pulsas, un fotograma, calculando el siguiente por adelantado. El juego va igual. Auto lo usa si hay tiempo.
+# context: ui_psp.c, set_help
+settings.help.small_marks_for_a_challenge_progress	Pequeñas marcas para un reto, progreso e intento de clasificación.
+# context: ui_psp.c, set_help
+settings.help.smoothed_at_four_times_its_size	Suavizado al cuádruple de tamaño. El más detallado y exigente.
+# context: ui_psp.c, set_help
+settings.help.smoothed_at_three_times_its_size	Suavizado al triple de tamaño. Más detalle, más trabajo.
+# context: ui_psp.c, set_help
+settings.help.smoothed_at_twice_the_game_s	Suavizado al doble del tamaño del juego, y luego ajustado.
+# context: ui_psp.c, set_help
+settings.help.soft_every_pixel_blends_into_the	Suave: cada píxel se mezcla con el siguiente.
+# context: help line under Game Boy core when Standard is chosen
+settings.help.standard_the_usual_core_fast_with	Estándar: el núcleo de siempre, rápido, con conexión, Cámara y marcos de Super Game Boy. Próximo juego.
+# context: ui_psp.c, set_help
+settings.help.states_rewind_and_cheats_allowed	Estados, rebobinado y trucos permitidos.
+# context: ui_psp.c, set_help
+settings.help.super_game_boy_games_in_the	Juegos de Super Game Boy con su marco (colores de Game Boy: Super Game Boy).
+# context: ui_psp.c, set_help
+settings.help.swap_it_if_turning_or_tilting	Cámbialo si girar o inclinar se siente al revés.
+# context: ui_psp.c, set_help
+settings.help.the_console_s_own_picture_bars	La imagen de la consola, con bandas al lado.
+# context: ui_psp.c, set_help
+settings.help.the_game_s_own_pixels_evenly	Los píxeles del juego, de tamaño uniforme en cualquier pantalla.
+# context: ui_psp.c, set_help
+settings.help.the_highlighted_game_link_cable_or	El juego resaltado: Cable Link o Adaptador inalámbrico.
+# context: ui_psp.c, set_row_shown
+settings.help.the_host_s_setting_is_used	Vale el ajuste del anfitrión.
+# context: ui_psp.c, set_help
+settings.help.the_language_of_the_menus_automatic	El idioma de los menús. Automático sigue el ajuste de la Vita.
+# context: ui_psp.c, set_help
+settings.help.the_name_other_players_see_beside	El nombre que otros jugadores ven junto a tu sala.
+# context: ui_psp.c, set_help
+settings.help.the_nes_picture_as_it_was	La imagen de NES como era: 256 columnas.
+# context: ui_psp.c, set_help
+settings.help.the_newest_frame_only_sharper_with	Solo el fotograma más reciente: más nítido, con algo de tirón al desplazar.
+# context: ui_psp.c, set_help
+settings.help.the_order_of_all_games_and	El orden de Todos los juegos y Favoritos. Recientes: lo nuevo primero.
+# context: ui_psp.c, set_help
+settings.help.the_rear_panel_does_nothing	El panel trasero no hace nada.
+# context: ui_psp.c, set_help
+settings.help.the_rear_panel_s_four_corners	Las esquinas traseras pueden ser botones: ver Asignación de botones.
+# context: ui_psp.c, set_help
+settings.help.the_right_stick_does_not_rewind	La palanca derecha no rebobina.
+# context: ui_psp.c, set_help
+settings.help.the_right_stick_is_the_cartridge	La palanca derecha es el sensor del cartucho.
+# context: ui_psp.c, set_help
+settings.help.the_sides_filled_with_the_game	Los lados usan la imagen del juego si se conoce. Nada inventado.
+# context: ui_psp.c, set_help
+settings.help.the_slow_lcd_left_a_trail	El LCD lento dejaba rastro tras lo que se movía. 10 es fuerte.
+# context: ui_psp.c, set_help
+settings.help.the_slow_lcd_left_a_trail_2	El LCD lento dejaba estela. 0 = no; 5 calma el parpadeo de transparencia.
+# context: ui_psp.c, set_help
+settings.help.the_small_link_status_in_the	El pequeño estado de conexión en la esquina del juego.
+# context: ui_psp.c, set_help
+settings.help.the_vita_s_own_ps_start	El PS + Start de la Vita hace capturas.
+# context: ui_psp.c, set_help
+settings.help.the_wonderswan_s_75_frames_a	Mezcla los 75 fps de WonderSwan en cada refresco: scroll suave.
+# context: ui_psp.c, set_help
+settings.help.this_game_s_achievements_and_what	Los logros de este juego y qué pide cada uno.
+# context: help line under This game > Game Boy core; "Settings" is the value that follows Settings > Gameplay
+settings.help.this_game_s_own_choice_next_start	Elección de este juego. Ajustes sigue la fila Jugabilidad. Al próximo inicio del juego.
+# context: ui_psp.c, set_help
+settings.help.this_game_s_own_choice_settings	Elección de este juego. Ajustes sigue la fila Jugabilidad. Auto lo usa si hay tiempo.
+# context: ui_psp.c, set_help
+settings.help.this_game_s_own_choice_settings_2	Elección de este juego. Ajustes sigue la fila Controles.
+# context: ui_psp.c, set_help
+settings.help.tiles_over_your_game_a_list	Mosaicos, lista con imágenes o imágenes a pantalla completa.
+# context: snprintf in ui_psp.c, set_help
+settings.help.turn_on_rewind_with_right_stick	Activa Rebobinar con la palanca derecha, o asigna un botón.
+# context: ui_psp.c, set_help
+settings.help.turn_or_tilt_the_vita_the	Gira o inclina la Vita: el sensor del cartucho lo nota.
+# context: ui_psp.c, set_help
+settings.help.turn_the_vita_left_for_vertical	Gira la Vita a la izquierda en escenas verticales: llena la pantalla.
+# context: ui_psp.c, set_help
+settings.help.type_your_friend_s_room_code	Escribe el código de sala de tu amigo. Se busca y se inicia su juego.
+# context: ui_psp.c, set_help
+settings.help.vertical_scenes_upright_on_a_level	Escenas verticales derechas con la Vita nivelada; la cruceta gira.
+# context: ui_psp.c, set_help
+settings.help.what_fills_the_wide_view_s	Qué llena los márgenes de la vista ancha (requiere Vista ancha).
+# context: help line of Camera when the picture comes from a file
+settings.help.what_the_camera_sees_camera_png	Lo que ve la cámara: camera.png de la carpeta de datos.
+# context: ui_psp.c, set_help
+settings.help.what_the_camera_sees_the_vita	Lo que ve la cámara: la cámara trasera de la Vita.
+# context: ui_psp.c, set_help
+settings.help.what_the_camera_sees_the_vita_2	Lo que ve la cámara: la cámara frontal de la Vita.
+# context: ui_psp.c, set_help
+settings.help.whether_the_app_is_using_the	Si la app usa el cuarto núcleo de CPU de la Vita (requiere el plugin CapUnlocker).
+# context: ui_psp.c, set_help
+settings.help.which_button_does_what_and_the	Qué botón hace qué, y los atajos.
+# context: ui_psp.c, set_help
+settings.help.which_vita_screen_this_is_oled	Qué Vita tienes. OLED suaviza algo los colores. Todas las consolas.
+# context: ui_psp.c, set_help
+settings.help.x_a_copy_retroarch_can_use	X: una copia que RetroArch puede usar, donde la busca.
+# context: ui_psp.c, set_help
+settings.help.x_a_picture_of_your_own	{x}: una imagen tuya como portada del juego elegido en la lista.
+# context: help line of Export save when the value is Plain .sav; X is the Cross button
+settings.help.x_a_plain_sav_beside_the_game	X: un .sav simple junto al juego (mGBA, SameBoy...).
+# context: ui_psp.c, set_help
+settings.help.x_add_a_folder_ux0_roms	{x}: añadir carpeta (ux0:ROMS/GBA), o elegir una para quitarla.
+# context: ui_psp.c, set_help
+settings.help.x_check_now_off_no_check	{x}: buscar ya. No: sin buscar salvo que lo pidas.
+# context: ui_psp.c, set_help
+settings.help.x_check_now_once_a_day	{x}: buscar ya. Una vez al día consulta si hay un VitAdhoc nuevo.
+# context: ui_psp.c, set_help
+settings.help.x_type_a_folder_ux0_pictures	{x}: escribe una carpeta (ux0:pictures/VitAdhoc). Vacío: screenshots/.
+# context: help line of Overlay when it is on; overlays/ is a folder name
+settings.help.your_picture_from_overlays_over_the	Tu imagen de overlays/ sobre el juego (gba.png, gb.png, gbc.png o su nombre).
+# context: ui_psp.c, set_help
+settings.help.your_retroachievements_org_account	Tu cuenta de retroachievements.org.
+# context: ui_psp.c, set_help
+settings.help.zapper_touch_the_screen_to_aim	Zapper: toca la pantalla para apuntar y disparar. Al iniciar el juego.
+# context: ui_psp.c, ff_step_now
+settings.high_contrast	Alto contraste
+# context: ui_psp.c, ff_step_now
+settings.image_quality	Calidad de imagen
+# context: ui_psp.c, ff_step_now
+settings.interface	INTERFAZ
+# context: ui_psp.c, ff_step_now
+settings.join_a_share	Recibir datos de juego
+# context: ui_psp.c, ff_step_now
+settings.join_online	Unirse en línea
+# context: ui_psp.c, ff_step_now
+settings.keep_full_speed	Mantener velocidad total
+# context: ui_psp.c, ff_step_now
+settings.language	Idioma
+# context: ui_psp.c, ff_step_now
+settings.lcd_colours	Colores LCD
+# context: ui_psp.c, ff_step_now
+settings.lcd_ghosting	Estela LCD
+# context: ui_psp.c, ff_step_now
+settings.lcd_grid	Rejilla LCD
+# context: ui_psp.c, ff_step_now
+settings.level	Nivel
+# context: ui_psp.c, ff_step_now
+settings.library	BIBLIOTECA
+# context: ui_psp.c, ff_step_now
+settings.link_delay	Retardo de conexión
+# context: ui_psp.c, ff_step_now
+settings.link_mode	Modo de conexión
+# context: ui_psp.c, ff_step_now
+settings.link_setup	AJUSTE DE CONEXIÓN
+# context: ui_psp.c, ff_step_now
+settings.motion_controls	Controles de movimiento
+# context: ui_psp.c, ff_step_now
+settings.motion_strength	Intensidad de movimiento
+# context: ui_psp.c, ff_step_now
+settings.pal_games_speed	Velocidad juegos PAL
+# context: ui_psp.c, ff_step_now
+settings.palette	Paleta
+# context: ui_psp.c, ff_step_now
+settings.player_name	Nombre de jugador
+# context: ui_psp.c, ff_step_now
+settings.port_2	Puerto 2
+# context: ui_psp.c, ff_step_now
+settings.quick_response	Respuesta rápida
+# context: ui_psp.c, ff_step_now
+settings.rear_touch_panel	Panel táctil trasero
+# context: ui_psp.c, ff_step_now
+settings.refresh_library	Actualizar biblioteca
+# context: ui_psp.c, ff_step_now
+settings.retroachievements	RETROACHIEVEMENTS
+# context: ui_psp.c, ff_step_now
+settings.rewind	Rebobinar
+# context: ui_psp.c, ff_step_now
+settings.rewind_length	Duración del rebobinado
+# context: ui_psp.c, ff_step_now
+settings.rewind_with_right_stick	Rebobinar: palanca der.
+# context: ui_psp.c, ff_step_now
+settings.room	Sala
+# context: ui_psp.c, ff_step_now
+settings.rotation	Rotación
+# context: ui_psp.c, ff_step_now
+settings.save_type	Tipo de guardado
+# context: ui_psp.c, ff_step_now
+settings.scanlines	Líneas de barrido
+# context: ui_psp.c, ff_step_now
+settings.screen	Pantalla
+# context: ui_psp.c, ff_step_now
+settings.screen_fill	Relleno de pantalla
+# context: ui_psp.c, ff_step_now
+settings.screen_overlay	Marco de pantalla
+# context: ui_psp.c, ff_step_now
+settings.screen_size	Tamaño de pantalla
+# context: ui_psp.c, ff_step_now
+settings.screenshot_button_combo	Combinación de captura
+# context: ui_psp.c, ff_step_now
+settings.screenshot_folder	Carpeta de capturas
+# context: ui_psp.c, ff_step_now
+settings.session_overlay	Marco de sesión
+# context: ui_psp.c, ff_step_now
+settings.sgb_border	Marco SGB
+# context: ui_psp.c, ff_step_now
+settings.share_game_data	Compartir datos de juego
+# context: ui_psp.c, ff_step_now
+settings.smooth_75_hz_motion	Movimiento suave 75 Hz
+# context: ui_psp.c, ff_step_now
+settings.smooth_hand_over	Transición suave
+# context: ui_psp.c, ff_step_now
+settings.steady_pacing	Ritmo estable
+# context: ui_psp.c, ff_step_now
+settings.sunlight	Luz solar
+# context: ui_psp.c, ff_step_now
+settings.sync_retroarch_saves	Sincronizar RetroArch
+# context: ui_psp.c, ff_step_now
+settings.tap_screen_for_menu	Tocar pantalla: menú
+# context: ui_psp.c, ff_step_now
+settings.text_size	Tamaño de texto
+# context: ui_psp.c, ff_step_now
+settings.theme	Tema
+# context: ui_psp.c, ff_step_now
+settings.this_game	ESTE JUEGO
+# context: ui_psp.c, ff_step_now
+settings.two_players	Dos jugadores
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.444_mhz_standard	444 MHz (estándar)
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.500_mhz_fast	500 MHz (alta)
+# context: Game Boy core value: Gambatte, closer to a real Game Boy
+settings.value.accurate	Preciso
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.all_games	todos los %s
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.as_held_at_the_start	como al inicio
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.as_the_vita	 (como Vita)
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.auto	Auto
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.automatic	Automático
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.by_name	por nombre
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.checking_of_have_covers	Comprobando %d de %d - %d con portada
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.circle_is_a	Círculo es A
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.classic_lcd_tint	Tono LCD clásico
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.controller	Mando
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.cross_is_a	Cruz es A
+# context: value of Button mapping: changed by the player
+settings.value.custom	Personalizado
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.daily	Diario
+# context: value of Theme
+settings.value.dark	Oscuro
+# context: value of Button mapping: nothing changed
+settings.value.default	Predeterminado
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.ff_button	Botón avance (%s)
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.file_name	Archivo
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.follows_the_clock	sigue el reloj
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.for_retroarch	para RetroArch
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.frame	%d fotograma
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.frames	%d fotogramas
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.full_sun	 (pleno sol)
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.game_title	Título
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.gb_gbc_only	solo GB / GBC
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.gb_only	solo GB
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.gba_link_cable_only	solo Cable Link GBA
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.greyscale	Grises
+# context: value of the link status row: not drawn
+settings.value.hidden	Oculto
+# context: value of Game list look: tiles over your game (the home screen)
+settings.value.home	Inicio
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.host_or_join	crear o unirse
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.host_saves_and_states_on	comparte datos en %s
+# context: value of Extra CPU core (About): the fourth core is in use
+settings.value.in_use	En uso
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.just_this_game	solo este
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.large	Grande
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.last_played_first	más reciente
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.lcd_pch_2000	LCD (PCH-2000)
+# context: value of Theme
+settings.value.light	Claro
+# context: value of Game list look: art full screen
+settings.value.marquee	Marquesina
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.min	%d min
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.most_played_first	más jugado
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.no_game	ningún juego
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.none_shade	ninguna (tono)
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.normal	Normal
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.normal_pitch	, tono normal
+# context: value of Extra CPU core (About): the fourth core cannot be used
+settings.value.not_available	No disponible
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.not_checking	Sin comprobar
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.ntsc_colours	Colores NTSC
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.of	%u de %u
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.of_10	%d de 10%s
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.of_games_have_covers	%d de %d con portada
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.off	Desactivado
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.oled_pch_1000	OLED (PCH-1000)
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.on	Activado
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.on_2	activado - %.48s
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.on_from_the_next_game	activado (próx. juego)
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.on_l_r_select	act. (L+R+Select)
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.on_none_in_overlays	act. - nada en overlays/
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.only_roms	solo roms/
+# context: value of Export save: a plain .sav file (the other value is "for RetroArch")
+settings.value.plain_sav	.sav simple
+# context: value of Reverse (motion controls)
+settings.value.reversed	Invertido
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.scan_now	buscar ahora
+# context: value of Level (motion controls): a level was set by hand
+settings.value.set	Fijado
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.settings	Ajustes
+# context: value of Game list look: a list with art
+settings.value.shelf	Estante
+# context: value of the link status row: the small status is drawn
+settings.value.shown	Visible
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.sign_in	iniciar sesión
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.signing_in	iniciando...
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.smooth_50_hz	50 Hz suave
+# context: Game Boy core value: the usual core (fast, link play, Camera)
+settings.value.standard	Estándar
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.the_one_on	el de %s
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.this_game	Este juego
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.true_50_hz	50 Hz real
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.turn_the_vita	Gira la Vita
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.type_a_room_code	código de sala
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.upright	Derecho
+# context: snprintf in ui_psp.c, screen_settings_page
+settings.value.with_sound	 con sonido
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.your_own	propia
+# context: set_item in ui_psp.c, screen_settings_page
+settings.value.zapper	Zapper
+# context: ui_psp.c, ff_step_now
+settings.vertical_play	Juego vertical
+# context: ui_psp.c, ff_step_now
+settings.video_filter	Filtro de vídeo
+# context: ui_psp.c, ff_step_now
+settings.wide_view	Vista ancha
+# context: snprintf in ui_share.inc, share_host_run
+share.a_vita_joined_and_is_browsing	Una Vita se unió a %s y está explorando.
+# context: snprintf in ui_share.inc, shj_draw_modal
+share.about_s_left	%s  -  faltan unos %u s
+# context: snprintf in ui_share.inc, shj_draw_modal
+share.an_unknown_date	una fecha desconocida
+# context: snprintf in ui_share.inc, shj_draw_modal
+share.and_its_preview	%s  -  y su vista previa
+# context: snprintf in ui_share.inc, shj_connect_notice
+share.another_version	otra versión
+# context: sh_notice in ui_share.inc, shj_connect_notice
+share.another_vita_is_already_in_that	Otra Vita ya está en esa sala.
+# context: snprintf in ui_share.inc, shj_connect_notice
+share.ask_them_to_choose_share_game	Pídele que elija Compartir datos de juego otra vez.
+# context: vid_text_center in ui_share.inc, sh_online_wait
+share.checking_your_connection	Comprobando tu conexión...
+# context: sh_wait_frame in ui_share.inc, share_host_run
+share.closing_the_room	Cerrando la sala...
+# context: snprintf in ui_share.inc, share_host_run
+share.connected_over_the_internet	Conectado por internet.
+# context: vid_text_center in ui_share.inc, sh_online_wait
+share.connecting	Conectando...
+# context: vid_text_center in ui_share.inc, sh_online_wait
+share.connecting_through_the_relay	Conectando mediante el relé.
+# context: sh_notice in ui_share.inc, share_join_run
+share.could_not_join_the_room	No se pudo unir a la sala.
+# context: sh_notice in ui_share.inc, share_host_run
+share.could_not_read_the_game_folder	No se pudo leer la carpeta de juegos.
+# context: snprintf in ui_share.inc, shj_xf_fail
+share.could_not_write_it_here_is	No se pudo escribir aquí. ¿Está llena la tarjeta de memoria?
+# context: what a Vita shares: saves, states, then games per console
+share.counts_per_console	%s  -  %s  -  GBA %u / GB %u / GBC %u
+# context: snprintf in ui_share.inc, shj_draw_modal
+share.fetching_their_save_file	Obteniendo su archivo de partida
+# context: snprintf in ui_share.inc, shj_draw_modal
+share.fetching_their_slot_into_your_slot	Obteniendo su ranura %d en tu ranura %d
+# context: vid_text_center in ui_share.inc, sh_online_wait
+share.finding_your_friend	Buscando a tu amigo...
+# context: sh_header in ui_share.inc, shj_connect
+share.game_data	DATOS DE JUEGO
+# context: vid_text_center in ui_share.inc, sh_online_wait
+share.getting_a_code	Obteniendo un código...
+# context: vid_text in ui_share.inc, shj_draw_their
+share.got_it	listo
+# context: snprintf in ui_share.inc, shj_draw_yours
+share.incoming_their_slot	Entrante   su ranura %d   %s
+# context: ui_share.inc, shj_draw_modal
+share.it_is_saved_when_it_finishes	Se guarda al terminar.
+# context: vid_text_center in ui_share.inc, sh_online_wait
+share.join_online_settings_join_a_share	Unirse en línea > Ajustes > Recibir datos de juego
+# context: snprintf in ui_share.inc, sh_online_wait
+share.joining	Uniéndose a %s...
+# context: snprintf in ui_share.inc, sh_kb
+share.kb	%u KB
+# context: ui_share.inc, shj_draw_list
+share.l_r_page	L/R página
+# context: sh_wait_frame in ui_share.inc, share_join_run
+share.leaving_the_room	Saliendo de la sala...
+# context: sh_wait_frame in ui_share.inc, shj_rejoin
+share.looking_for_the_room_again	Buscando la sala otra vez...
+# context: snprintf in ui_share.inc, shj_connect
+share.looking_for_the_vita_sharing_on	Buscando la Vita que comparte en %s...
+# context: sh_plate in ui_share.inc, shj_draw_modal
+share.lost_the_other	Se perdió la otra Vita
+# context: sh_plate in ui_share.inc, shj_draw_modal
+share.move_the_vitas_closer_or_ask	Acerca las Vitas, o pídele que comparta otra vez.
+# context: plural
+share.n_saves_many	%u partidas
+# context: a count of save files, singular (the number is first)
+share.n_saves_one	%u partida
+# context: plural
+share.n_states_many	%u estados
+# context: a count of save states, singular
+share.n_states_one	%u estado
+# context: ui_share.inc, shj_panel_their
+share.needs_the_same_build	necesita la misma versión
+# context: ui_share.inc, shj_panel_their
+share.no_preview	Sin vista previa
+# context: vid_text in ui_share.inc, shj_draw_their
+share.no_save_file_shared	Ninguna partida compartida
+# context: snprintf in ui_share.inc, shj_draw_list
+share.no_saves_or_states_on	Sin partidas ni estados de %s en %s
+# context: ui_share.inc, sh_net_error
+share.not_enough_memory_to_start_the	Memoria insuficiente para iniciar la radio.
+# context: sh_plate in ui_share.inc, shj_draw_modal
+share.not_fetched	Sin obtener
+# context: snprintf in ui_share.inc, shj_holds
+share.not_for_this_build	 (no para esta versión)
+# context: snprintf in ui_share.inc, shj_draw_list
+share.nothing_here_for_your_games	No hay nada para tus juegos de %s
+# context: snprintf in ui_share.inc, share_join_run
+share.nothing_of_yours_was_changed	No se cambió nada tuyo.
+# context: ui_share.inc, sh_notice
+share.o_back	{o} atrás
+# context: ui_share.inc, sh_online_wait
+share.o_cancel	{o} cancelar
+# context: ui_share.inc, shj_draw_footer
+share.o_games	{o} juegos
+# context: ui_share.inc, shj_draw_footer
+share.o_keep_mine	{o} conservar la mía
+# context: ui_share.inc, shj_draw_list
+share.o_leave	{o} salir
+# context: ui_share.inc, share_host_run
+share.o_stop_sharing	{o} dejar de compartir
+# context: snprintf in ui_share.inc, share_host_run
+share.on_the_other_vita_join_as	En la otra Vita: únete a %s como siempre.
+# context: sh_header in ui_share.inc, sh_online_wait
+share.online	En línea
+# context: sh_notice in ui_share.inc, share_host_run
+share.play_a_game_first_its_save	Juega primero una partida; su guardado aparecerá aquí.
+# context: ui_share.inc, sh_wait_frame
+share.please_wait	espera
+# context: ui_share.inc, shj_panel_their
+share.preview_arriving	vista previa en camino
+# context: snprintf in ui_share.inc, shj_draw_yours
+share.put_their_slot_in	Poner su ranura %d en:
+# context: snprintf in ui_share.inc, shj_connect
+share.reading_what_shares	Leyendo lo que comparte %s...
+# context: sh_wait_frame in ui_share.inc, share_host_run
+share.reading_your_saves_and_states	Leyendo tus partidas y estados...
+# context: snprintf in ui_share.inc, shj_draw_modal
+share.replace_your_save	¿Reemplazar tu partida de %s?
+# context: vid_text in ui_share.inc, shj_draw_their
+share.replaced_yours	reemplazó la tuya
+# context: snprintf in ui_share.inc, share_host_run
+share.save_file	%s %s  -  archivo de partida  -  %s
+# context: ui_share.inc, shj_panel_hero
+share.save_file_2	ARCHIVO DE PARTIDA
+# context: vid_text in ui_share.inc, shj_draw_their
+share.save_file_3	Archivo de partida
+# context: snprintf in ui_share.inc, shj_xf_commit
+share.save_file_replaced_yours	El archivo de partida reemplazó el tuyo
+# context: snprintf in ui_share.inc, shj_xf_commit
+share.save_file_saved	Archivo de partida guardado
+# context: Share game data: what is offered, only the save file (see share.save_state_one)
+share.save_only	PARTIDA
+# context: plural of the line above
+share.save_state_many	PARTIDA  -  %d estados%s
+# context: one save file and one state; the last %s is a short note or nothing
+share.save_state_one	PARTIDA  -  %d estado%s
+# context: snprintf in ui_share.inc, shj_xf_commit
+share.saved_to_your_slot	Guardado en tu ranura %d
+# context: snprintf in ui_share.inc, share_host_run
+share.sending	Enviando
+# context: snprintf in ui_share.inc, share_host_run
+share.sent	Enviado
+# context: ui_share.inc, sh_net_error
+share.share_game_data	COMPARTIR DATOS DE JUEGO
+# context: snprintf in ui_share.inc, shj_draw_list
+share.shared_by	Compartido por %s
+# context: sh_notice in ui_share.inc, share_host_run
+share.sharing_could_not_start	No se pudo iniciar el uso compartido.
+# context: sh_notice in ui_share.inc, share_host_run
+share.sharing_has_stopped	Se detuvo el uso compartido.
+# context: snprintf in ui_share.inc, share_host_run
+share.sharing_on_waiting_for_another_vita	Compartiendo en %s. Esperando a otra Vita.
+# context: snprintf in ui_share.inc, shj_draw_their
+share.slot	Ranura %d
+# context: snprintf in ui_share.inc, shj_draw_their
+share.slot_2	Ranura %d   %s   %s
+# context: snprintf in ui_share.inc, share_host_run
+share.slot_state	%s %s  -  estado de ranura %u  -  %s
+# context: vid_text_center in ui_share.inc, share_host_run
+share.some_games_did_not_fit_in	Algunos juegos no cupieron en la lista.
+# context: snprintf in ui_share.inc, share_host_run
+share.starting	Iniciando %s...
+# context: plural
+share.state_many	%d estados%s
+# context: one state; the last %s is a short note or nothing
+share.state_one	%d estado%s
+# context: vid_text in ui_share.inc, shj_draw_their
+share.states_need_the_same_build	Los estados necesitan la misma versión.
+# context: vid_text in ui_share.inc, shj_draw_their
+share.states_only	solo estados
+# context: snprintf in ui_share.inc, share_join_run
+share.still_no_answer_from_the_other	Aún sin respuesta de la otra Vita.
+# context: vid_text_center in ui_share.inc, sh_online_wait
+share.tell_your_friend_this_code	Dile este código a tu amigo
+# context: snprintf in ui_share.inc, shj_xf_fail
+share.that_file_is_too_large_to	Ese archivo es demasiado grande para obtenerlo.
+# context: snprintf in ui_share.inc, shj_xf_fail
+share.that_is_not_a_state_this	Ese estado no se puede cargar con esta versión.
+# context: snprintf in ui_share.inc, shj_xf_fail
+share.the_file_changed_on_the_other	El archivo cambió en la otra Vita mientras se enviaba.
+# context: sh_plate in ui_share.inc, shj_draw_modal
+share.the_game_loads_theirs_next_time	El juego carga el suyo la próxima vez que juegues.
+# context: snprintf in ui_share.inc, share_join_run
+share.the_other_vita_is_not_answering	La otra Vita no responde.
+# context: snprintf in ui_share.inc, shj_xf_fail
+share.the_other_vita_no_longer_has	La otra Vita ya no tiene ese archivo.
+# context: snprintf in ui_share.inc, share_join_run
+share.the_other_vita_stopped_sharing	La otra Vita dejó de compartir.
+# context: snprintf in ui_share.inc, shj_xf_fail
+share.the_other_vita_stopped_sharing_at	La otra Vita dejó de compartir al %d%%.
+# context: ui_share.inc, sh_net_error
+share.the_radio_could_not_start	No se pudo iniciar la radio.
+# context: sh_notice in ui_share.inc, share_host_run
+share.the_radio_dropped_the_room	La radio perdió la sala.
+# context: ui_share.inc, sh_net_error
+share.the_room_was_not_found_is	No se encontró la sala. ¿Sigue compartiendo?
+# context: snprintf in ui_share.inc, shj_xf_fail
+share.the_transfer_did_not_complete	La transferencia no se completó.
+# context: snprintf in ui_share.inc, shj_xf_fail
+share.the_transfer_stopped_at	La transferencia se detuvo al %d%%.
+# context: sh_notice in ui_share.inc, shj_connect_notice
+share.the_two_vitas_run_versions_that	Las dos Vitas usan versiones que no pueden compartir.
+# context: sh_notice in ui_share.inc, shj_connect_notice
+share.the_vita_sharing_on_that_room	La Vita que comparte en esa sala no respondió.
+# context: snprintf in ui_share.inc, shj_draw_list
+share.their_build_yours	%s  -  su versión %.20s, la tuya %.20s
+# context: sh_header in ui_share.inc, shj_draw_their
+share.their_states	SUS ESTADOS
+# context: snprintf in ui_share.inc, shj_draw_their
+share.theirs_you_have_none	Suyo %s   tú no tienes
+# context: snprintf in ui_share.inc, shj_draw_their
+share.theirs_yours	Suyo %s   Tuyo %s
+# context: sh_notice in ui_share.inc, share_host_run
+share.there_are_no_saves_or_states	Aún no hay partidas ni estados que compartir.
+# context: vid_text_center in ui_share.inc, shj_draw_list
+share.they_share_some_for_the_other	Comparten algunos de otras consolas.
+# context: Share game data: what was taken, only the save file (see share.took_save_state_one)
+share.took_save_only	partida
+# context: plural
+share.took_save_state_many	partida, %d estados
+# context: you took the save and one state
+share.took_save_state_one	partida, %d estado
+# context: plural
+share.took_state_many	%d estados
+# context: you took one state
+share.took_state_one	%d estado
+# context: vid_text_center in ui_share.inc, shj_draw_list
+share.tri_change_console	{tri} cambiar consola
+# context: ui_share.inc, shj_draw_list
+share.tri_console	{tri} consola
+# context: sh_notice in ui_share.inc, shj_connect_notice
+share.try_again_when_it_has_left	Inténtalo de nuevo cuando se haya ido.
+# context: snprintf in ui_share.inc, shj_connect_notice
+share.update_vitadhoc_on_both_vitas_theirs	Actualiza VitAdhoc en ambas Vitas (la suya: %.24s).
+# context: snprintf in ui_share.inc, sh_online_wait
+share.waiting_for_your_friend	Esperando a tu amigo...  %d:%02d
+# context: ui_share.inc, sh_net_error
+share.wi_fi_is_off	El Wi-Fi está apagado.
+# context: ui_share.inc, shj_draw_footer
+share.x_get	{x} obtener
+# context: ui_share.inc, shj_draw_footer
+share.x_get_save	{x} obtener partida
+# context: ui_share.inc, shj_draw_footer
+share.x_overwrite	{x} sobrescribir
+# context: ui_share.inc, shj_draw_footer
+share.x_put_it_here	{x} ponerlo aquí
+# context: ui_share.inc, shj_draw_footer
+share.x_replace	{x} reemplazar
+# context: ui_share.inc, shj_draw_list
+share.x_their_states	{x} sus estados
+# context: ui_share.inc, shj_draw_footer
+share.x_try_again	{x} reintentar
+# context: snprintf in ui_share.inc, shj_draw_list
+share.you_have_a_save_for_this	tienes una partida de este juego
+# context: snprintf in ui_share.inc, shj_draw_list
+share.you_have_no_save_for_this	no tienes partida de este juego
+# context: snprintf in ui_share.inc, shj_draw_list
+share.you_took_the	  -  te quedaste con %s
+# context: sh_plate in ui_share.inc, shj_draw_modal
+share.your_current_save_is_kept_as	Tu partida actual se guarda como copia de seguridad.
+# context: snprintf in ui_share.inc, shj_xf_commit
+share.your_old_save_is_kept_as	Tu partida anterior se guarda como archivo .bak.
+# context: snprintf in ui_share.inc, shj_xf_commit
+share.your_old_slot_is_kept_as	Tu ranura %d anterior se guarda como archivo .old.
+# context: snprintf in ui_share.inc, shj_xf_fail
+share.your_save_was_not_changed	No se cambió tu partida.
+# context: snprintf in ui_share.inc, shj_draw_modal
+share.your_slot_changes_only_when_it	Tu ranura solo cambia cuando ha llegado todo.
+# context: snprintf in ui_share.inc, shj_xf_fail
+share.your_slot_was_not_changed	No se cambió tu ranura %d.
+# context: sh_header in ui_share.inc, shj_draw_yours
+share.your_slots	TUS RANURAS
+# context: snprintf in ui_share.inc, shj_draw_modal
+share.yours_is_from_theirs_from	La tuya es de %s, la suya de %s.
+# context: ui_share.inc, shj_draw_modal
+share.yours_is_replaced_when_it_finishes	La tuya se reemplaza al terminar.
+# context: ui_vita_snes.h, s2_frame
+snes.a_code_to_share	un código para compartir
+# context: ui_vita_snes.h, s2_frame
+snes.a_friend_s_room	la sala de un amigo
+# context: vw_clip in ui_vita_snes.h, s2_frame
+snes.a_player	un jugador
+# context: ui_vita_snes.h, s2_frame
+snes.a_room_on_this_wi_fi	una sala en este Wi-Fi
+# context: ui_vita_snes.h, s2_room_why
+snes.already_playing	ya está jugando
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.connect_in_the_vita_s_settings	Conéctate en Ajustes > Red de la Vita. Esta página sigue sola en cuanto lo estés.
+# context: ui_vita_snes.h, s2_room_why
+snes.different_version	versión distinta
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.end_it_first_play_together_disconnect	Termínala primero (Jugar juntos > Desconectar).
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.found	%d ENCONTRADAS
+# context: ui_vita_snes.h, s2_frame
+snes.host_a_game	Crear partida
+# context: vw_head in ui_vita_snes.h, s2_frame
+snes.host_a_game_2	CREAR PARTIDA
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.is	%s está %s.
+# context: ui_vita_snes.h, s2_frame
+snes.join_a_game	Unirse a una partida
+# context: vw_head in ui_vita_snes.h, s2_frame
+snes.join_a_game_2	UNIRSE A UNA PARTIDA
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.looking_for_games_on_this_wi	Buscando juegos en este Wi-Fi...
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.no_two_players_room_for_this	Aún no hay sala de Dos jugadores para este juego.
+# context: ui_vita_snes.h, s2_frame
+snes.online	En línea
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.room	Sala %d
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.room_2	Sala %d  -  %s
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.room_ms	Sala %d  -  %d ms
+# context: ui_vita_snes.h, s2_frame
+snes.rooms_on_this_wi_fi	salas en este Wi-Fi
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.runs_a_different_version_of_vitadhoc	%s usa otra versión de VitAdhoc.
+# context: ui_vita_snes.h, s2_frame
+snes.same_wi_fi	Mismo Wi-Fi
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.searching	BUSCANDO
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.that_player	Ese jugador
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.that_room	Esa sala
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.the_other_vita_hosts_the_same	La otra Vita crea el mismo juego (Ajustes > Dos jugadores), en el mismo Wi-Fi. Sigue buscando.
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.the_radio_is_busy_with_another	La radio está ocupada con otra conexión.
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.the_search_could_not_start	No se pudo iniciar la búsqueda.
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.this_vita_is_not_connected_to	Esta Vita no está conectada al Wi-Fi.
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.trying_again_by_itself_if_this	Reintentando solo. Si sigue, revisa el Wi-Fi de la Vita.
+# context: vw_head in ui_vita_snes.h, s2_frame
+snes.two_players	DOS JUGADORES
+# context: ui_vita_snes.h, s2_frame
+snes.type_your_friend_s_code	escribe el código de tu amigo
+# context: snprintf in ui_vita_snes.h, s2_frame
+snes.waiting	ESPERANDO
+# context: ui_vita_snes.h, s2_frame
+snes.you_start_the_room	tú abres la sala
+# context: osd_toast in ui_psp.c, screen_settings_page
+toast.a_plain_file	un archivo simple
+# context: osd_toast in link_vita.c, adapter_service
+toast.a_player	Un jugador
+# context: osd_toast in link_vita.c, adapter_service
+toast.a_player_left	Un jugador salió de %s
+# context: toast: Gambatte refused the game, the usual core runs it
+toast.accurate_core_can_t_run_this_cartridge	El núcleo Preciso no puede con este cartucho: se usa Estándar
+# context: toast in ra_vita.c, on_event
+toast.achievement	Logro: %s
+# context: toast in ra_vita.c, on_event
+toast.achievements_sent	Logros enviados
+# context: toast in ra_vita.c, game_done
+toast.achievements_unavailable	Logros no disponibles: %s
+# context: toast in ra_vita.c, on_event
+toast.achievements_will_be_sent_when_back	Logros: se enviarán al volver la conexión
+# context: osd_toast in main_vita.c, ui_host_update_now
+toast.already_checking_for_updates	Ya se están buscando actualizaciones
+# context: osd_toast in link_vita.c, link_action
+toast.already_linked_disconnect_first	Ya estás conectado. Desconecta primero.
+# context: osd_toast in main_vita.c, game_boot
+toast.audio_output_unavailable	Salida de audio no disponible
+# context: toast; camera.png is a file name
+toast.camera_png_not_found_using_a_test	No se encontró camera.png: se usa una imagen de prueba
+# context: toast_now in main_vita.c, game_loop
+toast.cannot_load_a_state_during_a	Sin cargar estados durante la conexión
+# context: toast_now in main_vita.c, game_loop
+toast.cannot_save_a_state_during_a	Sin guardar estados durante la conexión
+# context: osd_toast in main_vita.c, ui_host_update_now
+toast.checking_for_updates	Buscando actualizaciones...
+# context: osd_toast in main_vita.c, clip_export_service
+toast.clip_saved	Clip guardado
+# context: osd_toast in ui_psp.c, settings_adjust
+toast.clock_is_used_the_next_time	El reloj se usa al próximo inicio del juego
+# context: toast in ra_vita.c, on_event
+toast.completed	Completado: %s
+# context: osd_toast in ui_vita_online.h, ui_online_connected_toast
+toast.connected_to	Conectado a %s.
+# context: osd_toast in ui_vita_online.h, ui_online_connected_toast
+toast.connected_to_connection	Conectado a %s. Conexión: %s
+# context: osd_toast in local_vita.c, link_local_frame
+toast.controller_2_drives_the_partner_s	El mando 2 maneja el juego del compañero
+# context: toast_now in main_vita.c, game_loop
+toast.could_not_continue_starting_from_the	No se pudo continuar: se usa la partida
+# context: toast_now in main_vita.c, game_loop
+toast.could_not_load_state	No se pudo cargar el estado %d
+# context: toast in ra_vita.c, login_done
+toast.could_not_sign_in_will_try	no se pudo iniciar sesión, se reintentará
+# context: toast; gb_override.txt is a file name
+toast.could_not_write_gb_override_txt	No se pudo escribir gb_override.txt
+# context: osd_toast in link_vita.c, link_disconnect
+toast.disconnected	Desconectado
+# context: osd_toast in ui_psp.c, screen_settings_page
+toast.eight_folders_is_the_most	Ocho carpetas es el máximo
+# context: toast_now in main_vita.c, game_loop
+toast.emulation_fault_game_was_reset	Fallo de emulación: el juego se reinició
+# context: osd_toast in link_vita.c, link_disconnect
+toast.ending_the_link	Cerrando la conexión...
+# context: osd_toast in ui_psp.c, screen_settings_page
+toast.exported_as	Exportado como %.48s
+# context: toast_now in main_vita.c, ff_frame
+toast.fast_forward_is_off_during_a	Avance rápido desactivado en conexión
+# context: toast_now in main_vita.c, ff_frame
+toast.fast_forward_is_off_while_two	Avance rápido desactivado con 2 juegos
+# context: osd_toast in ui_psp.c, ui_browser
+toast.favourites_list_is_full	La lista de favoritos está llena
+# context: osd_toast in ui_psp.c, screen_settings_page
+toast.folder_added_scanning	Carpeta añadida - buscando
+# context: osd_toast in ui_psp.c, screen_settings_page
+toast.folder_removed_scanning	Carpeta quitada - buscando
+# context: osd_toast in ui_psp.c, settings_adjust
+toast.game_boy_type_is_used_the	El tipo de Game Boy vale al próximo inicio
+# context: osd_toast in ui_psp.c, ui_browser
+toast.game_found	%d juego encontrado
+# context: osd_toast in ui_psp.c, ui_browser
+toast.games_found	%d juegos encontrados
+# context: osd_toast in mgift_vita.c, mgift_vita_frame
+toast.gift_received_from_the_phone	Regalo recibido del móvil
+# context: toast_now in main_vita.c, game_loop
+toast.hardcore_mode_rewind_is_off	Modo Hardcore: rebobinado desactivado
+# context: toast_now in main_vita.c, game_loop
+toast.hardcore_mode_starting_from_the_save	Modo Hardcore: se empieza desde la partida
+# context: osd_toast in main_vita.c, menu_action
+toast.hardcore_mode_states_cannot_be_loaded	Modo Hardcore: no se pueden cargar estados
+# context: toast_now in main_vita.c, ws_layout_hint
+toast.horizontal_circle_a_cross_b	Horizontal: Círculo = A, Cruz = B
+# context: osd_toast in link_vita.c, adapter_service
+toast.joined	Te uniste a %s
+# context: osd_toast in link_vita.c, adapter_service
+toast.joined_2	%s se unió a %s
+# context: toast in ra_vita.c, on_event
+toast.leaderboard_attempt	Intento de clasificación: %s
+# context: toast in ra_vita.c, on_event
+toast.leaderboard_attempt_failed	Intento de clasificación fallido: %s
+# context: osd_toast in ui_psp.c, settings_adjust
+toast.level_is_how_you_hold_the	Nivel es cómo sostienes ahora la Vita
+# context: osd_toast in main_vita.c, snes_link_page
+toast.link_cancelled	Conexión cancelada.
+# context: osd_toast in link_vita.c, link_end
+toast.link_ended_game_saved	Conexión terminada. Partida guardada.
+# context: osd_toast in link_vita.c, link_end
+toast.link_ended_your_own_game_is	Conexión terminada. Vuelve tu propio juego.
+# context: osd_toast in link_vita.c, link_lost
+toast.link_error_the_connection_could_not	Error de conexión: no pudo seguir el ritmo.
+# context: osd_toast in link_vita.c, link_end
+toast.link_lost_the_other_vita_is	Conexión perdida: tu juego se restaura
+# context: osd_toast in link_vita.c, link_end
+toast.link_lost_the_other_vita_is_2	Conexión perdida: tu juego continúa
+# context: osd_toast in link_vita.c, link_end
+toast.link_lost_the_other_vita_is_3	Conexión perdida: no se guardó nada
+# context: osd_toast in link_vita.c, adapter_service
+toast.link_lost_the_other_vita_is_4	Conexión perdida: la otra Vita ya no está.
+# context: toast when a link starts while Game Boy core is Accurate
+toast.link_play_uses_the_standard_gb_core	La conexión usa el núcleo Estándar de Game Boy
+# context: osd_toast in main_vita.c, menu_action
+toast.load_undone	Carga deshecha
+# context: osd_toast in ui_psp.c, screen_settings_page
+toast.looking_again_for_missing_covers	Buscando de nuevo las portadas que faltan
+# context: toast in ra_vita.c, on_event
+toast.mastered	Dominado: %s
+# context: osd_toast in main_vita.c, main
+toast.menu_hold_start_select	Menú: mantén START + SELECT
+# context: osd_toast in main_vita.c, main
+toast.menu_tap_the_screen_or_start	Menú: toca la pantalla, o START + SELECT
+# context: osd_toast in mgift_vita.c, mgift_vita_start
+toast.mystery_gift_is_already_listening	Mystery Gift ya está escuchando
+# context: osd_toast in mgift_vita.c, mgift_vita_start
+toast.mystery_gift_listening	Mystery Gift escuchando
+# context: osd_toast in mgift_vita.c, mgift_vita_stop
+toast.mystery_gift_off	Mystery Gift apagado
+# context: toast in ra_vita.c, game_done
+toast.no_achievements_for_this_game_yet	Aún no hay logros para este juego
+# context: toast in ra_vita.c, login_done
+toast.no_answer	sin respuesta
+# context: toast; camera.png is a file name
+toast.no_camera_using_camera_png_or_a	Sin cámara: se usa camera.png o una imagen de prueba
+# context: osd_toast in ui_psp.c, screen_settings_page
+toast.no_folder_with_that_name_on	No hay esa carpeta en la tarjeta
+# context: osd_toast in ui_psp.c, settings_adjust
+toast.no_motion_reading_to_set_level	Sin lectura de movimiento para el nivel
+# context: osd_toast in main_vita.c, ui_host_update_now
+toast.no_network_to_check_with	Sin red para comprobarlo
+# context: toast_now in main_vita.c, screenshot_write
+toast.no_picture_to_save_yet	Aún no hay imagen que guardar
+# context: toast_now in main_vita.c, game_loop
+toast.no_saved_state	Sin estado guardado
+# context: osd_toast in ui_psp.c, ui_browser
+toast.no_saved_state_in_this_slot	Sin estado guardado en esta ranura
+# context: osd_toast in main_vita.c, menu_action
+toast.no_state_to_load	No hay estado que cargar
+# context: osd_toast in main_vita.c, menu_action
+toast.nothing_to_undo	Nada que deshacer
+# context: osd_toast in local_vita.c, link_local_frame
+toast.one_controller_right_stick_or_tap	Un mando: palanca der. o toque cambia juego
+# context: osd_toast in main_vita.c, game_boot
+toast.patch_not_applied	Parche no aplicado
+# context: toast_now in main_vita.c, game_loop
+toast.patched_since_it_was_left_starting	Parcheado de nuevo: empieza desde la partida
+# context: toast_now in main_vita.c, game_loop
+toast.pause_is_off_during_a_link	Pausa desactivada durante la conexión
+# context: osd_toast in local_vita.c, link_local_frame
+toast.player_2_plays_on_the_touch	El jugador 2 juega en la pantalla táctil
+# context: osd_toast in ui_psp.c, ra_settings_account
+toast.press_the_same_button_again_to	Pulsa de nuevo para salir de RetroAchievements
+# context: toast_now in main_vita.c, gbprint_done
+toast.print_could_not_be_saved	No se pudo guardar la impresión
+# context: toast_now in main_vita.c, gbprint_done
+toast.printed_saved_to_prints	Impreso: guardado en prints
+# context: toast in ra_vita.c, on_event
+toast.retroachievements	RetroAchievements: %s
+# context: toast in ra_vita.c, game_done
+toast.retroachievements_does_not_know_this_version	RetroAchievements no conoce esta versión
+# context: toast in ra_vita.c, login_done
+toast.retroachievements_please_sign_in_again	RetroAchievements: inicia sesión de nuevo
+# context: toast
+toast.rewind_failed	Error al rebobinar
+# context: toast
+toast.rewind_is_off_while_games_are_linked	Rebobinar no funciona con juegos conectados
+# context: toast
+toast.rewind_is_switched_off_settings	Rebobinar está desactivado (Ajustes)
+# context: toast
+toast.rewind_not_enough_memory_for_it	Rebobinar: no hay memoria suficiente
+# context: osd_toast in ui_psp.c, ui_browser
+toast.rom_path_is_too_long	La ruta de la ROM es demasiado larga
+# context: toast_now in main_vita.c, game_loop
+toast.save_failed	Error al guardar
+# context: osd_toast in ui_psp.c, settings_adjust
+toast.save_type_is_used_the_next	El tipo de guardado vale al próximo inicio
+# context: osd_toast in local_vita.c, link_local_state_saved
+toast.saved_your_game_only_the_second	Solo se guardó tu juego: el segundo no se guardó
+# context: osd_toast in ui_psp.c, rom_scan_boot
+toast.scan_stopped_showing_what_was_found	Búsqueda detenida: se muestra lo encontrado
+# context: toast_now in main_vita.c, screenshot_write
+toast.screenshot_could_not_be_saved	No se pudo guardar la captura
+# context: toast_now in main_vita.c, screenshot_write
+toast.screenshot_saved	Captura guardada
+# context: toast in ra_vita.c, on_event
+toast.set_completed	Conjunto completado: %s
+# context: toast in ra_vita.c, login_done
+toast.sign_in_failed	Error al iniciar sesión: %s
+# context: osd_toast in ui_psp.c, ra_settings_typed
+toast.sign_in_is_already_under_way	Ya se está iniciando sesión
+# context: toast in ra_vita.c, login_done
+toast.signed_in_but_the_account_could	Sesión iniciada, pero la cuenta no se guardó
+# context: toast in ra_vita.c, login_done
+toast.signed_in_to_retroachievements_as	Sesión iniciada en RetroAchievements como %s
+# context: osd_toast in ui_psp.c, ra_settings_account
+toast.signed_out_of_retroachievements	Sesión cerrada en RetroAchievements
+# context: osd_toast in ui_psp.c, ra_settings_account
+toast.signing_in_to_retroachievements	Iniciando sesión en RetroAchievements...
+# context: toast_now in main_vita.c, game_loop
+toast.slot_1_is_locked	La ranura 1 está bloqueada
+# context: osd_toast in main_vita.c, menu_action
+toast.slot_is_locked	La ranura está bloqueada
+# context: osd_toast in ui_vita_online.h, ui_online_connected_toast
+toast.slow_connection_the_game_may_feel	Conexión lenta: puede haber retardo.
+# context: osd_toast in main_vita.c, menu_action
+toast.state_loaded	Estado cargado
+# context: osd_toast in local_vita.c, link_local_state_loaded
+toast.state_loaded_the_second_game_is	Estado cargado: el 2.º juego es copia otra vez
+# context: osd_toast in local_vita.c, link_local_state_loaded
+toast.state_loaded_your_game_only	Estado cargado: solo tu juego
+# context: osd_toast in main_vita.c, menu_action
+toast.state_save_failed	ERROR al guardar el estado
+# context: osd_toast in main_vita.c, menu_action
+toast.state_saved	Estado guardado
+# context: osd_toast in ui_psp.c, ui_browser
+toast.still_no_files_in_that_folder	Aún no hay archivos .%s en esa carpeta
+# context: toast_now in main_vita.c, menu_action
+toast.stop_mystery_gift_first	Detén primero Mystery Gift
+# context: toast_now in main_vita.c, menu_action
+toast.stop_the_two_player_game_on	Detén antes el juego de dos jugadores
+# context: osd_toast in link_vita.c, link_disconnect
+toast.stopped_hosting	Se dejó de crear %s
+# context: toast in ra_vita.c, on_event
+toast.submitted	Enviado: %s
+# context: osd_toast in ui_psp.c, screen_settings_page
+toast.that_folder_can_t_be_used	Esa carpeta no se puede usar
+# context: toast: Continue found a state of the other Game Boy core
+toast.that_state_is_from_the_other_gb_core_starting	Ese estado es del otro núcleo: se usa la partida
+# context: osd_toast in local_vita.c, link_local_state_loaded
+toast.that_state_s_second_game_is	El segundo juego de ese estado es otro cartucho
+# context: toast_now in main_vita.c, gbcam_frame
+toast.the_camera_stopped	La cámara se detuvo
+# context: osd_toast in ui_psp.c, rom_scan_boot
+toast.the_card_is_slow_showing_what	Tarjeta lenta: se muestra lo encontrado
+# context: osd_toast in main_vita.c, clip_export_service
+toast.the_clip_could_not_be_saved	No se pudo guardar el clip
+# context: osd_toast in link_vita.c, online_service
+toast.the_code_expired_host_again_for	El código caducó. Crea de nuevo la partida.
+# context: osd_toast in link_vita.c, link_lost
+toast.the_connection_was_lost_the_link	La conexión se perdió y terminó.
+# context: osd_toast in ui_psp.c, screen_settings_page
+toast.the_folder_list_could_not_be	No se pudo guardar la lista de carpetas
+# context: osd_toast in mgift_vita.c, mgift_vita_frame
+toast.the_game_found_the_gift	El juego encontró el regalo
+# context: osd_toast in link_vita.c, link_end
+toast.the_games_fell_out_of_step	Desincronizados. Tu juego se restaura.
+# context: osd_toast in link_vita.c, link_end
+toast.the_games_fell_out_of_step_2	Juegos desincronizados. Nada se guardó.
+# context: osd_toast in link_vita.c, adapter_service
+toast.the_host_closed_the_room	El anfitrión cerró la sala.
+# context: osd_toast in ui_psp.c, ra_settings_account
+toast.the_keyboard_is_not_available	El teclado no está disponible
+# context: osd_toast in local_vita.c, link_local_frame
+toast.the_link_between_the_two_games	Se detuvo la conexión entre los dos juegos
+# context: osd_toast in link_vita.c, session_begin
+toast.the_link_could_not_start	No se pudo iniciar la conexión
+# context: osd_toast in link_vita.c, link_end
+toast.the_link_did_not_start	La conexión no empezó.
+# context: osd_toast in link_vita.c, link_power
+toast.the_link_ended_when_the_vita	Conexión terminada: la Vita entró en reposo.
+# context: osd_toast in link_vita.c, link_lost
+toast.the_link_has_ended	La conexión ha terminado.
+# context: osd_toast in ui_psp.c, linkmode_cycle
+toast.the_link_mode_list_is_full	La lista de modos de conexión está llena
+# context: osd_toast in link_vita.c, link_end
+toast.the_other_vita_could_not_set	La otra Vita no pudo preparar el juego.
+# context: osd_toast in link_vita.c, link_end
+toast.the_other_vita_left_before_the	La otra Vita salió antes de conectar.
+# context: toast_now in main_vita.c, game_loop
+toast.the_patch_changed_starting_from_the	El parche cambió: se usa la partida
+# context: osd_toast in link_vita.c, link_lost
+toast.the_room_is_closed	La sala está cerrada.
+# context: osd_toast in link_vita.c, link_power
+toast.the_room_was_closed_when_the	La sala se cerró al entrar la Vita en reposo.
+# context: osd_toast in ui_psp.c, screen_settings_page
+toast.the_save_could_not_be_exported	No se pudo exportar la partida
+# context: osd_toast in local_vita.c, save_report
+toast.the_second_game_s_old_save	No se pudo copiar la partida anterior del segundo juego: no se reemplazó
+# context: osd_toast in local_vita.c, save_report
+toast.the_second_game_s_save_could	No se pudo escribir el 2.º guardado: se conserva el anterior
+# context: osd_toast in local_vita.c, save_report
+toast.the_second_game_s_save_could_2	No se pudo escribir la partida del 2.º juego
+# context: toast at the oldest point of rewind
+toast.this_is_as_far_back_as_rewind	No se puede rebobinar más atrás
+# context: toast: a save state made with the other Game Boy core (Standard / Accurate) cannot be loaded
+toast.this_state_is_from_the_other_gb_core	Este estado es del otro núcleo de Game Boy
+# context: toast when two players on one Vita start (two cartridges) while Game Boy core is Accurate
+toast.two_cart_play_uses_the_standard_gb_core	Dos cartuchos usa el núcleo Estándar de Game Boy
+# context: toast_now in main_vita.c, ws_layout_hint
+toast.vertical_the_d_pad_turns_with	Vertical: la cruceta gira con la imagen. L = A, R = B
+# context: toast_now in main_vita.c, ws_layout_hint
+toast.vertical_turn_the_vita_left_l	Vertical: gira la Vita a la izq. L = A, R = B
+# context: toast_now in main_vita.c, game_loop
+toast.video	Vídeo: %s
+# context: osd_toast in link_vita.c, mirror_service
+toast.waiting_for_the_other_vita	Esperando a la otra Vita...
+# context: osd_toast in link_vita.c, link_lost
+toast.wi_fi_was_lost	Se perdió el Wi-Fi. %s
+# context: osd_toast in link_vita.c, link_end
+toast.wi_fi_was_lost_link_ended	Wi-Fi perdido. Conexión terminada; tu juego sigue.
+# context: osd_toast in link_vita.c, link_end
+toast.wi_fi_was_lost_link_ended_2	Wi-Fi perdido. Conexión terminada, nada guardado.
+# context: osd_toast in link_vita.c, link_end
+toast.wi_fi_was_lost_the_link	Se perdió el Wi-Fi. La conexión no empezó.
+# context: snprintf in ui_psp.c, screen_menu
+ui.a_clip_could_not_be_saved	No se pudo guardar un clip.
+# context: snprintf in ui_psp.c, screen_menu
+ui.a_clip_is_still_being_saved	Todavía se está guardando un clip.
+# context: vid_text_center in ui_psp.c, browser_empty
+ui.a_retroarch_playlist_it_cannot_be	Una lista de RetroArch: aquí no se puede cambiar
+# context: vid_text_center in ui_psp.c, cht_empty
+ui.a_text_file_a_name_on	Un archivo de texto: un nombre en una línea y sus códigos debajo.
+# context: ui_psp.c, ctl_fixed_row
+ui.a_turbo_button_presses_a_or	Un botón turbo pulsa A (o B) una y otra vez por ti.
+# context: snprintf in ui_psp.c, screen_cheats
+ui.all_cheats_are_off	Todos los trucos están desactivados
+# context: ui_psp.c, cht_menu_value
+ui.all_off	todo desactivado
+# context: snprintf in ui_psp.c, screen_cheats
+ui.all_off_could_not_save_that	Todo desactivado (no se pudo guardar)
+# context: ui_psp.c, ov_stamp
+ui.apr	abr
+# context: ui_psp.c, ov_stamp
+ui.aug	ago
+# context: ui_psp.c, linkmode_value
+ui.auto	Auto
+# context: ui_psp.c, linkmode_value
+ui.auto_ask	Auto: preguntar
+# context: ui_psp.c, linkmode_value
+ui.auto_link_cable	Auto: Cable Link
+# context: ui_psp.c, linkmode_value
+ui.auto_wireless_adapter	Auto: Adaptador inalámbrico
+# context: wl_row_at in ui_psp.c, wl_session
+ui.back	Atrás
+# context: snprintf in ui_psp.c, ov_slots_stat_io
+ui.bak	%s.bak
+# context: wl_row_at_w in ui_psp.c, screen_host
+ui.both_vitas_need_this_game	las dos Vitas necesitan este juego
+# context: ui_psp.c, ctl_fixed_row
+ui.button	Botón
+# context: snprintf in ui_psp.c, ctl_capture_plate
+ui.cancels_in_5_s	%s %s      se cancela en 5 s
+# context: snprintf in ui_psp.c, ctl_capture_plate
+ui.cancels_in_s	%s %s      se cancela en %d s
+# context: snprintf in ui_psp.c, screen_cheats
+ui.changed_but_the_choice_could_not	Cambiado, pero no se pudo guardar la elección
+# context: ov_head in ui_psp.c, screen_cheats
+ui.cheats	TRUCOS
+# context: ui_psp.c, screen_menu
+ui.cheats_2	Trucos
+# context: ov_plate in ui_psp.c, screen_cheats
+ui.cheats_are_off_during_link_play	Los trucos están desactivados durante la conexión. Vuelven al terminar.
+# context: snprintf in ui_psp.c, cht_empty
+ui.cheats_in_the_gbadhoc_folder	cheats/ en la carpeta GBAdhoc
+# context: snprintf in ui_psp.c, screen_cheats
+ui.choose_a_format_gs1_ar3_gs1raw	Elige un formato: GS1:, AR3:, GS1RAW: o AR3RAW:
+# context: vid_text_center in ui_psp.c, scan_ui_frame
+ui.circle_stop_and_show_what_is	CÍRCULO: parar y mostrar lo encontrado
+# context: snprintf in ui_psp.c, screen_menu
+ui.clips_are_off_while_linked	Los clips están desactivados durante la conexión.
+# context: ui_psp.c, ui_wake_menu
+ui.continue	Continuar
+# context: ov_head in ui_psp.c, screen_turbo
+ui.controls	CONTROLES
+# context: snprintf in ui_psp.c, browser_empty
+ui.copy_them_to	Cópialos en %s
+# context: vid_text_center in ui_psp.c, browser_empty
+ui.copy_them_to_2	Cópialos en:
+# context: ui_psp.c, ctl_fixed_row
+ui.counted_in_game_frames_so_fast	Se cuenta en fotogramas de juego, así que el avance rápido también lo acelera.
+ui.date_order	dmy
+# context: ui_psp.c, ov_stamp
+ui.dec	dic
+# context: snprintf in ui_psp.c, browser_state_panel
+ui.delete_slot	¿Eliminar la ranura %d?
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.delete_slot_x_delete_o_keep	¿Eliminar la ranura %d?      {x} eliminar     {o} conservar
+# context: ui_psp.c, ctl_fixed_row
+ui.each_of_the_four_has_its	Cada uno de los cuatro tiene su botón, frecuencia y modo.
+# context: snprintf in ui_psp.c, screen_controls
+ui.every_control_is_back_to_its	Todos los controles vuelven a sus valores originales
+# context: ui_psp.c, screen_menu
+ui.exit_vitadhoc	Salir de VitAdhoc
+# context: ui_psp.c, ov_stamp
+ui.feb	feb
+# context: ui_text_open in ui_psp.c, ui_browser
+ui.find_a_game	Buscar un juego
+# context: snprintf in ui_psp.c, scan_ui_frame
+ui.finding_games_found	Buscando juegos... %d encontrados
+# context: ui_psp.c, CTL_ROWS_N
+ui.game_buttons	BOTONES DEL JUEGO
+# context: ui_text_open in ui_psp.c, screen_settings_page
+ui.game_folder_to_add_or_remove	Carpeta de juegos que añadir o quitar
+# context: snprintf in ui_psp.c, screen_cheats
+ui.game_genie_codes_patch_the_rom	Los códigos Game Genie parchean la ROM: no se pueden usar
+# context: snprintf in ui_psp.c, browser_header
+ui.games	%d juegos
+# context: vid_text_center in ui_psp.c, cht_empty
+ui.gb_gbc_gameshark_codes_e_g	GB / GBC: códigos GameShark, p. ej. 010AD5C1
+# context: vid_text_center in ui_psp.c, cht_empty
+ui.gba_codebreaker_codes_e_g_82025bc4	GBA: códigos CodeBreaker, p. ej. 82025BC4 E0FF
+# context: snprintf in ui_psp.c, ui_state_load_done
+ui.hardcore_mode_states_cannot_be_loaded	Modo Hardcore: no se pueden cargar estados
+# context: ui_psp.c, screen_turbo
+ui.hold	Mantener
+# context: ui_psp.c, ctl_fixed_row
+ui.hold_1_5_s	mantén 1,5 s
+# context: ui_psp.c, ctl_fixed_row
+ui.hold_fires_for_as_long_as	Mantener: dispara mientras mantengas el botón.
+# context: Button mapping: beside the fixed START+SELECT chip, how the menu chord is pressed
+ui.hold_tag	mantener
+# context: page title: hosting a link game (the other Vita joins)
+ui.host_title	CREAR
+# context: ov_cluster_text in ui_psp.c, ov_cluster
+ui.hosting	CREANDO PARTIDA
+# context: ui_psp.c, ov_head
+ui.hosting_2	Creando partida
+# context: snprintf in ui_psp.c, screen_menu
+ui.hosting_waiting	creando %s, esperando
+# context: vid_text in ui_psp.c, screen_host
+ui.how_will_the_other_vita_connect	¿Cómo se conectará la otra Vita?
+# context: ov_text_right in ui_psp.c, screen_controls
+ui.in_game	en el juego
+# context: snprintf in ui_psp.c, screen_controls
+ui.in_game_home_opens_the_menu	En el juego, HOME abre el menú  -  mantén START+SELECT para salir
+# context: snprintf in ui_psp.c, ui_loading_update
+ui.in_the_game_hold_for_the	En el juego, mantén %s para el menú
+# context: snprintf in ui_psp.c, ui_loading_update
+ui.in_the_game_hold_for_the_2	En el juego, mantén %s para el menú.
+# context: vid_text_center in ui_psp.c, ui_browser
+ui.is_lost_fewer_per_console_shows	se pierde. Con menos por consola se ven todos.
+# context: ui_psp.c, ov_stamp
+ui.jan	ene
+# context: ui_psp.c, ov_stamp
+ui.jul	jul
+# context: ui_psp.c, ov_stamp
+ui.jun	jun
+# context: snprintf in ui_psp.c, ui_loading_update
+ui.kib	%u / %u KiB
+# context: ui_psp.c, browser_footer
+ui.l_r_page	L/R página
+# context: ui_psp.c, browser_footer
+ui.left_states	Izquierda: estados
+# context: snprintf in ui_psp.c, ctl_capture_plate
+ui.let_go_to_set	%s      suelta para fijar
+# context: ui_psp.c, linkmode_value
+ui.link_cable	Cable Link
+# context: ov_cluster_text in ui_psp.c, ov_cluster
+ui.linked	CONECTADO
+# context: ui_psp.c, ov_head
+ui.linked_2	Conectado
+# context: snprintf in ui_psp.c, screen_menu
+ui.linked_player	conectado, jugador %d
+# context: vid_text_hd in ui_psp.c, ui_linking_draw
+ui.linking	CONECTANDO
+# context: snprintf in ui_psp.c, ov_slots_stat_io
+ui.lock	%s.lock
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.locked	  -  bloqueada
+# context: ui_psp.c, ov_stamp
+ui.mar	mar
+# context: ui_psp.c, ov_stamp
+ui.may	may
+# context: snprintf in ui_psp.c, meta_line
+ui.mb	%u MB
+# context: ui_psp.c, screen_settings_page
+ui.menu	Menú
+# context: ui_psp.c, ctl_fixed_row
+ui.mode	Modo
+# context: ui_psp.c, cht_empty
+ui.no_cheats_for_this_game_yet	Aún no hay trucos para este juego
+# context: ui_psp.c, cht_empty
+ui.no_cheats_in_this_game_s	No hay trucos en el archivo de este juego
+# context: snprintf in ui_psp.c, screen_menu
+ui.no_clip_yet_play_for_a	Aún no hay clip: juega unos segundos primero.
+# context: snprintf in ui_psp.c, browser_empty
+ui.no_favourites_yet	Aún no hay favoritos de %s
+# context: snprintf in ui_psp.c, browser_empty
+ui.no_games_in_this_view	No hay juegos de %s en esta vista
+# context: vid_text_center in ui_psp.c, browser_empty
+ui.no_games_match	Ningún juego coincide
+# context: ui_psp.c, ss_panel
+ui.no_preview	Sin vista previa
+# context: snprintf in ui_psp.c, browser_empty
+ui.no_roms_found	No se encontraron ROM .%s
+# context: vid_text in ui_psp.c, shell_shelf
+ui.no_save	sin partida
+# context: ui_psp.c, cht_menu_value
+ui.none_for_this_game	ninguno para este juego
+# context: vid_text_center in ui_psp.c, cht_empty
+ui.nothing_in_it_reads_as_a	Nada en él parece un truco:
+# context: ui_psp.c, ss_panel
+ui.nothing_saved_here	Aquí no hay nada guardado
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.nothing_to_undo	Nada que deshacer
+# context: ui_psp.c, ov_stamp
+ui.nov	nov
+# context: ui_psp.c, browser_footer
+ui.o_clear	{o} borrar
+# context: ui_psp.c, browser_footer
+ui.o_exit	{o} salir
+# context: ui_psp.c, ov_stamp
+ui.oct	oct
+# context: snprintf in ui_psp.c, screen_cheats
+ui.of_on	%u de %d activos
+# context: snprintf in ui_psp.c, screen_menu
+ui.of_used	%d de %d usados
+# context: ui_psp.c, cht_menu_value
+ui.off_for_link_play	desactivado durante la conexión
+# context: vid_text in ui_psp.c, screen_menu
+ui.off_in_hardcore	desactivado en Hardcore
+# context: vid_text in ui_psp.c, screen_menu
+ui.off_while_linked	desactivado durante la conexión
+# context: snprintf in ui_psp.c, state_delete
+ui.old	%s.old
+# context: snprintf in ui_psp.c, cht_menu_value
+ui.on	%u activos
+# context: snprintf in ui_psp.c, screen_cheats
+ui.only_codes_that_write_the_game	Solo se pueden usar códigos que escriben en la RAM del juego
+# context: snprintf in ui_psp.c, screen_cheats
+ui.only_gameshark_codes_that_start_01	Solo se pueden usar códigos GameShark que empiezan por 01
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.overwrite_slot_x_overwrite_o_keep	¿Sobrescribir la ranura %d?      {x} sobrescribir     {o} conservar
+# context: vs_text_c in ui_psp.c, ui_wake_menu
+ui.paused	En pausa
+# context: ui_psp.c, cht_menu_value
+ui.paused_for_link_play	en pausa durante la conexión
+# context: ui_psp.c, linkmode_value
+ui.pick_a_game	elige un juego
+# context: ui_psp.c, screen_menu
+ui.play_together	Jugar juntos
+# context: ui_text_open in ui_psp.c, screen_settings_page
+ui.player_name	Nombre de jugador
+# context: Button mapping: the chip while it waits for a button
+ui.press	pulsa...
+# context: ui_psp.c, ctl_capture_plate
+ui.press_a_button_for	Pulsa un botón para
+# context: ui_psp.c, ctl_capture_plate
+ui.press_a_button_or_combo_for	Pulsa un botón o combinación para
+# context: vid_text_center in ui_psp.c, ui_notice
+ui.press_any_button_to_return_to	Pulsa cualquier botón para volver a LiveArea.
+# context: vid_text_center in ui_psp.c, browser_empty
+ui.press_sq_on_a_game_to	Pulsa {sq} en un juego para marcarlo con estrella
+# context: snprintf in ui_psp.c, screen_controls
+ui.press_x_again_to_reset_every	Pulsa {x} de nuevo para restablecer todos los controles
+# context: ui_psp.c, ctl_fixed_row
+ui.presses_a_second_10_15_or	Pulsaciones por segundo: 10, 15 o 30.
+# context: snprintf in ui_psp.c, screen_menu
+ui.progress_the_game_has_not_saved	Se pierde el progreso que el juego no haya guardado.
+# context: vid_text_center in ui_psp.c, cht_empty
+ui.put_a_cheat_file_on_the	Pon un archivo de trucos en la tarjeta de memoria:
+ui.quick_warn	Ojo: el guardado o la carga rápida está ahora\nen una dirección de palanca sola. Una Vita dejada\nen una cama o en una bolsa puede pulsarla y\nreemplazar un estado. No volverás a ver esto.
+# context: ui_psp.c, ctl_fixed_row
+ui.quit	Salir
+# context: ui_psp.c, ui_wake_menu
+ui.quit_to_game_list	Salir a la lista de juegos
+# context: ui_psp.c, ctl_fixed_row
+ui.rate	Frecuencia
+# context: vid_text_center in ui_psp.c, scan_ui_frame
+ui.reading_the_memory_card	Leyendo la tarjeta de memoria
+# context: ui_loading_update in ui_psp.c, ui_loading_begin
+ui.remembering_game	Recordando juego
+# context: ui_psp.c, screen_settings_page
+ui.reset_to_defaults	Restablecer valores
+# context: ui_psp.c, ui_wake_menu
+ui.resume	Reanudar
+# context: ui_text_open_secret in ui_psp.c, ra_settings_typed
+ui.retroachievements_password	Contraseña de RetroAchievements
+# context: ui_text_open in ui_psp.c, ra_settings_account
+ui.retroachievements_user_name	Usuario de RetroAchievements
+# context: ui_psp.c, ret_chip
+ui.returning_to_game_list	Volviendo a la lista de juegos...
+# context: on-screen chip while rewinding; %s is the time back ("12 s", "4:59")
+ui.rewind_chip	<< REBOBINAR %s
+# context: on-screen chip at the oldest point of rewind; %s is the time back
+ui.rewind_chip_oldest	<< %s (tope)
+# context: vid_text_center in ui_psp.c, ui_browser
+ui.rom_path_is_too_long	La ruta de la ROM es demasiado larga
+# context: game list (Shelf look): badge on a game that has a save file
+ui.save_badge	PARTIDA
+# context: ui_psp.c, screen_menu
+ui.save_clip	Guardar clip
+# context: vid_text in ui_psp.c, shell_shelf
+ui.save_present	partida presente
+# context: ui_psp.c, screen_menu
+ui.save_states	Estados guardados
+# context: ov_head in ui_psp.c, screen_state_slots
+ui.save_states_2	ESTADOS GUARDADOS
+# context: snprintf in ui_psp.c, screen_menu
+ui.save_states_are_off_while_linked	Los estados guardados están desactivados mientras estás conectado a otra consola.
+# context: ui_psp.c, ss_panel
+ui.saved_by_3_1_small_preview	guardado por 3.1: solo vista previa pequeña
+# context: snprintf in ui_psp.c, screen_menu
+ui.saving_the_last_ten_seconds_as	Guardando los últimos diez segundos como clip...
+# context: ui_text_open in ui_psp.c, screen_settings_page
+ui.screenshot_folder_empty_the_usual_one	Carpeta de capturas (vacío: la habitual)
+# context: ui_psp.c, screen_settings_page
+ui.screenshots_go_there_now	Las capturas van allí ahora
+# context: ui_psp.c, screen_settings_page
+ui.screenshots_go_to_screenshots	Las capturas van a screenshots/
+# context: snprintf in ui_psp.c, screen_turbo
+ui.sec	%d / s
+# context: ui_psp.c, ui_wake_menu
+ui.select	Elegir
+# context: ui_psp.c, browser_footer
+ui.select_all_games	SELECT todos los juegos
+# context: vid_text_center in ui_psp.c, browser_empty
+ui.select_all_games_2	SELECT: todos los juegos
+# context: ui_psp.c, browser_footer
+ui.select_next_view	SELECT vista siguiente
+# context: vid_text_center in ui_psp.c, browser_empty
+ui.select_next_view_2	SELECT: vista siguiente
+# context: vid_text_center in ui_psp.c, browser_empty
+ui.select_sq_on_a_game_adds	SELECT + {sq} en un juego lo añade a una colección
+# context: ui_psp.c, ov_stamp
+ui.sep	sep
+# context: snprintf in ui_psp.c, screen_controls
+ui.set	%d conjunto
+# context: ov_head in ui_psp.c, screen_settings_page
+ui.settings	AJUSTES
+# context: ui_psp.c, screen_menu
+ui.settings_2	Ajustes
+# context: ui_psp.c, CTL_ROWS_N
+ui.shortcuts	ATAJOS
+# context: vid_text_center in ui_psp.c, ui_browser
+ui.shorten_folders_or_filenames_to_browse	Acorta las carpetas o nombres de archivo para explorarlos.
+# context: vid_text_center in ui_psp.c, ui_browser
+ui.shorten_the_folder_or_filename	Acorta la carpeta o el nombre de archivo
+# context: snprintf in ui_psp.c, cht_page_reset
+ui.showing_of_cheats	Mostrando %u de %u trucos
+# context: snprintf in ui_psp.c, ui_browser
+ui.showing_of_games	Mostrando %d de %d juegos
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.slot	Ranura %d
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.slot_could_not_be_deleted	No se pudo eliminar la ranura %d
+# context: snprintf in ui_psp.c, ui_state_load_done
+ui.slot_could_not_be_loaded	No se pudo cargar la ranura %d
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.slot_could_not_be_locked	No se pudo bloquear la ranura %d
+# context: snprintf in ui_psp.c, ui_state_save_done
+ui.slot_could_not_be_saved	No se pudo guardar la ranura %d
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.slot_could_not_be_undone	No se pudo deshacer la ranura %d
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.slot_deleted	Ranura %d eliminada
+# context: Save states: under an empty slot
+ui.slot_empty	vacía
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.slot_is_as_it_was_before	La ranura %d está como antes de guardar
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.slot_is_empty_again	La ranura %d vuelve a estar vacía
+# context: snprintf in ui_psp.c, ui_state_save_done
+ui.slot_is_locked	La ranura %d está bloqueada
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.slot_is_locked_l_unlocks_it	La ranura %d está bloqueada: L la desbloquea
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.slot_locked	Ranura %d bloqueada
+# context: snprintf in ui_psp.c, ui_browser
+ui.slot_not_deleted	Ranura %d no eliminada
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.slot_of	Ranura %d de %d  -  %s%s
+# context: state list: a state of an older version (no picture)
+ui.slot_old	antiguo
+# context: snprintf in ui_psp.c, ui_state_save_done
+ui.slot_saved	Ranura %d guardada
+# context: Save states: under a slot that holds a state with no date
+ui.slot_state_saved	guardado
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.slot_unlocked	Ranura %d desbloqueada
+# context: in-game menu plate: the smoothing governor lowered smoothing
+ui.smoothing_is_lighter_to_keep_full	Suavizado más ligero para ir a toda velocidad.
+# context: in-game menu plate: the smoothing governor stopped smoothing
+ui.smoothing_is_off_to_keep_full_speed	Suavizado desactivado para ir a toda velocidad.
+# context: ui_psp.c, ui_browser
+ui.some_paths_were_too_long_and	Algunas rutas eran demasiado largas y se omitieron.
+# context: snprintf in ui_psp.c, ui_browser
+ui.some_rom_folders_were_skipped	Se omitieron algunas carpetas de ROM
+# context: ui_psp.c, browser_footer
+ui.sq_star	{sq} favorito
+# context: ui_psp.c, browser_footer
+ui.sq_unstar	{sq} quitar favorito
+# context: snprintf in ui_psp.c, rom_has_sav
+ui.srm	%.*s.srm
+# context: snprintf in ui_psp.c, screen_controls
+ui.start_select_hold_opens_the_menu	START+SELECT (mantener) abre el menú  -  HOME es el del sistema
+# context: ui_psp.c, browser_footer
+ui.start_settings	START ajustes
+# context: in-game menu: beside Play together while waiting as the host
+ui.status_hosting	creando
+# context: in-game menu: beside Play together while games are linked (lowercase, dim)
+ui.status_linked	conectado
+# context: snprintf in ui_psp.c, cht_page_reset
+ui.the_file_is_over_kb_showing	El archivo pasa de %d KB: se muestran los primeros %u trucos
+# context: wl_row_at_w in ui_psp.c, screen_host
+ui.the_game_s_wireless_mode	el modo inalámbrico del juego
+# context: vid_text_center in ui_psp.c, browser_empty
+ui.the_games_you_have_not_started	Los juegos que no has empezado aparecen aquí
+# context: vid_text_center in ui_psp.c, browser_empty
+ui.the_games_you_play_show_up	Los juegos a los que juegas aparecen aquí
+# context: ui_psp.c, ui_browser
+ui.the_name_storage_limit_was_reached	Se alcanzó el límite de almacenamiento de nombres.
+# context: vid_text_center in ui_psp.c, ui_browser
+ui.the_others_are_still_on_the	Los demás siguen en la tarjeta: nada
+# context: snprintf in ui_psp.c, ui_browser
+ui.this_build_lists_at_a_time	Esta versión lista %d a la vez.
+# context: snprintf in ui_psp.c, screen_cheats
+ui.this_code_is_not_one_gbadhoc	GBAdhoc no puede leer este código
+# context: snprintf in ui_psp.c, screen_menu
+ui.this_ends_the_link_for_both	Esto termina la conexión para los dos jugadores.
+# context: snprintf in ui_psp.c, wl_line_name
+ui.this_game	este juego
+# context: ui_psp.c, screen_turbo
+ui.toggle	Alternar
+# context: ui_psp.c, ctl_fixed_row
+ui.toggle_press_to_start_press_again	Alternar: pulsa para empezar, pulsa otra vez para parar.
+# context: snprintf in ui_psp.c, screen_cheats
+ui.too_many_cheats_on_at_once	Demasiados trucos activos a la vez: desactiva uno primero
+# context: vid_text_center in ui_psp.c, browser_empty
+ui.tri_change_console	{tri} cambiar consola
+# context: ui_psp.c, screen_settings_page
+ui.turbo_buttons	Botones turbo
+# context: vid_text_w in ui_psp.c, screen_turbo
+ui.turbo_buttons_2	BOTONES TURBO
+# context: ui_psp.c, CTL_ROW_Y0
+ui.turbo_is_off_during_link_play	El turbo está desactivado durante la conexión. Vuelve al terminar.
+# context: snprintf in ui_psp.c, screen_menu
+ui.turn_on_game_previews_in_settings	Activa Vistas previas en Ajustes para guardar clips.
+# context: snprintf in ui_psp.c, screen_menu
+ui.two_players_on_this	dos jugadores en esta Vita
+# context: snprintf in ui_psp.c, ctl_note_result
+ui.unchanged	%s sin cambios: %s
+# context: snprintf in ui_psp.c, ctl_capture_step
+ui.unchanged_nothing_pressed	%s sin cambios: no se pulsó nada
+# context: snprintf in ui_psp.c, ov_slots_stat_io
+ui.undo	%s.undo
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.undo_the_last_load_x_undo	¿Deshacer la última carga?      {x} deshacer     {o} conservar
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.undo_the_save_in_slot_x	¿Deshacer el guardado de la ranura %d?      {x} deshacer     {o} conservar
+# context: snprintf in ui_psp.c, screen_state_slots
+ui.undo_x_the_save_in_slot	¿Deshacer?      {x} guardado de la ranura %d     {sq} última carga     {o} conservar
+# context: vid_text in ui_psp.c, browser_state_panel
+ui.up_dn_slot	ARR/ABA: ranura
+# context: vid_text in ui_psp.c, browser_state_panel
+ui.up_dn_slot_sq_delete	ARR/ABA: ranura   {sq}: eliminar
+# context: the question before leaving the game: "{x} exit" (fills %s in ui.x_o_stay)
+ui.verb_exit	salir
+# context: the question before closing the app: "{x} quit" (fills %s in ui.x_o_stay)
+ui.verb_quit	salir
+# context: snprintf in ui_psp.c, ctl_note_result
+ui.was_is_now_blank_disabled	%s era %s  -  %s ahora está vacío (desactivado)
+# context: ui_psp.c, linkmode_value
+ui.wireless_adapter	Adaptador inalámbrico
+# context: vid_text in ui_psp.c, browser_state_panel
+ui.x_delete_o_keep	{x}: eliminar   {o}: conservar
+# context: vid_text in ui_psp.c, browser_state_panel
+ui.x_load_o_close	{x}: cargar   {o}: cerrar
+# context: ui_psp.c, browser_footer
+ui.x_look_again	{x} mirar otra vez
+# context: snprintf in ui_psp.c, screen_menu
+ui.x_o_stay	%s     {x} %s     {o} quedarse
+# context: vid_text_center in ui_psp.c, ctl_warn_draw
+ui.x_ok	{x} OK
+# context: ui_psp.c, browser_footer
+ui.x_play	{x} jugar
+# context: ui_psp.c, ss_panel
+ui.x_save	{x} guardar
+# context: snprintf in ui_psp.c, screen_cheats
+ui.x_switch_all_off_o_keep	{x} desactivar los %u     {o} mantener activos
+# context: snprintf in ui_psp.c, screen_cheats
+ui.x_switch_it_off_o_keep	{x} desactivarlo     {o} mantener activo

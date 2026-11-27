@@ -987,6 +987,21 @@ static int lk_frame_done(void)
    return GBALINK_RUN_FRAME;
 }
 
+/* One slice of CPU: the recompiler, or the interpreter in a build without one
+ * (HAVE_DYNAREC off) or with it switched off at run time. */
+static void lk_exec(u32 cycles)
+{
+#ifdef HAVE_DYNAREC
+   if (dynarec_enable)
+   {
+      execute_arm_translate(cycles);
+      return;
+   }
+#endif
+   clear_gamepak_stickybits();
+   execute_arm(cycles);
+}
+
 static int lk_run(uint64_t horizon)
 {
    if (!lk.active || lk.need_begin)
@@ -1006,10 +1021,10 @@ static int lk_run(uint64_t horizon)
       r = update_gba(lk.saved_remaining);
       if (r & 0x80000000)
          return lk.yielded ? lk.yield_kind : lk_frame_done();
-      execute_arm_translate(r & 0x7FFF);
+      lk_exec(r & 0x7FFF);
    }
    else
-      execute_arm_translate(execute_cycles);
+      lk_exec(execute_cycles);
    return lk.yielded ? lk.yield_kind : lk_frame_done();
 }
 

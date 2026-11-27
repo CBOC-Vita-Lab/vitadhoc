@@ -1,9 +1,7 @@
 """vstyle_art.py -- the Vita UI's icons and wordmark, as SVG.
 
-One source for three uses: tools/bake_vstyle_icons.py bakes them into
-vstyle_icons.h (8-bit coverage atlases the app tints at draw time),
-tools/make_livearea.py draws the LiveArea pictures with them, and the
-design mock-ups use them.
+Tools/bake_vstyle_icons.py bakes them into vstyle_icons.h (8-bit coverage
+atlases the app tints at draw time). The design mock-ups also use them.
 
 Icons are drawn on a 48 x 48 grid: 3.4 px strokes with round ends, the
 weight of the system's own line icons, optically centred.  The order is

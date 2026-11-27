@@ -28,6 +28,9 @@ void snes_host_shutdown(void);
  * returns non-zero and writes a short reason into err. Battery RAM is loaded
  * from srm_path when the file exists. */
 int snes_host_load_rom(const char *rom_path, const char *srm_path, char *err, size_t errlen);
+/* The same from a ROM already in memory (a patched one, say). `name` is the file name the core is told (its
+ * folder part is ignored); the cheat list and the battery RAM are found by the caller's names, as above. */
+int snes_host_load_rom_mem(const uint8_t *data, size_t n, const char *name, const char *srm_path, char *err, size_t errlen);
 void snes_host_unload(void);
 
 /* port 0..4: pad 1, pad 2, and (with the multitap on) pads 3 to 5. */
@@ -38,6 +41,24 @@ int snes_host_multitap(void);
 
 /* Run until the next vertical blank (one frame). */
 void snes_host_run_frame(void);
+/* Run-ahead by one frame ("Quick response"): runs ONE real frame without drawing it (its sound is kept), saves the machine in
+ * memory, runs the next frame with the same buttons drawn and silent, and goes back to the saved machine, so the picture that
+ * snes_host_video / snes_host_video_nowait give is the next frame's and the game itself runs exactly as with snes_host_run_frame
+ * (checked by snes/twin/ahead_check.sh). The save is the core's light one (core/ahead.cpp): no reset, the picture thread does not
+ * wait and keeps its video memory, the tile caches lose only the tiles the look-ahead frame changed. Returns 0 when it ran ahead,
+ * 1 when it ran a plain frame instead (the render flag is off, or snes_host_ahead_possible() = 0), 2 when the way back failed
+ * (cannot happen; run-ahead then stays off for this game). Battery RAM and the chips' own memory are part of the machine. */
+int snes_host_run_frame_ahead(void);
+int snes_host_ahead_possible(void);         /* a game is loaded, its cartridge can be run ahead, no way back has failed */
+const char *snes_host_ahead_why(void);      /* why not ("" when it can) */
+int snes_host_ahead_debug_tail(void);       /* tests: only the look-ahead frame and the way back (the machine must not change) */
+void snes_host_ahead_verify(int on);        /* tests: every way back compares the machine with the one saved (snes_host_ahead_stat [4], [5]) */
+/* [0] frames run ahead, [1] blocks of 32 bytes of video RAM put back, [2] look-ahead frames that rebuilt the sprite tables, [3] bytes
+ * a save copies (without the sound side), [4] ways back verified, [5] of them that differed (must stay 0), [6] [7] ns spent saving and
+ * going back (the emulating thread's wall time; with the APU thread the sound side's copy is that thread's) */
+void snes_host_ahead_stat(uint64_t out[8]);
+/* tests: the machine as a number (Snes9x's saved state but one drawing flag, the pads' state, the sprite tables' flags) */
+uint64_t snes_host_machine_digest(void);
 void snes_host_reset(void);
 
 /* Last finished frame: RGB565, pitch in bytes. Valid until the next run_frame. */
@@ -53,8 +74,9 @@ size_t snes_host_sram_size(void);
 const uint8_t *snes_host_sram_data(void);
 /* Returns 1 when the SRAM changed since the last successful snes_host_sram_save. */
 int snes_host_sram_dirty(void);
-/* Safe save: writes path.tmp, keeps the previous file as path.bak, renames.
- * Returns 0 on success. */
+/* Safe save: a verified backup of the existing file first (once per session), then
+ * path.tmp, read back, renamed over the file. Returns 0 on success; on failure the
+ * existing file is untouched (codes: see snes_host_save_error). */
 int snes_host_sram_save(void);
 /* For a save written on another thread: snes_host_sram_take copies the SRAM into
  * `out` (cap bytes) and counts that content as saved; snes_host_sram_write writes
@@ -68,15 +90,42 @@ void snes_host_sram_forget(void);
  * (the Vita app uses ux0:data/GBAdhoc/backups/snes). The folder must exist. */
 void snes_host_set_backup_dir(const char *dir);
 
+/* Why the last battery save failed: 0 when it did not (or none was tried), else the
+ * return code of the failed snes_host_sram_save / snes_host_sram_write (see host.cpp:
+ * 1 temp file, 2 write, 3 no verified backup, 4 rename, 5 read-back, 6 unreadable save)
+ * and, in `text` (cap bytes), the real reason. Any thread. The existing file is left
+ * untouched on every failure; the caller retries later. */
+int snes_host_save_error(char *text, size_t cap);
+/* Where the host reports save problems (one line per call); default is stderr. */
+void snes_host_set_log(void (*fn)(const char *line));
+
 /* Save states, same safe write rule. Return 0 on success. */
 int snes_host_state_save(const char *path);
 int snes_host_state_load(const char *path);
+/* The same in memory: snes_host_state_size() is the size of a state now (0 without a game);
+ * snes_host_state_save_buf writes it into out (cap bytes) and puts its length in *len; returns 0, or 2 when
+ * cap is too small. snes_host_state_load_buf returns 0, 1 without a game, 3 when the core refuses the bytes
+ * (a state of another game or a damaged one: the running game is then left as Snes9x leaves it on a failed
+ * load, which is unchanged for a wrong-format state). Codes are switched off around the load as for the file. */
+size_t snes_host_state_size(void);
+int snes_host_state_save_buf(uint8_t *out, size_t cap, size_t *len);
+int snes_host_state_load_buf(const uint8_t *data, size_t n);
+/* The same two for rewind and fast forward's history (snes_host_state_load_buf loads them): the same bytes, but a capture writes
+ * only the part of the 512 KB cartridge RAM block that can hold anything (see host.cpp). It must be given buffers that only ever
+ * hold such states. snes_host_rewind_state_size() also starts a new set of buffers (call it when rewind opens). */
+size_t snes_host_rewind_state_size(void);
+int snes_host_rewind_state_save_buf(uint8_t *out, size_t cap, size_t *len);
+size_t snes_host_rewind_tail_nonzero(void);   /* twin proof, see host.cpp */
+int snes_host_rewind_whole(void);              /* 1 once a capture had to write the whole cartridge RAM block */
+size_t snes_host_rewind_ext(void);             /* bytes of the cartridge RAM block a capture writes (0: all of it) */
+unsigned snes_host_rewind_scans(void);         /* captures that checked the part left out */
 
 /* Core options by name; returns 0 when the name is known:
  *   block_vram 0/1       block CPU/DMA VRAM access while the screen is drawn (Snes9x default 1)
  *   sprite_tiles N       sprite tiles per line, 34 = hardware, 128 = no flicker
  *   interp 0..4          DSP interpolation: 0 none 1 linear 2 gaussian (hardware) 3 cubic 4 sinc
  *   superfx_clock N      Super FX speed in percent (100 = hardware)
+ *   gsu_fast 0/1         Super FX block-cache interpreter (identical results, faster)
  *   transparency 0/1
  *   echo_buffer 0/1      separate echo buffer (fixes a few games, costs accuracy elsewhere) */
 int snes_host_set_option(const char *name, int value);
@@ -101,8 +150,13 @@ const uint16_t *snes_host_video_nowait(int *width, int *height, int *pitch_bytes
 /* Core number (0..2, -1 = any) and Vita priority of the workers, and how many empty polls an idle
  * worker makes before it blocks on a semaphore. Call before enabling the threads. */
 void snes_host_thread_config(int apu_core, int apu_prio, int ppu_core, int ppu_prio, int spin);
+/* the wide view's margin strip cache (options "wide_cache", "wide_cache_verify"): 0 lines served from the cache, 1 lines drawn, 2 batches, 3 lines checked, 4 lines that differed (0 = exact) */
+void snes_host_wide_cache_stats(uint64_t out[8]);
 void snes_host_sync(void); /* wait until the worker threads have caught up with the emulation */
-int snes_host_threads_active(void); /* bit 0 APU thread, bit 1 PPU thread */
+int snes_host_threads_active(void); /* bit 0 APU thread, bit 1 PPU thread, bit 2 the wide view's margin thread (only while the wide view is on) */
+/* The wide view's margin thread (option "wide_thread", default 1; it exists only with the PPU thread and while the wide view is on): core 0..2,
+ * -1 = any, or a Vita affinity mask (>= 0x10000), and its priority. Call before the wide view is switched on. */
+void snes_host_wide_thread_config(int core, int prio);
 typedef struct {
 	uint64_t apu_busy_ns;  /* time the APU thread spent working (not waiting) */
 	uint64_t apu_cmds;     /* work items it ran */
@@ -113,10 +167,97 @@ typedef struct {
 	uint64_t ppu_batches;  /* snapshots it drew */
 	uint64_t ppu_waits;    /* times the register side waited for it (full ring, picture asked for) */
 	uint64_t ppu_wait_ns;
+	uint64_t wide_busy_ns;       /* time the margin thread spent on the wide view's passes and the capture */
+	uint64_t wide_frames;        /* frames it captured */
+	uint64_t wide_centre_waits;  /* times the PPU thread waited for it (it was three frames behind) */
 } snes_thread_stats;
 void snes_host_thread_stats(snes_thread_stats *st);
 
+/* ---- Cheats (all systems share the shape of this API) ------------------------------------
+ * Codes: Game Genie XXXX-XXXX, Pro Action Replay AAAAAAVV (8 hex), raw AAAAAA:VV or AAAAAA=VV
+ * (address 1-6 hex digits, value 1-2), and AAAAAA=CC?VV (poke VV only while the byte is CC).
+ * Several cells in one code: separate them with '+', ',', ';', a blank or a line end. Case and
+ * spacing do not matter; spaces around ':' or '=' are not allowed. Address 0 is refused.
+ *
+ * The codes of a game live in a list (up to SNES_CHEATS_MAX); a code is poked into memory at the end
+ * of every frame while it is on, on the emulation thread (RAM writes at a frame boundary, so the APU
+ * and PPU workers stay bit-identical to the single thread), a Game Genie style ROM patch is put back
+ * when the code is switched off. Reset and state load switch the codes off, do their work and arm them
+ * again, so a state's own bytes are never mixed with stale ones. With no code on, the emulation is
+ * bit-identical to a build without cheats (checked by hash on the 15 owner games, threads on and off).
+ *
+ * Persistence: after snes_host_cheats_load(root) every change is written to
+ * <root>/cheats/<ROM file name without extension>.cht in RetroArch's format
+ *     cheats = 2
+ *     cheat0_desc = "Infinite lives"
+ *     cheat0_code = "7E0DBE=63"
+ *     cheat0_enable = true
+ * (a code of several cells joined by '+'; keys we do not know are kept). Writing is the safe writer:
+ * temp file, read back, rename, a verified backup of the old file before the first overwrite. If a
+ * write fails the change still holds in memory, snes_host_cheat_error() says why and the next change
+ * (or snes_host_cheats_save()) retries; a file that exists but cannot be read is never overwritten.
+ * Call everything from the thread that runs the frames, between frames. */
+#define SNES_CHEATS_MAX 512
+#define SNES_CHEAT_NAME_CAP 64
+#define SNES_CHEAT_CODE_CAP 512
+enum {
+	SNES_CHEAT_OK = 0,
+	SNES_CHEAT_E_FULL = -1,
+	SNES_CHEAT_E_FORMAT = -2,       /* not a code */
+	SNES_CHEAT_E_UNSUPPORTED = -3,  /* in the list but not a code this engine can run (cannot be switched on) */
+	SNES_CHEAT_E_TOO_LONG = -4,     /* more than 16 cells, or a text over the cap */
+	SNES_CHEAT_E_IO = -5,           /* the .cht could not be read or written */
+	SNES_CHEAT_E_RANGE = -6,        /* bad index, or address 0 */
+	SNES_CHEAT_E_NOROM = -7
+};
+typedef struct {
+	char label[SNES_CHEAT_NAME_CAP];
+	char code[SNES_CHEAT_CODE_CAP];
+	int enabled;
+	int usable;                     /* 0: the text is not a code we can run (kept so the file round-trips) */
+} snes_cheat_info;
+/* Needs a loaded ROM. Reads the game's .cht (a missing file is an empty list) and arms the entries that
+ * are on. Returns the number of entries or a SNES_CHEAT_E_*. Loading a ROM forgets the list. */
+int snes_host_cheats_load(const char *root);
+/* Checks a code without adding it. Returns the number of cells (> 0) or SNES_CHEAT_E_*. If canon is given
+ * it receives the normalised text ("7E0DBE=63", "C2A6-3D6D", upper case, cells joined by '+'). */
+int snes_host_cheat_validate(const char *code, char *canon, size_t cap);
+/* The same code as plain address=value cells, "7E0DBE=63+..." (a Game Genie or Action Replay cell decoded); for tests. */
+int snes_host_cheat_decode(const char *code, char *raw, size_t cap);
+/* Work RAM byte at offset 0..0x1FFFF (address $7E0000 + offset), or -1; for tests. */
+int snes_host_peek_wram(uint32_t offset);
+/* RetroAchievements (rc_consoles.h SUPER_NINTENDO) address space: $000000-$01FFFF work RAM ($7E0000-$7FFFFF), $020000 on the cartridge's battery RAM
+ * as held (snes_host_sram_size() bytes). Copies n bytes from addr into out and returns how many were inside a window (a request is cut at the
+ * end of its window; 0 = unmapped or nothing loaded). Reads have no side effects. */
+int snes_host_ra_read(unsigned addr, uint8_t *out, unsigned n);
+/* PPU registers for tests and traces: BG mode and the scroll of BG1..BG4 (h[n], v[n]) */
+int snes_host_ppu_scroll(int *h, int *v);
+/* Writes one work RAM byte (offset 0..0x1FFFF); for test scripts only (they hold lives or invulnerability to stay in play). */
+void snes_host_poke_wram(uint32_t offset, uint8_t value);
+/* Test hook: the picture as it stood at the frame end (see host.cpp), tightly packed w x h; NULL when not enabled/none yet. */
+void snes_host_snapshot_enable(int on);
+const uint16_t *snes_host_video_snapshot(int *w, int *h);
+/* Adds a code (switched on). label may be NULL/"" ("Cheat N"). Returns the new index or SNES_CHEAT_E_*. */
+int snes_host_cheat_add(const char *code, const char *label);
+int snes_host_cheat_enable(int index, int on);
+int snes_host_cheat_remove(int index);
+int snes_host_cheat_count(void);
+int snes_host_cheat_get(int index, snes_cheat_info *out);
+void snes_host_cheat_disable_all(void);
+/* Holds the codes that are on out of the machine (1) and puts them back (0), without touching the list or the file: RetroAchievements
+ * Hardcore, which lasts as long as one game. */
+void snes_host_cheats_hold(int hold);
+/* Removes every code (memory is restored) and writes the empty list. */
+void snes_host_cheat_reset(void);
+/* Writes the list now (a retry after a failed write). 0 or SNES_CHEAT_E_IO. */
+int snes_host_cheats_save(void);
+/* 1 and the reason in text when the last write of the list failed, else 0. */
+int snes_host_cheat_error(char *text, size_t cap);
+
 const char *snes_host_rom_title(void);
+/* The loaded cartridge image (copier header already removed), valid while the ROM is loaded; the wide view keys its learned
+ * map and profile by a checksum of it. NULL and 0 when nothing is loaded. */
+const uint8_t *snes_host_rom_image(size_t *n);
 /* One line about the loaded cartridge: map, size, chips, SRAM. */
 const char *snes_host_rom_info(void);
 

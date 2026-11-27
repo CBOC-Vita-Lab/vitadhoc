@@ -21,6 +21,8 @@
  *   nat        joiner and host see each other only through an address-
  *              rewriting relay: the declared->observed alias carries the
  *              session and the bulk lane
+ *   settarget  a joiner created without a target is pointed at its host
+ *              afterwards (lan_transport_set_target), then a session runs
  *   bulk       1 MiB over the bulk lane with 5 % loss, a NACK bitmap on the
  *              ordered channel; nothing of it reaches netdrv
  *   hostile    discovery datagrams, garbage and foreign bulk aimed at a
@@ -86,6 +88,7 @@ struct console
    netdrv *nd;
    pthread_t th;
    atomic_int run;
+   atomic_int stall;                   /* 1 = the pump thread does nothing */
    int     threaded;
 
    /* written by the console thread, read by the test thread */
@@ -202,7 +205,8 @@ static void *con_thread(void *p)
    console *c = (console *)p;
    while (atomic_load(&c->run))
    {
-      con_step(c);
+      if (!atomic_load(&c->stall))
+         con_step(c);
       nd_sleep_us(1000);
    }
    return NULL;
@@ -1049,6 +1053,51 @@ static void test_nat(void)
    relay_close(&r);
 }
 
+/* ================================================================ settarget == */
+
+/* lan_transport_set_target (online play): a joiner created WITHOUT a target
+ * is pointed at its host afterwards, and netdrv's JOIN goes there. */
+static void test_settarget(void)
+{
+   uint16_t base = test_port(30);
+   lan_transport *th, *tj, *tx;
+   console H, J;
+   uint32_t lo = inet_addr("127.0.0.1");
+
+   printf("[settarget: a joiner is pointed at its host after create]\n");
+   th = mk_host(base, 0);
+   tj = mk_join(base, 0, 0);                  /* no target: it would broadcast */
+   tx = mk_join(base, lo, 9);                 /* a target already (a wrong one) */
+   CHECK(th && tj && tx, "transports: %s", lan_last_error());
+   if (!th || !tj || !tx)
+      return;
+   CHECK(lan_transport_set_target(th, lo, lan_transport_port(tj)) < 0, "a host has no target to set");
+   CHECK(lan_transport_set_target(NULL, lo, 1) < 0, "NULL");
+   CHECK(lan_transport_set_target(tj, 0, 1) < 0, "no address");
+   CHECK(lan_transport_set_target(tx, lo, lan_transport_port(th)) == 0,
+         "a target given at create may be replaced before any session");
+   lan_transport_destroy(tx);
+
+   CHECK(lan_transport_set_target(tj, lo, lan_transport_port(th)) == 0, "set_target");
+   CHECK(con_open(&H, "host", th, 1, PROTO_A, 0x11, NULL) == 0, "H");
+   CHECK(con_open(&J, "join", tj, 0, PROTO_A, 0x22, NULL) == 0, "J");
+   WAIT_FOR(6000, atomic_load(&J.active) && atomic_load(&H.peers) == 1);
+   CHECK(atomic_load(&J.active) && atomic_load(&H.peers) == 1, "joined the host it was pointed at");
+   CHECK(atomic_load(&H.connects) == 1, "admitted once (%d)", atomic_load(&H.connects));
+   CHECK(lan_transport_set_target(tj, lo, lan_transport_port(th)) < 0,
+         "refused once the session has peers");
+   H.to_send = J.to_send = 100;
+   atomic_store(&H.go, 1);
+   atomic_store(&J.go, 1);
+   WAIT_FOR(8000, atomic_load(&J.rx_ok[0]) == 100 && atomic_load(&H.rx_ok[1]) == 100);
+   CHECK(atomic_load(&J.rx_ok[0]) == 100 && atomic_load(&H.rx_ok[1]) == 100,
+         "data both ways (%u/%u)", atomic_load(&J.rx_ok[0]), atomic_load(&H.rx_ok[1]));
+   con_close(&J);
+   con_close(&H);
+   lan_transport_destroy(tj);
+   lan_transport_destroy(th);
+}
+
 /* ==================================================================== bulk == */
 
 #define BLOB_BYTES  (1024u * 1024u)
@@ -1402,6 +1451,158 @@ static void test_hostile(void)
    lan_transport_destroy(th);
 }
 
+/* ================================================================ peerlock == */
+
+/* One well-formed keepalive ("GBLD" v1 type KEEP, 18 bytes, CRC over 16). */
+static size_t mk_keep(uint8_t *pkt, uint32_t cookie)
+{
+   uint16_t c;
+   memset(pkt, 0, 18);
+   memcpy(pkt, "GBLD", 4);
+   pkt[4] = 1; pkt[5] = 6; pkt[6] = 18; pkt[7] = 0;
+   memcpy(pkt + 8, &cookie, 4);
+   c = nd_crc16(0xFFFF, pkt, 16);
+   pkt[16] = (uint8_t)c; pkt[17] = (uint8_t)(c >> 8);
+   return 18;
+}
+
+/* 2.0 security review.  (a) Sixteen and more invented addresses that send a
+ * session-shaped datagram do not push the real peer out of the "who is
+ * alive" table.  (b) A locked transport (online play, once the peer is
+ * known) queues nothing a stranger sends -- netdrv frames, the bulk lane,
+ * keepalives -- and the session with the locked peer goes on. */
+static void test_peerlock(void)
+{
+   uint16_t base = test_port(11);
+   lan_transport *th, *tj;
+   console H, J;
+   struct sockaddr_in to;
+   nd_transport itf;
+   uint8_t pkt[1600], jmac[6];
+   lan_stats sb, sa;
+   nd_stats nb, na;
+   int fds[24], i, k;
+   unsigned ok0, locked_foreign = 0;
+   uint64_t age;
+
+   printf("[peerlock: strangers cannot evict the peer, and a locked transport hears only its peer]\n");
+   th = mk_host(base, 0);
+   tj = mk_join(base, inet_addr("127.0.0.1"), base);
+   CHECK(th && tj, "transports");
+   if (!th || !tj)
+      return;
+   lan_transport_set_io_keepalive(th, 1);
+   lan_transport_set_io_keepalive(tj, 1);
+   lan_transport_bulk_open(th, 64, "GBLK");
+   lan_transport_bulk_any(th, 1);          /* the lane's own filter off: the lock is what is tested */
+   CHECK(con_open(&H, "host", th, 1, PROTO_A, 0x91, NULL) == 0, "H");
+   CHECK(con_open(&J, "join", tj, 0, PROTO_A, 0x92, NULL) == 0, "J");
+   WAIT_FOR(5000, atomic_load(&J.active) && atomic_load(&H.peers) == 1);
+   CHECK(atomic_load(&J.active), "session up");
+   lan_mac_from_addr(inet_addr("127.0.0.1"), lan_transport_port(tj), jmac);
+   lan_transport_iface(th, &itf);
+
+   memset(&to, 0, sizeof(to));
+   to.sin_family = AF_INET;
+   to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+   to.sin_port = htons(lan_transport_port(th));
+   for (i = 0; i < 24; i++)
+      fds[i] = socket(AF_INET, SOCK_DGRAM, 0);
+
+   /* (a) not locked: 24 strangers' keepalives, three rounds */
+   for (k = 0; k < 3; k++)
+   {
+      for (i = 0; i < 24; i++)
+         sendto(fds[i], pkt, mk_keep(pkt, (uint32_t)(k * 100 + i)), 0, (struct sockaddr *)&to, sizeof(to));
+      nd_sleep_us(150000);
+   }
+   age = itf.heard_age_us(itf.ctx, jmac);
+   CHECK(age != UINT64_MAX && age < 3000000ull, "the real peer is still in the table after the flood (age %llu us)",
+         (unsigned long long)age);
+
+   /* (b) locked to the joiner */
+   CHECK(lan_transport_peer_lock(th, inet_addr("127.0.0.1"), lan_transport_port(tj)) == 0, "lock");
+   nd_sleep_us(50000);
+   lan_transport_get_stats(th, &sb);
+   netdrv_get_stats(H.nd, &nb);
+   ok0 = atomic_load(&H.rx_ok[1]);
+   for (i = 0; i < 300; i++)
+   {
+      size_t n;
+      switch (i % 3)
+      {
+         case 0:                         /* netdrv magic and a plausible length */
+            memset(pkt, 0, sizeof(pkt));
+            pkt[0] = 0x31; pkt[1] = 0x4E; pkt[2] = 0x50; pkt[3] = 0x47; pkt[4] = 2;
+            n = 24;
+            break;
+         case 1:                         /* the bulk lane's magic */
+            memset(pkt, 0x55, sizeof(pkt));
+            memcpy(pkt, "GBLK", 4);
+            n = 200;
+            break;
+         default:
+            n = mk_keep(pkt, (uint32_t)i);
+            break;
+      }
+      sendto(fds[i % 24], pkt, n, 0, (struct sockaddr *)&to, sizeof(to));
+      if ((i % 50) == 49)
+         nd_sleep_us(20000);
+   }
+   /* the locked peer still gets through */
+   J.to_send = 20;
+   J.send_every_ms = 5;
+   atomic_store(&J.go, 1);
+   WAIT_FOR(4000, atomic_load(&H.rx_ok[1]) >= ok0 + 20);
+   CHECK(atomic_load(&H.rx_ok[1]) >= ok0 + 20, "the peer's data still arrives (%u of 20)",
+         atomic_load(&H.rx_ok[1]) - ok0);
+   lan_transport_get_stats(th, &sa);
+   netdrv_get_stats(H.nd, &na);
+   CHECK(sa.rx_foreign - sb.rx_foreign == 300, "all 300 strangers' datagrams counted foreign (+%u)",
+         sa.rx_foreign - sb.rx_foreign);
+   locked_foreign = sa.rx_foreign - sb.rx_foreign;
+   CHECK(sa.bulk_rx == sb.bulk_rx && sa.bulk_drop == sb.bulk_drop, "none reached the bulk lane");
+   CHECK(na.rx_drop_malformed == nb.rx_drop_malformed && na.rx_drop_crc == nb.rx_drop_crc &&
+         na.rx_drop_unknown_peer == nb.rx_drop_unknown_peer, "none reached netdrv");
+   {
+      uint8_t b[LAN_BULK_MAX];
+      CHECK(lan_transport_bulk_recv(th, b, sizeof(b)) == 0, "the bulk ring is empty");
+   }
+   /* held (the peer is not known yet): nobody gets through, the old peer included */
+   lan_transport_peer_hold(th);
+   nd_sleep_us(20000);
+   lan_transport_get_stats(th, &sb);
+   memset(pkt, 0x55, 64);
+   memcpy(pkt, "GBLK", 4);
+   sendto(fds[1], pkt, 64, 0, (struct sockaddr *)&to, sizeof(to));
+   nd_sleep_us(1200000);                   /* the joiner's keepalives (one a second) arrive too */
+   lan_transport_get_stats(th, &sa);
+   {
+      uint8_t b[LAN_BULK_MAX];
+      CHECK(lan_transport_bulk_recv(th, b, sizeof(b)) == 0, "held: the lane takes nothing");
+   }
+   CHECK(sa.rx_foreign - sb.rx_foreign >= 2, "held: the stranger's and the old peer's datagrams are both dropped (+%u)",
+         sa.rx_foreign - sb.rx_foreign);
+   /* unlock: a stranger's bulk datagram is taken again (bulk_any is on) */
+   CHECK(lan_transport_peer_lock(th, 0, 0) == 0, "unlock");
+   memset(pkt, 0x55, 64);
+   memcpy(pkt, "GBLK", 4);
+   sendto(fds[0], pkt, 64, 0, (struct sockaddr *)&to, sizeof(to));
+   {
+      uint8_t b[LAN_BULK_MAX];
+      int got = 0;
+      WAIT_FOR(1000, (got = lan_transport_bulk_recv(th, b, sizeof(b))) > 0);
+      CHECK(got == 64, "unlocked: the lane takes it again (%d)", got);
+   }
+   printf("  heard age %llu us, locked: foreign +%u of 300\n", (unsigned long long)age, locked_foreign);
+   for (i = 0; i < 24; i++)
+      close(fds[i]);
+   con_close(&J);
+   con_close(&H);
+   lan_transport_destroy(tj);
+   lan_transport_destroy(th);
+}
+
 /* ================================================================== cycles == */
 
 static int count_dir(const char *path)
@@ -1729,6 +1930,194 @@ static void bench(const char *only)
    }
 }
 
+
+/* ============================================================ liveness == */
+
+/* A session between a host and one joiner on loopback, a pump thread each,
+ * with the I/O-thread keepalive on or off.  Returns 0 on success. */
+typedef struct pair
+{
+   lan_transport *th, *tj;
+   console H, J;
+} pair;
+
+static int pair_open(pair *p, int test, int keepalive)
+{
+   unsigned save = g_net_flags;
+   uint16_t base = test_port(test);
+   uint32_t ip;
+   uint16_t port;
+   char typed[32];
+
+   memset(p, 0, sizeof(*p));
+   if (keepalive)
+      g_net_flags |= LAN_F_IO_KEEPALIVE;
+   p->th = mk_host(base, 0);
+   if (!p->th)
+      { g_net_flags = save; return -1; }
+   lan_transport_addr_str(p->th, typed, sizeof(typed));
+   lan_parse_addr(typed, &ip, &port, LAN_PORT_DEFAULT);
+   p->tj = mk_join(base, ip, port);
+   g_net_flags = save;
+   if (!p->tj)
+      return -1;
+   if (con_open(&p->H, "host", p->th, 1, PROTO_A, 0x1001, NULL) ||
+       con_open(&p->J, "join", p->tj, 0, PROTO_A, 0x2002, NULL))
+      return -1;
+   WAIT_FOR(5000, atomic_load(&p->H.peers) == 1 && atomic_load(&p->J.peers) == 1 &&
+                  atomic_load(&p->J.active));
+   return atomic_load(&p->H.peers) == 1 && atomic_load(&p->J.active) ? 0 : -1;
+}
+
+/* Both sides send `n` payloads and see all of the other's. */
+static int pair_traffic(pair *p, unsigned n, unsigned ms)
+{
+   unsigned h0 = atomic_load(&p->H.rx_ok[1]), j0 = atomic_load(&p->J.rx_ok[0]);
+   unsigned hs = atomic_load(&p->H.sent), js = atomic_load(&p->J.sent);
+   p->H.to_send = hs + n;
+   p->J.to_send = js + n;
+   atomic_store(&p->H.go, 1);
+   atomic_store(&p->J.go, 1);
+   WAIT_FOR(ms, atomic_load(&p->H.rx_ok[1]) >= h0 + n &&
+                atomic_load(&p->J.rx_ok[0]) >= j0 + n);
+   return atomic_load(&p->H.rx_ok[1]) >= h0 + n &&
+          atomic_load(&p->J.rx_ok[0]) >= j0 + n &&
+          !atomic_load(&p->H.rx_bad) && !atomic_load(&p->J.rx_bad);
+}
+
+static void pair_close(pair *p)
+{
+   if (p->H.nd) con_close(&p->H);
+   if (p->J.nd) con_close(&p->J);
+   if (p->tj) lan_transport_destroy(p->tj);
+   if (p->th) lan_transport_destroy(p->th);
+}
+
+/* One side's PUMP THREAD does nothing for `secs` (a state save, card I/O),
+ * its transport's I/O thread keeps running.  `victim` 0 = the host (the
+ * joiner judges it), 1 = the joiner (the host judges it). */
+static void stall_run(int test, int secs, int keepalive, int victim,
+                      int expect_alive)
+{
+   pair p;
+   console *v, *o;
+   uint64_t t0;
+   lan_census cs;
+
+   printf("[stall: %s's pump thread idle %d s, I/O keepalive %s, expect the "
+          "session %s]\n", victim ? "joiner" : "host", secs,
+          keepalive ? "on" : "off", expect_alive ? "kept" : "ended");
+   if (pair_open(&p, test, keepalive) != 0)
+   {
+      CHECK(0, "session opens: %s", lan_last_error());
+      pair_close(&p);
+      return;
+   }
+   CHECK(pair_traffic(&p, 40, 10000), "traffic before the stall");
+   v = victim ? &p.J : &p.H;
+   o = victim ? &p.H : &p.J;
+   atomic_store(&v->stall, 1);
+   t0 = nd_now_us();
+   WAIT_FOR((unsigned)secs * 1000, !atomic_load(&o->active) ||
+                                   !atomic_load(&o->peers));
+   if (expect_alive)
+      CHECK(atomic_load(&o->active) && atomic_load(&o->peers) == 1,
+            "the other console kept the session through %d s "
+            "(active=%d peers=%d stop=%d)", secs, atomic_load(&o->active),
+            atomic_load(&o->peers), atomic_load(&o->stop_reason));
+   else
+   {
+      /* ended by the 20 s limit, not earlier */
+      WAIT_FOR(5000, !atomic_load(&o->active) || !atomic_load(&o->peers));
+      CHECK(!atomic_load(&o->active) || !atomic_load(&o->peers),
+            "no keepalive: the stalled peer was declared dead");
+      CHECK(nd_now_us() - t0 >= 19000000ull,
+            "...and not before ~20 s (%u ms)",
+            (unsigned)((nd_now_us() - t0) / 1000));
+   }
+   if (expect_alive)
+   {
+      lan_transport_census(o == &p.H ? p.th : p.tj, &cs, 1);
+      if (keepalive)
+         CHECK(cs.keep_in >= (unsigned)secs - 2 || secs < 3,
+               "I/O keepalives kept arriving while the pump was stalled "
+               "(%u in %d s)", cs.keep_in, secs);
+      atomic_store(&v->stall, 0);
+      CHECK(pair_traffic(&p, 60, 15000),
+            "traffic resumes both ways after the stall, intact "
+            "(H<-J %u, J<-H %u)", atomic_load(&p.H.rx_ok[1]),
+            atomic_load(&p.J.rx_ok[0]));
+   }
+   atomic_store(&v->stall, 0);
+   pair_close(&p);
+}
+
+static void test_stall12(void)
+{
+   stall_run(30, 12, 1, 0, 1);
+   stall_run(31, 12, 0, 1, 1);
+}
+
+static void test_stall25(void)
+{
+   stall_run(32, 25, 1, 0, 1);       /* the keepalive carries it past 20 s */
+   stall_run(33, 25, 0, 0, 0);       /* without it the limit applies */
+}
+
+/* A peer that is really gone: its transport closed without a BYE.  Measured
+ * from that moment to the other side's own "lost" path. */
+static void test_peerdead(void)
+{
+   int victim;
+   for (victim = 0; victim < 2; victim++)
+   {
+      pair p;
+      console *o;
+      uint64_t t0;
+      unsigned ms;
+      printf("[peer dead: the %s vanishes without a BYE]\n",
+             victim ? "joiner" : "host");
+      if (pair_open(&p, 34 + victim, 1) != 0)
+      {
+         CHECK(0, "session opens: %s", lan_last_error());
+         pair_close(&p);
+         continue;
+      }
+      CHECK(pair_traffic(&p, 20, 10000), "traffic before");
+      /* "kill": stop its pump thread and take its socket away, no BYE */
+      if (victim)
+      {
+         atomic_store(&p.J.run, 0); pthread_join(p.J.th, NULL);
+         p.J.threaded = 0;
+         lan_transport_destroy(p.tj); p.tj = NULL;
+         netdrv_destroy(p.J.nd); p.J.nd = NULL;
+         o = &p.H;
+      }
+      else
+      {
+         atomic_store(&p.H.run, 0); pthread_join(p.H.th, NULL);
+         p.H.threaded = 0;
+         lan_transport_destroy(p.th); p.th = NULL;
+         netdrv_destroy(p.H.nd); p.H.nd = NULL;
+         o = &p.J;
+      }
+      t0 = nd_now_us();
+      WAIT_FOR(30000, victim ? atomic_load(&o->disconnects) > 0
+                             : !atomic_load(&o->active));
+      ms = (unsigned)((nd_now_us() - t0) / 1000);
+      if (victim)
+         CHECK(atomic_load(&o->disconnects) == 1 && ms >= 19000 && ms <= 23000,
+               "host dropped the dead joiner after %u ms (want ~20000)", ms);
+      else
+         CHECK(!atomic_load(&o->active) &&
+               atomic_load(&o->stop_reason) == ND_STOP_HOST_LOST &&
+               ms >= 19000 && ms <= 23000,
+               "joiner ended with HOST_LOST after %u ms (stop=%d, want "
+               "~20000)", ms, atomic_load(&o->stop_reason));
+      pair_close(&p);
+   }
+}
+
 /* ==================================================================== main == */
 
 static const struct { const char *name; void (*fn)(void); } TESTS[] = {
@@ -1739,10 +2128,15 @@ static const struct { const char *name; void (*fn)(void); } TESTS[] = {
    { "session",   test_session },
    { "bcastjoin", test_bcastjoin },
    { "nat",       test_nat },
+   { "settarget", test_settarget },
    { "bulk",      test_bulk },
    { "hostile",   test_hostile },
+   { "peerlock",  test_peerlock },
    { "cycles",    test_cycles },
    { "realnet",   test_realnet },
+   { "stall12",   test_stall12 },
+   { "stall25",   test_stall25 },
+   { "peerdead",  test_peerdead },
 };
 
 int main(int argc, char **argv)
@@ -1763,7 +2157,9 @@ int main(int argc, char **argv)
    }
    for (i = 0; i < sizeof(TESTS) / sizeof(TESTS[0]); i++)
    {
-      int want = argc < 2;
+      /* the liveness tests take 12-60 s each: only when asked for by name */
+      int want = argc < 2 && strncmp(TESTS[i].name, "stall", 5) &&
+                 strcmp(TESTS[i].name, "peerdead");
       for (a = 1; a < argc; a++)
          if (!strcmp(argv[a], TESTS[i].name))
             want = 1;

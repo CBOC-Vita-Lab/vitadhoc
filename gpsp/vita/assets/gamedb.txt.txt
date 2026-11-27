@@ -1,16 +1,19 @@
 gamedb.txt -- the game list's own knowledge (gamedb.h), written by
 tools/make_gamedb.py.
 
-records:  C  cartridge CRC32 -> No-Intro name        (GBA, GB, GBC, SNES: 11781)
+records:  C  cartridge CRC32 -> No-Intro name        (GBA, GB, GBC, SNES, NES, FDS, WS, WSC, Genesis, SMS, GG, SG: 23933)
           S  GBA header game code -> No-Intro name   (2756)
           Z  GBA header game code -> cartridge size  (2756)
-          N  console + loose title -> No-Intro name  (7842)
-          T  title key -> English Wikipedia article  (2451)
-          W  article -> its first sentences          (2030)
+          N  console + loose title -> No-Intro name  (14327)
+          U  console + title key -> English Wikipedia article   (4360)
+          W  article -> its first sentences                    (3219)
 
 sources:  the No-Intro catalogues as published in libretro-database
           (metadat/no-intro/Nintendo - Game Boy Advance / Game Boy /
-          Game Boy Color / Super Nintendo Entertainment System .dat);
+          Game Boy Color / Super Nintendo Entertainment System / Nintendo Entertainment System /
+          Family Computer Disk System .dat, metadat/no-intro/Bandai - WonderSwan /
+          WonderSwan Color .dat, Sega - Mega Drive - Genesis / Master System - Mark III /
+          Game Gear / SG-1000 .dat);
           Wikidata (CC0): the video games released for those consoles and
           their English Wikipedia articles; English Wikipedia (CC BY-SA
           4.0): the opening sentences of each article, at most ~200
@@ -19,6 +22,55 @@ sources:  the No-Intro catalogues as published in libretro-database
           and foreign-script titles left out, list and disambiguation pages
           left out. The SNES records were added for 1.3 (GAMEDB_SYSTEMS=D);
           where a title is shared, the earlier consoles' article is kept.
+          The NES (E) and Disk System (F) records were added for 1.4 from the
+          No-Intro catalogues alone (GAMEDB_SYSTEMS=EF, Wikidata and Wikipedia
+          were not reachable then): names and checksums, no descriptions. Only
+          the headerless CRCs are kept, as the app hashes without the iNES header.
+          The WonderSwan (G) and WonderSwan Color (H) records were added for 1.4
+          the same way (GAMEDB_SYSTEMS=GH): names and whole-file checksums.
+          The Sega Genesis / Mega Drive (I, 2800 games), Master System (J, 1057),
+          Game Gear (K, 607) and SG-1000 (L, 211) records were added for 2.0 the same
+          way, from libretro-database 7d716259 (catalogue version 2026.11.14), with
+          GAMEDB_KEEP=1 GAMEDB_SYSTEMS=IJKL (nothing earlier changes): 4673 C records
+          (two ROMs are in two catalogues and keep the first console's name) and 2841
+          N records, no descriptions (Wikidata and Wikipedia were not used; a game
+          shares the description of a title the other consoles have). The Genesis
+          CRCs are of the plain ROM (an SMD file is de-interleaved first,
+          gamedb_md_crc_cancel); the others of the whole image without a 512-byte copier
+          header (gamedb_sms_crc_cancel).
+
+Descriptions, 2.0 (every console, rebuilt): in 1.x a title key (T record) named
+one article for all consoles, so a game could show the text of another console's
+game of the same name, or of a series. Now a description is filed per console,
+U<letter><title key> (letters as for N records; M = Sega CD; F, the Disk System,
+uses E's), and exists only when the article is about that game:
+  - the article is one Wikidata lists as released for THAT console (platform
+    set P400: Q188642 GBA, Q186437 GB, Q203992 GBC, Q183259 SNES, Q172742 NES,
+    Q1065792 WonderSwan, Q1048035 WonderSwan Color, Q10676 Genesis, Q209868
+    Master System, Q751719 Game Gear, Q1136956 SG-1000, Q1047516 Sega CD);
+  - its title matches the game's name (the No-Intro title key; a GBA game's
+    other regions share the article of the one found); a match by an alias of
+    the article, or through a Wikipedia redirect ("Tempo Jr." for Tempo), also
+    needs the console named in the text;
+  - a series or franchise article ("Golden Axe is a series of ...") is not used.
+Otherwise there is no record and the game shows no description. gamedb.c finds a
+game's text under its console, then the one it plays as well (Game Boy <-> Color,
+WonderSwan <-> Color, Disk System -> NES, a Game Gear game in a .sms file).
+The 1.x T records (2451) and the text of articles nothing reaches were dropped
+(1.x: 928 GBA, 506 GB, 346 GBC, 1003 SNES games with a text; now 827, 360, 281,
+868 by this rule); no C, N, S or Z record changed. Texts are Wikipedia's
+introductions fetched on 21 November 2026 and tidied (a leftover romanisation
+bracket such as "Albert Odyssey (, Arubato Odessei)" is left out); titles from the
+No-Intro catalogues (Sega CD: Redump metadat/redump/Sega - Mega-CD - Sega CD.dat)
+of libretro-database revision 7d716259 (2026.11.14). Rebuild (byte-identical from
+the same Wikimedia answers, whatever the hash seed):
+
+  GAMEDB_REDO_BLURBS=1 GAMEDB_DATS=<dats> python3 tools/make_gamedb.py <dir>
+
+with <dats> holding the thirteen catalogues at that revision, <dir>/gamedb.txt
+the file with the names and checksums (its U and W records are replaced) and
+<dir>/cache the Wikimedia answers (downloaded when absent). The attribution list
+is rebuilt by tools/make_wiki_attribution.py.
 
 The descriptions are adapted from Wikipedia and stay under CC BY-SA 4.0;
 the app shows them with a "From Wikipedia" chip and the README credits

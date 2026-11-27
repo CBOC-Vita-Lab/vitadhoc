@@ -40,8 +40,13 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <arpa/inet.h>
+
+#ifdef __APPLE__
+#define st_mtim st_mtimespec          /* macOS names the struct stat time that way */
+#endif
 
 #define NET_VITA_HOST
 #include "../net_vita.c"
@@ -147,6 +152,28 @@ static void host_refresh(int force)
    fe_evt("nethost wifi=%d ssid=%s ip=%s adhoc_station=%d peers=%d "
           "dialog=%d/%d", H.wifi, H.ssid, H.ip, H.station, H.n_peers,
           H.dlg_frames, H.dlg_result);
+}
+
+void net_vita_entropy(uint8_t out[16])
+{
+   FILE *f = fopen("/dev/urandom", "rb");
+   size_t n = f ? fread(out, 1, 16, f) : 0;
+   if (f)
+      fclose(f);
+   if (n != 16)
+   {
+      /* no /dev/urandom: the clock, so two twins still differ */
+      struct timespec ts;
+      uint64_t t;
+      int i;
+      clock_gettime(CLOCK_REALTIME, &ts);
+      t = (uint64_t)ts.tv_nsec * 6364136223846793005ull ^ (uint64_t)getpid();
+      for (i = 0; i < 16; i++)
+      {
+         t = t * 6364136223846793005ull + 1442695040888963407ull;
+         out[i] = (uint8_t)(t >> 56);
+      }
+   }
 }
 
 int net_vita_init(void)

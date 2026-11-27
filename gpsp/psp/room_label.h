@@ -34,6 +34,11 @@
  *              a non-alphanumeric byte becomes '0').
  *   GBnnXXXX   Link Cable room nn, Game Boy / Color; XXXX = the first four
  *              alphanumeric bytes of the cartridge title, else GAME.
+ *   GTnnXXXX   "Two players" room nn (2.0, NES and WonderSwan: both consoles
+ *              run one machine, one pad each); XXXX = the first four hex
+ *              digits of the cartridge's CRC-32, which a joiner compares
+ *              with its own game's.  Older builds show it as another
+ *              room, joinable by its verbatim name, and find nobody to link.
  *   GSnnDATA   "Share game data" room nn (docs/SAVE-SHARE.md): a PSP in its
  *              game list serving its saves and states, read-only.  NOT a
  *              link room: nothing speaks the link protocol in it, so a
@@ -45,7 +50,7 @@
  * makes GC07AMKE, by adapter GPSP07.  Two rooms can share a number if their
  * modes differ; the scan list shows both. */
 enum { ROOM_ADAPTER = 0, ROOM_CABLE_GBA, ROOM_CABLE_GB, ROOM_OTHER,
-       ROOM_SHARE };
+       ROOM_SHARE, ROOM_PAD };
 #define ROOM_SHARE_CODE "DATA"
 
 static inline int room_is_digit(char c) { return c >= '0' && c <= '9'; }
@@ -76,14 +81,16 @@ static inline int room_parse(const char *group, int *num, char code[5])
       k = ROOM_SHARE;
       n = (group[2] - '0') * 10 + (group[3] - '0');
    }
-   else if (group[0] == 'G' && (group[1] == 'C' || group[1] == 'B') &&
+   else if (group[0] == 'G' && (group[1] == 'C' || group[1] == 'B' ||
+                                group[1] == 'T') &&
             room_is_digit(group[2]) && room_is_digit(group[3]))
    {
       for (i = 4; i < 8 && room_is_alnum(group[i]); i++)
          ;
       if (i == 8 && group[8] == '\0')
       {
-         k = group[1] == 'C' ? ROOM_CABLE_GBA : ROOM_CABLE_GB;
+         k = group[1] == 'C' ? ROOM_CABLE_GBA
+           : group[1] == 'T' ? ROOM_PAD : ROOM_CABLE_GB;
          n = (group[2] - '0') * 10 + (group[3] - '0');
          if (code)
          {
@@ -130,13 +137,22 @@ static inline const char *room_make(int kind, int num, const char *code,
    num = num < 0 ? 0 : num % 100;
    if (kind == ROOM_SHARE)
       snprintf(out, n, "GS%02d" ROOM_SHARE_CODE, num);
-   else if (kind == ROOM_CABLE_GBA || kind == ROOM_CABLE_GB)
-      snprintf(out, n, "G%c%02d%.4s", kind == ROOM_CABLE_GBA ? 'C' : 'B',
+   else if (kind == ROOM_CABLE_GBA || kind == ROOM_CABLE_GB || kind == ROOM_PAD)
+      snprintf(out, n, "G%c%02d%.4s",
+               kind == ROOM_CABLE_GBA ? 'C' : kind == ROOM_PAD ? 'T' : 'B',
                num, code && strlen(code) >= 4 ? code : "GAME");
    else
       snprintf(out, n, "GPSP%02d", num);
    return out;
 }
+
+/* In the app the word is the interface language's (i18n.h, key link.room) when
+ * i18n.h came first; the tools' tests have the English word. */
+#ifdef GBADHOC_I18N_H
+#define ROOM_LABEL_FMT tr("link.room")
+#else
+#define ROOM_LABEL_FMT ROOM_LABEL_WORD " %d"
+#endif
 
 /* `group` -> "Room N" (no leading zero) into buf; returns buf.  Every kind
  * of room is "Room N": the mode and the game are columns of their own. */
@@ -148,7 +164,7 @@ static inline const char *room_label(const char *group, char *buf, size_t n)
    if (!group)
       group = "";
    if (room_parse(group, &num, NULL) != ROOM_OTHER)
-      snprintf(buf, n, ROOM_LABEL_WORD " %d", num);
+      snprintf(buf, n, ROOM_LABEL_FMT, num);
    else
       /* An adhocctl group name is at most 8 bytes. */
       snprintf(buf, n, "%.8s", group);

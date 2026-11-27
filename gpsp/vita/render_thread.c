@@ -7,6 +7,7 @@
 
 #include "pspcompat.h"          /* pspcompat_time_us */
 #include "fe_evt.h"
+#include "handoff_glue.h"       /* core4_*: the fourth core */
 
 /* The core's types, for video.h's capture structure (its layout does not
  * depend on the core's build flags). */
@@ -59,14 +60,31 @@ static u8 g_shadow[1024 * 96] __attribute__((aligned(64)));
 #endif
 /* Two pictures: the one shown stays whole while the next is drawn. */
 static u16 g_out[2][RT_PITCH * (160 + 1)] __attribute__((aligned(64)));
+static u16 g_wide_out[(RT_PITCH + 2 * WIDE_MARGIN_MAX) * 160] __attribute__((aligned(64)));
+static u16 *g_wide_orig;              /* core's wide_buf (ping-ponged with g_wide_out) */
+static const u16 *g_wide_last;        /* whole wide frame from last completed render */
+static int g_wide_valid;
+static unsigned g_wide_margin;
 static int g_cur;                     /* g_out[] the thread draws next     */
+
+static void rt_wide_restore(void)
+{
+   if (g_wide_orig && wide_pixels == g_wide_out)
+      wide_pixels = g_wide_orig;
+   g_wide_valid = 0;
+   g_wide_last = NULL;
+}
 
 static int g_mode;                    /* the mode in force (RT_*)           */
 static int g_fresh;                   /* the thread's object lists are old  */
 static int g_vram_all;                /* the thread's VRAM is not the game's */
 static unsigned g_vram_age;           /* frames since all of it was copied   */
 static unsigned g_pages;              /* VRAM pages copied (statistics)      */
-static int g_posted;                  /* this frame went to the thread      */
+static int g_posted;                  /* the thread has a picture to draw (or is drawing one) */
+static int g_wd = -1;                 /* watchdog slot (the thread is on the extra core) */
+static int g_late;                    /* ...and it was not done in time     */
+static int g_last = 1;                  /* g_out[] holding the last whole picture */
+static unsigned g_timeouts, g_stale;  /* waits that ran out; frames shown stale */
 static int g_ready;                   /* the thread is running              */
 static int g_failed;                  /* it could not be started: never    */
 static int g_logset;
@@ -104,6 +122,7 @@ static void rt_work(void)
 
 static SceUID g_go = -1, g_done = -1, g_th = -1;
 static volatile int g_quit;
+#define rt_stall() ((void)0)    /* (the twin's stall test is not built here) */
 
 static int rt_entry(SceSize args, void *argp)
 {
@@ -113,7 +132,10 @@ static int rt_entry(SceSize args, void *argp)
       sceKernelWaitSema(g_go, 1, NULL);
       if (g_quit)
          break;
+      rt_stall();
       rt_work();
+      core4_beat(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST));
+      core4_busy(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST), 0);
       sceKernelSignalSema(g_done, 1);
    }
    return 0;
@@ -127,19 +149,33 @@ static int rt_start(void)
     * middle of a long picture), below the sound: the emulator waits for
     * this at the end of the frame. */
    g_th = sceKernelCreateThread("gbadhoc_render", rt_entry, 0x60, 0x10000, 0,
-                                SCE_KERNEL_CPU_MASK_USER_1 |
-                                SCE_KERNEL_CPU_MASK_USER_2, NULL);
+                                (int)core4_mask(C4_RENDER, 0,
+                                                SCE_KERNEL_CPU_MASK_USER_1 |
+                                                SCE_KERNEL_CPU_MASK_USER_2),
+                                NULL);
+   /* On the extra core (core4_init proved it): the thread owes the emulator
+    * a picture a frame, so the watchdog watches it (a trip moves it back to
+    * the user cores); a plain three-core run gets no slot, no change. */
+   __atomic_store_n(&g_wd, core4_wd_add("render", C4_RENDER, 0), __ATOMIC_SEQ_CST);
    if (g_go < 0 || g_done < 0 || g_th < 0 ||
        sceKernelStartThread(g_th, 0, NULL) < 0)
       return -1;
+   core4_set_thread(C4_RENDER, 0, (int)g_th);
    return 0;
 }
 
-static void rt_post(void) { sceKernelSignalSema(g_go, 1); }
-static void rt_wait(void) { sceKernelWaitSema(g_done, 1, NULL); }
+static void rt_post(void) { core4_busy(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST), 1); sceKernelSignalSema(g_go, 1); }
+/* 1: the picture is done; 0: `us` went by first (the semaphore is not
+ * consumed: the thread's signal will still be there). */
+static int rt_wait_to(unsigned us)
+{
+   SceUInt timeout = us;
+   return sceKernelWaitSema(g_done, 1, &timeout) >= 0;
+}
 
 void rt_shutdown(void)
 {
+   rt_wide_restore();
    if (!g_ready)
       return;
    g_quit = 1;
@@ -149,57 +185,129 @@ void rt_shutdown(void)
    g_ready = 0;
 }
 #else
+#include <errno.h>
 #include <pthread.h>
-#include <semaphore.h>
+#include <stdlib.h>
+#include <time.h>
+#include <unistd.h>
+#include "host_sem.h"
 
-static sem_t g_go, g_done;
+static host_sem_t g_go, g_done;
 static pthread_t g_th;
 static volatile int g_quit;
+static void rt_stall(void);
 
 static void *rt_entry(void *arg)
 {
    (void)arg;
    for (;;)
    {
-      while (sem_wait(&g_go) != 0)
+      while (host_sem_wait(&g_go) != 0)
          ;
       if (g_quit)
          break;
+      rt_stall();
       rt_work();
-      sem_post(&g_done);
+      core4_beat(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST));
+      core4_busy(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST), 0);
+      host_sem_post(&g_done);
    }
    return NULL;
 }
 
 static int rt_start(void)
 {
-   if (sem_init(&g_go, 0, 0) != 0 || sem_init(&g_done, 0, 0) != 0)
+   if (host_sem_init(&g_go, 0) != 0 || host_sem_init(&g_done, 0) != 0)
       return -1;
+   __atomic_store_n(&g_wd, core4_wd_add("render", C4_RENDER, 0), __ATOMIC_SEQ_CST);   /* (the twin's fake core) */
+   core4_set_thread(C4_RENDER, 0, 0);
    return pthread_create(&g_th, NULL, rt_entry, NULL) == 0 ? 0 : -1;
 }
 
-static void rt_post(void) { sem_post(&g_go); }
-static void rt_wait(void) { while (sem_wait(&g_done) != 0) ; }
+static void rt_post(void) { core4_busy(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST), 1); host_sem_post(&g_go); }
+static int rt_wait_to(unsigned us)
+{
+   struct timespec ts;
+   clock_gettime(CLOCK_REALTIME, &ts);
+   ts.tv_nsec += (long)(us % 1000000u) * 1000L;
+   ts.tv_sec += us / 1000000u + ts.tv_nsec / 1000000000L;
+   ts.tv_nsec %= 1000000000L;
+   for (;;)
+   {
+      if (host_sem_timedwait(&g_done, &ts) == 0)
+         return 1;
+      if (errno != EINTR)
+         return 0;
+   }
+}
+/* A twin's test of the bounded wait (app_tests.py "stall"): the thread
+ * sleeps GBADHOC_STALL_MS before each picture, as one the system has not
+ * scheduled would.  Never built into the VPK. */
+static void rt_stall(void)
+{
+   static int ms = -1, left = 30;      /* the first 30 pictures */
+   if (ms < 0)
+   {
+      const char *e = getenv("GBADHOC_STALL_MS");
+      ms = e ? atoi(e) : 0;
+   }
+   if (ms > 0 && left-- > 0)
+      usleep((useconds_t)ms * 1000u);
+}
 
 void rt_shutdown(void)
 {
+   rt_wide_restore();
    if (!g_ready)
       return;
    g_quit = 1;
-   sem_post(&g_go);
+   host_sem_post(&g_go);
    pthread_join(g_th, NULL);
    g_ready = 0;
 }
 #endif
 
+/* The wait for the thread's picture is bounded.  50 ms: the picture is 2-6 ms
+ * of work, so one not finished after three refreshes means the thread has
+ * lost its core (the system's, or a sibling helper's); the emulator's own
+ * frame is then shown with the last whole picture of the thread's -- one
+ * repeated frame -- and the late one is collected when it lands, instead of
+ * the game, its sound and its input stopping for as long as the other core
+ * takes. */
+#define RT_WAIT_US 50000u
+
+/* The thread's picture, if it is done: 1 collected, 0 not yet (counted). */
+static int rt_collect(unsigned us)
+{
+   if (!g_posted)
+      return 1;
+   if (!rt_wait_to(us))
+   {
+      g_timeouts++;
+      /* On the extra core, a thread that does not answer is the system
+       * taking the core back: say so, and the thread is moved to the user
+       * cores (handoff_glue.cpp), where it finishes this picture. */
+      if (__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST) >= 0 &&
+          core4_mark_lost("render thread stalled"))
+         __atomic_store_n(&g_wd, -1, __ATOMIC_SEQ_CST);
+      return 0;
+   }
+   g_posted = 0;
+   g_last = g_cur;                    /* whole now; the thread draws the other */
+   g_cur ^= 1;
+   return 1;
+}
+
 /* ---- the frame ----------------------------------------------------------------- */
 
 void rt_frame_begin(int mode)
 {
-   if (g_posted)                      /* (a frame end that never came) */
+   if (g_posted)                      /* (a frame end that never came, or a late picture) */
    {
-      rt_wait();
-      g_posted = 0;
+      if (rt_collect(RT_WAIT_US))
+         g_late = 0;
+      else
+         g_late = 1;
    }
    if (mode && !g_ready && !g_failed)
    {
@@ -212,6 +320,34 @@ void rt_frame_begin(int mode)
     * core drew itself, line by line) */
    if (!g_ready || (wide_margin && wide_selftest))
       mode = RT_OFF;
+   if (wide_pixels && wide_pixels != g_wide_out)
+      g_wide_orig = wide_pixels;
+   if (mode != RT_ON || !wide_margin || wide_margin != g_wide_margin)
+   {
+      const int last_in_out = g_wide_last == g_wide_out;
+      rt_wide_restore();
+      if (mode == RT_ON && wide_margin && !last_in_out)
+         memset(g_wide_out, 0, sizeof(g_wide_out));
+      g_wide_margin = mode == RT_ON ? wide_margin : 0;
+   }
+   else if (g_wide_valid && wide_pixels == g_wide_last)
+   {
+      /* wide.c (wide_apply) reset wide_pixels back to wide_buf while it held
+       * the previous completed frame; move drawing to the spare buffer so
+       * g_wide_last (and g_last.pix / g_show.pix) is never overwritten in place. */
+      if (g_wide_last == g_wide_out)
+      {
+         if (g_wide_orig)
+            wide_pixels = g_wide_orig;
+         else
+         {
+            g_wide_valid = 0;
+            g_wide_last = NULL;
+         }
+      }
+      else
+         wide_pixels = g_wide_out;
+   }
    if (mode == g_mode)
       return;
    /* The renderer that takes over has not seen the objects move: its
@@ -244,6 +380,13 @@ void gpsp_visible_done_hook(void)
    unsigned t0;
    if (!g_mode || skip_next_frame || g_posted)
       return;
+   /* A boot that starts on a late line (cpu.cc) has no whole first
+    * frame: lines 0..start-1 were never captured, so the thread would
+    * draw them from empty registers.  That one partial picture is not
+    * handed over (the next frame is whole). */
+   if (!g_cap.line0_seen)
+      return;
+   g_cap.line0_seen = 0;
    t0 = pspcompat_time_us();
    /* VRAM: the pages written since the last copy (every path that writes
     * VRAM marks its page: the C stores, DMA, a state loaded, and the code
@@ -282,6 +425,37 @@ void gpsp_visible_done_hook(void)
    rt_post();
 }
 
+static const uint16_t *rt_stale_return(const uint16_t *pix, int mode,
+                                       int allow_compose)
+{
+   if (!pix || mode != RT_ON)
+      return pix;
+   if (wide_margin && wide_pixels && pix == wide_pixels)
+   {
+      if (g_wide_valid && g_wide_last)
+         return g_wide_last;
+      if (allow_compose && g_drawn)
+      {
+         u16 *done_buf = wide_pixels;
+         if (done_buf != g_wide_out)
+            g_wide_orig = done_buf;
+         wide_compose(g_out[g_last]);
+         g_wide_last = done_buf;
+         g_wide_valid = 1;
+         if (done_buf == g_wide_out)
+         {
+            if (g_wide_orig)
+               wide_pixels = g_wide_orig;
+         }
+         else
+            wide_pixels = g_wide_out;
+         return done_buf;
+      }
+      return NULL;
+   }
+   return g_out[g_last];
+}
+
 const uint16_t *rt_frame_end(const uint16_t *pix)
 {
    const u16 *out;
@@ -289,18 +463,37 @@ const uint16_t *rt_frame_end(const uint16_t *pix)
    const int mode = g_mode;
 
    if (!g_posted)
+   {
+      if (mode == RT_ON && wide_margin && wide_pixels && pix == wide_pixels)
+         return rt_stale_return(pix, mode, 0);
       return pix;
+   }
+   /* A picture from an earlier frame is still being drawn, and this
+    * frame was not given to the thread (the hook saw it busy): the last
+    * whole picture is shown again.  (With the core drawing too, mode 2,
+    * its own is as good and is not touched.) */
    t0 = pspcompat_time_us();
-   rt_wait();
-   g_posted = 0;
+   if (g_late)
+   {
+      if (rt_collect(RT_WAIT_US))
+         g_late = 0;
+      g_stale++;
+      return rt_stale_return(pix, mode, 0);
+   }
+   if (!rt_collect(RT_WAIT_US))
+   {
+      g_late = 1;
+      g_stale++;
+      g_wait_us += pspcompat_time_us() - t0;
+      return rt_stale_return(pix, mode, 1);
+   }
    dt = pspcompat_time_us() - t0;
    g_wait_us += dt;
    if (dt > g_wait_max_us)
       g_wait_max_us = dt;
    g_frames++;
    g_drawn++;
-   out = g_out[g_cur];
-   g_cur ^= 1;
+   out = g_out[g_last];
    if (!pix)
       return pix;
    if (mode == RT_CHECK)
@@ -331,11 +524,25 @@ const uint16_t *rt_frame_end(const uint16_t *pix)
       return pix;
    }
    /* The wide view: the margins were drawn as the lines went by; the
-    * middle goes in between them now (video.h wide_compose). */
+    * middle goes in between them now (video.h wide_compose).  Ping-pong
+    * wide_pixels between the core's buffer and g_wide_out so the completed
+    * frame stays intact for stale returns without a 95 KiB Core-0 memcpy. */
    if (wide_margin && wide_pixels && pix == wide_pixels)
    {
+      u16 *done_buf = wide_pixels;
+      if (done_buf != g_wide_out)
+         g_wide_orig = done_buf;
       wide_compose(out);
-      return pix;
+      g_wide_last = done_buf;
+      g_wide_valid = 1;
+      if (done_buf == g_wide_out)
+      {
+         if (g_wide_orig)
+            wide_pixels = g_wide_orig;
+      }
+      else
+         wide_pixels = g_wide_out;
+      return done_buf;
    }
    /* (anything else the core hands over -- a post-processing pass of its
     * own, which this app does not use -- was made from a picture the core
@@ -346,6 +553,15 @@ const uint16_t *rt_frame_end(const uint16_t *pix)
 void rt_stats(rt_stats_t *out)
 {
    const unsigned n = g_frames;
+   /* The bounded wait's census (once a window): waits that ran out, and
+    * the frames shown with the thread's last whole picture because of it. */
+   if (g_ready)
+   {
+      static unsigned last_to;
+      fe_evt("vita_rt_waits timeouts=%u window=%u stale_frames=%u limit_us=%u",
+             g_timeouts, g_timeouts - last_to, g_stale, RT_WAIT_US);
+      last_to = g_timeouts;
+   }
    memset(out, 0, sizeof(*out));
    out->frames = n;
    if (n)

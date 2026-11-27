@@ -30,6 +30,9 @@ extern "C" {
  * up for the life of the program: it costs the pool and nothing else. */
 int  net_vita_init(void);
 void net_vita_term(void);                 /* at exit, after every release */
+/* 16 bytes of real randomness (the console's RNG; /dev/urandom on the
+ * twin): online play's transaction ids, cookies and room tokens come from it. */
+void net_vita_entropy(uint8_t out[16]);
 uint32_t net_vita_last_sce_error(void);
 
 /* ---- Wi-Fi (infrastructure) state ------------------------------------------ */
@@ -95,6 +98,13 @@ int  net_vita_bulk_send(const uint8_t mac[6], const void *buf, size_t len);
 int  net_vita_bulk_recv(void *buf, size_t cap);
 /* Datagrams waiting for the pump (telemetry: EVT gblink_win rxq_max). */
 unsigned net_vita_rx_depth(void);
+
+/* ---- is a link session up? (link_vita.c) -----------------------------------
+ * 1 from the moment the partner has arrived until the session is gone; 0
+ * while a host only waits.  For whoever should keep off the radio and the
+ * card meanwhile: cover-art fetching (artfetch_pause) and the achievements'
+ * web requests.  Cheap; the main thread. */
+int link_is_active(void);
 
 /* ---- ARQ timing per kind of link --------------------------------------------
  * netdrv's timers are per session (nd_config); frontend-common exposes two

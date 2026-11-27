@@ -10,8 +10,13 @@
 #include "snes9x.h"
 #include "ppu.h"
 #include "tile.h"
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 extern struct SLineMatrixData	LineMatrixData[240];
+extern int g_wide_on, g_wide_dx;	// CBOC-Vita: wide view pass (gfx.cpp)
+extern int g_s9x_fastpix;			// CBOC-Vita: 1 = the exact fast pixel paths (default; host option "fast_pixels"), 0 = the per-pixel reference paths (globals.cpp: one copy shared by the renderer copies)
 
 
 namespace TileImpl {
@@ -172,6 +177,9 @@ namespace TileImpl {
 	{
 		enum { None = 1, Vec = 0 };
 		static alwaysinline void CalcRow8(const PixCtx &c, const uint32 *main8, uint32 Offset, uint16 *out) {}
+#if S9X_NEON_RGB565
+		static alwaysinline uint16x8_t CalcRow8V16(const PixCtx &c, uint16x8_t main8, uint32 Offset) { (void) c; (void) Offset; return main8; }
+#endif
 		static alwaysinline uint16 Calc(const PixCtx &c, uint16 Main, uint16 Sub, uint8 SD)
 		{
 			return Main;
@@ -188,23 +196,61 @@ namespace TileImpl {
 		{
 			return Op::fn(Main, (SD & 0x20) ? Sub : c.FixedColour);
 		}
+#if S9X_NEON_RGB565
+		// eight RGB565 pixels at once in 16-bit NEON lanes (no widen/narrow, no stack spill)
+		static alwaysinline uint16x8_t CalcRow8V16(const PixCtx &c, uint16x8_t main8, uint32 Offset)
+		{
+			uint64 sz64;
+			memcpy(&sz64, c.SubZ + Offset, 8);
+			const uint64 szm = sz64 & 0x2020202020202020ULL;
+			if (szm == 0)
+				return Op::fnV16(main8, vdupq_n_u16((uint16) c.FixedColour));
+			const uint16x8_t sub = vld1q_u16(c.SubScreen + Offset);
+			if (szm == 0x2020202020202020ULL)
+				return Op::fnV16(main8, sub);
+			const uint8x8_t m8 = vtst_u8(vcreate_u8(sz64), vdup_n_u8(0x20));
+			const uint16x8_t sel = vreinterpretq_u16_s16(vmovl_s8(vreinterpret_s8_u8(m8)));
+			return Op::fnV16(main8, vbslq_u16(sel, sub, vdupq_n_u16((uint16) c.FixedColour)));
+		}
+#endif
 		// eight pixels at once: the same as Calc() for each (out[i] = Calc(main8[i], SubScreen[Offset+i], SubZ[Offset+i]))
 		static alwaysinline void CalcRow8(const PixCtx &c, const uint32 *main8, uint32 Offset, uint16 *out)
 		{
-			uint32 other[8];
-			for (int i = 0; i < 8; i++)
-				other[i] = (c.SubZ[Offset + i] & 0x20) ? c.SubScreen[Offset + i] : (uint32) c.FixedColour;
-			uint32 res[8];
+			// four lanes a step: other = (SubZ & 0x20) ? SubScreen : FixedColour, the same bit for bit as the scalar form
+#if defined(__ARM_NEON)
+			// the generic vector form widens the four SubZ bytes through the stack on the Vita's compiler (scalar loads and stores); the same steps in NEON
+			const uint32x4_t fixedq = vdupq_n_u32(c.FixedColour);
 			for (int h = 0; h < 8; h += 4)
 			{
-				s9x_v4u a, b, r;
-				memcpy(&a, main8 + h, 16);
-				memcpy(&b, other + h, 16);
-				r = Op::fnV(a, b);
-				memcpy(res + h, &r, 16);
+				uint32 zw;
+				memcpy(&zw, c.SubZ + Offset + h, 4);
+				const uint32x4_t zz = vmovl_u16(vget_low_u16(vmovl_u8(vreinterpret_u8_u32(vdup_n_u32(zw)))));
+				const uint32x4_t ss = vmovl_u16(vld1_u16(c.SubScreen + Offset + h));
+				const uint32x4_t sel = vtstq_u32(zz, vdupq_n_u32(0x20u));
+				const uint32x4_t other = vbslq_u32(sel, ss, fixedq);
+				const s9x_v4u r = Op::fnV((s9x_v4u) vld1q_u32(main8 + h), (s9x_v4u) other);
+				vst1_u16(out + h, vmovn_u32((uint32x4_t) r));
 			}
-			for (int i = 0; i < 8; i++)
-				out[i] = (uint16) res[i];
+#else
+			typedef uint8 v4u8 __attribute__((vector_size(4)));
+			typedef uint16 v4u16 __attribute__((vector_size(8)));
+			const s9x_v4u fixed = { c.FixedColour, c.FixedColour, c.FixedColour, c.FixedColour };
+			for (int h = 0; h < 8; h += 4)
+			{
+				v4u8 z8;
+				v4u16 s16;
+				memcpy(&z8, c.SubZ + Offset + h, 4);
+				memcpy(&s16, c.SubScreen + Offset + h, 8);
+				const s9x_v4u zz = __builtin_convertvector(z8, s9x_v4u);
+				const s9x_v4u ss = __builtin_convertvector(s16, s9x_v4u);
+				const s9x_v4u sel = (s9x_v4u) ((zz & 0x20u) != 0u);
+				const s9x_v4u other = (ss & sel) | (fixed & ~sel);
+				s9x_v4u a;
+				memcpy(&a, main8 + h, 16);
+				const v4u16 o = __builtin_convertvector(Op::fnV(a, other), v4u16);
+				memcpy(out + h, &o, 8);
+			}
+#endif
 		}
 		// the result for a pixel whose sub-screen flag (SD & 0x20) is clear: independent of the sub-screen pixel
 		static alwaysinline uint16 CalcConst(const PixCtx &c, uint16 Main) { return Op::fn(Main, c.FixedColour); }
@@ -216,8 +262,16 @@ namespace TileImpl {
 	template<class Op>
 	struct MATHF1_2
 	{
-		enum { None = 0, Vec = 0 };
+		enum { None = 0, Vec = Op::Vec16 };
 		static alwaysinline void CalcRow8(const PixCtx &c, const uint32 *main8, uint32 Offset, uint16 *out) {}
+#if S9X_NEON_RGB565
+		static alwaysinline uint16x8_t CalcRow8V16(const PixCtx &c, uint16x8_t main8, uint32 Offset)
+		{
+			(void) Offset;
+			const uint16x8_t fixed = vdupq_n_u16((uint16) c.FixedColour);
+			return c.ClipColors ? Op::fnV16(main8, fixed) : Op::fn1_2V16(main8, fixed);
+		}
+#endif
 		static alwaysinline uint16 Calc(const PixCtx &c, uint16 Main, uint16 Sub, uint8 SD)
 		{
 			return c.ClipColors ? Op::fn(Main, c.FixedColour) : Op::fn1_2(Main, c.FixedColour);
@@ -230,8 +284,27 @@ namespace TileImpl {
 	template<class Op>
 	struct MATHS1_2
 	{
-		enum { None = 0, Vec = 0 };
+		enum { None = 0, Vec = Op::Vec16 };
 		static alwaysinline void CalcRow8(const PixCtx &c, const uint32 *main8, uint32 Offset, uint16 *out) {}
+#if S9X_NEON_RGB565
+		static alwaysinline uint16x8_t CalcRow8V16(const PixCtx &c, uint16x8_t main8, uint32 Offset)
+		{
+			uint64 sz64;
+			memcpy(&sz64, c.SubZ + Offset, 8);
+			const uint64 szm = sz64 & 0x2020202020202020ULL;
+			if (szm == 0)
+				return Op::fnV16(main8, vdupq_n_u16((uint16) c.FixedColour));
+			const uint16x8_t sub = vld1q_u16(c.SubScreen + Offset);
+			if (szm == 0x2020202020202020ULL)
+				return c.ClipColors ? Op::fnV16(main8, sub) : Op::fn1_2V16(main8, sub);
+			const uint8x8_t m8 = vtst_u8(vcreate_u8(sz64), vdup_n_u8(0x20));
+			const uint16x8_t sel = vreinterpretq_u16_s16(vmovl_s8(vreinterpret_s8_u8(m8)));
+			const uint16x8_t fixed = vdupq_n_u16((uint16) c.FixedColour);
+			if (c.ClipColors)
+				return Op::fnV16(main8, vbslq_u16(sel, sub, fixed));
+			return vbslq_u16(sel, Op::fn1_2V16(main8, sub), Op::fnV16(main8, fixed));
+		}
+#endif
 		static alwaysinline uint16 Calc(const PixCtx &c, uint16 Main, uint16 Sub, uint8 SD)
 		{
 			return c.ClipColors ? REGMATH<Op>::Calc(c, Main, Sub, SD) : (SD & 0x20) ? Op::fn1_2(Main, Sub) : Op::fn(Main, c.FixedColour);
@@ -319,13 +392,62 @@ namespace TileImpl {
 			uint16 *sp = ctx.S + Offset;
 			if (PIXEL::math_t::Vec && m == hi)
 			{
-				// a whole row with plain add / subtract maths: four pixels per vector operation
+				// a whole row with plain add / subtract / half-add / half-subtract maths
+#if S9X_NEON_RGB565
+				const uint16 *sc = ctx.ScreenColors;
+				const uint32 p_lo = (uint32) pix;
+				const uint32 p_hi = (uint32) (pix >> 32);
+				const uint32 w0 = (uint32) sc[p_lo & 0xff] | ((uint32) sc[(p_lo >> 8) & 0xff] << 16);
+				const uint32 w1 = (uint32) sc[(p_lo >> 16) & 0xff] | ((uint32) sc[p_lo >> 24] << 16);
+				const uint32 w2 = (uint32) sc[p_hi & 0xff] | ((uint32) sc[(p_hi >> 8) & 0xff] << 16);
+				const uint32 w3 = (uint32) sc[(p_hi >> 16) & 0xff] | ((uint32) sc[p_hi >> 24] << 16);
+				const uint16x8_t main8 = vcombine_u16(
+					vcreate_u16((uint64) w0 | ((uint64) w1 << 32)),
+					vcreate_u16((uint64) w2 | ((uint64) w3 << 32)));
+				vst1q_u16(sp, PIXEL::math_t::CalcRow8V16(ctx, main8, Offset));
+#else
 				uint32 mc[8];
 				for (int i = 0; i < 8; i++)
 					mc[i] = ctx.ScreenColors[(pix >> (8 * i)) & 0xff];
 				PIXEL::math_t::CalcRow8(ctx, mc, Offset, sp);
+#endif
 				const uint64 zz = (uint64) z2 * ones;
 				memcpy(ctx.DB + Offset, &zz, 8);
+			}
+			else if (PIXEL::math_t::Vec && __atomic_load_n(&g_s9x_fastpix, __ATOMIC_RELAXED) && ({ uint64 t3 = m & (m - 1); t3 &= t3 - 1; t3 != 0; }))
+			{
+				// a mixed row with plain add / subtract / half-add / half-subtract maths: the maths is a pure function
+				// of the pixel's colour and the sub screen at that position, so it is done for all eight lanes at once
+				// and only the drawn lanes are kept
+#if S9X_NEON_RGB565
+				const uint16 *sc = ctx.ScreenColors;
+				const uint32 p_lo = (uint32) pix;
+				const uint32 p_hi = (uint32) (pix >> 32);
+				const uint32 w0 = (uint32) sc[p_lo & 0xff] | ((uint32) sc[(p_lo >> 8) & 0xff] << 16);
+				const uint32 w1 = (uint32) sc[(p_lo >> 16) & 0xff] | ((uint32) sc[p_lo >> 24] << 16);
+				const uint32 w2 = (uint32) sc[p_hi & 0xff] | ((uint32) sc[(p_hi >> 8) & 0xff] << 16);
+				const uint32 w3 = (uint32) sc[(p_hi >> 16) & 0xff] | ((uint32) sc[p_hi >> 24] << 16);
+				const uint16x8_t main8 = vcombine_u16(
+					vcreate_u16((uint64) w0 | ((uint64) w1 << 32)),
+					vcreate_u16((uint64) w2 | ((uint64) w3 << 32)));
+				const uint16x8_t res = PIXEL::math_t::CalcRow8V16(ctx, main8, Offset);
+				const uint8x8_t m8 = vreinterpret_u8_s8(vshr_n_s8(vreinterpret_s8_u8(vcreate_u8(m)), 7));
+				const uint16x8_t m16 = vreinterpretq_u16_s16(vmovl_s8(vreinterpret_s8_u8(m8)));
+				vst1q_u16(sp, vbslq_u16(m16, res, vld1q_u16(sp)));
+				vst1_u8(ctx.DB + Offset, vbsl_u8(m8, vdup_n_u8(z2), vcreate_u8(db)));
+#else
+				uint32 mc[8];
+				uint16 res[8];
+				for (int i = 0; i < 8; i++)
+					mc[i] = ctx.ScreenColors[(pix >> (8 * i)) & 0xff];
+				PIXEL::math_t::CalcRow8(ctx, mc, Offset, res);
+				do {
+					const int i = __builtin_ctzll(m) >> 3;
+					sp[i] = res[i];
+					ctx.DB[Offset + i] = z2;
+					m &= m - 1;
+				} while (m);
+#endif
 			}
 			else if (PIXEL::Fill && m == hi)
 			{
@@ -662,6 +784,25 @@ namespace TileImpl {
 							continue;
 						}
 					}
+					if (PIXEL::math_t::Vec && PIXEL::Step == 1 && v0 == 0)
+					{
+						// CBOC-Vita: plain add / subtract / half-add / half-subtract maths on a group nothing has drawn on yet and
+						// that is not uniform (the sub screen shows through some of it): the eight results by the vector form (the
+						// same values as Calc() per pixel, as in DrawRow8). Same pixels, same depth as DRAW_PIXEL(x, 1).
+#if S9X_NEON_RGB565
+						vst1q_u16(ctx.S + Offset + x, PIXEL::math_t::CalcRow8V16(ctx, vdupq_n_u16(ctx.ScreenColors[0]), Offset + x));
+#else
+						uint32 mc[8];
+						const uint32 c0 = ctx.ScreenColors[0];
+						for (int i = 0; i < 8; i++)
+							mc[i] = c0;
+						PIXEL::math_t::CalcRow8(ctx, mc, Offset + x, ctx.S + Offset + x);
+#endif
+						const uint64 ones = 0x0101010101010101ULL;
+						memcpy(ctx.DB + Offset + x, &ones, 8);
+						x += Group;
+						continue;
+					}
 					for (uint32 xe = x + Group; x < xe; x++)
 						DRAW_PIXEL(x, 1);
 				}
@@ -684,6 +825,9 @@ namespace TileImpl {
 	//     MASK is 0xff or 0x7f, the 'color' portion of the pixel.
 	// We define Z1/Z2 to either be constant 5 or to vary depending on the 'priority' portion of the pixel.
 
+	typedef int s9x_v4i __attribute__((vector_size(16)));
+	enum { Mode7Chunk = 128 };
+
 	#define CLIP_10_BIT_SIGNED(a)	(((a) & 0x2000) ? ((a) | ~0x3ff) : ((a) & 0x3ff))
 
 	#define DRAW_PIXEL(N, M) PIXEL::Draw(ctx, N, M, Offset, OffsetInLine, Pix, OP::Z1(D, b), OP::Z2(D, b))
@@ -692,7 +836,8 @@ namespace TileImpl {
 	{
 		enum {
 			MASK = 0xff,
-			BG   = 0
+			BG   = 0,
+			VARZ = 0		// the depth is the same for every pixel of the BG
 		};
 		static uint8 Z1(int D, uint8 b) { return D + 7; }
 		static uint8 Z2(int D, uint8 b) { return D + 7; }
@@ -702,7 +847,8 @@ namespace TileImpl {
 	{
 		enum {
 			MASK = 0x7f,
-			BG   = 1
+			BG   = 1,
+			VARZ = 1		// the depth depends on the pixel's priority bit
 		};
 		static uint8 Z1(int D, uint8 b) { return D + ((b & 0x80) ? 11 : 3); }
 		static uint8 Z2(int D, uint8 b) { return D + ((b & 0x80) ? 11 : 3); }
@@ -758,13 +904,15 @@ namespace TileImpl {
 
 				if (PPU.Mode7HFlip)
 				{
-					startx = Right - 1;
+					// CBOC-Vita: g_wide_on is 1 only during the wide view's margin pass, which maps buffer column x to
+					// screen x + g_wide_dx (the flip is about the 256 pixel screen)
+					startx = g_wide_on ? 255 - ((int) Left + g_wide_dx) : Right - 1;
 					aa = -l->MatrixA;
 					cc = -l->MatrixC;
 				}
 				else
 				{
-					startx = Left;
+					startx = g_wide_on ? (int) Left + g_wide_dx : Left;
 					aa = l->MatrixA;
 					cc = l->MatrixC;
 				}
@@ -774,6 +922,100 @@ namespace TileImpl {
 				int	CC = l->MatrixC * startx + ((l->MatrixC * xx) & ~63);
 
 				uint8	Pix;
+
+				if (PIXEL::Step == 1 && !OP::VARZ && __atomic_load_n(&g_s9x_fastpix, __ATOMIC_RELAXED))
+				{
+					// CBOC-Vita: the line in two steps. First the pixel bytes of the line are fetched into a buffer (a pixel the
+					// loop below would skip, outside the plane with repeat off, is a 0 byte, which it skips as well), then
+					// the buffer is drawn eight pixels at a time by DrawRow8, which does what the per-pixel plotter does
+					// (same depth test, same colour maths, same stores). Same pixels, same depth, far fewer instructions.
+					const uint8 z = (uint8) (D + 7);
+					const uint8 rep = PPU.Mode7Repeat;
+					uint8 pb[Mode7Chunk + 8];	// + the up to three extra pixels of the last vector step
+					for (uint32 x0 = Left; x0 < Right; x0 += Mode7Chunk)
+					{
+						const uint32 n = (Right - x0) < Mode7Chunk ? (Right - x0) : Mode7Chunk;
+						// the plane position of a pixel is linear in its index, so when the first and the last pixel of the run are
+						// inside the plane (or the plane wraps) every pixel is: no per-pixel range test then
+						const int A0 = AA + BB, C0 = CC + DD;
+						const int Xa = A0 >> 8, Ya = C0 >> 8;
+						const int Xb = (A0 + (int) (n - 1) * aa) >> 8, Yb = (C0 + (int) (n - 1) * cc) >> 8;
+						if (!rep || (((Xa | Ya | Xb | Yb) & ~0x3ff) == 0))
+						{
+#if defined(__arm__) && !defined(__aarch64__)
+							// On Cortex-A9 (Vita), NEON->ARM lane transfer stalls ~20 cycles per 4 pixels;
+							// keep coordinate stepping in ARM GPRs, 4x unrolled, with BB/DD pre-folded into A0/C0.
+							int A2 = A0, C2 = C0;
+							uint32 i = 0;
+							for (; i + 4 <= n; i += 4)
+							{
+								const int X0 = (A2 >> 8) & 0x3ff, Y0 = (C2 >> 8) & 0x3ff; A2 += aa; C2 += cc;
+								const int X1 = (A2 >> 8) & 0x3ff, Y1 = (C2 >> 8) & 0x3ff; A2 += aa; C2 += cc;
+								const int X2 = (A2 >> 8) & 0x3ff, Y2 = (C2 >> 8) & 0x3ff; A2 += aa; C2 += cc;
+								const int X3 = (A2 >> 8) & 0x3ff, Y3 = (C2 >> 8) & 0x3ff; A2 += aa; C2 += cc;
+								pb[i]     = VRAM1[(VRAM0[((Y0 & ~7) << 5) + ((X0 >> 2) & ~1)] << 7) + ((Y0 & 7) << 4) + ((X0 & 7) << 1)] & OP::MASK;
+								pb[i + 1] = VRAM1[(VRAM0[((Y1 & ~7) << 5) + ((X1 >> 2) & ~1)] << 7) + ((Y1 & 7) << 4) + ((X1 & 7) << 1)] & OP::MASK;
+								pb[i + 2] = VRAM1[(VRAM0[((Y2 & ~7) << 5) + ((X2 >> 2) & ~1)] << 7) + ((Y2 & 7) << 4) + ((X2 & 7) << 1)] & OP::MASK;
+								pb[i + 3] = VRAM1[(VRAM0[((Y3 & ~7) << 5) + ((X3 >> 2) & ~1)] << 7) + ((Y3 & 7) << 4) + ((X3 & 7) << 1)] & OP::MASK;
+							}
+							for (; i < n; i++, A2 += aa, C2 += cc)
+							{
+								const int X = (A2 >> 8) & 0x3ff, Y = (C2 >> 8) & 0x3ff;
+								pb[i] = VRAM1[(VRAM0[((Y & ~7) << 5) + ((X >> 2) & ~1)] << 7) + ((Y & 7) << 4) + ((X & 7) << 1)] & OP::MASK;
+							}
+#else
+							// four pixels a step: the plane coordinates and the two byte addresses are made as vectors, the two
+							// loads are scalar. A run is rounded up to four pixels: the extra ones read inside VRAM (the
+							// coordinates are masked to the plane) and are never drawn
+							const s9x_v4i lane = { 0, 1, 2, 3 };
+							s9x_v4i Av = A0 + lane * aa, Cv = C0 + lane * cc;
+							const s9x_v4i sa = { 4 * aa, 4 * aa, 4 * aa, 4 * aa }, sc = { 4 * cc, 4 * cc, 4 * cc, 4 * cc };
+							for (uint32 i = 0; i < n; i += 4)
+							{
+								const s9x_v4i X = (Av >> 8) & 0x3ff;
+								const s9x_v4i Y = (Cv >> 8) & 0x3ff;
+								const s9x_v4i a1 = ((Y & ~7) << 5) + ((X >> 2) & ~1);
+								const s9x_v4i a2 = ((Y & 7) << 4) + ((X & 7) << 1);
+								int ia[4], ib[4];
+								memcpy(ia, &a1, 16);
+								memcpy(ib, &a2, 16);
+								pb[i]     = VRAM1[(VRAM0[ia[0]] << 7) + ib[0]] & OP::MASK;
+								pb[i + 1] = VRAM1[(VRAM0[ia[1]] << 7) + ib[1]] & OP::MASK;
+								pb[i + 2] = VRAM1[(VRAM0[ia[2]] << 7) + ib[2]] & OP::MASK;
+								pb[i + 3] = VRAM1[(VRAM0[ia[3]] << 7) + ib[3]] & OP::MASK;
+								Av += sa; Cv += sc;
+							}
+#endif
+						}
+						else
+						{
+							int A2 = A0, C2 = C0;
+							for (uint32 i = 0; i < n; i++, A2 += aa, C2 += cc)
+							{
+								const int X = A2 >> 8;
+								const int Y = C2 >> 8;
+								uint8 b;
+								if (((X | Y) & ~0x3ff) == 0)
+								{
+									const uint8 *TileData = VRAM1 + (VRAM0[((Y & ~7) << 5) + ((X >> 2) & ~1)] << 7);
+									b = *(TileData + ((Y & 7) << 4) + ((X & 7) << 1));
+								}
+								else if (rep == 3)
+									b = *(VRAM1 + ((Y & 7) << 4) + ((X & 7) << 1));
+								else
+									b = 0;
+								pb[i] = b & OP::MASK;
+							}
+						}
+						AA += (int) n * aa; CC += (int) n * cc;
+						uint32 i = 0;
+						for (; i + 8 <= n; i += 8)
+							DrawRow8<PIXEL, false>(ctx, pb + i, Offset + x0 + i, OffsetInLine, z, z);
+						for (; i < n; i++)
+							PIXEL::Draw(ctx, x0 + i, pb[i], Offset, OffsetInLine, pb[i], z, z);
+					}
+					continue;
+				}
 
 				if (!PPU.Mode7Repeat)
 				{
@@ -856,9 +1098,28 @@ namespace TileImpl {
 			if (PPU.BGMosaic[OP::BG])
 			{
 				HMosaic = PPU.Mosaic;
-				MLeft  -= MLeft  % HMosaic;
-				MRight += HMosaic - 1;
-				MRight -= MRight % HMosaic;
+				if (g_wide_on)
+				{
+					int32 sL = (int32) Left + g_wide_dx;
+					int32 sR = (int32) Right + g_wide_dx;
+					int32 rL = sL % HMosaic;
+					if (rL < 0)
+						rL += HMosaic;
+					sL -= rL;
+					sR += HMosaic - 1;
+					int32 rR = sR % HMosaic;
+					if (rR < 0)
+						rR += HMosaic;
+					sR -= rR;
+					MLeft  = sL - g_wide_dx;
+					MRight = sR - g_wide_dx;
+				}
+				else
+				{
+					MLeft  -= MLeft  % HMosaic;
+					MRight += HMosaic - 1;
+					MRight -= MRight % HMosaic;
+				}
 			}
 
 			uint32	Offset = StartY * GFX.PPL;
@@ -890,13 +1151,13 @@ namespace TileImpl {
 
 				if (PPU.Mode7HFlip)
 				{
-					startx = MRight - 1;
+					startx = g_wide_on ? 255 - ((int) MLeft + g_wide_dx) : MRight - 1;
 					aa = -l->MatrixA;
 					cc = -l->MatrixC;
 				}
 				else
 				{
-					startx = MLeft;
+					startx = g_wide_on ? (int) MLeft + g_wide_dx : MLeft;
 					aa = l->MatrixA;
 					cc = l->MatrixC;
 				}
@@ -927,7 +1188,8 @@ namespace TileImpl {
 							for (int32 h = MosaicStart; h < VMosaic; h++)
 							{
 								for (int32 w = x + HMosaic - 1; w >= x; w--)
-									DRAW_PIXEL(w + h * GFX.PPL, (w >= (int32) Left && w < (int32) Right));
+									if (w >= (int32) Left && w < (int32) Right)
+										DRAW_PIXEL(w + h * GFX.PPL, 1);
 							}
 						}
 					}
@@ -961,7 +1223,8 @@ namespace TileImpl {
 							for (int32 h = MosaicStart; h < VMosaic; h++)
 							{
 								for (int32 w = x + HMosaic - 1; w >= x; w--)
-									DRAW_PIXEL(w + h * GFX.PPL, (w >= (int32) Left && w < (int32) Right));
+									if (w >= (int32) Left && w < (int32) Right)
+										DRAW_PIXEL(w + h * GFX.PPL, 1);
 							}
 						}
 					}

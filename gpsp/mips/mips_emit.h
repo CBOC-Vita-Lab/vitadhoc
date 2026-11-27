@@ -3019,6 +3019,10 @@ void init_emitter(bool must_swap) {
   int i;
   /* must_swap is unused on MIPS (see x86_emit.h for context). */
   (void)must_swap;
+  /* the .S lays spsr (u32[16]) and reg_mode (u32[7][7]) out by hand */
+  GPSP_REGBLOCK_EXPECT("mips", spsr, reg, 0xD00);         /* SPSR_BASE */
+  GPSP_REGBLOCK_EXPECT("mips", reg_mode, spsr, sizeof(spsr));
+  GPSP_REGBLOCK_EXPECT("mips", tmemld, reg_mode, sizeof(reg_mode)); /* FNPTRS_MEMOPS */
   // Initialize memory to a debuggable state
   rom_cache_watermark = INITIAL_ROM_WATERMARK;
 

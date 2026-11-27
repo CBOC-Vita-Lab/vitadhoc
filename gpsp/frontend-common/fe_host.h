@@ -75,13 +75,18 @@ typedef struct fe_host_config
     * clock (base + emulated frames).  0 = the cartridge clock follows
     * gpsp_wallclock, the console's own clock (gba_memory.c, rtc_clock.h). */
    int gba_rtc_frames_only;
-   /* GB/GBC only: the DMG palette, a GBCORE_PALETTE_* id (0 = Auto: Super
-    * Game Boy colours where the game has them, grey otherwise). */
+   /* GB/GBC only: the DMG palette, a GBCORE_PALETTE_* id (the default is
+    * GBC auto, the Game Boy Color's colours for each game; 0 = Super Game
+    * Boy colours where the game has them, grey otherwise). */
    int gb_palette;
    /* GBC only: 1 = show CGB colours raw (the 5-to-8-bit expansion); 0, the
     * default, = through the Game Boy Color LCD model
     * (gbcore_set_color_correction; docs/GB-PALETTE-FIXES.md). */
    int gbc_raw_colors;
+   /* GB/GBC: 1 = the Accurate core (Gambatte) for this game, 0, the default, = Standard (TGB Dual).  A cartridge
+    * Accurate cannot run, a Super Game Boy game under the Super Game Boy palette and every cable session use
+    * Standard regardless (gbcore_mux.h). */
+   int gb_accurate;
    /* GB/GBC, harness measurement only (GPSP_PERF_RIG's `gb_dual_rom`): also
     * run this second cartridge headless beside the player's, interleaved
     * one scanline at a time with the cable wired -- the machine pair of a
@@ -331,6 +336,13 @@ void fe_host_cpu_stat(uint64_t *emu_ns, uint64_t *frames);
  * same contract as the core's own frameskip (video callback with NULL).
  * Used by the fast-forward draw gate (docs/FF-PRESETS.md); GBA and GB. */
 void fe_host_skip_override(int skip);
+/* Quick response (run-ahead by one frame): GB, GBC, NES, WonderSwan.  fe_host_ahead_possible: a machine that can, now (no link, no
+ * session).  fe_host_ahead_set(1): the next fe_host_run_frame runs the real frame undrawn, the next one drawn and silent, and puts
+ * the machine back (the picture shown is one frame ahead; sound, state, saves are as without it).  The caller keeps it off in
+ * fast forward, rewind and Steady pacing's half mode.  fe_host_ahead_stat: frames run ahead, and failed ones (0 expected). */
+int fe_host_ahead_possible(void);
+void fe_host_ahead_set(int want);
+void fe_host_ahead_stat(unsigned *frames, unsigned *fails);
 /* Emulation faults the core recovered from by resetting the game (a guest
  * jump to an address that is not code).  Monotonic; the UI toasts on change. */
 unsigned fe_host_guest_faults(void);
@@ -389,6 +401,19 @@ const uint16_t *fe_host_last_frame(size_t *pitch_bytes);
  * while a wireless session is active — RFU state is not serialized). */
 int fe_host_state_save(const char *path);
 int fe_host_state_load(const char *path);
+/* Save-state slots (a path ending .st0 .. .st9): a LOCK (<slot>.lock) makes
+ * fe_host_state_save refuse the slot; every save of a slot keeps the file it
+ * replaces as <slot>.bak (written by one rename: atomic), which
+ * fe_host_state_undo_save puts back (0 restored, 1 the slot is empty again,
+ * -1 nothing to undo, -2 failed).  The companions (.thumb .shot .meta) are
+ * moved aside by fe_host_state_keep_companions once the new state is on the
+ * card, and a delete drops the undo copy (fe_host_state_forget_undo). */
+int  fe_host_state_locked(const char *path);
+int  fe_host_state_set_lock(const char *path, int on);
+int  fe_host_state_undo_available(const char *path);
+int  fe_host_state_undo_save(const char *path);
+void fe_host_state_keep_companions(const char *path);
+void fe_host_state_forget_undo(const char *path);
 /* Restore a missing slot from an interrupted .old replacement. 0 = nothing
  * to recover, 1 = recovered, -1 = I/O/path failure. Call before UI slot stats. */
 int fe_host_state_recover(const char *path);
@@ -434,6 +459,16 @@ void     fe_host_battery_changed(void);
 void        fe_host_gb_palette_set(int id);
 int         fe_host_gb_palette_count(void);
 const char *fe_host_gb_palette_name(int id);
+/* The twelve colours (BG, OBJ0, OBJ1; RGB565) the picture shows with
+ * palette `id` (gbcore_palette_preview): the Settings row's live preview. */
+int         fe_host_gb_palette_preview(int id, uint16_t rgb565[12]);
+/* The Game Boy core.  fe_host_gb_accurate_running: the running game is on the Accurate core.  fe_host_gb_core_notice_take:
+ * 0, or once a reason the player is told: 1 = the game asked for Accurate and runs on Standard (a cartridge or colour
+ * mode Accurate does not do), 2 = a cable session took the game over on Standard.  fe_host_state_other_core_take: 1,
+ * once, after a state load that met the other core's image (states are not shared between the two). */
+int         fe_host_gb_accurate_running(void);
+int         fe_host_gb_core_notice_take(void);
+int         fe_host_state_other_core_take(void);
 
 /* CRC-compare the 128 KiB SRAM buffer and write the .sav if dirty.
  * force_write=1 writes even when clean (used by round-trip tests) AND
@@ -568,6 +603,26 @@ void fe_host_input_inject(uint32_t joypad_mask);
 unsigned fe_host_sensor_kinds(void);
 void fe_host_sensor_set(uint32_t reading);
 
+/* GAME BOY PRINTER (fe_gbprinter.h).  With no link partner the serial port
+ * has a printer on it while the setting is on (fe_host_gb_printer_set; on at
+ * the start of the process).  A finished strip waits for the platform:
+ * fe_host_gb_print_take returns it once (160 wide, one byte a pixel, 0 =
+ * paper .. 3 = darkest; valid until the next call) or NULL, and
+ * fe_host_gb_print_colours the four colours to print it in, lightest first
+ * (the game's palette, else grey). */
+void           fe_host_gb_printer_set(int on);
+const uint8_t *fe_host_gb_print_take(int *w, int *h);
+void           fe_host_gb_print_colours(uint32_t rgb[4]);
+
+/* GAME BOY CAMERA (gbcore.h gbcore_set_camera_image): whether the running
+ * game is a Game Boy Camera, and the platform's picture for it -- 128x112
+ * greyscale, published each frame while it is. */
+unsigned fe_host_gbcam_present(void);
+void     fe_host_gbcam_frame(const uint8_t *grey_128x112);
+/* Captures the camera game has started so far (only grows): the platform
+ * keeps a real camera running only while this changes. */
+unsigned fe_host_gbcam_requests(void);
+
 /* THE SUPER GAME BOY'S BORDER (gbcore.h gbcore_sgb_border): 0 = none (no GB
  * machine, a link session, not running as a Super Game Boy, nothing sent
  * yet), else a number that changes when it is drawn again, with *pixels the
@@ -642,6 +697,13 @@ int  fe_host_gblink_facts(struct fe_gblink_progress *out);
 /* 1 when this boot can start a GBA link-cable session (GBA_LINK builds:
  * instance B loaded for sessions, docs/GBA-LINK-MIRROR.md 14). */
 int  fe_host_gba_cable_ready(void);
+/* The NES / WonderSwan two-player link (frontend-common/fe_padpair.h): 1 when
+ * the running game is such a machine, no session runs and this build has the
+ * layer; fe_host_gblink_start then starts it.  fe_host_pad_game_id: the
+ * game's identity for a room, 8 uppercase hex digits (the core's CRC-32 of
+ * the cartridge), 0 / -1 when it is not such a game. */
+int  fe_host_pad_ready(void);
+int  fe_host_pad_game_id(char out[9]);
 /* GBA cable sessions identify the cartridge by sampled slices (default 1,
  * fe_gblink_local.rom_sampled); 0 = the streamed whole-file SHA-1.  Both
  * consoles must agree; harness A/B only. */

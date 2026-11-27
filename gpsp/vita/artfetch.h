@@ -56,6 +56,10 @@ void artfetch_focus(unsigned generation, const char *path, const char *name);
 /* 1 while a game runs: nothing is fetched (a download in the works is
  * abandoned). */
 void artfetch_pause(int on);
+/* 1 while the user is actively moving the menu cursor or loading the landed
+ * game's local art/metadata: yields background SD-card I/O without dropping
+ * the worker's HTTP connection or progress state. */
+void artfetch_nav_busy(int busy);
 
 /* Also each cartridge's title screen (libretro's Named_Titles) into
  * titles/<file name without extension>.png -- the home screen's picture for

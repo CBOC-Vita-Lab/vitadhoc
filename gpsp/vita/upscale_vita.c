@@ -6,14 +6,23 @@
 #include <string.h>
 
 #include "pspcompat.h"          /* pspcompat_time_us */
+#include "fe_evt.h"
+#include "handoff_glue.h"       /* core4_*: the fourth core */
+/* MMPX 2x (mmpx_vita.h) is compiled into this unit: the program's source
+ * lists (app.mk, the host twin's, tests/upscale) need no new file.  If
+ * mmpx_vita.c is ever listed there, drop this line. */
+#include "mmpx_vita.c"
 
 #ifdef __vita__
 #include <psp2/kernel/clib.h>
-/* newlib's memmove is a plain word loop with no prefetch (a slid 4x picture,
- * 2.4 MB, took it 10-15 ms on a console); the system's own is not. */
+/* newlib's memmove/memcpy are plain word loops with no prefetch (a slid 4x
+ * picture, 2.4 MB, took memmove 10-15 ms on a console); the system's own
+ * are not. */
 #define UP_MEMMOVE sceClibMemmove
+#define UP_MEMCPY  sceClibMemcpy
 #else
 #define UP_MEMMOVE memmove
+#define UP_MEMCPY  memcpy
 #endif
 
 void xbrz_c_init(void);
@@ -31,11 +40,20 @@ void xbrz_c_scale_rect_to(int factor, const uint32_t *src, int w, int h,
 #define UP_BUDGET_PX 724000u
 /* Helper threads.  A console has three cores for an application: the
  * emulator's and these two. */
-#define UP_HELPERS 2
-/* A picture is cut into stripes of this many source rows... */
-#define UP_STRIPE 8
+/* Three: the third (index 2) only exists when the extra CPU core is proven
+ * (handoff_glue.h core4_*); without it the pool is the two it always was. */
+#define UP_HELPERS 3
+/* A picture is cut into stripes of [UP_STRIPE_MIN, UP_STRIPE_MAX] source rows
+ * scaled dynamically with dirty coverage to limit xBRZ yFirst-1 boundary work
+ * and atomic stripe claims. */
+#define UP_STRIPE_MIN 8
+#define UP_STRIPE_MAX 16
 #define UP_MAX_H 256
-#define UP_MAX_STRIPES (UP_MAX_H / UP_STRIPE)
+#define UP_MAX_STRIPES (UP_MAX_H / UP_STRIPE_MIN)
+#define UP_SLIDE_MAX 8
+#define UP_PROBE_ROWS 12
+#define UP_PROBE_COLS 16
+#define UP_PROBES (UP_PROBE_ROWS * UP_PROBE_COLS)
 /* ...and a pixel is scaled again when it, or one within this many of it in
  * any direction, changed: xBRZ looks two pixels each way (a pixel's corners
  * are decided by its neighbours' 4x4 kernels), Scale3x one. */
@@ -62,12 +80,18 @@ void xbrz_c_scale_rect_to(int factor, const uint32_t *src, int w, int h,
 
 /* ---- 565 -> RGBA8 --------------------------------------------------------- */
 
-static uint32_t g_lut[2][65536];       /* [bgr][565] */
+static uint32_t (*g_lut)[65536];       /* [bgr][565], allocated lazily */
 static int g_lut_ready;
 
-static void lut_build(void)
+static int lut_build(void)
 {
    unsigned v;
+   if (!g_lut)
+   {
+      g_lut = (uint32_t (*)[65536])malloc(2u * 65536u * sizeof(uint32_t));
+      if (!g_lut)
+         return 0;
+   }
    for (v = 0; v < 65536; v++)
    {
       unsigned hi = (v >> 11) & 31, g6 = (v >> 5) & 63, lo = v & 31;
@@ -77,74 +101,197 @@ static void lut_build(void)
       g_lut[0][v] = 0xFF000000u | (l8 << 16) | (g8 << 8) | h8;
       g_lut[1][v] = 0xFF000000u | (h8 << 16) | (g8 << 8) | l8;
    }
-   xbrz_c_init();
    g_lut_ready = 1;
+   return 1;
 }
 
 /* Scale2x / Scale3x, rows [y0, y1) and columns [x0, x1) of a tightly packed
  * w x h 565 picture; source pixel (x0, y0)'s block is written at `at`, rows
  * `dp` pixels apart.  Edges repeat the border pixel. */
-static void epx_rows(const uint16_t *src, int w, int h, int f, int bgr,
-                     uint32_t *at, size_t dp, int y0, int y1, int x0, int x1)
+static void epx2_rows(const uint16_t *src, int w, int h, const uint32_t *lut,
+                      uint32_t *at, size_t dp, int y0, int y1, int x0, int x1)
 {
-   const uint32_t *lut = g_lut[bgr];
+   const int xi1 = x1 > w - 1 ? w - 1 : x1;
    int x, y;
    for (y = y0; y < y1; y++)
    {
       const uint16_t *rm = src + (size_t)w * (size_t)y;
       const uint16_t *ru = y > 0 ? rm - w : rm;
       const uint16_t *rd = y < h - 1 ? rm + w : rm;
-      uint32_t *o = at + dp * (size_t)f * (size_t)(y - y0);
-      for (x = x0; x < x1; x++)
+      uint32_t *o = at + dp * 2u * (size_t)(y - y0);
+      x = x0;
+      if (x < x1 && x == 0)
       {
-         const int xl = x > 0 ? x - 1 : x, xr = x < w - 1 ? x + 1 : x;
-         const uint16_t B = ru[x], D = rm[xl], E = rm[x], F = rm[xr],
-                        H = rd[x];
-         if (f == 2)
+         const int xr = w > 1 ? 1 : 0;
+         const uint16_t B = ru[0], D = rm[0], E = rm[0], F = rm[xr], H = rd[0];
+         if (B == H || D == F)
          {
-            uint16_t e0 = E, e1 = E, e2 = E, e3 = E;
-            if (B != H && D != F)
-            {
-               if (D == B) e0 = D;
-               if (B == F) e1 = F;
-               if (D == H) e2 = D;
-               if (H == F) e3 = F;
-            }
-            o[0] = lut[e0]; o[1] = lut[e1];
-            o[dp] = lut[e2]; o[dp + 1] = lut[e3];
-            o += 2;
+            const uint32_t c = lut[E];
+            o[0] = c; o[1] = c; o[dp] = c; o[dp + 1] = c;
          }
          else
          {
-            const uint16_t A = ru[xl], C = ru[xr], G = rd[xl], I = rd[xr];
-            uint16_t e[9];
-            int i;
-            for (i = 0; i < 9; i++)
-               e[i] = E;
-            if (B != H && D != F)
-            {
-               if (D == B) e[0] = D;
-               if ((D == B && E != C) || (B == F && E != A)) e[1] = B;
-               if (B == F) e[2] = F;
-               if ((D == B && E != G) || (D == H && E != A)) e[3] = D;
-               if ((B == F && E != I) || (H == F && E != C)) e[5] = F;
-               if (D == H) e[6] = D;
-               if ((D == H && E != I) || (H == F && E != G)) e[7] = H;
-               if (H == F) e[8] = F;
-            }
-            o[0] = lut[e[0]]; o[1] = lut[e[1]]; o[2] = lut[e[2]];
-            o[dp] = lut[e[3]]; o[dp + 1] = lut[e[4]]; o[dp + 2] = lut[e[5]];
-            o[2 * dp] = lut[e[6]]; o[2 * dp + 1] = lut[e[7]];
-            o[2 * dp + 2] = lut[e[8]];
-            o += 3;
+            const uint32_t cE = lut[E];
+            o[0]      = (D == B) ? lut[D] : cE;
+            o[1]      = (B == F) ? lut[F] : cE;
+            o[dp]     = (D == H) ? lut[D] : cE;
+            o[dp + 1] = (H == F) ? lut[F] : cE;
+         }
+         o += 2;
+         x = 1;
+      }
+      for (; x < xi1; x++, o += 2)
+      {
+         const uint16_t B = ru[x], D = rm[x - 1], E = rm[x], F = rm[x + 1],
+                        H = rd[x];
+         if (B == H || D == F)
+         {
+            const uint32_t c = lut[E];
+            o[0] = c; o[1] = c; o[dp] = c; o[dp + 1] = c;
+         }
+         else
+         {
+            const uint32_t cE = lut[E];
+            o[0]      = (D == B) ? lut[D] : cE;
+            o[1]      = (B == F) ? lut[F] : cE;
+            o[dp]     = (D == H) ? lut[D] : cE;
+            o[dp + 1] = (H == F) ? lut[F] : cE;
+         }
+      }
+      for (; x < x1; x++, o += 2)
+      {
+         const int xl = x > 0 ? x - 1 : x, xr = x < w - 1 ? x + 1 : x;
+         const uint16_t B = ru[x], D = rm[xl], E = rm[x], F = rm[xr], H = rd[x];
+         if (B == H || D == F)
+         {
+            const uint32_t c = lut[E];
+            o[0] = c; o[1] = c; o[dp] = c; o[dp + 1] = c;
+         }
+         else
+         {
+            const uint32_t cE = lut[E];
+            o[0]      = (D == B) ? lut[D] : cE;
+            o[1]      = (B == F) ? lut[F] : cE;
+            o[dp]     = (D == H) ? lut[D] : cE;
+            o[dp + 1] = (H == F) ? lut[F] : cE;
          }
       }
    }
 }
 
+static void epx3_rows(const uint16_t *src, int w, int h, const uint32_t *lut,
+                      uint32_t *at, size_t dp, int y0, int y1, int x0, int x1)
+{
+   const size_t dp2 = 2u * dp;
+   const int xi1 = x1 > w - 1 ? w - 1 : x1;
+   int x, y;
+   for (y = y0; y < y1; y++)
+   {
+      const uint16_t *rm = src + (size_t)w * (size_t)y;
+      const uint16_t *ru = y > 0 ? rm - w : rm;
+      const uint16_t *rd = y < h - 1 ? rm + w : rm;
+      uint32_t *o = at + dp * 3u * (size_t)(y - y0);
+      x = x0;
+      if (x < x1 && x == 0)
+      {
+         const int xr = w > 1 ? 1 : 0;
+         const uint16_t B = ru[0], D = rm[0], E = rm[0], F = rm[xr], H = rd[0];
+         if (B == H || D == F)
+         {
+            const uint32_t c = lut[E];
+            o[0] = c; o[1] = c; o[2] = c;
+            o[dp] = c; o[dp + 1] = c; o[dp + 2] = c;
+            o[dp2] = c; o[dp2 + 1] = c; o[dp2 + 2] = c;
+         }
+         else
+         {
+            const uint16_t A = ru[0], C = ru[xr], G = rd[0], I = rd[xr];
+            const uint32_t cE = lut[E];
+            const int db = (D == B), bf = (B == F), dh = (D == H), hf = (H == F);
+            o[0]       = db ? lut[D] : cE;
+            o[1]       = ((db && E != C) || (bf && E != A)) ? lut[B] : cE;
+            o[2]       = bf ? lut[F] : cE;
+            o[dp]      = ((db && E != G) || (dh && E != A)) ? lut[D] : cE;
+            o[dp + 1]  = cE;
+            o[dp + 2]  = ((bf && E != I) || (hf && E != C)) ? lut[F] : cE;
+            o[dp2]     = dh ? lut[D] : cE;
+            o[dp2 + 1] = ((dh && E != I) || (hf && E != G)) ? lut[H] : cE;
+            o[dp2 + 2] = hf ? lut[F] : cE;
+         }
+         o += 3;
+         x = 1;
+      }
+      for (; x < xi1; x++, o += 3)
+      {
+         const uint16_t B = ru[x], D = rm[x - 1], E = rm[x], F = rm[x + 1],
+                        H = rd[x];
+         if (B == H || D == F)
+         {
+            const uint32_t c = lut[E];
+            o[0] = c; o[1] = c; o[2] = c;
+            o[dp] = c; o[dp + 1] = c; o[dp + 2] = c;
+            o[dp2] = c; o[dp2 + 1] = c; o[dp2 + 2] = c;
+         }
+         else
+         {
+            const uint16_t A = ru[x - 1], C = ru[x + 1],
+                           G = rd[x - 1], I = rd[x + 1];
+            const uint32_t cE = lut[E];
+            const int db = (D == B), bf = (B == F), dh = (D == H), hf = (H == F);
+            o[0]       = db ? lut[D] : cE;
+            o[1]       = ((db && E != C) || (bf && E != A)) ? lut[B] : cE;
+            o[2]       = bf ? lut[F] : cE;
+            o[dp]      = ((db && E != G) || (dh && E != A)) ? lut[D] : cE;
+            o[dp + 1]  = cE;
+            o[dp + 2]  = ((bf && E != I) || (hf && E != C)) ? lut[F] : cE;
+            o[dp2]     = dh ? lut[D] : cE;
+            o[dp2 + 1] = ((dh && E != I) || (hf && E != G)) ? lut[H] : cE;
+            o[dp2 + 2] = hf ? lut[F] : cE;
+         }
+      }
+      for (; x < x1; x++, o += 3)
+      {
+         const int xl = x > 0 ? x - 1 : x, xr = x < w - 1 ? x + 1 : x;
+         const uint16_t B = ru[x], D = rm[xl], E = rm[x], F = rm[xr], H = rd[x];
+         if (B == H || D == F)
+         {
+            const uint32_t c = lut[E];
+            o[0] = c; o[1] = c; o[2] = c;
+            o[dp] = c; o[dp + 1] = c; o[dp + 2] = c;
+            o[dp2] = c; o[dp2 + 1] = c; o[dp2 + 2] = c;
+         }
+         else
+         {
+            const uint16_t A = ru[xl], C = ru[xr], G = rd[xl], I = rd[xr];
+            const uint32_t cE = lut[E];
+            const int db = (D == B), bf = (B == F), dh = (D == H), hf = (H == F);
+            o[0]       = db ? lut[D] : cE;
+            o[1]       = ((db && E != C) || (bf && E != A)) ? lut[B] : cE;
+            o[2]       = bf ? lut[F] : cE;
+            o[dp]      = ((db && E != G) || (dh && E != A)) ? lut[D] : cE;
+            o[dp + 1]  = cE;
+            o[dp + 2]  = ((bf && E != I) || (hf && E != C)) ? lut[F] : cE;
+            o[dp2]     = dh ? lut[D] : cE;
+            o[dp2 + 1] = ((dh && E != I) || (hf && E != G)) ? lut[H] : cE;
+            o[dp2 + 2] = hf ? lut[F] : cE;
+         }
+      }
+   }
+}
+
+static void epx_rows(const uint16_t *src, int w, int h, int f, int bgr,
+                     uint32_t *at, size_t dp, int y0, int y1, int x0, int x1)
+{
+   const uint32_t *lut = g_lut[bgr];
+   if (f == 2)
+      epx2_rows(src, w, h, lut, at, dp, y0, y1, x0, x1);
+   else
+      epx3_rows(src, w, h, lut, at, dp, y0, y1, x0, x1);
+}
+
 /* ---- columns of a stripe --------------------------------------------------- */
 
-#define UP_MAX_W 320
+#define UP_MAX_W 448
 #define UP_WORDS (UP_MAX_W / 32)
 
 typedef struct { uint32_t b[UP_WORDS]; } colmask;
@@ -191,6 +338,22 @@ static void cm_set_range(colmask *m, int x0, int x1)
       const int a = x0 > lo ? x0 - lo : 0;
       const int b = x1 < lo + 32 ? x1 - lo : 32;
       m->b[i] |= (b - a == 32 ? 0xFFFFFFFFu : ((1u << (b - a)) - 1u)) << a;
+   }
+}
+
+static void cm_clear_range(colmask *m, int x0, int x1)
+{
+   int i;
+   if (x0 < 0)
+      x0 = 0;
+   if (x1 <= x0)
+      return;
+   for (i = x0 >> 5; i <= (x1 - 1) >> 5; i++)
+   {
+      const int lo = i * 32;
+      const int a = x0 > lo ? x0 - lo : 0;
+      const int b = x1 < lo + 32 ? x1 - lo : 32;
+      m->b[i] &= ~((b - a == 32 ? 0xFFFFFFFFu : ((1u << (b - a)) - 1u)) << a);
    }
 }
 
@@ -304,6 +467,8 @@ typedef struct
 {
    /* What `big` holds a scaled copy of. */
    int kind, f, bgr;
+   int mm;                     /* the 2x picture is made by MMPX (decided
+                                * once per picture, in upscale_submit)    */
    unsigned w, h;
    uint16_t *cur, *old;        /* the last picture and the one before it,
                                 * w x h, tightly packed                    */
@@ -319,30 +484,67 @@ typedef struct
    /* Per ring row, the ring columns of `big` that each texture does not
     * have yet (a texture is written every other picture). */
    colmask pend[2][UP_MAX_H];
+   unsigned char big_stale_row[UP_MAX_H]; /* 1 = ring row bypassed S->big */
    unsigned char *out[2];
    size_t out_pitch;
    int last_dx, last_dy;       /* how the picture last scrolled            */
+   /* Cached slide_find probe offsets for (slide_w, slide_h) and miss backoff. */
+   int slide_idx[UP_PROBES];
+   unsigned slide_w, slide_h;
+   int slide_fail, slide_skip;
 
    /* The job (written by upscale_submit while nobody looks at the slot). */
    colmask dirty[UP_MAX_STRIPES];         /* columns to scale again       */
    int slid;                   /* the picture is the last one, scrolled   */
+   int direct;                 /* 1 = scale straight into out[target]     */
+   int stripe_h;               /* source rows per stripe [8..24]          */
    int target, nstripes;
    unsigned t0;
    int next, done;             /* atomics: stripes claimed, finished      */
    int state;                  /* atomic: ST_*                            */
    int inside;                 /* atomic: threads looking at the job      */
+   int waiting;                /* atomic: slot_wait_to awaiting done sema */
+   int dead;                   /* atomic: a helper never let go (teardown gave up); no more jobs, textures stay */
    int scaled_px;              /* atomic: source pixels this job scaled   */
 
    /* The factor's history. */
    int late_run, fast_run, fast_need, step_down;
    int hot;                    /* pictures to go at the fade's factor      */
+   int high_dirty_run;         /* consecutive non-slid >=65% dirty frames */
 } up_slot;
 
 static up_slot g_slot[UPSCALE_SLOTS];
 
+/* A host twin's test of the bounded waits (app_tests.py "stall"): a helper
+ * thread sleeps GBADHOC_STALL_MS in the middle of every stripe it takes, as
+ * a helper the system has not scheduled would.  Never built into the VPK. */
+#ifdef __vita__
+#define stall_hook() ((void)0)
+#else
+#include <unistd.h>
+static __thread int t_helper;
+static void stall_hook(void)
+{
+   static int ms = -1, left = 30;      /* the first 30 stripes */
+   if (!t_helper)
+      return;
+   if (ms < 0)
+   {
+      const char *e = getenv("GBADHOC_STALL_MS");
+      ms = e ? atoi(e) : 0;
+   }
+   if (ms > 0 && __atomic_fetch_sub(&left, 1, __ATOMIC_RELAXED) > 0)
+      usleep((useconds_t)ms * 1000u);
+}
+#endif
+
 #define A_LOAD(x)      __atomic_load_n(&(x), __ATOMIC_SEQ_CST)
 #define A_STORE(x, v)  __atomic_store_n(&(x), (v), __ATOMIC_SEQ_CST)
 #define A_ADD(x, v)    __atomic_fetch_add(&(x), (v), __ATOMIC_SEQ_CST)
+/* Relaxed atomics for non-synchronizing counters/flags (no dmb ish barrier). */
+#define A_RLOAD(x)     __atomic_load_n(&(x), __ATOMIC_RELAXED)
+#define A_RSTORE(x, v) __atomic_store_n(&(x), (v), __ATOMIC_RELAXED)
+#define A_RADD(x, v)   __atomic_fetch_add(&(x), (v), __ATOMIC_RELAXED)
 
 /* Statistics (atomics): written by whoever finishes a job. */
 static struct
@@ -386,32 +588,65 @@ static int ring_x(const up_slot *S, int x)
 }
 
 /* Rows [y0, y1), columns [x0, x1) of the picture, none across the ring's
- * seam: scaled into their place in the ring, and both textures lack them. */
+ * seam: scaled into their place in the ring (either S->big, or directly into
+ * S->out[S->target] when S->direct is set). */
 static void scale_piece(up_slot *S, int y0, int y1, int x0, int x1)
 {
    const int f = S->f, W = f * (int)S->w;
    const int rx0 = ring_x(S, x0), rx1 = rx0 + (x1 - x0);
-   uint32_t *at = S->big + (size_t)ring_y(S, y0) * (size_t)f * (size_t)W +
-                  (size_t)rx0 * (size_t)f;
+   const int ry0 = ring_y(S, y0);
+   uint32_t *at;
+   size_t dp;
    int y;
-   if (S->kind == UPSCALE_XBRZ)
-      xbrz_c_scale_rect_to(f, S->src32, (int)S->w, (int)S->h, y0, y1, x0, x1,
-                           at, W);
-   else
-      epx_rows(S->cur, (int)S->w, (int)S->h, f, S->bgr, at, (size_t)W, y0, y1,
-               x0, x1);
-   for (y = y0; y < y1; y++)
+   if (S->direct)
    {
-      const int r = ring_y(S, y);
-      cm_set_range(&S->pend[0][r], rx0, rx1);
-      cm_set_range(&S->pend[1][r], rx0, rx1);
+      dp = S->out_pitch / sizeof(uint32_t);
+      at = (uint32_t *)(void *)(S->out[S->target] +
+                                S->out_pitch * (size_t)ry0 * (size_t)f) +
+           (size_t)rx0 * (size_t)f;
+   }
+   else
+   {
+      dp = (size_t)W;
+      at = S->big + (size_t)ry0 * (size_t)f * (size_t)W +
+           (size_t)rx0 * (size_t)f;
+   }
+   if (f == 2 && S->mm)
+      mmpx_rect(S->cur, (int)S->w, (int)S->h, g_lut[S->bgr], at, dp,
+                y0, y1, x0, x1);
+   else if (S->kind == UPSCALE_XBRZ)
+      xbrz_c_scale_rect_to(f, S->src32, (int)S->w, (int)S->h, y0, y1, x0, x1,
+                           at, (int)dp);
+   else
+      epx_rows(S->cur, (int)S->w, (int)S->h, f, S->bgr, at, dp, y0, y1,
+               x0, x1);
+   if (S->direct)
+   {
+      const int other = 1 - S->target;
+      for (y = y0; y < y1; y++)
+      {
+         const int r = ring_y(S, y);
+         cm_clear_range(&S->pend[S->target][r], rx0, rx1);
+         cm_set_range(&S->pend[other][r], rx0, rx1);
+         S->big_stale_row[r] = 1;
+      }
+   }
+   else
+   {
+      for (y = y0; y < y1; y++)
+      {
+         const int r = ring_y(S, y);
+         cm_set_range(&S->pend[0][r], rx0, rx1);
+         cm_set_range(&S->pend[1][r], rx0, rx1);
+      }
    }
 }
 
 static void stripe_run(up_slot *S, int i)
 {
-   const int y0 = i * UP_STRIPE;
-   const int y1 = y0 + UP_STRIPE < (int)S->h ? y0 + UP_STRIPE : (int)S->h;
+   const int sh = S->stripe_h;
+   const int y0 = i * sh;
+   const int y1 = y0 + sh < (int)S->h ? y0 + sh : (int)S->h;
    const int w = (int)S->w, f = S->f;
    /* where the ring's seam falls in the picture */
    const int ys = (int)S->h - S->roy, xs = w - S->rox;
@@ -434,8 +669,13 @@ static void stripe_run(up_slot *S, int i)
       px += (x1 - x0) * (y1 - y0);
       x = x1;
    }
+   /* In non-direct mode, any previously bypassed row in this stripe was forced
+    * all-dirty in upscale_submit and has now been scaled whole into S->big. */
+   if (!S->direct)
+      for (y = y0; y < y1; y++)
+         S->big_stale_row[ring_y(S, y)] = 0;
    if (px)
-      A_ADD(S->scaled_px, px);
+      A_RADD(S->scaled_px, px);
    t2 = pspcompat_time_us();
 
    /* ...and bring the texture that is not on screen up to date, this
@@ -455,42 +695,67 @@ static void stripe_run(up_slot *S, int i)
       {
          const size_t off = (size_t)x0 * f * sizeof(uint32_t);
          const size_t n = (size_t)(x1 - x0) * f * sizeof(uint32_t);
-         int Y;
-         for (Y = r * f; Y < r * f + f; Y++)
-            memcpy(o + S->out_pitch * (size_t)Y + off,
-                   (const unsigned char *)S->big + bigrow * (size_t)Y + off,
-                   n);
+         if (x0 == 0 && x1 == w && S->out_pitch == bigrow)
+            UP_MEMCPY(o + bigrow * (size_t)(r * f),
+                      (const unsigned char *)S->big + bigrow * (size_t)(r * f),
+                      bigrow * (size_t)f);
+         else
+         {
+            int Y;
+            for (Y = r * f; Y < r * f + f; Y++)
+               UP_MEMCPY(o + S->out_pitch * (size_t)Y + off,
+                         (const unsigned char *)S->big + bigrow * (size_t)Y + off,
+                         n);
+         }
          x = x1;
       }
       memset(pm, 0, sizeof(colmask));
    }
-   A_ADD(g_st.job_us[0], (int)(t2 - t1));
-   A_ADD(g_st.job_us[1], (int)(pspcompat_time_us() - t2));
+   A_RADD(g_st.job_us[0], (int)(t2 - t1));
+   A_RADD(g_st.job_us[1], (int)(pspcompat_time_us() - t2));
+}
+
+/* Source pixels submitted / scaled since the program started: what
+ * upscale_stats reports, but not reset by it (the look governor's bitmap
+ * check reads the change over a second beside the stats consumer). */
+static int g_cum_px, g_cum_scaled;
+
+void upscale_cumulative(unsigned *px, unsigned *scaled)
+{
+   *px = (unsigned)A_RLOAD(g_cum_px);
+   *scaled = (unsigned)A_RLOAD(g_cum_scaled);
 }
 
 /* The last stripe of a job was finished, by this thread. */
 static void job_finish(up_slot *S)
 {
    const unsigned dt = pspcompat_time_us() - S->t0;
-   const int scaled = A_LOAD(S->scaled_px);
+   const int scaled = A_RLOAD(S->scaled_px);
    const int total = (int)(S->w * S->h);
 
-   A_ADD(g_st.jobs, 1);
-   A_ADD(g_st.sum_us, (int)dt);
-   if ((int)dt > A_LOAD(g_st.max_us))
-      A_STORE(g_st.max_us, (int)dt);
-   A_ADD(g_st.stripes, S->nstripes);
-   A_ADD(g_st.px_k, (total + 500) / 1000);
-   A_ADD(g_st.scaled_k, (scaled + 500) / 1000);
-   A_STORE(g_st.factor, S->f);
+   A_RADD(g_st.jobs, 1);
+   A_RADD(g_st.sum_us, (int)dt);
+   {
+      int cur = A_RLOAD(g_st.max_us);
+      while ((int)dt > cur &&
+             !__atomic_compare_exchange_n(&g_st.max_us, &cur, (int)dt, 1,
+                                          __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+         ;
+   }
+   A_RADD(g_st.stripes, S->nstripes);
+   A_RADD(g_st.px_k, (total + 500) / 1000);
+   A_RADD(g_st.scaled_k, (scaled + 500) / 1000);
+   A_RADD(g_cum_px, total);          /* (never reset: look_glue reads the change) */
+   A_RADD(g_cum_scaled, scaled);
+   A_RSTORE(g_st.factor, S->f);
    if (dt > 16683u)
    {
       upscale_gov_miss();
-      A_ADD(g_st.late, 1);
-      A_ADD(g_st.late_slid, S->slid ? 1 : 0);
+      A_RADD(g_st.late, 1);
+      A_RADD(g_st.late_slid, S->slid ? 1 : 0);
       if (S->f >= 2 && S->f <= 4)
-         A_ADD(g_st.late_f[S->f - 2], 1);
-      A_ADD(g_st.late_pct, total ? (int)((long long)scaled * 100 / total) : 0);
+         A_RADD(g_st.late_f[S->f - 2], 1);
+      A_RADD(g_st.late_pct, total ? (int)((long long)scaled * 100 / total) : 0);
    }
 
    /* The factor follows what the cores can do -- only where a late picture
@@ -499,13 +764,13 @@ static void job_finish(up_slot *S)
     * mostly new (a still one says nothing). */
    if (g_async && scaled * 2 >= total)
    {
-      if (!A_LOAD(S->step_down))
+      if (!A_RLOAD(S->step_down))
       {
          S->late_run = dt > UP_LATE_US ? S->late_run + 1 : 0;
          if (S->late_run >= UP_LATE_RUN && S->f > 2)
          {
-            A_STORE(S->step_down, 1);
-            A_ADD(g_st.stepped, 1);
+            A_RSTORE(S->step_down, 1);
+            A_RADD(g_st.stepped, 1);
             S->late_run = S->fast_run = 0;
             S->fast_need = S->fast_need ? S->fast_need * 2 : UP_FAST_RUN;
          }
@@ -517,13 +782,18 @@ static void job_finish(up_slot *S)
          S->fast_run = dt * 2u < UP_LATE_US ? S->fast_run + 1 : 0;
          if (S->fast_run >= S->fast_need)
          {
-            A_STORE(S->step_down, 0);
+            A_RSTORE(S->step_down, 0);
             S->late_run = S->fast_run = 0;
          }
       }
    }
    A_STORE(S->state, ST_DONE);
 }
+
+static void slot_done_init(void);
+static void slot_done_term(void);
+static void slot_done_signal(int si);
+static int  slot_done_wait(int si, unsigned rem_us);
 
 /* One stripe of slot `si`, if there is one to do.
  *
@@ -540,20 +810,27 @@ static int claim_and_run(int si)
    A_ADD(S->inside, 1);
    if (A_LOAD(S->state) == ST_BUSY)
    {
-      i = A_ADD(S->next, 1);
+      i = A_RADD(S->next, 1);
       if (i < S->nstripes)
       {
+         stall_hook();
          stripe_run(S, i);
-         if (A_ADD(S->done, 1) + 1 == S->nstripes)
+         if (__atomic_fetch_add(&S->done, 1, __ATOMIC_ACQ_REL) + 1 == S->nstripes)
             job_finish(S);
          ran = 1;
       }
    }
-   A_ADD(S->inside, -1);
+   if (__atomic_sub_fetch(&S->inside, 1, __ATOMIC_SEQ_CST) == 0 &&
+       A_LOAD(S->state) != ST_BUSY &&
+       __atomic_exchange_n(&S->waiting, 0, __ATOMIC_SEQ_CST))
+      slot_done_signal(si);
    return ran;
 }
 
-static void work_all(void)
+static int g_wd_up2 = -1;      /* watchdog slot of helper 2 (extra core); atomic access */
+
+/* `wd`: the watchdog slot to beat once per stripe (-1: none). */
+static void work_all(int wd)
 {
    int si, did;
    do
@@ -561,7 +838,10 @@ static void work_all(void)
       did = 0;
       for (si = 0; si < UPSCALE_SLOTS; si++)
          while (claim_and_run(si))
+         {
             did = 1;
+            core4_beat(wd);
+         }
    } while (did);
 }
 
@@ -574,6 +854,54 @@ static volatile int g_pool_quit;
 #include <psp2/kernel/threadmgr.h>
 
 static SceUID g_th[UP_HELPERS], g_go[UP_HELPERS];
+static SceUID g_done_sem[UPSCALE_SLOTS];
+static int g_done_sem_ok[UPSCALE_SLOTS];
+
+static void slot_done_init(void)
+{
+   int i;
+   for (i = 0; i < UPSCALE_SLOTS; i++)
+      if (!g_done_sem_ok[i])
+      {
+         g_done_sem[i] = sceKernelCreateSema("gbadhoc_up_done", 0, 0, 1, NULL);
+         g_done_sem_ok[i] = g_done_sem[i] >= 0;
+      }
+}
+
+static void slot_done_term(void)
+{
+   int i;
+   for (i = 0; i < UPSCALE_SLOTS; i++)
+      if (g_done_sem_ok[i])
+      {
+         sceKernelDeleteSema(g_done_sem[i]);
+         g_done_sem[i] = -1;
+         g_done_sem_ok[i] = 0;
+      }
+}
+
+static void slot_done_signal(int si)
+{
+   if (si >= 0 && si < UPSCALE_SLOTS && g_done_sem_ok[si])
+      sceKernelSignalSema(g_done_sem[si], 1);
+}
+
+static int slot_done_wait(int si, unsigned rem_us)
+{
+   SceUInt t;
+   if (si < 0 || si >= UPSCALE_SLOTS || !g_done_sem_ok[si])
+      return 0;
+   t = rem_us ? (SceUInt)rem_us : 1u;
+   sceKernelWaitSema(g_done_sem[si], 1, &t);
+   return 1;
+}
+
+static void slot_done_drain(int si)
+{
+   if (si >= 0 && si < UPSCALE_SLOTS && g_done_sem_ok[si])
+      while (sceKernelPollSema(g_done_sem[si], 1) >= 0)
+         ;
+}
 
 static int helper_entry(SceSize args, void *argp)
 {
@@ -584,7 +912,11 @@ static int helper_entry(SceSize args, void *argp)
       sceKernelWaitSema(g_go[i], 1, NULL);
       if (g_pool_quit)
          break;
-      work_all();
+      if (i == 2)
+         core4_busy(A_LOAD(g_wd_up2), 1);
+      work_all(i == 2 ? A_LOAD(g_wd_up2) : -1);
+      if (i == 2)
+         core4_busy(A_LOAD(g_wd_up2), 0);
    }
    return 0;
 }
@@ -594,8 +926,18 @@ static void pool_start(void)
    int i;
    g_pool = 0;
    g_async = 1;
+   A_STORE(g_wd_up2, -1);
+   slot_done_init();
    for (i = 0; i < UP_HELPERS; i++)
    {
+      if (i == 2 && !core4_on_core3(C4_UPSCALE, 2))
+         break;                  /* the third helper is the extra core's */
+      if (i == 2)
+      {
+         A_STORE(g_wd_up2, core4_wd_add("up2", C4_UPSCALE, 2));
+         if (A_LOAD(g_wd_up2) < 0)
+            break;               /* nothing would watch it: do not start it */
+      }
       /* One wake-up pending is enough: a helper that is told twice finds
        * nothing the second time. */
       g_go[i] = sceKernelCreateSema("gbadhoc_up_go", 0, 0, 1, NULL);
@@ -603,11 +945,14 @@ static void pool_start(void)
        * emulator's thread is least likely to be on. */
       g_th[i] = sceKernelCreateThread("gbadhoc_up", helper_entry, 0x10000100,
                                       0x10000, 0,
-                                      i ? SCE_KERNEL_CPU_MASK_USER_2
-                                        : SCE_KERNEL_CPU_MASK_USER_1, NULL);
+                                      (int)core4_mask(C4_UPSCALE, i,
+                                                      i ? SCE_KERNEL_CPU_MASK_USER_2
+                                                        : SCE_KERNEL_CPU_MASK_USER_1),
+                                      NULL);
       if (g_go[i] < 0 || g_th[i] < 0 ||
           sceKernelStartThread(g_th[i], sizeof(i), &i) < 0)
          break;                  /* fewer helpers than hoped */
+      core4_set_thread(C4_UPSCALE, i, (int)g_th[i]);
       g_pool = i + 1;
    }
    /* With no helper at all the caller scales, and waits. */
@@ -622,17 +967,25 @@ static void pool_go(void)
       sceKernelSignalSema(g_go[i], 1);   /* (fails when one is pending: fine) */
 }
 
-static void pool_stop(void)
+/* 1 when every helper ended; 0 when one did not within a second (it is left
+ * running: the caller must not free what it may still touch). */
+static int pool_stop(void)
 {
-   int i;
+   int i, all = 1;
    g_pool_quit = 1;
    for (i = 0; i < g_pool; i++)
    {
+      SceUInt timeout = 1000000u;
       sceKernelSignalSema(g_go[i], 1);
-      sceKernelWaitThreadEnd(g_th[i], NULL, NULL);
+      if (sceKernelWaitThreadEnd(g_th[i], NULL, &timeout) < 0)
+      {
+         all = 0;
+         continue;
+      }
       sceKernelDeleteThread(g_th[i]);
       sceKernelDeleteSema(g_go[i]);
    }
+   return all;
 }
 
 static void nap(void) { sceKernelDelayThread(200); }
@@ -648,22 +1001,76 @@ int upscale_thread_ids(int *ids, int max)
 #else /* a host twin */
 #include <pthread.h>
 #include <sched.h>
-#include <semaphore.h>
+#include "host_sem.h"
 
 static pthread_t g_th[UP_HELPERS];
-static sem_t g_go[UP_HELPERS];
+static host_sem_t g_go[UP_HELPERS];
 static int g_idx[UP_HELPERS];
+static host_sem_t g_done_sem[UPSCALE_SLOTS];
+static int g_done_sem_ok[UPSCALE_SLOTS];
+
+static void slot_done_init(void)
+{
+   int i;
+   for (i = 0; i < UPSCALE_SLOTS; i++)
+      if (!g_done_sem_ok[i])
+         g_done_sem_ok[i] = host_sem_init(&g_done_sem[i], 0) == 0;
+}
+
+static void slot_done_term(void)
+{
+   int i;
+   for (i = 0; i < UPSCALE_SLOTS; i++)
+      if (g_done_sem_ok[i])
+      {
+         host_sem_destroy(&g_done_sem[i]);
+         g_done_sem_ok[i] = 0;
+      }
+}
+
+static void slot_done_signal(int si)
+{
+   if (si >= 0 && si < UPSCALE_SLOTS && g_done_sem_ok[si])
+      host_sem_post(&g_done_sem[si]);
+}
+
+static int slot_done_wait(int si, unsigned rem_us)
+{
+   struct timespec ts;
+   uint64_t ns;
+   if (si < 0 || si >= UPSCALE_SLOTS || !g_done_sem_ok[si])
+      return 0;
+   clock_gettime(CLOCK_REALTIME, &ts);
+   ns = (uint64_t)ts.tv_nsec + (uint64_t)(rem_us ? rem_us : 1u) * 1000u;
+   ts.tv_sec += (time_t)(ns / 1000000000ull);
+   ts.tv_nsec = (long)(ns % 1000000000ull);
+   while (host_sem_timedwait(&g_done_sem[si], &ts) != 0 && errno == EINTR)
+      ;
+   return 1;
+}
+
+static void slot_done_drain(int si)
+{
+   if (si >= 0 && si < UPSCALE_SLOTS && g_done_sem_ok[si])
+      while (host_sem_trywait(&g_done_sem[si]) == 0)
+         ;
+}
 
 static void *helper_entry(void *p)
 {
    int i = *(int *)p;
+   t_helper = 1;
    for (;;)
    {
-      while (sem_wait(&g_go[i]) != 0)
+      while (host_sem_wait(&g_go[i]) != 0)
          ;
       if (g_pool_quit)
          break;
-      work_all();
+      if (i == 2)
+         core4_busy(A_LOAD(g_wd_up2), 1);
+      work_all(i == 2 ? A_LOAD(g_wd_up2) : -1);
+      if (i == 2)
+         core4_busy(A_LOAD(g_wd_up2), 0);
    }
    return NULL;
 }
@@ -672,18 +1079,29 @@ static void pool_start(void)
 {
    int i;
    g_pool = 0;
+   A_STORE(g_wd_up2, -1);
    g_async = getenv("GBADHOC_UPSCALE_ASYNC") != NULL;
    if (getenv("GBADHOC_UPSCALE_SERIAL"))
    {
       g_async = 0;
       return;
    }
+   slot_done_init();
    for (i = 0; i < UP_HELPERS; i++)
    {
+      if (i == 2 && !core4_on_core3(C4_UPSCALE, 2))
+         break;                  /* the third helper is the extra core's */
+      if (i == 2)
+      {
+         A_STORE(g_wd_up2, core4_wd_add("up2", C4_UPSCALE, 2));
+         if (A_LOAD(g_wd_up2) < 0)
+            break;               /* nothing would watch it: do not start it */
+      }
       g_idx[i] = i;
-      sem_init(&g_go[i], 0, 0);
+      host_sem_init(&g_go[i], 0);
       if (pthread_create(&g_th[i], NULL, helper_entry, &g_idx[i]) != 0)
          break;
+      core4_set_thread(C4_UPSCALE, i, 0);
       g_pool = i + 1;
    }
    if (!g_pool)
@@ -694,19 +1112,20 @@ static void pool_go(void)
 {
    int i;
    for (i = 0; i < g_pool; i++)
-      sem_post(&g_go[i]);
+      host_sem_post(&g_go[i]);
 }
 
-static void pool_stop(void)
+static int pool_stop(void)
 {
    int i;
    g_pool_quit = 1;
    for (i = 0; i < g_pool; i++)
    {
-      sem_post(&g_go[i]);
+      host_sem_post(&g_go[i]);
       pthread_join(g_th[i], NULL);
-      sem_destroy(&g_go[i]);
+      host_sem_destroy(&g_go[i]);
    }
+   return 1;
 }
 
 static void nap(void) { sched_yield(); }
@@ -724,7 +1143,16 @@ static int g_quality;
 
 void upscale_quality(int quality)
 {
-   g_quality = quality >= 0 && quality <= 3 ? quality : 0;
+   g_quality = quality >= 0 && quality <= 4 ? quality : 0;
+}
+
+/* The look governor's limit on Auto (look_glue.h): the largest factor
+ * (0 = none, 1 = no smoothing: sharp bilinear). */
+static int g_look_cap;
+
+void upscale_look_cap(int max_factor)
+{
+   A_RSTORE(g_look_cap, max_factor < 0 ? 0 : max_factor);
 }
 
 /* ---- the governor: smoothing that gives way, quietly ------------------------
@@ -757,13 +1185,19 @@ static upscale_gov g_gov;
 
 void upscale_gov_init(upscale_gov *g)
 {
-   memset(g, 0, sizeof(*g));
+   A_RSTORE(g->level, 0);
+   g->frames = 0;
+   g->active = 0;
+   g->bad = 0;
+   g->clean = 0;
    g->clean_need = GOV_CLEAN;
+   g->probing = 0;
+   g->settled = 0;
 }
 
 void upscale_gov_miss(void)
 {
-   A_STORE(g_gov_missed, 1);
+   A_RSTORE(g_gov_missed, 1);
 }
 
 int upscale_gov_step(upscale_gov *g, int bad, int active, int nat)
@@ -777,11 +1211,12 @@ int upscale_gov_step(upscale_gov *g, int bad, int active, int nat)
    if (g->active * 2 >= g->frames)
    {
       const int maxl = nat > 2 ? nat - 1 : 0;   /* nat - level < 2: off */
+      const int lvl = A_RLOAD(g->level);
       if (g->bad >= GOV_BAD)
       {
-         if (g->level < maxl)
+         if (lvl < maxl)
          {
-            g->level++;
+            A_RSTORE(g->level, lvl + 1);
             moved = -1;
             if (g->probing)           /* the step up did not hold */
             {
@@ -802,9 +1237,9 @@ int upscale_gov_step(upscale_gov *g, int bad, int active, int nat)
             g->settled = 0;
             g->clean_need = GOV_CLEAN;      /* it held: forget the doubling */
          }
-         if (g->level > 0 && ++g->clean >= g->clean_need)
+         if (lvl > 0 && ++g->clean >= g->clean_need)
          {
-            g->level--;
+            A_RSTORE(g->level, lvl - 1);
             g->clean = 0;
             g->probing = 1;
             g->settled = 0;
@@ -827,35 +1262,34 @@ void upscale_gov_enable(int on)
    if (!getenv("GBADHOC_GOV"))
       on = 0;
 #endif
-   if (!on && g_gov_on)
+   if (!on && A_RLOAD(g_gov_on))
       upscale_gov_init(&g_gov);        /* back to the full factor */
-   g_gov_on = on;
+   A_RSTORE(g_gov_on, on);
 }
 
 void upscale_gov_reset(void)
 {
    upscale_gov_init(&g_gov);
-   A_STORE(g_gov_missed, 0);
+   A_RSTORE(g_gov_missed, 0);
 }
 
 int upscale_gov_frame(int work_late)
 {
-   const int bad = work_late || A_LOAD(g_gov_missed);
-   const int active = A_LOAD(g_gov_seen);
+   const int missed = __atomic_exchange_n(&g_gov_missed, 0, __ATOMIC_RELAXED);
+   const int active = __atomic_exchange_n(&g_gov_seen, 0, __ATOMIC_RELAXED);
+   const int bad = work_late || missed;
    int moved;
-   A_STORE(g_gov_missed, 0);
-   A_STORE(g_gov_seen, 0);
-   if (!A_LOAD(g_gov_on))
+   if (!A_RLOAD(g_gov_on))
       return 0;
-   moved = upscale_gov_step(&g_gov, bad, active, A_LOAD(g_gov_nat));
+   moved = upscale_gov_step(&g_gov, bad, active, A_RLOAD(g_gov_nat));
    if (moved < 0)
-      A_ADD(g_st.stepped, 1);
+      A_RADD(g_st.stepped, 1);
    return moved;
 }
 
 int upscale_gov_level(void)
 {
-   return A_LOAD(g_gov_on) ? A_LOAD(g_gov.level) : 0;
+   return A_RLOAD(g_gov_on) ? A_RLOAD(g_gov.level) : 0;
 }
 
 const char *upscale_gov_note(void)
@@ -863,15 +1297,16 @@ const char *upscale_gov_note(void)
    const int l = upscale_gov_level();
    if (!l)
       return NULL;
-   return A_LOAD(g_gov_nat) - l < 2 ? "Smoothing is off to keep full speed."
-                                    : "Smoothing is lighter to keep full speed.";
+   /* catalogue keys (i18n.h): the menu shows tr() of it */
+   return A_RLOAD(g_gov_nat) - l < 2 ? "ui.smoothing_is_off_to_keep_full_speed"
+                                     : "ui.smoothing_is_lighter_to_keep_full";
 }
 
 int upscale_factor(int slot, int kind, unsigned w, unsigned h, int dw)
 {
    int f, fmax = kind == UPSCALE_XBRZ ? 4 : kind == UPSCALE_SCALE ? 3 : 0;
-   if (slot < 0 || slot >= UPSCALE_SLOTS || !fmax || !w || !h || dw <= 0 ||
-       g_quality == 1)
+   if (slot < 0 || slot >= UPSCALE_SLOTS || !fmax || !w || !h ||
+       w > UP_MAX_W || h > UP_MAX_H || dw <= 0 || g_quality == 1)
       return 0;
    /* The whole factor AT OR ABOVE the size on screen (a twentieth of
     * tolerance): "fit" is 3.4 times, and a picture scaled four times and
@@ -883,13 +1318,16 @@ int upscale_factor(int slot, int kind, unsigned w, unsigned h, int dw)
       f = fmax;
    while (f > 2 && (unsigned)(f * f) * w * h > UP_BUDGET_PX)
       f--;
+   /* Auto only: an explicit factor is the player's */
+   if (g_quality == 0 && A_RLOAD(g_look_cap) && f > A_RLOAD(g_look_cap))
+      f = A_RLOAD(g_look_cap);
    if (f < 2)
       return 0;
    /* The governor (above): this many factors less than the picture asks. */
-   A_STORE(g_gov_nat, f);
-   A_STORE(g_gov_seen, 1);
-   if (A_LOAD(g_gov_on))
-      f -= A_LOAD(g_gov.level);
+   A_RSTORE(g_gov_nat, f);
+   A_RSTORE(g_gov_seen, 1);
+   if (A_RLOAD(g_gov_on))
+      f -= A_RLOAD(g_gov.level);
    return f < 2 ? 0 : f;
 }
 
@@ -918,26 +1356,110 @@ int upscale_collect(int slot)
                                       __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
 }
 
-/* The slot's job is over and nobody is looking at it any more. */
-static void slot_wait(up_slot *S)
+/* ---- bounded waits ----------------------------------------------------------
+ * A helper that is not scheduled (the other core is busy with the system, or
+ * the kernel has put it to sleep) must never stop the game: the caller does
+ * the helper's work itself -- the stripes nobody has claimed yet -- and waits
+ * at most UP_WAIT_US for the one a helper is in the middle of.  Why 10 ms: a
+ * whole picture is 3-8 ms of helper time, so a stripe still unfinished after
+ * 10 ms means the helper lost its core, and 10 ms is already more than half
+ * a refresh; waiting longer costs a frame, giving up costs only a repeated
+ * picture (the caller shows the one before, which is whole).
+ * The wall clock, not the twin's simulated one: that does not move while
+ * the app spins. */
+#define UP_WAIT_US 10000u
+/* Teardown (forget, shutdown, a mode switch) has to be SURE nobody writes to
+ * the slot's memory any more -- the caller frees the textures right after --
+ * so it goes on in 10 ms turns, each counted, up to a second, which only a
+ * helper that has died can reach. */
+#define UP_TEARDOWN_TURNS 100
+
+static unsigned g_wait_timeouts;     /* atomic: waits that ran out (census) */
+static unsigned g_wait_abandoned;    /* atomic: teardown waits given up      */
+
+#ifdef __vita__
+static unsigned wall_us(void) { return pspcompat_time_us(); }
+#else
+#include <time.h>
+static unsigned wall_us(void)
 {
+   struct timespec ts;
+   clock_gettime(CLOCK_MONOTONIC, &ts);
+   return (unsigned)((unsigned)ts.tv_sec * 1000000u + (unsigned)ts.tv_nsec / 1000u);
+}
+#endif
+
+/* The slot's job is over and nobody is looking at it any more, or `us`
+ * microseconds went by (0).  Stripes no helper has taken are done here. */
+static int slot_wait_to(up_slot *S, unsigned us)
+{
+   const int si = (int)(S - g_slot);
+   const unsigned t0 = wall_us();
+   while (A_LOAD(S->state) == ST_BUSY && claim_and_run(si))
+      ;
    while (A_LOAD(S->state) == ST_BUSY || A_LOAD(S->inside))
-      nap();
+   {
+      const unsigned elapsed = wall_us() - t0;
+      if (elapsed >= us)
+      {
+         A_STORE(S->waiting, 0);
+         slot_done_drain(si);
+         A_RADD(g_wait_timeouts, 1);
+         return 0;
+      }
+      A_STORE(S->waiting, 1);
+      if (A_LOAD(S->state) != ST_BUSY && !A_LOAD(S->inside))
+      {
+         A_STORE(S->waiting, 0);
+         break;
+      }
+      if (!slot_done_wait(si, us - elapsed))
+      {
+         A_STORE(S->waiting, 0);
+         nap();
+      }
+   }
+   A_STORE(S->waiting, 0);
+   slot_done_drain(si);
+   return 1;
 }
 
-void upscale_forget(int slot)
+/* Teardown: see UP_TEARDOWN_TURNS.  1 = nobody is on the slot; 0 = a helper
+ * never let go, the slot is DEAD: it takes no more jobs, and its textures
+ * and buffers must not be freed (the helper may still write into them). */
+static int slot_wait(up_slot *S)
+{
+   int turn;
+   if (A_LOAD(S->dead))
+      return 0;
+   for (turn = 0; turn < UP_TEARDOWN_TURNS; turn++)
+      if (slot_wait_to(S, UP_WAIT_US))
+         return 1;
+   A_RADD(g_wait_abandoned, 1);
+   A_STORE(S->dead, 1);
+   fe_evt("up_slot_dead slot=%d: a helper never let go; its textures are kept",
+          (int)(S - g_slot));
+   return 0;
+}
+
+int upscale_forget(int slot)
 {
    up_slot *S;
    if (slot < 0 || slot >= UPSCALE_SLOTS)
-      return;
+      return 1;
    S = &g_slot[slot];
-   slot_wait(S);
+   if (!slot_wait(S))
+      return 0;
    A_STORE(S->state, ST_IDLE);
    S->kind = UPSCALE_NONE;       /* the next picture starts from nothing */
    S->out[0] = S->out[1] = NULL;
    S->late_run = S->fast_run = S->fast_need = 0;
    S->hot = 0;
-   A_STORE(S->step_down, 0);
+   S->high_dirty_run = 0;
+   S->slide_fail = S->slide_skip = 0;
+   memset(S->big_stale_row, 0, sizeof(S->big_stale_row));
+   A_RSTORE(S->step_down, 0);
+   return 1;
 }
 
 /* ---- a picture that scrolled ---------------------------------------------
@@ -954,10 +1476,6 @@ void upscale_forget(int slot)
  * (a scroll goes on at the speed it has).  A wrong guess only costs time:
  * every pixel is still compared with the one it is supposed to have come
  * from, and scaled again if it differs. */
-#define UP_SLIDE_MAX 8
-#define UP_PROBE_ROWS 12
-#define UP_PROBE_COLS 16
-#define UP_PROBES (UP_PROBE_ROWS * UP_PROBE_COLS)
 
 /* Probes that match at the slide `shift` (dy * w + dx), sample by sample,
  * giving up as soon as the rest could not bring the count to `need`: such a
@@ -981,23 +1499,29 @@ static void slide_find(up_slot *S, int *pdx, int *pdy)
 {
    const int w = (int)S->w, h = (int)S->h;
    const int m = UP_SLIDE_MAX + 1;
-   int idx[UP_PROBES];
+   int *idx = S->slide_idx;
    int r, c, dx, dy, base, best, bdx = 0, bdy = 0, floor_;
 
    *pdx = *pdy = 0;
    if (w < 6 * m || h < 6 * m)
       return;
-   /* The samples: a grid that keeps clear of the edges by the largest
-    * slide, staggered row by row so it does not sit on a 16-pixel tile's
-    * grid. */
-   for (r = 0; r < UP_PROBE_ROWS; r++)
-      for (c = 0; c < UP_PROBE_COLS; c++)
-      {
-         const int py = m + (h - 2 * m - 1) * (2 * r + 1) / (2 * UP_PROBE_ROWS);
-         const int px = m + ((w - 2 * m - 1) * (2 * c + 1) /
-                             (2 * UP_PROBE_COLS) + r * 5) % (w - 2 * m);
-         idx[r * UP_PROBE_COLS + c] = py * w + px;
-      }
+   /* Cache probe indices per (w, h) so we never run 192 integer divisions per
+    * frame on Cortex-A9. */
+   if (S->slide_w != (unsigned)w || S->slide_h != (unsigned)h)
+   {
+      for (r = 0; r < UP_PROBE_ROWS; r++)
+         for (c = 0; c < UP_PROBE_COLS; c++)
+         {
+            const int py = m + (h - 2 * m - 1) * (2 * r + 1) / (2 * UP_PROBE_ROWS);
+            const int px = m + ((w - 2 * m - 1) * (2 * c + 1) /
+                                (2 * UP_PROBE_COLS) + r * 5) % (w - 2 * m);
+            idx[r * UP_PROBE_COLS + c] = py * w + px;
+         }
+      S->slide_w = (unsigned)w;
+      S->slide_h = (unsigned)h;
+      S->slide_fail = 0;
+      S->slide_skip = 0;
+   }
    base = slide_score(S, idx, 0, 0);
    if (base * 4 >= UP_PROBES * 3)
       return;                    /* mostly the same where it is */
@@ -1008,10 +1532,20 @@ static void slide_find(up_slot *S, int *pdx, int *pdy)
                           (UP_PROBES * 3 + 3) / 4);
       if (s * 4 >= UP_PROBES * 3)
       {
+         S->slide_fail = 0;
+         S->slide_skip = 0;
          *pdx = S->last_dx;
          *pdy = S->last_dy;
          return;
       }
+   }
+   /* Failure backoff: non-scrolling fades / Mode 7 / palette flashes skip the
+    * full 288-offset scan up to 4 frames in 5, resetting immediately on any
+    * hit or dimension change. */
+   if (S->slide_skip > 0)
+   {
+      S->slide_skip--;
+      return;
    }
    /* A slide is used only if it explains three fifths of the samples and
     * an eighth more than staying put: nothing below that can be the
@@ -1045,8 +1579,16 @@ static void slide_find(up_slot *S, int *pdx, int *pdy)
    if ((bdx || bdy) && best * 5 >= UP_PROBES * 3 &&
        best >= base + UP_PROBES / 8)
    {
+      S->slide_fail = 0;
+      S->slide_skip = 0;
       *pdx = bdx;
       *pdy = bdy;
+   }
+   else
+   {
+      S->slide_fail++;
+      if (S->slide_fail >= 2)
+         S->slide_skip = S->slide_fail >= 5 ? 4 : S->slide_fail - 1;
    }
 }
 
@@ -1085,7 +1627,7 @@ static int row_same(const uint16_t *a, const uint16_t *b, unsigned w)
 static void up_lap(unsigned *tp, int part)
 {
    const unsigned now = pspcompat_time_us();
-   g_prep[part] += now - *tp;
+   __atomic_fetch_add(&g_prep[part], now - *tp, __ATOMIC_RELAXED);
    *tp = now;
 }
 
@@ -1126,7 +1668,7 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
    unsigned tp = tin;
    size_t npx, nbig;
    unsigned y, same = 0;
-   int i, fresh, any = 0, dx = 0, dy = 0, fj, whole = 0;
+   int i, fresh, any = 0, dx = 0, dy = 0, fj, whole = 0, mm;
 
    if (slot < 0 || slot >= UPSCALE_SLOTS || !src || !out || !out[0] ||
        !out[1] || !w || !h || h > UP_MAX_H || w > UP_MAX_W ||
@@ -1137,23 +1679,36 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
        out_pitch < (size_t)f * w * sizeof(uint32_t))
       return -1;
    S = &g_slot[slot];
-   if (A_LOAD(S->state) == ST_BUSY)
+   if (A_LOAD(S->dead) || A_LOAD(S->state) == ST_BUSY)
    {
-      A_ADD(g_st.dropped, 1);
+      A_RADD(g_st.dropped, 1);
       upscale_gov_miss();
       return 0;
    }
-   if (!g_lut_ready)
-      lut_build();
+   if (!g_lut_ready && !lut_build())
+      return -1;
    if (g_pool < 0)
       pool_start();
    /* A helper may still be on its way out of the job before this one
     * (claim_and_run): a few instructions, almost never seen. */
    {
       int spins = 0;
+      unsigned t0 = 0;
       while (A_LOAD(S->inside))
-         if (++spins > 200)
-            nap();
+      {
+         if (++spins <= 200)
+            continue;
+         if (!t0)
+            t0 = wall_us();
+         else if (wall_us() - t0 >= UP_WAIT_US)
+         {
+            /* a helper that never leaves the slot: this picture is dropped */
+            A_RADD(g_wait_timeouts, 1);
+            A_RADD(g_st.dropped, 1);
+            return 0;
+         }
+         nap();
+      }
    }
 
    /* ---- the slot's buffers ------------------------------------------------ */
@@ -1198,7 +1753,6 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
       S->kind = UPSCALE_NONE;
       return -1;
    }
-   S->nstripes = (int)((h + UP_STRIPE - 1) / UP_STRIPE);
 
    /* ---- the new picture, and what of it is new --------------------------- */
    {
@@ -1210,7 +1764,7 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
       for (y = 0; y < h; y++)
       {
          uint16_t *row = S->cur + (size_t)w * y;
-         memcpy(row, src + pitch * y, w * 2u);
+         UP_MEMCPY(row, src + pitch * y, w * 2u);
          if (!fresh)
          {
             rsame[y] = (unsigned char)row_same(row, S->old + (size_t)w * y, w);
@@ -1239,20 +1793,29 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
    fj = f;
    if (fj > 3 && S->hot && g_fade_drop)
       fj = fj - g_fade_drop < 2 ? 2 : fj - g_fade_drop;
-   else if (fj > 2 && A_LOAD(S->step_down))
+   else if (fj > 2 && A_RLOAD(S->step_down))
       fj--;
+   /* MMPX or xBRZ for a 2x picture: decided here, once, from the settings
+    * as they are now (they change on another thread); a change makes the
+    * picture whole again, like a change of factor, so no picture ever holds
+    * stripes of both */
+   mm = fj == 2 && mmpx_wanted(kind);
+   if (S->mm != mm)
+      fresh = 1;
    if (S->f != fj)
       fresh = 1;                 /* both textures need it all again        */
 
    if (fresh)
    {
       dx = dy = 0;
-      S->kind = kind; S->f = fj; S->bgr = bgr; S->w = w; S->h = h;
+      S->kind = kind; S->f = fj; S->mm = mm; S->bgr = bgr; S->w = w; S->h = h;
       S->out[0] = (unsigned char *)out[0];
       S->out[1] = (unsigned char *)out[1];
       S->out_pitch = out_pitch;
       S->last_dx = S->last_dy = 0;
       S->rox = S->roy = 0;
+      S->slide_fail = S->slide_skip = 0;
+      memset(S->big_stale_row, 0, sizeof(S->big_stale_row));
       for (y = 0; y < h; y++)
       {
          cm_set_all(&rowm[y], (int)w);
@@ -1272,10 +1835,13 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
          if (g_slide_mode == 1)
          {
             const long bo = (long)dy * fj * (long)(fj * w) + (long)dx * fj;
-            if (so > 0)
-               memmove(S->src32 + so, S->src32, (npx - (size_t)so) * 4);
-            else
-               memmove(S->src32, S->src32 - so, (npx - (size_t)-so) * 4);
+            if (kind == UPSCALE_XBRZ && !mm)
+            {
+               if (so > 0)
+                  memmove(S->src32 + so, S->src32, (npx - (size_t)so) * 4);
+               else
+                  memmove(S->src32, S->src32 - so, (npx - (size_t)-so) * 4);
+            }
             const size_t nb = npx * (size_t)fj * (size_t)fj;
             if (bo > 0)
                memmove(S->big + bo, S->big, (nb - (size_t)bo) * 4);
@@ -1289,16 +1855,19 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
          }
          else
          {
-            if (so > 0)
-               UP_MEMMOVE(S->src32 + so, S->src32, (npx - (size_t)so) * 4);
-            else
-               UP_MEMMOVE(S->src32, S->src32 - so, (npx - (size_t)-so) * 4);
+            if (kind == UPSCALE_XBRZ && !mm)
+            {
+               if (so > 0)
+                  UP_MEMMOVE(S->src32 + so, S->src32, (npx - (size_t)so) * 4);
+               else
+                  UP_MEMMOVE(S->src32, S->src32 - so, (npx - (size_t)-so) * 4);
+            }
             /* the old pixel (x - dx, y - dy) is where the new (x, y) is */
             S->rox = (int)(((long)S->rox - dx + (long)w * 8) % (long)w);
             S->roy = (int)(((long)S->roy - dy + (long)h * 8) % (long)h);
          }
          S->slid = 1;
-         A_ADD(g_st.shifted, 1);
+         A_RADD(g_st.shifted, 1);
       }
       up_lap(&tp, PP_MOVE);
       S->last_dx = dx;
@@ -1333,27 +1902,75 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
       }
       up_lap(&tp, PP_MARK);
    }
-   if (kind == UPSCALE_XBRZ)
    {
-      const uint32_t *lut = g_lut[bgr];
-      for (y = 0; y < h; y++)
-         if (cm_any(&rowm[y]))
-         {
-            const uint16_t *c = S->cur + (size_t)w * y;
-            uint32_t *e = S->src32 + (size_t)w * y;
-            int x = 0, x0, x1;
-            while (cm_run(&rowm[y], x, (int)w, 0, &x0, &x1))
+      int dirty_rows = 0;
+      if (kind == UPSCALE_XBRZ && !mm)
+      {
+         const uint32_t *lut = g_lut[bgr];
+         xbrz_c_init();
+         for (y = 0; y < h; y++)
+            if (cm_any(&rowm[y]))
             {
-               for (x = x0; x < x1; x++)
-                  e[x] = lut[c[x]];
-               x = x1;
+               const uint16_t *c = S->cur + (size_t)w * y;
+               uint32_t *e = S->src32 + (size_t)w * y;
+               int x = 0, x0, x1;
+               dirty_rows++;
+               while (cm_run(&rowm[y], x, (int)w, 0, &x0, &x1))
+               {
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+                  for (x = x0; x + 8 <= x1; x += 8)
+                     up_rgb565_to_rgba8_x8(vld1q_u16(c + x), e + x, bgr);
+                  for (; x < x1; x++)
+                     e[x] = up_rgb565_to_rgba8(c[x], bgr);
+                  (void)lut;
+#else
+                  for (x = x0; x < x1; x++)
+                     e[x] = lut[c[x]];
+#endif
+                  x = x1;
+               }
             }
-         }
+      }
+      else
+      {
+         for (y = 0; y < h; y++)
+            if (cm_any(&rowm[y]))
+               dirty_rows++;
+      }
+
+      /* Scale stripe height dynamically to dirty coverage and worker count. */
+      {
+         const int nworkers = g_pool > 0 ? g_pool : 1;
+         const int denom = 2 * nworkers;
+         int sh = dirty_rows ? (dirty_rows + denom - 1) / denom : 16;
+         if (sh < UP_STRIPE_MIN)
+            sh = UP_STRIPE_MIN;
+         if (sh > UP_STRIPE_MAX)
+            sh = UP_STRIPE_MAX;
+         S->stripe_h = sh;
+         S->nstripes = (int)((h + (unsigned)sh - 1u) / (unsigned)sh);
+      }
+
+      /* Direct-to-texture bypass on sustained non-slid high-dirty frames
+       * (>= 65% dirty rows for 2+ frames, e.g. fades, Mode 7, non-scrolling
+       * motion): scales straight into S->out[target] without writing S->big
+       * or copying S->big -> S->out[target].  Per-row big_stale_row tracking
+       * restores S->big cleanly when returning to incremental frames. */
+      if (!S->slid && dirty_rows * 100 >= (int)h * 65)
+         S->high_dirty_run++;
+      else
+         S->high_dirty_run = 0;
+      S->direct = !S->slid && g_slide_mode != 1 &&
+                  S->high_dirty_run >= 2 &&
+                  dirty_rows * 100 >= (int)h * 65 &&
+                  (((uintptr_t)S->out[target] | S->out_pitch) & 3u) == 0;
    }
    for (i = 0; i < S->nstripes; i++)
    {
-      int y0 = i * UP_STRIPE - UP_MARGIN, y1 = (i + 1) * UP_STRIPE + UP_MARGIN;
-      int yy;
+      const int sy0 = i * S->stripe_h;
+      const int sy1 = sy0 + S->stripe_h < (int)h ? sy0 + S->stripe_h : (int)h;
+      int y0 = sy0 - UP_MARGIN, y1 = sy1 + UP_MARGIN;
+      int yy, row_stale = 0;
       colmask m;
       memset(&m, 0, sizeof(m));
       if (y0 < 0) y0 = 0;
@@ -1362,6 +1979,14 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
          cm_or(&m, &rowm[yy]);
       if (cm_any(&m))
          cm_dilate(&m, UP_MARGIN, (int)w);
+      for (yy = sy0; yy < sy1; yy++)
+         if (S->big_stale_row[ring_y(S, yy)])
+         {
+            row_stale = 1;
+            break;
+         }
+      if (row_stale)
+         cm_set_all(&m, (int)w);
       S->dirty[i] = m;
       any |= cm_any(&m);
    }
@@ -1373,10 +1998,10 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
    /* ---- the job ---------------------------------------------------------- */
    S->target = target;
    S->t0 = pspcompat_time_us();
-   A_ADD(g_st.prep_us, (int)(S->t0 - tin));
-   A_STORE(S->scaled_px, 0);
-   A_STORE(S->done, 0);
-   A_STORE(S->next, 0);
+   A_RADD(g_st.prep_us, (int)(S->t0 - tin));
+   A_RSTORE(S->scaled_px, 0);
+   A_RSTORE(S->done, 0);
+   A_RSTORE(S->next, 0);
    A_STORE(S->state, ST_BUSY);   /* last: see claim_and_run */
    if (g_async && any)
       pool_go();
@@ -1388,7 +2013,11 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
          pool_go();
       while (claim_and_run(slot))
          ;
-      slot_wait(S);
+      /* A helper stalled inside a stripe: the picture is not whole, so it
+       * is not shown (the caller keeps the one before); the slot frees
+       * itself when the helper comes back. */
+      if (!slot_wait_to(S, UP_WAIT_US))
+         return 0;
    }
    return 1;
 }
@@ -1406,7 +2035,7 @@ int upscale_help(unsigned max_us)
       {
          if (pspcompat_time_us() - t0 >= max_us)
          {
-            A_ADD(g_st.helped, n);
+            A_RADD(g_st.helped, n);
             return n;
          }
          if (claim_and_run(si))
@@ -1416,57 +2045,87 @@ int upscale_help(unsigned max_us)
          }
       }
    } while (did);
-   A_ADD(g_st.helped, n);
+   A_RADD(g_st.helped, n);
    return n;
+}
+
+/* The look governor's own reading (main_vita.c app_look_pass), once a second:
+ * the average time of the pictures the upscalers finished since the last
+ * call, in microseconds (0 = none).  A separate read of the counters:
+ * upscale_stats resets them for the census and must keep doing so. */
+unsigned upscale_second_avg_us(void)
+{
+   static int last_jobs, last_sum;
+   const int jobs = A_RLOAD(g_st.jobs), sum = A_RLOAD(g_st.sum_us);
+   const int dj = jobs - last_jobs, ds = sum - last_sum;
+   if (dj < 0 || ds < 0)             /* upscale_stats reset them meanwhile */
+   {
+      last_jobs = jobs;
+      last_sum = sum;
+      return 0;
+   }
+   last_jobs = jobs;
+   last_sum = sum;
+   return dj > 0 ? (unsigned)(ds / dj) : 0u;
 }
 
 void upscale_stats(upscale_stats_t *out)
 {
-   const int jobs = __atomic_exchange_n(&g_st.jobs, 0, __ATOMIC_SEQ_CST);
-   const int sum = __atomic_exchange_n(&g_st.sum_us, 0, __ATOMIC_SEQ_CST);
-   const int stripes = __atomic_exchange_n(&g_st.stripes, 0, __ATOMIC_SEQ_CST);
-   const int px = __atomic_exchange_n(&g_st.px_k, 0, __ATOMIC_SEQ_CST);
-   const int scaled = __atomic_exchange_n(&g_st.scaled_k, 0, __ATOMIC_SEQ_CST);
-   const int shifted = __atomic_exchange_n(&g_st.shifted, 0, __ATOMIC_SEQ_CST);
-   const int prep = __atomic_exchange_n(&g_st.prep_us, 0, __ATOMIC_SEQ_CST);
+   /* The bounded waits' census (called once a window): waits that ran out
+    * and were answered with the previous picture, teardowns given up. */
+   if (g_pool > 0)
+   {
+      static unsigned last_to;
+      const unsigned to = A_RLOAD(g_wait_timeouts);
+      fe_evt("vita_up_waits timeouts=%u window=%u abandoned=%u limit_us=%u",
+             to, to - last_to, A_RLOAD(g_wait_abandoned), UP_WAIT_US);
+      last_to = to;
+   }
+   const int jobs = __atomic_exchange_n(&g_st.jobs, 0, __ATOMIC_RELAXED);
+   const int sum = __atomic_exchange_n(&g_st.sum_us, 0, __ATOMIC_RELAXED);
+   const int stripes = __atomic_exchange_n(&g_st.stripes, 0, __ATOMIC_RELAXED);
+   const int px = __atomic_exchange_n(&g_st.px_k, 0, __ATOMIC_RELAXED);
+   const int scaled = __atomic_exchange_n(&g_st.scaled_k, 0, __ATOMIC_RELAXED);
+   const int shifted = __atomic_exchange_n(&g_st.shifted, 0, __ATOMIC_RELAXED);
+   const int prep = __atomic_exchange_n(&g_st.prep_us, 0, __ATOMIC_RELAXED);
    if (!out)
       return;
    out->jobs = (unsigned)jobs;
    out->avg_us = jobs ? (unsigned)(sum / jobs) : 0;
    out->max_us = (unsigned)__atomic_exchange_n(&g_st.max_us, 0,
-                                               __ATOMIC_SEQ_CST);
+                                               __ATOMIC_RELAXED);
    out->dropped = (unsigned)__atomic_exchange_n(&g_st.dropped, 0,
-                                                __ATOMIC_SEQ_CST);
+                                                __ATOMIC_RELAXED);
    out->scaled_pct = px ? (unsigned)((long long)scaled * 100 / px) : 0;
    out->slid_pct = jobs ? (unsigned)(shifted * 100 / jobs) : 0;
    out->prep_us = jobs ? (unsigned)(prep / jobs) : 0;
    out->helped_pct = stripes ? (unsigned)(
-      __atomic_exchange_n(&g_st.helped, 0, __ATOMIC_SEQ_CST) * 100 / stripes)
+      __atomic_exchange_n(&g_st.helped, 0, __ATOMIC_RELAXED) * 100 / stripes)
       : 0;
    {
       int i;
       for (i = 0; i < 2; i++)
       {
-         const int v = __atomic_exchange_n(&g_st.job_us[i], 0, __ATOMIC_SEQ_CST);
+         const int v = __atomic_exchange_n(&g_st.job_us[i], 0, __ATOMIC_RELAXED);
          out->job_part[i] = jobs ? (unsigned)(v / jobs) : 0;
       }
-      out->late = (unsigned)__atomic_exchange_n(&g_st.late, 0, __ATOMIC_SEQ_CST);
+      out->late = (unsigned)__atomic_exchange_n(&g_st.late, 0, __ATOMIC_RELAXED);
       for (i = 0; i < 3; i++)
          out->late_f[i] = (unsigned)__atomic_exchange_n(&g_st.late_f[i], 0,
-                                                        __ATOMIC_SEQ_CST);
+                                                        __ATOMIC_RELAXED);
       out->stepped = (unsigned)__atomic_exchange_n(&g_st.stepped, 0,
-                                                   __ATOMIC_SEQ_CST);
+                                                   __ATOMIC_RELAXED);
       out->late_slid = (unsigned)__atomic_exchange_n(&g_st.late_slid, 0,
-                                                     __ATOMIC_SEQ_CST);
-      i = __atomic_exchange_n(&g_st.late_pct, 0, __ATOMIC_SEQ_CST);
+                                                     __ATOMIC_RELAXED);
+      i = __atomic_exchange_n(&g_st.late_pct, 0, __ATOMIC_RELAXED);
       out->late_pct = out->late ? (unsigned)i / out->late : 0;
       for (i = 0; i < PP_N && i < UPSCALE_PREP_PARTS; i++)
       {
-         out->prep_part[i] = jobs ? g_prep[i] / (unsigned)jobs : 0;
-         g_prep[i] = 0;
+         const unsigned pv = __atomic_exchange_n(&g_prep[i], 0, __ATOMIC_RELAXED);
+         out->prep_part[i] = jobs ? pv / (unsigned)jobs : 0;
       }
    }
-   out->factor = (unsigned)A_LOAD(g_st.factor);
+   out->factor = (unsigned)A_RLOAD(g_st.factor);
    out->threads = (unsigned)(g_pool > 0 ? g_pool : 0) + (g_async ? 0u : 1u);
    out->async = (unsigned)g_async;
 }
@@ -1483,8 +2142,6 @@ void upscale_xbrz_dist(int mode)
       slot_wait(&g_slot[i]);
       g_slot[i].kind = UPSCALE_NONE;     /* what `big` holds was made the other way */
    }
-   if (!g_lut_ready)
-      lut_build();
    xbrz_c_dist_mode(mode);
    g_xbrz_dist = mode;
 }
@@ -1511,8 +2168,8 @@ void upscale_bench(const uint16_t *src, unsigned w, unsigned h,
       line[0] = '\0';
    if (!src || !w || !h || h > UP_MAX_H || pitch < w || !line || !cap)
       return;
-   if (!g_lut_ready)
-      lut_build();
+   if (!g_lut_ready && !lut_build())
+      return;
    for (i = 0; i < UPSCALE_SLOTS; i++)
       slot_wait(&g_slot[i]);             /* the comparison is switched below */
    cur = (uint16_t *)malloc((size_t)w * h * sizeof(uint16_t));
@@ -1553,12 +2210,20 @@ void upscale_bench(const uint16_t *src, unsigned w, unsigned h,
 void upscale_shutdown(void)
 {
    int i;
+   int clean = 1;
    for (i = 0; i < UPSCALE_SLOTS; i++)
-      slot_wait(&g_slot[i]);
-   if (g_pool > 0)
-      pool_stop();
+      if (!slot_wait(&g_slot[i]))
+         clean = 0;
+   if (g_pool > 0 && !pool_stop())
+      clean = 0;
    g_pool = -1;
    g_pool_quit = 0;
+   if (!clean)
+      return; /* a helper may still touch the buffers: leak them, never free */
+   slot_done_term();
+   free(g_lut);
+   g_lut = NULL;
+   g_lut_ready = 0;
    for (i = 0; i < UPSCALE_SLOTS; i++)
    {
       free(g_slot[i].cur);

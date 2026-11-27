@@ -17,11 +17,14 @@
 #define UI_VITA_STYLE_H
 
 #include "vstyle.h"
+#include "i18n.h"
 
 #define HC_BG       VS_HEX(0x060914, 255)
 #define HC_TEXT     VS_HEX(0xF5F7FC, 255)
 #define HC_TEXT2    VS_HEX(0xA7B0C6, 255)
-#define HC_TEXT3    VS_HEX(0x6E7891, 255)
+/* (UX review 2.1: #6E7891 was too faint on the card at arm's length;
+ * #8F99B3 is the lightest secondary text the players use) */
+#define HC_TEXT3    VS_HEX(0x8F99B3, 255)
 #define HC_GLASS    VS_HEX(0xFFFFFF, 30)
 #define HC_GLASS_HI VS_HEX(0xFFFFFF, 52)
 #define HC_INK      VS_HEX(0x0A0F1F, 255)
@@ -36,10 +39,27 @@
    UI_TCH_ROW((id), (int)((x) / 2), (int)((y) / 2), (int)((w) / 2) + 1, \
               (int)((h) / 2) + 1)
 
-/* One colour per console (GBA, GB, GBC). */
+/* One colour per console (GBA, GB, GBC; the NES its own silver).  The SNES
+ * has always worn the GBA's (a console past the third falls back to it);
+ * it keeps that, the NES does not. */
 static uint32_t hm_tint(int console, int a)
 {
    static const uint32_t rgb[3] = { 0x7B6CFF, 0x8CC63F, 0x19C3B4 };
+   if (console == FE_CONSOLE_NES)
+      return VS_HEX(0xC9CED8, a);
+   if (console == FE_CONSOLE_WSWAN)
+      return VS_HEX(0xF2B134, a);
+   /* 2.0: the four Sega consoles (md.bin) */
+   if (console == FE_CONSOLE_MD)
+      return VS_HEX(0x4FA3FF, a);
+   if (console == FE_CONSOLE_SMS)
+      return VS_HEX(0xF2557F, a);
+   if (console == FE_CONSOLE_GG)
+      return VS_HEX(0xB57CFF, a);
+   if (console == FE_CONSOLE_SG)
+      return VS_HEX(0xFF9B3D, a);
+   if (console == FE_CONSOLE_SCD)
+      return VS_HEX(0xC8E03C, a);
    if (console < 0 || console > 2)
       console = 0;
    return VS_HEX(rgb[console], a);
@@ -50,6 +70,20 @@ static uint32_t hm_deep(int console, int bottom)
 {
    static const uint32_t top[3] = { 0x5B4BC4, 0x3D7A35, 0x1C9E97 };
    static const uint32_t bot[3] = { 0x231B5E, 0x12301A, 0x0A3F45 };
+   if (console == FE_CONSOLE_NES)
+      return VS_HEX(bottom ? 0x1D2027 : 0x6A6F7B, 255);
+   if (console == FE_CONSOLE_WSWAN)
+      return VS_HEX(bottom ? 0x2E1F05 : 0x9A6A14, 255);
+   if (console == FE_CONSOLE_MD)
+      return VS_HEX(bottom ? 0x0E1F3F : 0x2B5FA8, 255);
+   if (console == FE_CONSOLE_SMS)
+      return VS_HEX(bottom ? 0x3F0E1D : 0xA83252, 255);
+   if (console == FE_CONSOLE_GG)
+      return VS_HEX(bottom ? 0x24133F : 0x6B3FA8, 255);
+   if (console == FE_CONSOLE_SG)
+      return VS_HEX(bottom ? 0x3F2308 : 0xA8601F, 255);
+   if (console == FE_CONSOLE_SCD)
+      return VS_HEX(bottom ? 0x2B330A : 0x7C961C, 255);
    if (console < 0 || console > 2)
       console = 0;
    return VS_HEX(bottom ? bot[console] : top[console], 255);
@@ -177,21 +211,72 @@ static float hm_hints_w(const int *icons, const char *const *words, int n)
 }
 
 /* "SAVE STATES" -> "Save states": the old pages' titles, in the new
- * sentence case. */
+ * sentence case.  Whole characters: an accented capital after the first
+ * letter becomes small too ("PARAMÈTRES" -> "Paramètres", pk_u8_lower). */
 static void hm_sentence(char *out, size_t cap, const char *s)
 {
-   size_t i;
-   int first = 1;
-   for (i = 0; s[i] && i + 1 < cap; i++)
+   size_t o = 0;
+   int first = 1, word_start = 1;
+   int german = i18n_current() == I18N_DE;
+   int has_lower = 0;
+   const char *p;
+   if (!cap)
+      return;
+   if (german)
    {
-      char c = s[i];
-      if (c >= 'A' && c <= 'Z' && !first)
-         c = (char)(c - 'A' + 'a');
-      if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))
-         first = 0;
-      out[i] = c;
+      for (p = s; *p; )
+      {
+         int n;
+         uint32_t cp = pk_u8_next(p, &n);
+         if (cp >= PK_U8_RAW) { p++; continue; }
+         if (pk_u8_is_latin_letter(cp) && pk_u8_lower(cp) == cp)
+         {
+            has_lower = 1;
+            break;
+         }
+         p += n;
+      }
+      if (has_lower)
+      {
+         snprintf(out, cap, "%s", s);
+         return;
+      }
    }
-   out[i] = '\0';
+   while (*s && o + 1 < cap)
+   {
+      int n;
+      uint32_t cp = pk_u8_next(s, &n);
+      char b[4];
+      int k;
+      if (cp >= PK_U8_RAW)                 /* a stray byte: as it is */
+      {
+         out[o++] = *s++;
+         word_start = 1;
+         continue;
+      }
+      if (german)
+      {
+         /* German nouns are capitalised: for an ALL-CAPS header do not
+          * lowercase the first letter of any word. */
+         if (!word_start)
+            cp = pk_u8_lower(cp);
+         word_start = !pk_u8_is_latin_letter(cp);
+      }
+      else
+      {
+         if (!first)
+            cp = pk_u8_lower(cp);
+         if (pk_u8_is_latin_letter(cp))
+            first = 0;
+      }
+      k = pk_u8_put(cp, b);
+      if (o + (size_t)k >= cap)
+         break;                            /* no room for the whole character */
+      memcpy(out + o, b, (size_t)k);
+      o += (size_t)k;
+      s += n;
+   }
+   out[o] = '\0';
 }
 
 #endif /* UI_VITA_STYLE_H */

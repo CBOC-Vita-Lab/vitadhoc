@@ -70,9 +70,17 @@
 #include <sys/stat.h>
 #include <dirent.h>
 
+#include "i18n.h"
 #include "fe_host.h"
 #include "menu_load.h"
 #include "../gbcore/gbcore.h"   /* gbcore_set_color_correction */
+#include "../nescore/gbcore_mux.h"   /* gbmux_nes_fps, gbmux_nes_system_dir */
+#include "../wscore/wscore.h"        /* the WonderSwan's rotation, pad, blend */
+#include "../nescore/nescore.h"      /* the NES wide view */
+#include "pace_steady.h"             /* Steady pacing (playerkit's pk_pace) */
+#include "handoff_glue.h"            /* Smooth hand-over (playerkit's pk_handoff) */
+#include "look_glue.h"               /* the look governor (playerkit's pk_look) */
+#include "ahead_glue.h"              /* Quick response: run-ahead by one frame (playerkit's pk_ahead) */
 #include "fe_gbadual.h"
 #include "fe_evt.h"
 #include "fe_util.h"
@@ -85,6 +93,8 @@
 #include "config_psp.h"
 #include "ctl_map.h"
 #include "video_vita.h"
+#include "vglyph.h"
+#include "vback.h"                   /* vb_ownership_get: the GXM error census */
 #include "upscale_vita.h"
 #include "render_thread.h"
 #include "ui_host_hooks.h"
@@ -95,14 +105,22 @@
 #include "stb_image_write.h"
 
 #include "plat.h"
+#include "pk_screen.h"          /* screen profile (playerkit/src, MIT) */
 #include "cpuclock.h"
+#include "boot_guard.h"
 #include "fe_sensor.h"
+#include "fe_gbcam_fit.h"
+#include "stb_image.h"
 #include "play_log.h"
 #include "save_sync.h"
 #include "rom_patch.h"
 #include "zip_rom.h"
+#include "sz_rom.h"
 #include "audio_vita.h"
 #include "app_vita.h"
+#include "link_snes.h"
+#include "ui_vita_md.h"       /* the four Sega consoles (md.bin) */
+#include "zapper_map.h"       /* the NES Zapper on the touch screen */
 #include "mgift_vita.h"
 #include "mgift_net.h"       /* MGNET_LISTEN_PORT */
 #include "cheats_vita.h"
@@ -112,10 +130,16 @@
 #include "menu_diag.h"
 #include "gamedb.h"
 #include "artfetch.h"
+#include "update_check.h"
+#include "clip_export.h"
+#include "online_vita.h"    /* ONLINE_APP_VERSION: the app's version */
 #include "ra_vita.h"
 #include "net_vita.h"
 #include "../wide.h"
 #include "vstyle.h"
+#include "diskspace.h"
+#include "../../playerkit/src/pk_ffnorm.h"   /* fast forward at normal pitch */
+#include "gbkind.h"
 #include "../gbalink/gbalink_script.h"
 
 /* The control map's bits are the PSP's pad bits (psp/ctl_map.h says so of
@@ -205,7 +229,8 @@ static struct
                                * follow a scrolled picture
                                * (upscale_slide_mode; 2 the default)      */
    int      main_cpu;         /* main_cpu = 0..2: keep the emulator's thread
-                               * on that core; -1 leave it to the system */
+                               * on that core (0 default); -1 leave it to
+                               * the system */
    int      drain;            /* drain = 0 / 1 / 2: a frame starts only once
                                * the last picture is on the glass (1, the
                                * default) / taken by the display queue (2) /
@@ -228,22 +253,9 @@ static struct
                                * line by line / jit / sound), `EVT
                                * core_phase` every ten seconds (main.h has
                                * what each level costs); 0 = off        */
-   int      gpu_xbrz;         /* gpu_xbrz = 1: xBRZ drawn by the GPU where
-                               * it can be (video_vita.c, "xBRZ on the
-                               * GPU"); 0 = the CPU's cores, the default:
-                               * on the console the GPU took 31 ms a
-                               * frame for it                            */
    int      gpu_time;         /* gpu_time = 1: each present waits for the
                                * GPU to finish, and the log's vita_gpu
                                * line says how long (measuring only)     */
-   int      gpu_probe;        /* gpu_probe = 1: at start, compile test
-                               * programs and log what the shader
-                               * compiler says (`gpu_probe` lines); N >=
-                               * 2: what GPU xBRZ's first passes left in
-                               * their targets at its Nth picture
-                               * (`gpu_rt` lines)                       */
-   int      gpu_view;         /* gpu_xbrz_view = 1/2: the screen shows GPU
-                               * xBRZ's passes 1/0 (video_vita.c)       */
    /* FASTER LINK PLAY (GBAdhoc 4.0; the PSP's PLAY_* defaults): the GBA
     * Link Cable's fast path with the lean hooks (gba_link_fast = 0..3; 0 =
     * every bus walk, as up to build 19) and a network session's partner
@@ -256,18 +268,50 @@ static struct
                                  screens (artfetch_titles)              */
    int      overlays;         /* overlays = 0: no picture from overlays/
                                * over the game (vid_set_overlay)        */
-   int      grid;             /* grid_strength = 1..10: the LCD grid and
-                               * scanline looks' darkness (5 = default) */
    int      cpu_fast;         /* cpu_mhz = 500 (default) or 444: Settings >
                                * CPU speed (cpuclock.h)                 */
+   int      smc_partial;      /* smc_partial = 0 | 1 (default 1): GBA code
+                               * writes flush only the code they touch  */
+   int      dispatch_cache;   /* dispatch_cache = 0 | 1 (default 1)    */
+   int      handoff;          /* smooth_handoff = 0 | 1: this launch's
+                               * override of the setting (-1: as set)  */
+   int      draw_core;        /* draw_core = 0..2 (-1 default), draw_prio:
+                               * smooth hand-over's drawing thread     */
+   int      draw_prio;
    /* Last: the initializer below is positional, and "" is its default. */
    char     shot_dir[200];    /* screenshots = ux0:pictures/VitAdhoc: where
                                  * screenshots go (empty: screenshots/) */
    char     ra_host[128];     /* ra_host = http://host[:port]: another
                                * RetroAchievements server (the twin's
                                * tests; "" = retroachievements.org)    */
-} g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, -1, 1, 1,
-           "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 5, 1, "", "" };
+   int snes_two;              /* snes_two = host | join (1 | 2): a SNES game picked from the list starts a Two players
+                               * link first (the test switch; players use Join online) */
+   char     update_url[160];  /* update_url = http://host[:port]/path: the
+                               * update check's answer, on the twin only
+                               * (it asks nobody without it) */
+   int      update_timeout;   /* update_timeout = ms: the twin's tests */
+} g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, 0, 1, 1,
+           "", 0, 2, 1, 0, 0, 3, 2, 1, 1, 1, 1, 1, -1, -1, -1,
+           "", "", 0, "", 0 };
+
+/* The A/B keys of 1.4's layers, so the owner can run a "1.3 baseline"
+ * profile (docs/TECHNICAL.md, "A/B keys"): vita.ini
+ *   smooth_handoff = 0   no drawing thread (also a Settings row)
+ *   look_gov = 0         the look governor never eases anything
+ *   core4 = off          no fourth-core probe, every thread where 1.3 had it
+ *   handoff_check = 0    keep hand-over on even when its boot self-check
+ *                        (below) would give it up
+ * Not in g_sw: its initializer is positional. */
+static int g_look_gov = 1;
+static int g_ho_check = 1;
+static int g_core4_off;
+
+/* jit_lazy_exits = 0 | 1 and jit_lazy_budget = N (GBA recompiler, cpu_threaded.c
+ * "LAZY EXITS"): exits to untranslated ROM code are linked on first execution
+ * once N speculative blocks were translated by one lookup.  Not in g_sw: that
+ * initializer is positional. */
+static int g_jit_lazy = 0;
+static int g_jit_lazy_budget = 0;
 
 /* sync_ra_saves = 0: RetroArch's save file is left alone (save_sync.h) */
 static int g_sync_ra = 1;
@@ -311,6 +355,7 @@ static void app_core_phase(unsigned *lvl, unsigned *clk_ns, unsigned *frames,
 
 /* The GBA's frame period: 280896 cycles of a 16.777216 MHz clock. */
 #define GBA_FRAME_NS   16742706ull
+static uint64_t g_frame_ns = GBA_FRAME_NS;   /* the running core's frame (the NES differs) */
 #define GBA_FPS_X1000  59727.5
 
 /* A frame this many refreshes behind is not chased: the debt is forgiven.
@@ -416,6 +461,7 @@ static struct { const uint16_t *pix; unsigned w, h; size_t pitch; } g_last;
 static struct { const uint16_t *pix; unsigned w, h; size_t pitch; } g_show;
 static int g_wide_mode;                /* what the core was last told       */
 static int g_wide_fill = -1;
+static char g_overlay_name[96];   /* the overlay in use (overlay_apply) */
 
 /* The frame the player was looking at, as the UI wants it: PSP-order 565 at
  * the top-left of a 256x256 texture.  The menu's backdrop, the pause and
@@ -478,6 +524,7 @@ static struct
     * so the game is heard at its own speed-up and the port's rate holds. */
    int32_t   acc[2];
    int       acc_n;
+   pk_ffnorm norm;        /* ff_audio = 2: normal pitch (every mult'th chunk) */
    uint64_t  t0;
 } g_ff;
 static int g_blit_suppress;            /* 3x: an intermediate frame, not drawn */
@@ -498,6 +545,8 @@ static unsigned long long evt_clock(void)
 
 /* snprintf that says when the result did not fit, so no path is ever used
  * truncated (a truncated save path is somebody else's save). */
+static int path_fmt(char *out, size_t cap, const char *fmt, ...)
+   __attribute__((format(printf, 3, 4)));
 static int path_fmt(char *out, size_t cap, const char *fmt, ...)
 {
    va_list ap;
@@ -564,20 +613,50 @@ static int has_ext(const char *name, const char *ext)
    return n > e && strcasecmp(name + n - e, ext) == 0;
 }
 
+/* A game kept in an archive: .zip, or .7z (zip_rom.h, sz_rom.h) */
+static int is_arc(const char *path)
+{
+   return has_ext(path, ".zip") || has_ext(path, ".7z");
+}
+
+/* The extension's length: ".zip" 4, ".7z" 3 */
+static size_t arc_ext_len(const char *path)
+{
+   return has_ext(path, ".7z") ? 3 : 4;
+}
+
 /* A cartridge started without the game list is the console its extension
  * says; one picked in the list is the console the player was browsing. */
 static fe_console_t console_for(const char *path)
 {
-   if (has_ext(path, ".zip"))
+   if (is_arc(path))
    {
       zip_rom_entry e;
       if (zip_rom_peek(path, &e) >= -2 && e.console >= 0)
          return (fe_console_t)e.console;
       return FE_CONSOLE_GBA;
    }
-   if (has_ext(path, ".gbc")) return FE_CONSOLE_GBC;
-   if (has_ext(path, ".gb"))  return FE_CONSOLE_GB;
+   if (has_ext(path, ".gbc") || has_ext(path, ".gb"))
+   {
+      /* the cartridge header's Color flag decides, not the name (gbkind.h) */
+      char ovr[APP_PATH_CAP];
+      if (path_fmt(ovr, sizeof(ovr), "%s/gb_override.txt", g_app_root) == 0)
+         (void)gbk_overrides_load(ovr);
+      return gbk_decide(path) == GBK_GBC ? FE_CONSOLE_GBC : FE_CONSOLE_GB;
+   }
    if (has_ext(path, ".sfc") || has_ext(path, ".smc")) return FE_CONSOLE_SNES;
+   if (has_ext(path, ".nes") || has_ext(path, ".fds") || has_ext(path, ".unf") ||
+       has_ext(path, ".unif"))
+      return FE_CONSOLE_NES;
+   if (has_ext(path, ".ws") || has_ext(path, ".wsc") || has_ext(path, ".pc2"))
+      return FE_CONSOLE_WSWAN;
+   if (has_ext(path, ".md") || has_ext(path, ".gen") || has_ext(path, ".smd") ||
+       has_ext(path, ".68k") || (has_ext(path, ".bin") && gamedb_md_accept(path)))
+      return FE_CONSOLE_MD;
+   if (has_ext(path, ".sms")) return FE_CONSOLE_SMS;
+   if (has_ext(path, ".gg"))  return FE_CONSOLE_GG;
+   if (has_ext(path, ".sg") || has_ext(path, ".sc")) return FE_CONSOLE_SG;
+   if (has_ext(path, ".cue") || has_ext(path, ".chd") || has_ext(path, ".iso") || has_ext(path, ".m3u")) return FE_CONSOLE_SCD;   /* a disc, or the list of a game's discs: Sega CD */
    return FE_CONSOLE_GBA;
 }
 
@@ -594,10 +673,748 @@ static int snes_launch(const char *rom_path)
    return plat_exec_program("snes.bin", rom_path);   /* returns only on failure */
 }
 
+/* ---- Genesis, Master System, Game Gear, SG-1000 (VitAdhoc 2.0): md.bin ------
+ * The same coupling as for the SNES: md.bin (md/, Genesis Plus GX: a non-commercial licence) is another program of the
+ * package; the launch file (player_launch_write) says which of the four consoles and how, the game's path is its argument. */
+static int sega_launch(fe_console_t con, const char *game)
+{
+   fe_evt("sega_launch console=%s rom=%s", ui_sega_id(con), game);
+   return plat_exec_program("md.bin", game);   /* returns only on failure */
+}
+
+/* ".bin" is a Genesis game only when its bytes say so (gamedb_md_accept: SEGA at 0x100, or an SMD header), a ".md" only when it is not a tiny text file; the library's scan asks. */
+int ui_host_md_bin_ok(const char *path)
+{
+   const char *dot = path ? strrchr(path, '.') : NULL;
+   if (dot && !strcasecmp(dot, ".md"))
+   {
+      /* a .md is a Genesis game, unless it is a text file (README.md): smaller than any cartridge */
+      struct stat st;
+      return stat(path, &st) == 0 && st.st_size >= 0x4000;
+   }
+   return gamedb_md_accept(path);
+}
+
+/* Collections: a RetroArch playlist's checksum, as the game database's name. */
+int ui_host_name_by_crc(unsigned crc, char *out, size_t cap)
+{
+   return gamedb_name_by_crc((uint32_t)crc, out, cap);
+}
+
+/* ---- SNES (1.4): the launch file and the session report ------------------
+ * playerkit/FORMATS.md "Launch and session files" (the player: snes/vita/
+ * player.cpp, playerkit pk_launch).  Before snes.bin starts, <root>/launch/
+ * snes.ini says what to run and how (the save, Continue or a slot chosen on
+ * the shelf, the CPU clock, the Enter button) with a fresh session_id; the
+ * game's path stays the program's argument too, for an older player.  When
+ * this program starts again, the player's launch/session.txt (same id) adds
+ * the time played and shows its notice; with no report (the player was
+ * closed) the time since the launch is the estimate. */
+static char g_snes_session[40];
+static const char *g_snes_end_l1, *g_snes_end_l2;   /* a Two players session that never started: its two lines, shown once the list is up */
+static const link_snes_link *g_snes_lk;   /* the link snes_launch_write puts in the launch file, or NULL */
+static const char *base_name(const char *path);
+static void play_name_of(const char *rom_path, char *out, size_t cap);
+
+static int snes_file_put(const char *path, const char *text)
+{
+   char tmp[APP_PATH_CAP + 8], back[4096];
+   size_t n = strlen(text), got;
+   FILE *f;
+   int ok;
+   if (path_fmt(tmp, sizeof(tmp), "%s.tmp", path) != 0 || n >= sizeof(back))
+      return -1;
+   if ((f = fopen(tmp, "wb")) == NULL)
+      return -1;
+   ok = fwrite(text, 1, n, f) == n;
+   ok &= fclose(f) == 0;
+   /* read back: what is on the card is what was meant */
+   if (ok && (f = fopen(tmp, "rb")) != NULL)
+   {
+      got = fread(back, 1, sizeof(back), f);
+      fclose(f);
+      ok = got == n && memcmp(back, text, n) == 0;
+   }
+   else
+      ok = 0;
+   if (ok)
+   {
+      remove(path);                 /* the card refuses to rename over a file */
+      ok = rename(tmp, path) == 0;
+   }
+   if (!ok)
+      remove(tmp);
+   return ok ? 0 : -1;
+}
+
+static void snes_session_clear(void)
+{
+   char p[APP_PATH_CAP], q[APP_PATH_CAP + 8];
+   if (path_fmt(p, sizeof(p), "%s/launch/session.txt", g_app_root) != 0)
+      return;
+   remove(p);
+   if (path_fmt(q, sizeof(q), "%s.old", p) == 0) remove(q);
+   if (path_fmt(q, sizeof(q), "%s.tmp", p) == 0) remove(q);
+}
+
+static unsigned char *patch_read(const char *path, long *len, long cap);
+
+/* The two launch-file keys the SNES player reads from the app (P1's side:
+ * playerkit/src/pk_launch.cpp, snes/vita/player.cpp; format in
+ * playerkit/FORMATS.md):
+ *
+ *   patch=<path>          an IPS, BPS or UPS file the player applies to the
+ *                         ROM in memory; "" = none.  Looked up beside the
+ *                         game as the GBA side does (patch_prepare): the
+ *                         whole name first (Game.smc.ips, .bps, .ups), then
+ *                         the stem (Game.ips) unless another cartridge has
+ *                         that stem too.  A zip's patch is named after the
+ *                         zip (Game.zip.ips) or its stem.
+ *   patch_key=<text>      one line, "<kind> <rom size> <rom mtime> <patch
+ *                         size> <patch crc32 hex>" (kind: rom_patch_kind,
+ *                         the same note the GBA side keeps).  The player
+ *                         stores it beside a resume point and refuses a
+ *                         resume made with another patch.  "" when no patch.
+ *   retroarch_save=<path> a RetroArch Game.srm of this game (its savefiles
+ *                         folder or a core's folder in it, as save_sync
+ *                         knows them; the folder of RetroArch's own
+ *                         config is not read here), "" = none.  The player
+ *                         imports it when it is newer than `save`.
+ * All three are "" for any failure: never a half-filled pair. */
+static const char *const k_snes_carts[] = { ".smc", ".sfc", ".swc", ".fig", ".zip", ".7z" };
+static const char *const k_sega_carts[] = { ".md", ".gen", ".smd", ".bin", ".68k", ".sms", ".gg", ".sg", ".sc", ".zip", ".7z" };
+static int snes_patch_find(const char *rom_path, char *out, size_t cap,
+                           const char *const *carts, size_t ncarts)
+{
+   static const char *const ext[3] = { ".ips", ".bps", ".ups" };
+   struct stat ps;
+   int i;
+   for (i = 0; i < 6; i++)
+   {
+      if ((i < 3 ? path_fmt(out, cap, "%s%s", rom_path, ext[i])
+                 : psp_rom_path_suffix(out, cap, rom_path, ext[i - 3])) != 0 ||
+          stat(out, &ps) != 0 || !S_ISREG(ps.st_mode))
+         continue;
+      if (i >= 3)
+      {
+         const char *own = strrchr(rom_path, '.');
+         char other[APP_PATH_CAP];
+         size_t k;
+         int clash = 0;
+         for (k = 0; k < ncarts; k++)
+            if ((!own || strcasecmp(own, carts[k])) &&
+                psp_rom_path_suffix(other, sizeof(other), rom_path,
+                                    carts[k]) == 0 &&
+                stat(other, &ps) == 0)
+               clash = 1;
+         if (clash)
+            continue;
+      }
+      return 0;
+   }
+   return -1;
+}
+
+static void snes_patch_keys(const char *rom_path, char *patch, size_t pcap,
+                            char *key, size_t kcap,
+                            const char *const *carts, size_t ncarts)
+{
+   struct stat rs;
+   unsigned char *data;
+   long plen = 0;
+   patch[0] = key[0] = 0;
+   if (snes_patch_find(rom_path, patch, pcap, carts, ncarts) != 0)
+   {
+      patch[0] = 0;
+      return;
+   }
+   data = patch_read(patch, &plen, 64L << 20);
+   if (!data || stat(rom_path, &rs) != 0)
+   {
+      free(data);
+      patch[0] = 0;
+      return;
+   }
+   snprintf(key, kcap, "%d %ld %ld %ld %08x", rom_patch_kind(data, (size_t)plen),
+            (long)rs.st_size, (long)rs.st_mtime, plen,
+            (unsigned)fe_crc32(0, data, (size_t)plen));
+   free(data);
+}
+
+static void snes_ra_save(const char *rom_path, const char *save, char *out,
+                         size_t cap, const char *const *sub, size_t nsub)
+{
+   char stem[APP_PATH_CAP];
+   const char *bn = base_name(rom_path), *dot = strrchr(bn, '.');
+   size_t i;
+   long sz = 0;
+   out[0] = 0;
+   snprintf(stem, sizeof(stem), "%.*s",
+            (int)(dot && dot != bn ? (size_t)(dot - bn) : strlen(bn)), bn);
+   if (!stem[0])
+      return;
+   for (i = 0; i < nsub; i++)
+   {
+      char p[APP_PATH_CAP];
+      if (path_fmt(p, sizeof(p), "%s%s/%s.srm", save_sync_ra_dir(), sub[i],
+                   stem) == 0 && strcmp(p, save) &&
+          file_size(p, &sz) == 0 && sz > 0 && strlen(p) < cap)
+      {
+         snprintf(out, cap, "%s", p);
+         return;
+      }
+   }
+}
+
+/* The launch files of the two players: snes.ini (snes.bin) and, for the Sega
+ * consoles (2.0), md.ini / sms.ini / gg.ini / sg.ini (md.bin; ui_vita_md.h).
+ * The one written for a start is the only one left on the card. */
+static const char *const k_launch_ids[] = { "snes", "md", "sms", "gg", "sg", "scd" };
+
+static int ab_circle(void);
+
+/* `con` the console (FE_CONSOLE_SNES, or one of the four Sega ones), `game`
+ * is what the player runs (the unpacked file of a zip), `save` its battery
+ * file, `rom_path` the game as the list knows it; `slot` the shelf's choice
+ * (PSP_STATE_RESUME: Continue).  0 = written. */
+static int player_launch_write(fe_console_t con, const char *game, const char *save,
+                               const char *rom_path, int slot)
+{
+   static unsigned seq;
+   char dir[APP_PATH_CAP], path[APP_PATH_CAP], text[3600], name[200];
+   char patch[APP_PATH_CAP], pkey[200], ra[APP_PATH_CAP], extra[APP_PATH_CAP + 32];
+   const char *id = con == FE_CONSOLE_SNES ? "snes" : ui_sega_id(con);
+   const int sega = ui_console_is_sega(con);
+   size_t li;
+   if (!id)
+      return -1;
+   extra[0] = 0;
+   const char *b = base_name(rom_path);
+   const char *dot = strrchr(b, '.');
+   const uint32_t now = (uint32_t)plat_wallclock();
+   int n;
+   snprintf(name, sizeof(name), "%.*s",
+            (int)(dot && dot != b ? (size_t)(dot - b) : strlen(b)), b);
+   if (path_fmt(dir, sizeof(dir), "%s/launch", g_app_root) != 0 ||
+       path_fmt(path, sizeof(path), "%s/%s.ini", dir, id) != 0)
+      return -1;
+   mkdir(dir, 0777);
+   /* only this console's launch file: a player takes the one whose game= it was
+    * started with, else the newest, and an older one must not answer for it */
+   for (li = 0; li < sizeof(k_launch_ids) / sizeof(k_launch_ids[0]); li++)
+      if (strcmp(k_launch_ids[li], id))
+      {
+         char other[APP_PATH_CAP];
+         if (path_fmt(other, sizeof(other), "%s/%s.ini", dir, k_launch_ids[li]) == 0)
+            remove(other);
+      }
+   if (sega)
+   {
+      /* the database's cheats for this game, for md.bin to merge (switched off) */
+      char cht[APP_PATH_CAP];
+      int cn;
+      if (path_fmt(cht, sizeof(cht), "%s/%s_cheats.cht", dir, id) == 0)
+      {
+         cheats_load(g_app_root, rom_path, con);
+         cn = cheats_export_database(cht);
+         cheats_unload();
+         if (cn > 0)
+            snprintf(extra, sizeof(extra), "cheats_db=%s\n", cht);
+         fe_evt("sega_cheats console=%s entries=%d", id, cn);
+      }
+   }
+   if (sega)
+   {
+      static const char *const sub[] = { "", "/Genesis Plus GX", "/Genesis Plus GX Wide",
+         "/PicoDrive", "/BlastEm", "/SMS Plus GX" };
+      snes_patch_keys(rom_path, patch, sizeof(patch), pkey, sizeof(pkey),
+                      k_sega_carts, sizeof(k_sega_carts) / sizeof(k_sega_carts[0]));
+      snes_ra_save(rom_path, save, ra, sizeof(ra), sub, sizeof(sub) / sizeof(sub[0]));
+   }
+   else
+   {
+      static const char *const sub[] = { "", "/Snes9x", "/Snes9x 2010",
+         "/Snes9x 2005", "/bsnes", "/bsnes-mercury Balanced" };
+      snes_patch_keys(rom_path, patch, sizeof(patch), pkey, sizeof(pkey),
+                      k_snes_carts, sizeof(k_snes_carts) / sizeof(k_snes_carts[0]));
+      snes_ra_save(rom_path, save, ra, sizeof(ra), sub, sizeof(sub) / sizeof(sub[0]));
+   }
+   snes_session_clear();          /* an old report is never read for this one */
+   snprintf(g_snes_session, sizeof(g_snes_session), "s-%u-%u", (unsigned)now,
+            (unsigned)(++seq + (unsigned)(plat_time_us() & 0xFFFF)));
+   n = snprintf(text, sizeof(text),
+                "version=1\n"
+                "session_id=%s\n"
+                "console=%s\n"
+                "game=%s\n"
+                "game_name=%s\n"
+                "save=%s\n"
+                "root=%s\n"
+                "cpu_mhz=%d\n"
+                "enter_button=%s\n"
+                "tap_menu=%d\n"
+                "language=%s\n"
+                "start=%s\n"
+                "slot=%d\n"
+                "patch=%s\n"
+                "patch_key=%s\n"
+                "retroarch_save=%s\n"
+                "app_rom=%s\n"
+                "app_started_at=%u\n"
+                "%s",
+                g_snes_session, id, game, name, save, g_app_root,
+                g_sw.cpu_fast ? 500 : 444,
+                ab_circle() ? "circle" : "cross",
+                g_pcfg.tap_menu ? 1 : 0,
+                i18n_code[i18n_current() >= 0 && i18n_current() < I18N_LANGS
+                          ? i18n_current() : 1],
+                slot == PSP_STATE_RESUME ? "continue"
+                : slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? "slot" : "new",
+                slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? slot : 0,
+                patch, pkey, ra, rom_path, (unsigned)now, extra);
+   if (n < 0 || (size_t)n >= sizeof(text))
+      return -1;
+   if (g_sw.shot_dir[0])
+   {
+      int m = snprintf(text + n, sizeof(text) - (size_t)n, "shot_dir=%s\n", g_sw.shot_dir);
+      if (m < 0 || (size_t)m >= sizeof(text) - (size_t)n)
+         return -1;
+      n += m;
+   }
+   if (g_snes_lk)
+   {
+      /* Two players: snes.bin makes the link again on the same local port (playerkit/FORMATS.md "link.*") */
+      const link_snes_link *k = g_snes_lk;
+      int m = snprintf(text + n, sizeof(text) - (size_t)n,
+                       "link.role=%s\nlink.mode=%s\nlink.local_port=%u\nlink.peer=%s\nlink.peer_lan=%s\n"
+                       "link.punch_key=%s\nlink.relay_server=%s\nlink.relay_ports=%s\nlink.relay_user=%s\n"
+                       "link.relay_pass=%s\nlink.relay_peer=%s\nlink.relay_addr=%s\nlink.delay=%u\n"
+                       "link.compat=%s\nlink.nick=%s\nlink.wait_s=%u\n",
+                       k->role, k->mode, k->local_port, k->peer, k->peer_lan, k->punch_key, k->relay_server,
+                       k->relay_ports, k->relay_user, k->relay_pass, k->relay_peer, k->relay_addr, k->delay,
+                       k->compat, k->nick, k->wait_s);
+      if (m < 0 || (size_t)m >= sizeof(text) - (size_t)n)
+         return -1;
+   }
+   if (boot_guard_is_safe_game(rom_path))
+   {
+      /* the crash-loop guard: this game closed the app twice; the player
+       * starts it with the safe picture (its own launch overrides) */
+      static const char safe[] = "ovr.wide_view=2\novr.steady_pacing=0\n"
+                                 "ovr.smooth_handoff=0\novr.quality=0\n"
+                                 "ovr.look_mode=2\n";
+      /* md.bin (the keys its player reads): no steady pacing, no hand-over,
+       * no pixel art scaler (scaler 1 = off), the light look */
+      static const char safe_sega[] = "ovr.steady_pacing=0\novr.smooth_handoff=0\n"
+                                      "ovr.scaler=1\novr.look_mode=2\n";
+      const char *sf = sega ? safe_sega : safe;
+      const size_t sl = sega ? sizeof(safe_sega) : sizeof(safe);
+      size_t len = strlen(text);
+      if (len + sl < sizeof(text))
+         memcpy(text + len, sf, sl);
+      fe_evt("boot_guard player_safe game=%s", rom_path);
+   }
+   n = snes_file_put(path, text);
+   if (n == 0 && !boot_guard_is_safe_game(rom_path))
+      boot_guard_player_begin(rom_path, BG_RISK_HANDOFF | BG_RISK_CORE4 |
+                              (sega ? 0 : BG_RISK_WIDE) | BG_RISK_QUALITY | BG_RISK_STEADY);
+   fe_evt("%s_launch_file ok=%d session=%s start=%s slot=%d patch=%d "
+          "retroarch_save=%d", sega ? "sega" : "snes", n == 0,
+          g_snes_session, slot == PSP_STATE_RESUME ? "continue"
+          : slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? "slot" : "new", slot,
+          patch[0] != 0, ra[0] != 0);
+   return n;
+}
+
+/* ---- SNES: Two players (2.0, B3) -------------------------------------------------
+ * The link is formed HERE (link_snes.h: the same rooms, code, punch and relay as for a NES game), then snes.bin plays it.
+ * A page of its own runs the link layer a frame at a time; O cancels.  0 = ready (`out` is for the launch file),
+ * -1 = cancelled or failed (the page said why). */
+static void app_notice(const char *title, const char *l1, const char *l2, unsigned hold_ms);
+static int snes_link_page(int is_host, const char *game, const char *title, link_snes_link *out)
+{
+   int rc = link_snes_begin(is_host, game, title);
+   int shown_fail = 0;
+   unsigned prev = pspcompat_pad(), t_fail = 0;
+
+   if (rc == -2)
+   {
+      char nb[64];
+      snprintf(nb, sizeof(nb), tr("app.nearby_isn_t_available_for_games"), link_snes_console_name(link_snes_console_of_file(game)));
+      app_notice(nb, tr("notice.use_same_wi_fi_or_online"), NULL, 5000);
+      return -1;
+   }
+   if (rc > 0)
+   {
+      const char *a, *b;
+      ui_link_fail_text(rc, &a, &b);
+      app_notice(a, b, NULL, 5000);
+      link_snes_end();
+      return -1;
+   }
+   while (g_running)
+   {
+      unsigned pad = pspcompat_pad();
+      int st = link_snes_frame(pad);
+      unsigned edge = pad & ~prev;
+
+      prev = pad;
+      link_snes_draw();
+      vid_overlay_end();
+      pspcompat_wait_vblank();
+      vid_swap();
+      if (st == LSN_READY)
+      {
+         int ok = link_snes_take(out) == 0;
+         fe_evt("snes_link_ready ok=%d mode=%s", ok, ok ? out->mode : "-");
+         return ok ? 0 : -1;
+      }
+      if (st == LSN_CANCELLED)
+      {
+         if (!link_snes_end_said())
+            osd_toast(tr("toast.link_cancelled"));
+         break;
+      }
+      if (st == LSN_FAILED)
+      {
+         if (!shown_fail++)
+            t_fail = (unsigned)(plat_time_us() / 1000u);
+         if ((edge & (PSP_CTRL_CIRCLE | PSP_CTRL_CROSS)) && (unsigned)(plat_time_us() / 1000u) - t_fail > 400)
+            break;
+      }
+   }
+   link_snes_end();
+   return -1;
+}
+
+/* At start-up: a session of a player program (snes.bin, md.bin) that ended (or
+ * was cut short) since the last run of this program.  `pid` is the console id
+ * of its launch file (k_launch_ids).  */
+static void player_session_collect(const char *pid)
+{
+   char lp[APP_PATH_CAP], sp[APP_PATH_CAP], id[80], rid[80], rom[APP_PATH_CAP],
+        save[APP_PATH_CAP], v[400], name[APP_PATH_CAP];
+   long secs;
+   int have_report, save_changed = 0, save_error = 0;
+   const int skind = !strcmp(pid, "snes") ? SS_KIND_SNES : !strcmp(pid, "md") ? SS_KIND_MD
+                   : !strcmp(pid, "sms") ? SS_KIND_SMS : !strcmp(pid, "gg") ? SS_KIND_GG
+                   : !strcmp(pid, "scd") ? SS_KIND_SCD : SS_KIND_SG;
+   uint32_t now = (uint32_t)plat_wallclock(), started;
+   if (path_fmt(lp, sizeof(lp), "%s/launch/%s.ini", g_app_root, pid) != 0 ||
+       path_fmt(sp, sizeof(sp), "%s/launch/session.txt", g_app_root) != 0 ||
+       !fe_ini_get(lp, "session_id", id, sizeof(id)) || !id[0] ||
+       !fe_ini_get(lp, "app_rom", rom, sizeof(rom)) || !rom[0])
+      return;
+   if (!fe_ini_get(lp, "save", save, sizeof(save)))
+      save[0] = '\0';
+   started = (uint32_t)fe_ini_get_int(lp, "app_started_at", 0);
+   have_report = fe_ini_get(sp, "session_id", rid, sizeof(rid)) &&
+                 strcmp(rid, id) == 0;
+   if (have_report)
+   {
+      secs = fe_ini_get_int(sp, "seconds_played", 0);
+      save_changed = fe_ini_get_int(sp, "save_changed", 0) != 0;
+      save_error = fe_ini_get_int(sp, "save_error", 0) != 0;
+      if (!fe_ini_get(sp, "notice", v, sizeof(v)))
+         v[0] = '\0';
+   }
+   else
+   {
+      /* the player was closed or failed: the time since the launch, at
+       * most a day (a clock that jumped says nothing) */
+      secs = started && now > started ? (long)(now - started) : 0;
+      if (secs > 86400)
+         secs = 0;
+      v[0] = '\0';
+   }
+   if (secs < 0)
+      secs = 0;
+   /* the crash-loop guard: a report (any exit) settles the marker; with none
+    * the player died, when the app is back soon after the launch */
+   boot_guard_player_end(have_report,
+                         started && now >= started ? (long)(now - started) : -1);
+   play_name_of(rom, name, sizeof(name));
+   if (secs)
+   {
+      play_log_add(name, now, (uint32_t)secs, 0);
+      (void)play_log_save();
+   }
+   fe_evt("%s_session report=%d secs=%ld save_changed=%d save_error=%d "
+          "notice=\"%s\" rom=%s", !strcmp(pid, "snes") ? "snes" : "sega",
+          have_report, secs, save_changed, save_error, v, rom);
+   if (save_changed && save[0])
+   {
+      /* the battery the player wrote: its record and RetroArch's copy now */
+      char note[160];
+      save_sync_game_start(save, note, sizeof(note));
+      save_sync_heal_game(save, rom, skind, note, sizeof(note));
+   }
+   /* a Two players session: how it ended, in the words the other games use (link_snes_ended) */
+   if (have_report)
+   {
+      char lres[16], lname[40], role[8], mode[8], toast[100];
+      int ui;
+      lres[0] = lname[0] = role[0] = mode[0] = '\0';
+      if (fe_ini_get(sp, "link_result", lres, sizeof(lres)) && lres[0])
+      {
+         (void)fe_ini_get(sp, "link_error_name", lname, sizeof(lname));
+         (void)fe_ini_get(lp, "link.role", role, sizeof(role));
+         (void)fe_ini_get(lp, "link.mode", mode, sizeof(mode));
+         ui = link_snes_ended(!strcmp(role, "host"), !strcmp(mode, "punch") || !strcmp(mode, "relay"), lres,
+                              (int)fe_ini_get_int(sp, "link_error", 0), lname,
+                              (int)fe_ini_get_int(sp, "link_peer_reason", -1), pid,
+                              (int)fe_ini_get_int(sp, "link_frames", 0), toast, sizeof(toast));
+         fe_evt("snes_link_end result=%s error=%s frames=%ld ui=%d", lres, lname, fe_ini_get_int(sp, "link_frames", 0), ui);
+         if (ui)
+         {
+            const char *a, *b;
+            ui_link_fail_text(ui, &a, &b);
+            g_snes_end_l1 = a;
+            g_snes_end_l2 = b;
+         }
+         else if (toast[0])
+            snprintf(v, sizeof(v), "%s", toast);
+      }
+   }
+   remove(lp);
+   snes_session_clear();
+   if (v[0])
+      osd_toast("%s", v);          /* over the game list */
+}
+
+static void snes_session_collect(void)
+{
+   size_t i;
+   for (i = 0; i < sizeof(k_launch_ids) / sizeof(k_launch_ids[0]); i++)
+      player_session_collect(k_launch_ids[i]);
+}
+
 static const char *console_name(fe_console_t c)
 {
    return c == FE_CONSOLE_GBC ? "GBC" : c == FE_CONSOLE_GB ? "GB"
-        : c == FE_CONSOLE_SNES ? "SNES" : "GBA";
+        : c == FE_CONSOLE_SNES ? "SNES" : c == FE_CONSOLE_NES ? "NES"
+        : c == FE_CONSOLE_WSWAN ? "WS" : c == FE_CONSOLE_MD ? "MD"
+        : c == FE_CONSOLE_SMS ? "SMS" : c == FE_CONSOLE_GG ? "GG"
+        : c == FE_CONSOLE_SG ? "SG" : c == FE_CONSOLE_SCD ? "SCD" : "GBA";
+}
+
+/* ---- WonderSwan (VitAdhoc 1.4): the per-game Rotation / Vertical play /
+ * Palette (in-game menu) and Settings > Display > WonderSwan smoothing, given
+ * to the core (wscore.h); also called when the menu changes one. */
+void app_ws_options(void)
+{
+   wscore_set_rotation(g_pgame.ws_rotation == PCFG_WS_ROT_HORIZONTAL
+                       ? WSCORE_ROT_HORIZONTAL
+                       : g_pgame.ws_rotation == PCFG_WS_ROT_VERTICAL
+                       ? WSCORE_ROT_VERTICAL : WSCORE_ROT_AUTO);
+   wscore_set_vertical_play(g_pgame.ws_vplay ? WSCORE_TURNED : WSCORE_UPRIGHT);
+   wscore_set_mono_palette(g_pgame.ws_palette);
+   wscore_set_time_source(plat_wallclock);    /* local time: no zone in libc */
+   wscore_set_blend(g_pcfg.ws_blend);
+   /* one core call per refresh: the vsync pacer's refresh, the timer
+    * pacer's GBA frame */
+   if (g_sw.pace_mode == PACE_VSYNC)
+      wscore_set_display_rate(60000, 1001);
+   else
+      wscore_set_display_rate(16777216, 280896);
+   fe_evt("ws_options rotation=%d vertical_play=%d palette=%d blend=%d",
+          g_pgame.ws_rotation, g_pgame.ws_vplay, g_pgame.ws_palette,
+          g_pcfg.ws_blend);
+}
+
+/* The NES Wide view setting (Settings > Display, NES profile), to the core:
+ * at the game's start and when the row changes. */
+void app_nes_options(void)
+{
+   /* Port 2 (this game's own choice; read at the load): Auto / Zapper / Controller */
+   nescore_set_port2(g_pgame.on ? g_pgame.nes_port2 : NESCORE_PORT2_AUTO);
+   /* (Auto gives way to the look governor's last rung: look_glue.h) */
+   nescore_set_wide(boot_guard_safe() ? NESCORE_WIDE_OFF
+                    : g_pcfg.nes_wide == 1 ? NESCORE_WIDE_ON
+                    : g_pcfg.nes_wide == 2 || look_rung(5) ? NESCORE_WIDE_OFF
+                    : NESCORE_WIDE_AUTO);
+   gbmux_set_pal_smooth(g_pcfg.nes_pal_smooth && !boot_guard_safe());
+   /* Ambient glow off: the wide view's unknown sides are black bars, not a
+    * blurred glow of the picture's own edges */
+   nescore_set_soft_edge(g_pcfg.glow > 0 && !g_overlay_name[0]);
+   fe_evt("nes_options wide=%d pal_smooth=%d soft_edge=%d", g_pcfg.nes_wide,
+          g_pcfg.nes_pal_smooth, g_pcfg.glow > 0 && !g_overlay_name[0]);
+}
+
+/* The crash-loop guard (boot_guard.h): which risky features are on for a
+ * game of `console` now. */
+static unsigned guard_risky(int console)
+{
+   unsigned r = 0;
+   if (g_sw.handoff >= 0 ? g_sw.handoff != 0 : g_pcfg.smooth_handoff)
+      r |= BG_RISK_HANDOFF;
+   if (strstr(core4_status(), "in use"))
+      r |= BG_RISK_CORE4;
+   if (console == FE_CONSOLE_NES ? g_pcfg.nes_wide != 2
+                                 : g_pcfg.wide != 0)
+      r |= BG_RISK_WIDE;
+   if (g_pcfg.quality != PCFG_QUALITY_ORIGINAL)
+      r |= BG_RISK_QUALITY;
+   if (g_pcfg.steady_pacing)
+      r |= BG_RISK_STEADY;
+   return r;
+}
+
+/* The ambient look in force: nothing at Ambient glow 0 or under a screen
+ * overlay, else the source (art, else the game's frame), or still art where
+ * the look governor took the blurred game frame away (its first rung). */
+static int app_glow_on(void)
+{
+   return g_pcfg.glow > 0 && !g_overlay_name[0];
+}
+
+static int app_ambient_mode(void)
+{
+   if (!app_glow_on())
+      return PCFG_AMB_OFF;
+   return look_rung(0) && g_pcfg.ambient == PCFG_AMB_ART_GAME ? PCFG_AMB_ART
+                                                              : g_pcfg.ambient;
+}
+
+/* ---- Quick response (ahead_glue.h): run-ahead by one frame, Game Boy / Game Boy Color / NES / WonderSwan ----------------------------
+ * The mode of this game: vita.ini quick_response (a launch's override; the twin's GBADHOC_AHEAD sets it), else the game's own choice
+ * (games/<ROM>.ini), else Settings > Gameplay > Quick response, else the console's default.  The crash-loop guard turns it off. */
+static int g_quick_ini = -1;
+static int g_ahead_began;                /* ahead_begin has run for this game */
+static int g_game_console;               /* (defined below) */
+
+/* The default per console: Auto where a run-ahead frame (about twice a plain one, docs/PERFORMANCE.md) leaves room on the model,
+ * Off where it does not.  The GBA's frame, state and translation cache do not leave it: Off, and not offered. */
+static int app_quick_default(int console)
+{
+   switch (console)
+   {
+      case FE_CONSOLE_GB:
+      case FE_CONSOLE_GBC:
+      case FE_CONSOLE_NES:
+      case FE_CONSOLE_WSWAN:
+         return AHEAD_MODE_AUTO;
+      default:
+         return AHEAD_MODE_OFF;
+   }
+}
+
+int app_quick_supported(int console)
+{
+   return console == FE_CONSOLE_GB || console == FE_CONSOLE_GBC ||
+          console == FE_CONSOLE_NES || console == FE_CONSOLE_WSWAN;
+}
+
+int app_quick_effective(int console)
+{
+   if (!app_quick_supported(console) || boot_guard_safe())
+      return AHEAD_MODE_OFF;
+   if (g_quick_ini >= 0 && g_quick_ini <= 2)
+      return g_quick_ini;
+   if (g_pgame.on && g_pgame.quick >= 0)
+      return g_pgame.quick;
+   if (g_pcfg.quick_response >= 0)
+      return g_pcfg.quick_response;
+   return app_quick_default(console);
+}
+
+/* The game starts, or the row changed: the governor hears the mode.  A frame is 1e6 / the console's rate. */
+void app_quick_options(void)
+{
+   const int console = (int)g_game_console;
+   const int mode = app_quick_effective(console);
+   if (console < 0)
+      return;                  /* the game list: the setting is only kept */
+   if (!g_ahead_began)
+   {
+      /* first guess for the cost of a run-ahead frame: two frames, a save and a load (measured: docs/PERFORMANCE.md) */
+      ahead_begin(mode, (uint32_t)(g_frame_ns / 1000u), 230, 600);
+      g_ahead_began = 1;
+   }
+   else
+      ahead_set_mode(mode);
+   fe_evt("quick_response mode=%s supported=%d", mode == AHEAD_MODE_OFF ? "off" : mode == AHEAD_MODE_AUTO ? "auto" : "on",
+          app_quick_supported(console));
+}
+
+/* No pass of play may run ahead when ... (fe_host.c also refuses a machine that cannot).  Nor with the Zapper: the gun's
+ * light is timed against the frame the core is drawing and is not part of a state, so a frame run ahead and taken back
+ * would leave the game a light from a frame that never was. */
+static int zapper_active(void);
+static int app_ahead_blocked(int session, int local, int steady_on, int rewinding)
+{
+   return g_ff.on || session || local || g_sw.link_bench || link_owns_picture() || rewinding || steady_on || zapper_active() ||
+          ui_active() || !fe_host_ahead_possible() || (ahead_mode() == AHEAD_MODE_AUTO && !ho_active());
+}
+
+/* Smooth hand-over switched in Settings: the game loop asks again next
+ * pass (g_ho_want), the mailbox empties before it is turned off. */
+static int g_ho_want;              /* (defined with the hand-over below) */
+void app_handoff_options(void)
+{
+   boot_guard_release();              /* the row was changed: theirs again */
+   g_ho_want = -1;
+}
+
+/* Steady pacing: the refresh it measures against, and on or off. */
+static int g_steady_at_boot;           /* the call is the game's start, not the row */
+void app_steady_options(void)
+{
+   uint32_t budget = g_sw.pace_mode == PACE_VSYNC && plat_refresh_mhz()
+                   ? (uint32_t)(1000000000ull / plat_refresh_mhz())
+                   : (uint32_t)(g_frame_ns / 1000u);
+   if (!g_steady_at_boot)
+      boot_guard_release();            /* the row was changed: theirs again */
+   steady_config(budget);
+   steady_enable(g_pcfg.steady_pacing && !boot_guard_safe());
+   fe_evt("steady_options on=%d budget_us=%u safe=%d",
+          g_pcfg.steady_pacing && !boot_guard_safe(), (unsigned)budget,
+          boot_guard_safe());
+}
+
+/* The first time each layout shows in a session (the game turned the
+ * console, or the menu did): how to hold it and what the buttons are now.
+ * The picture and the buttons changed together, in the same frame. */
+static unsigned g_steady_half_passes;   /* passes drawn 1 of 2 (census) */
+
+static void ws_layout_hint(void)
+{
+   static unsigned seen_changes = ~0u;
+   static unsigned told;                 /* bit per WSCORE_SHOW_* */
+   unsigned ch = wscore_layout_changes();
+   int show = wscore_showing();
+   if (ch == seen_changes)
+      return;
+   seen_changes = ch;
+   fe_evt("ws_layout show=%d changes=%u", show, ch);
+   if (ch == 0 || (told & (1u << show)))
+      return;
+   told |= 1u << show;
+   if (show == WSCORE_SHOW_UPRIGHT)
+      toast_now(tr("toast.vertical_the_d_pad_turns_with"));
+   else if (show == WSCORE_SHOW_TURNED)
+      toast_now(tr("toast.vertical_turn_the_vita_left_l"));
+   else
+      toast_now(tr("toast.horizontal_circle_a_cross_b"));
+}
+
+/* The WonderSwan's buttons this frame: the Vita's own (the layout follows
+ * the picture's rotation, wswan/frontend/layout.h), not the control map. */
+static unsigned ws_buttons(unsigned pad)
+{
+   unsigned b = 0;
+   if (pad & PSP_CTRL_UP) b |= WSCORE_UP;
+   if (pad & PSP_CTRL_DOWN) b |= WSCORE_DOWN;
+   if (pad & PSP_CTRL_LEFT) b |= WSCORE_LEFT;
+   if (pad & PSP_CTRL_RIGHT) b |= WSCORE_RIGHT;
+   if (pad & PSP_CTRL_CROSS) b |= WSCORE_CROSS;
+   if (pad & PSP_CTRL_CIRCLE) b |= WSCORE_CIRCLE;
+   if (pad & PSP_CTRL_SQUARE) b |= WSCORE_SQUARE;
+   if (pad & PSP_CTRL_TRIANGLE) b |= WSCORE_TRIANGLE;
+   if (pad & PSP_CTRL_LTRIGGER) b |= WSCORE_L;
+   if (pad & PSP_CTRL_RTRIGGER) b |= WSCORE_R;
+   if (pad & PSP_CTRL_START) b |= WSCORE_START;
+   return b;
 }
 
 static const char *base_name(const char *path)
@@ -613,12 +1430,131 @@ static const char *base_name(const char *path)
  * what pspcompat_pad() makes of the first pad, for a second one. */
 static unsigned pad_psp_bits(const plat_pad *p)
 {
-   unsigned b = p->buttons & CTL_ALL;
+   unsigned b = p->buttons & 0xFFFFu;
    int dx = (int)p->lx - 128, dy = (int)p->ly - 128;
    if (dx < -PSPCOMPAT_STICK_DEADZONE) b |= PSP_CTRL_LEFT;
    if (dx >  PSPCOMPAT_STICK_DEADZONE) b |= PSP_CTRL_RIGHT;
    if (dy < -PSPCOMPAT_STICK_DEADZONE) b |= PSP_CTRL_UP;
    if (dy >  PSPCOMPAT_STICK_DEADZONE) b |= PSP_CTRL_DOWN;
+   return b;
+}
+
+/* ---- THE NES ZAPPER on the front touch screen (zapper_map.h) -------------------
+ *
+ * A NES game that uses the Zapper (the core's game database lists them: Duck
+ * Hunt, Hogan's Alley, Wild Gunman, Gumshoe and the rest; Settings > THIS GAME >
+ * Port 2 can force it or switch it off) takes the front touch screen as its
+ * gun: a finger on the picture aims, and for as long as it is down the
+ * trigger is pulled.  The screen is then the gun's alone -- a tap does not
+ * open the menu (Start + Select does) -- and nothing is drawn for it. */
+static int zapper_active(void)
+{
+   return g_game_console == FE_CONSOLE_NES && nescore_zapper_active();
+}
+
+static int g_zap_told = -1, g_zap_trig;     /* what the log has been told (harness) */
+/* A game looks for the gun's light in the frames AFTER the trigger (the core
+ * shows it the pull for about five frames, then the game blanks the picture
+ * and draws its targets white), and a tap of the screen is shorter than that:
+ * the gun stays where the finger was for this many frames after it lifts. */
+#define ZAP_AIM_FRAMES 20
+static int g_zap_x = -1, g_zap_y = -1, g_zap_keep;
+
+static void zapper_frame(void)
+{
+   pc_touch t;
+   int nx = -1, ny = -1, trig = 0;
+   pspcompat_touch(&t);
+   if (g_tap.wait && !t.down)          /* (touch_tap does this too, but not with */
+      g_tap.wait = 0;                  /* the menus' touch switched off)         */
+   if (t.down && !g_tap.wait)          /* (not the finger that closed the menu) */
+   {
+      vid_rect_t r;
+      int row0 = 0, rows = (int)g_show.h;
+      vid_picture_rect(g_show.w, g_show.h, &r);
+      vid_picture_rows(g_show.w, g_show.h, &row0, &rows);   /* (4x crop shows the middle rows) */
+      trig = 1;
+      (void)zapper_map(t.nx, t.ny, r.x, r.y, r.w, r.h, (int)g_show.w,
+                       rows, (int)nescore_top() + row0, &nx, &ny);
+      g_zap_x = nx;
+      g_zap_y = ny;
+      g_zap_keep = ZAP_AIM_FRAMES;
+   }
+   else if (g_zap_keep > 0 && !g_tap.wait)
+   {
+      nx = g_zap_x;
+      ny = g_zap_y;
+      if (--g_zap_keep == 0)
+         fe_evt("zapper aim_off x=%d y=%d", nx, ny);
+   }
+   else
+      g_zap_keep = 0;
+   nescore_set_zapper(nx, ny, trig);
+   if (trig != g_zap_trig)
+   {
+      g_zap_trig = trig;
+      fe_evt("zapper trigger=%d x=%d y=%d", trig, nx, ny);
+   }
+}
+
+/* ---- THE REAR TOUCH PANEL (ctl_map.h CTL_REAR_*) --------------------------
+ *
+ * Settings > Controls > Rear touch panel (this game's own choice first): the
+ * panel's four corners are inputs that Button mapping gives to any action.
+ * They are read here, beside the pad, and only join it as CTL_REAR_* bits
+ * while the setting is on: with it off the panel is not read at all, so the
+ * fingers that rest on the back cannot get into a binding being captured.
+ * Nothing is bound to them by default. */
+static int rear_wanted(void)
+{
+   if (g_pgame.on && g_pgame.rear >= 0)
+      return g_pgame.rear;
+   return g_pcfg.rear_touch;
+}
+
+static unsigned rear_pad(void)
+{
+   plat_touch_pt pt[4];
+   int x[4], y[4], i, n;
+   if (!rear_wanted())
+      return 0;
+   n = plat_rear_points(pt, 4);
+   for (i = 0; i < n; i++)
+   {
+      x[i] = pt[i].x;
+      y[i] = pt[i].y;
+   }
+   return ctl_rear_zones(x, y, n);
+}
+
+/* The pad as the app reads it: the buttons, and the rear corners. */
+static unsigned pad_now(void)
+{
+   return pspcompat_pad() | rear_pad();
+}
+
+/* The WonderSwan takes the Vita's own buttons, not the control map: a corner
+ * bound to a game button presses what that button's own key presses there.
+ * WonderSwan A is Circle and B is Cross (unlike the Vita's default West A/B). */
+static unsigned ws_rear_keys(unsigned pad)
+{
+   unsigned b = 0;
+   int a;
+   if (!(pad & CTL_REAR_ALL))
+      return 0;
+   for (a = CTL_GAME_A; a < CTL_GAME_COUNT; a++)
+   {
+      unsigned bind = g_pcfg.controls.bind[a];
+      if ((bind & CTL_REAR_ALL) && (pad & bind) == bind)
+      {
+         if (a == CTL_GAME_A)
+            b |= PSP_CTRL_CIRCLE;
+         else if (a == CTL_GAME_B)
+            b |= PSP_CTRL_CROSS;
+         else
+            b |= ctl_default(a);
+      }
+   }
    return b;
 }
 
@@ -779,6 +1715,340 @@ static void sensor_frame(const plat_pad *pp)
                 (unsigned)reading, sensor_owns_stick());
       }
    }
+}
+
+/* ---- GAME BOY CAMERA and GAME BOY PRINTER ------------------------------------
+ *
+ * The Camera cartridge looks at a 128x112 grey picture (gbcore.h
+ * gbcore_set_camera_image), published each time there is a new one: the front
+ * or back camera (plat_camera_*), or camera.png from the data folder (also
+ * what a console with no camera, or the twin, falls back to); with neither,
+ * the core shows its own test picture.  Settings > THIS GAME > Camera
+ * chooses; the game's file keeps it.
+ *
+ * The Printer's finished strips (fe_host_gb_print_take) are written to
+ * prints/<game>-<date>-<n>.png in the game's colours, and a toast says so. */
+static int      g_cam_game;          /* the running game is a Game Boy Camera */
+static int      g_cam_mode = -1;     /* PCFG_CAM_* the picture comes from now  */
+static int      g_cam_dev;           /* the Vita's camera is running           */
+static int      g_cam_have;          /* g_cam_pic holds a picture              */
+static uint8_t  g_cam_pic[FE_GBCAM_W * FE_GBCAM_H];
+
+static int gbcam_load_file(void)
+{
+   char path[APP_PATH_CAP];
+   FILE *f;
+   long n = 0;
+   unsigned char *buf, *px;
+   int w = 0, h = 0, c = 0, i;
+   static unsigned char *grey;
+   if (path_fmt(path, sizeof(path), "%s/camera.png", g_app_root) != 0 ||
+       file_size(path, &n) != 0 || n <= 0 || n > 8 * 1024 * 1024)
+      return -1;
+   buf = (unsigned char *)malloc((size_t)n);
+   if (!buf)
+      return -1;
+   f = fopen(path, "rb");
+   if (!f || fread(buf, 1, (size_t)n, f) != (size_t)n)
+   {
+      if (f)
+         fclose(f);
+      free(buf);
+      return -1;
+   }
+   fclose(f);
+   px = stbi_load_from_memory(buf, (int)n, &w, &h, &c, 4);
+   free(buf);
+   if (!px || w < 1 || h < 1 || w > 4096 || h > 4096)
+   {
+      if (px)
+         stbi_image_free(px);
+      return -1;
+   }
+   grey = (unsigned char *)realloc(grey, (size_t)w * (size_t)h);
+   if (!grey)
+   {
+      stbi_image_free(px);
+      return -1;
+   }
+   for (i = 0; i < w * h; i++)
+      grey[i] = (unsigned char)((px[i * 4] * 77 + px[i * 4 + 1] * 150 +
+                                 px[i * 4 + 2] * 29) >> 8);
+   stbi_image_free(px);
+   fe_gbcam_fit(grey, w, h, w, 0, g_cam_pic);
+   free(grey);
+   grey = NULL;
+   return 0;
+}
+
+/* The Vita's camera runs only while the game is taking pictures: it opens on
+ * the first capture the game starts, and is let go after CAM_IDLE_FRAMES
+ * without another (a camera game sitting in its menus draws nothing from
+ * the battery).  A capture that finds it closed uses the last picture. */
+#define CAM_IDLE_FRAMES  120         /* about 2 s */
+#define CAM_RETRY_FRAMES 120         /* cooldown after a transient camera error */
+static int      g_cam_lazy;          /* the source is the Vita's camera, open or not */
+static int      g_cam_want;          /* a capture was started since it closed */
+static unsigned g_cam_req;           /* fe_host_gbcam_requests() last seen */
+static unsigned g_cam_last;          /* frame of the last capture start */
+static unsigned g_cam_retry_until;   /* cooldown deadline after transient read error */
+static int      g_cam_retry_wait;    /* 1 while backing off before retrying open */
+
+static void gbcam_game_end(void)
+{
+   if (g_cam_dev)
+      plat_camera_close();
+   g_cam_dev = 0;
+   g_cam_lazy = 0;
+   g_cam_want = 0;
+   g_cam_game = 0;
+   g_cam_have = 0;
+   g_cam_mode = -1;
+   g_cam_retry_until = 0;
+   g_cam_retry_wait = 0;
+}
+
+/* The console slept: the camera does not come back by itself.  Let go of it
+ * and let the next capture start the chosen source again (gbcam_frame). */
+static void gbcam_resume(void)
+{
+   if (!g_cam_game)
+      return;
+   if (g_cam_dev)
+      plat_camera_close();
+   g_cam_dev = 0;
+   g_cam_mode = -1;
+   g_cam_retry_until = 0;
+   g_cam_retry_wait = 0;
+   fe_evt("camera_resume");
+}
+
+static void gbcam_game_begin(void)
+{
+   gbcam_game_end();
+   g_cam_game = fe_host_gbcam_present() ? 1 : 0;
+   g_cam_req = fe_host_gbcam_requests();
+   if (g_cam_game)
+      fe_evt("camera_game mode=%d", g_pgame.camera);
+}
+
+static void gbcam_frame(void)
+{
+   int fresh = 0;
+   const unsigned now = fe_host_frame_count();
+   const unsigned req = g_cam_game ? fe_host_gbcam_requests() : 0;
+   if (!g_cam_game)
+      return;
+   if (req != g_cam_req)
+   {
+      g_cam_req = req;
+      g_cam_last = now;
+      g_cam_want = 1;
+   }
+   if (g_pgame.camera != g_cam_mode)
+   {
+      /* a new source: stop the old one; a camera starts at the next capture,
+       * a file or nothing is read now */
+      const int mode = g_pgame.camera;
+      if (g_cam_dev)
+         plat_camera_close();
+      g_cam_dev = 0;
+      g_cam_mode = mode;
+      g_cam_have = 0;
+      g_cam_retry_until = 0;
+      g_cam_retry_wait = 0;
+      g_cam_lazy = mode != PCFG_CAM_FILE;
+      if (!g_cam_lazy)
+      {
+         g_cam_have = gbcam_load_file() == 0;
+         fresh = 1;
+         if (!g_cam_have)
+            toast_now(tr("toast.camera_png_not_found_using_a_test"));
+      }
+      fe_evt("camera_source mode=%d device=%d file=%d", mode, g_cam_lazy, g_cam_have);
+   }
+   if (g_cam_retry_wait && (int)(now - g_cam_retry_until) >= 0)
+      g_cam_retry_wait = 0;
+   if (g_cam_lazy && !g_cam_dev && g_cam_want && !g_cam_retry_wait)
+   {
+      g_cam_dev = plat_camera_open(g_cam_mode == PCFG_CAM_BACK) == 0;
+      if (!g_cam_dev)
+      {
+         /* none here, or it would not start: camera.png or a test picture */
+         g_cam_lazy = 0;
+         toast_now(tr("toast.no_camera_using_camera_png_or_a"));
+         g_cam_have = gbcam_load_file() == 0;
+         fresh = 1;
+         fe_evt("camera_source mode=%d device=0 file=%d", g_cam_mode, g_cam_have);
+      }
+      else
+         g_cam_last = now;
+   }
+   if (g_cam_dev)
+   {
+      const int rc = plat_camera_read(g_cam_pic, g_cam_mode == PCFG_CAM_FRONT);
+      if (rc == 0)
+      {
+         g_cam_have = 1;
+         fresh = 1;
+      }
+      else if (rc < 0)
+      {
+         plat_camera_close();
+         g_cam_dev = 0;
+         /* Transient camera error: back off for 2 s instead of disabling the
+          * camera for the whole session. */
+         g_cam_retry_until = now + CAM_RETRY_FRAMES;
+         g_cam_retry_wait = 1;
+         toast_now(tr("toast.the_camera_stopped"));
+         fe_evt("camera_stopped");
+      }
+      if (g_cam_dev && now - g_cam_last >= CAM_IDLE_FRAMES)
+      {
+         plat_camera_close();
+         g_cam_dev = 0;
+         g_cam_want = 0;
+         fe_evt("camera_idle");
+      }
+   }
+   if (fresh && g_cam_have)
+      fe_host_gbcam_frame(g_cam_pic);
+}
+
+/* A finished strip is copied and written to its PNG by the worker the clip
+ * export uses (plat_job_*), so the game does not stop for it; the frame loop
+ * collects the result and shows the toast.  While the clip export holds the
+ * worker the strip waits (copied) and is started when it is free. */
+static struct
+{
+   uint8_t *shades;                /* the strip, w*h bytes (0 paper .. 3) */
+   int      w, h;
+   uint32_t colour[4];
+   char     stem[80];
+   int      year, mon, day;
+   int      state;                 /* 0 none, 1 waiting, 2 running, 3 finished */
+   int      ok;
+   char     path[APP_PATH_CAP];
+} g_pr;
+
+static void gbprint_job(void *arg)
+{
+   char dir[APP_PATH_CAP], path[APP_PATH_CAP];
+   uint8_t *rgb;
+   unsigned n;
+   int ok = 0;
+   (void)arg;
+   g_pr.path[0] = '\0';
+   rgb = (uint8_t *)malloc((size_t)g_pr.w * (size_t)g_pr.h * 3);
+   if (rgb)
+   {
+      for (n = 0; n < (unsigned)(g_pr.w * g_pr.h); n++)
+      {
+         const uint32_t c = g_pr.colour[g_pr.shades[n] & 3];
+         rgb[n * 3 + 0] = (uint8_t)(c >> 16);
+         rgb[n * 3 + 1] = (uint8_t)(c >> 8);
+         rgb[n * 3 + 2] = (uint8_t)c;
+      }
+      if (path_fmt(dir, sizeof(dir), "%s/prints", g_app_root) == 0)
+         mkdir(dir, 0777);
+      for (n = 1; n < 1000 && dir[0]; n++)
+      {
+         if (path_fmt(path, sizeof(path), "%s/%s-%04d%02d%02d-%u.png", dir,
+                      g_pr.stem, g_pr.year, g_pr.mon, g_pr.day, n) != 0)
+            break;
+         if (file_size(path, NULL) != 0)
+         {
+            ok = stbi_write_png(path, g_pr.w, g_pr.h, 3, rgb, g_pr.w * 3);
+            if (ok)
+               snprintf(g_pr.path, sizeof(g_pr.path), "%s", path);
+            break;
+         }
+      }
+      free(rgb);
+   }
+   g_pr.ok = ok;
+   __atomic_store_n(&g_pr.state, 3, __ATOMIC_RELEASE);
+}
+
+static void gbprint_done(void)
+{
+   fe_evt("gb_print_saved ok=%d file=%s w=%d h=%d", g_pr.ok,
+          g_pr.ok ? g_pr.path : "", g_pr.w, g_pr.h);
+   toast_now(g_pr.ok ? tr("toast.printed_saved_to_prints") : tr("toast.print_could_not_be_saved"));
+   free(g_pr.shades);
+   g_pr.shades = NULL;
+   g_pr.state = 0;
+}
+
+static void gbprint_frame(void)
+{
+   int w = 0, h = 0;
+   const uint8_t *strip;
+   fe_host_gb_printer_set(g_pcfg.gb_printer);
+   if (__atomic_load_n(&g_pr.state, __ATOMIC_ACQUIRE) == 3)
+   {
+      (void)plat_job_join(1000000);       /* it has finished: collect it */
+      gbprint_done();
+   }
+   if (g_pr.state == 0)
+   {
+      strip = fe_host_gb_print_take(&w, &h);
+      if (strip && w > 0 && h > 0)
+      {
+         time_t now = plat_wallclock();
+         struct tm tm;
+         char *dot;
+         g_pr.shades = (uint8_t *)malloc((size_t)w * (size_t)h);
+         if (!g_pr.shades)
+         {
+            fe_evt("gb_print_saved ok=0 file= w=%d h=%d", w, h);
+            toast_now(tr("toast.print_could_not_be_saved"));
+            return;
+         }
+         memcpy(g_pr.shades, strip, (size_t)w * (size_t)h);
+         g_pr.w = w;
+         g_pr.h = h;
+         fe_host_gb_print_colours(g_pr.colour);
+         snprintf(g_pr.stem, sizeof(g_pr.stem), "%s", base_name(g_game.rom_path));
+         dot = strrchr(g_pr.stem, '.');
+         if (dot && dot != g_pr.stem)
+            *dot = '\0';
+         memset(&tm, 0, sizeof(tm));
+         gmtime_r(&now, &tm);         /* plat_wallclock is local time already */
+         g_pr.year = tm.tm_year + 1900;
+         g_pr.mon = tm.tm_mon + 1;
+         g_pr.day = tm.tm_mday;
+         g_pr.state = 1;
+      }
+   }
+   if (g_pr.state == 1)
+   {
+      g_pr.state = 2;
+      if (plat_job_start(gbprint_job, NULL) != 0)
+      {
+         g_pr.state = 1;
+         if (!clip_export_busy())
+         {
+            /* no worker to be had: write it here */
+            g_pr.state = 2;
+            gbprint_job(NULL);
+         }
+      }
+   }
+}
+
+/* The end of the program: let a print in flight finish. */
+static void gbprint_stop(void)
+{
+   if (g_pr.state == 2 || g_pr.state == 3)
+   {
+      (void)plat_job_join(3000000);
+      if (__atomic_load_n(&g_pr.state, __ATOMIC_ACQUIRE) == 3)
+         gbprint_done();
+   }
+   free(g_pr.shades);
+   g_pr.shades = NULL;
+   g_pr.state = 0;
 }
 
 /* ---- PLAY TIME (play_log.h) ---------------------------------------------------
@@ -1147,13 +2417,13 @@ static int patch_prepare(const char *rom_path, char *out, size_t cap,
        path_fmt(out, cap, "%s/patched/%s", g_app_root, base_name(rom_path)) != 0 ||
        path_fmt(key, sizeof(key), "%s.key", out) != 0)
    {
-      why = "a path too long";
+      why = tr("app.a_path_too_long");
       goto done;
    }
    patch = patch_read(ppath, &plen, 64L << 20);
    if (!patch)
    {
-      why = "could not be read";
+      why = tr("app.could_not_be_read");
       goto done;
    }
    kind = rom_patch_kind(patch, (size_t)plen);
@@ -1175,7 +2445,7 @@ static int patch_prepare(const char *rom_path, char *out, size_t cap,
    rom = patch_read(rom_path, &rlen, 64L << 20);
    if (!rom)
    {
-      why = "the game could not be read";
+      why = tr("app.the_game_could_not_be_read");
       goto done;
    }
    tlen = rom_patch_size(patch, (size_t)plen, (size_t)rlen, &why);
@@ -1183,35 +2453,64 @@ static int patch_prepare(const char *rom_path, char *out, size_t cap,
       goto done;
    if (tlen > (64u << 20))
    {
-      why = "too large";
+      why = tr("app.too_large");
       goto done;
    }
    dst = (unsigned char *)malloc(tlen);
    if (!dst)
    {
-      why = "not enough memory";
+      why = tr("app.not_enough_memory");
       goto done;
    }
    if (rom_patch_apply(patch, (size_t)plen, rom, (size_t)rlen, dst, tlen,
                        &dlen, &why) != 0)
       goto done;
    {
-      char tmp[APP_PATH_CAP + 8], dir[APP_PATH_CAP];
-      int ok;
+      char tmp[APP_PATH_CAP + 8], old[APP_PATH_CAP + 8], dir[APP_PATH_CAP];
+      int ok, had;
+      struct stat st;
       path_fmt(dir, sizeof(dir), "%s/patched", g_app_root);
       mkdir(dir, 0777);
-      path_fmt(tmp, sizeof(tmp), "%s.tmp", out);
+      if (path_fmt(tmp, sizeof(tmp), "%s.tmp", out) != 0 ||
+          path_fmt(old, sizeof(old), "%s.old", out) != 0)
+         goto done;
       remove(key);                /* no key until the file is whole */
       f = fopen(tmp, "wb");
       ok = f && fwrite(dst, 1, dlen, f) == dlen;
       if (f)
          ok &= fclose(f) == 0;
-      remove(out);
-      ok = ok && rename(tmp, out) == 0;
+      had = 0;
+      if (ok)
+      {
+         had = stat(out, &st) == 0;
+         if (had)
+         {
+            remove(old);
+            if (rename(out, old) != 0)
+               ok = 0;
+         }
+         if (ok)
+         {
+            if (rename(tmp, out) == 0)
+            {
+               if (had)
+                  remove(old);
+            }
+            else
+            {
+               ok = 0;
+               if (had)
+                  rename(old, out);
+            }
+         }
+      }
       if (!ok)
       {
          remove(tmp);
-         why = "the patched game could not be written (is the card full?)";
+         {
+            static char wbuf[128];     /* what is true of the card, not a guess */
+            why = ds_failed_line(tr("app.the_patched_game"), out, wbuf, sizeof(wbuf));
+         }
          goto done;
       }
       if ((f = fopen(key, "wb")) != NULL)
@@ -1229,11 +2528,11 @@ done:
    free(rom);
    free(dst);
    if (rc == 1)
-      snprintf(g_patch_note, sizeof(g_patch_note), "Patched with %s",
+      snprintf(g_patch_note, sizeof(g_patch_note), tr("app.patched_with"),
                base_name(ppath));
    else
       snprintf(g_patch_note, sizeof(g_patch_note), "%s: %s", base_name(ppath),
-               why ? why : "not a patch");
+               why ? why : tr("app.not_a_patch"));
    fe_evt("rom_patch file=%s kind=%d rc=%d size=%ld cached=%d why=\"%s\"",
           ppath, kind, rc, rc == 1 ? *out_size : 0L, cached,
           rc == 1 ? "" : (why ? why : "not a patch"));
@@ -1277,8 +2576,44 @@ static void read_switches(void)
    char ini[APP_PATH_CAP];
    path_fmt(ini, sizeof(ini), "%s/vita.ini", g_app_root);
    g_sw.pace_mode       = (int)fe_ini_get_int(ini, "pace_mode", g_sw.pace_mode);
+   /* engineering switches for A/B on the console (docs/TECHNICAL.md
+    * "Version 1.4: SMC Without Whole-Cache Flushes"): no Settings row */
+   g_sw.smc_partial     = fe_ini_get_int(ini, "smc_partial", 1) ? 1 : 0;
+   g_sw.dispatch_cache  = fe_ini_get_int(ini, "dispatch_cache", 1) ? 1 : 0;
+   g_jit_lazy           = fe_ini_get_int(ini, "jit_lazy_exits", g_jit_lazy) ? 1 : 0;
+   g_jit_lazy_budget    = (int)fe_ini_get_int(ini, "jit_lazy_budget", g_jit_lazy_budget);
+   if (g_jit_lazy_budget < 0 || g_jit_lazy_budget > 4096)
+      g_jit_lazy_budget = 0;
+   /* smooth hand-over (handoff_glue.h): this launch's override of the
+    * setting, and where its drawing thread runs */
+   g_sw.handoff         = (int)fe_ini_get_int(ini, "smooth_handoff", -1);
+   g_quick_ini          = (int)fe_ini_get_int(ini, "quick_response", -1);   /* this launch's override: 0 Off, 1 Auto, 2 On */
+#ifdef PSPCOMPAT_PLAT
+   {
+      /* the twin (hostcore): GBADHOC_AHEAD=0|1|2 forces the mode, for the proofs of docs/TESTING.md */
+      const char *e = getenv("GBADHOC_AHEAD");
+      if (e && *e)
+         g_quick_ini = atoi(e);
+   }
+#endif
+   g_look_gov           = fe_ini_get_int(ini, "look_gov", 1) ? 1 : 0;
+   g_ho_check           = fe_ini_get_int(ini, "handoff_check", 1) ? 1 : 0;
+   {
+      char c4[16];
+      g_core4_off = fe_ini_get(ini, "core4", c4, sizeof(c4)) &&
+                    (!strncasecmp(c4, "off", 3) || c4[0] == '0');
+   }
+   g_sw.draw_core       = (int)fe_ini_get_int(ini, "draw_core", -1);
+   g_sw.draw_prio       = (int)fe_ini_get_int(ini, "draw_prio", -1);
+   /* Image quality Auto's xBRZ over the sharp filter (video_vita.c) */
+   vid_set_auto_xbrz((int)fe_ini_get_int(ini, "auto_xbrz", 1));
    g_sw.drc             = (int)fe_ini_get_int(ini, "drc", g_sw.drc);
    g_sw.autoexit_frames = (unsigned)fe_ini_get_int(ini, "autoexit_frames", 0);
+   {
+      char v[16];
+      g_sw.snes_two = fe_ini_get(ini, "snes_two", v, sizeof(v))
+                         ? (!strcmp(v, "host") ? 1 : !strcmp(v, "join") ? 2 : 0) : 0;
+   }
    g_sw.link_bench      = (int)fe_ini_get_int(ini, "link_bench", 0);
    mgift_vita_set_port((unsigned)fe_ini_get_int(ini, "mgift_port",
                                                 MGNET_LISTEN_PORT));
@@ -1301,10 +2636,7 @@ static void read_switches(void)
    g_sw.render_thread   = (int)fe_ini_get_int(ini, "render_thread", 1);
    if (g_sw.render_thread < 0 || g_sw.render_thread > 2)
       g_sw.render_thread = 1;
-   g_sw.gpu_xbrz        = (int)fe_ini_get_int(ini, "gpu_xbrz", 0) ? 1 : 0;
    g_sw.gpu_time        = (int)fe_ini_get_int(ini, "gpu_time", 0) ? 1 : 0;
-   g_sw.gpu_probe       = (int)fe_ini_get_int(ini, "gpu_probe", 0);
-   g_sw.gpu_view        = (int)fe_ini_get_int(ini, "gpu_xbrz_view", 0);
    g_sw.core_phase      = (int)fe_ini_get_int(ini, "core_phase", 0);
    if (g_sw.core_phase < 0 || g_sw.core_phase > 3)
       g_sw.core_phase = 0;
@@ -1313,14 +2645,18 @@ static void read_switches(void)
    if (!fe_ini_get(ini, "art_url", g_sw.art_url, sizeof(g_sw.art_url)))
       g_sw.art_url[0] = '\0';
    g_sw.art_titles      = (int)fe_ini_get_int(ini, "art_titles", 1) ? 1 : 0;
+   if (!fe_ini_get(ini, "update_url", g_sw.update_url, sizeof(g_sw.update_url)))
+      g_sw.update_url[0] = '\0';
+   g_sw.update_timeout  = (int)fe_ini_get_int(ini, "update_timeout", 0);
    g_sw.overlays = (int)fe_ini_get_int(ini, "overlays", 1) ? 1 : 0;
    g_sync_ra = (int)fe_ini_get_int(ini, "sync_ra_saves", 1) ? 1 : 0;
    save_sync_init(g_app_root);
    save_sync_set_enabled(g_sync_ra);
-   g_sw.grid = (int)fe_ini_get_int(ini, "grid_strength", 5);
-   if (g_sw.grid < 1 || g_sw.grid > 10)
-      g_sw.grid = 5;
-   vid_set_lcd_strength(g_sw.grid * 20);
+   /* 1.x's one strength for the LCD grid and scanline filters: only what a
+    * file that still says "filter = LCD grid / scanlines" becomes (config_psp.h) */
+   g_pcfg_legacy_grid = (int)fe_ini_get_int(ini, "grid_strength", 5);
+   if (g_pcfg_legacy_grid < 1 || g_pcfg_legacy_grid > 10)
+      g_pcfg_legacy_grid = 5;
    g_sw.cpu_fast = (int)fe_ini_get_int(ini, "cpu_mhz", 500) == 444 ? 0 : 1;
    if (!fe_ini_get(ini, "screenshots", g_sw.shot_dir, sizeof(g_sw.shot_dir)))
       g_sw.shot_dir[0] = '\0';
@@ -1377,7 +2713,25 @@ static const char *const k_builtin_roots[] = {
    "ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Color",
    /* SNES games (started by snes.bin, the separate program in snes/) */
    "ux0:ROMS/SNES", "ux0:roms/SNES",
-   "ux0:data/RetroFlow/ROMS/Nintendo - Super Nintendo Entertainment System"
+   "ux0:data/RetroFlow/ROMS/Nintendo - Super Nintendo Entertainment System",
+   /* NES and Famicom Disk System games (in-process core); RetroFlow has a
+    * folder for the NES only */
+   "ux0:ROMS/NES", "ux0:roms/NES",
+   "ux0:data/RetroFlow/ROMS/Nintendo - Nintendo Entertainment System",
+   /* WonderSwan and WonderSwan Color (in-process core): one tab, both */
+   "ux0:ROMS/WS", "ux0:ROMS/WSC", "ux0:roms/WS", "ux0:roms/WSC",
+   "ux0:data/RetroFlow/ROMS/Bandai - WonderSwan",
+   "ux0:data/RetroFlow/ROMS/Bandai - WonderSwan Color",
+   /* Genesis / Mega Drive, Master System, Game Gear, SG-1000 (md.bin).  Their
+    * folders under ux0:ROMS and ux0:roms (MD, Genesis, Mega Drive, SMS, GG,
+    * SG-1000, "Sega - Game Gear", ... gamedb_sega.h) need no line here: every
+    * folder directly under those two is read (extra_roots_add_subfolders);
+    * only RetroFlow's, which sit elsewhere, are named. */
+   "ux0:data/RetroFlow/ROMS/Sega - Mega Drive - Genesis",
+   "ux0:data/RetroFlow/ROMS/Sega - Master System - Mark III",
+   "ux0:data/RetroFlow/ROMS/Sega - Game Gear",
+   "ux0:data/RetroFlow/ROMS/Sega - SG-1000",
+   "ux0:data/RetroFlow/ROMS/Sega - Mega-CD - Sega CD"
 };
 #define EXTRA_ROOT_MAX_LEN 200        /* leaves 119 bytes of a 319-byte name */
 
@@ -1598,7 +2952,8 @@ static void rom_roots_init(void)
     * the list is (Settings > Game folders writes it, with these in it). */
    if (strcmp(source, "ini") && strcmp(source, "off"))
    {
-      static const char *const keys[] = { "gba_roms", "gb_roms", "gbc_roms", "snes_roms" };
+      static const char *const keys[] = { "gba_roms", "gb_roms", "gbc_roms", "snes_roms", "nes_roms", "ws_roms",
+                                        "md_roms", "sms_roms", "gg_roms", "sg_roms" };
       for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
          if (fe_ini_get(ini, keys[i], list, sizeof(list)) ||
              fe_ini_get(g_app_config, keys[i], list, sizeof(list)))
@@ -1621,6 +2976,13 @@ static void rom_roots_init(void)
  * 1 = a game was asked for but cannot be played (g_launch_note says why). */
 static char g_launch_note[200];
 static int  g_launch_tried;
+/* Online play (2.0): "Join online" from the game list or the library match
+ * chose a game to open and then a room to join.  g_next_rom is the game
+ * (consumed by the loop's next turn), g_join_pending asks link_action(0)
+ * once that game has run a few frames. */
+static char g_next_rom[APP_PATH_CAP];
+static int  g_join_pending;
+static unsigned g_join_frames;       /* frames run since the game booted */
 
 static int rom_from_launch(char *out, size_t cap)
 {
@@ -1634,7 +2996,7 @@ static int rom_from_launch(char *out, size_t cap)
       break;
    case -2:
       fe_evt("launch_param refused reason=too_long");
-      snprintf(g_launch_note, sizeof(g_launch_note), "The path is too long.");
+      snprintf(g_launch_note, sizeof(g_launch_note), tr("app.the_path_is_too_long"));
       return 1;
    default:
       return -1;
@@ -1644,21 +3006,28 @@ static int rom_from_launch(char *out, size_t cap)
           ? path_fmt(out, cap, "%s", raw) != 0
           : path_fmt(out, cap, "%s/%s", g_app_rom_dir, raw) != 0)
    {
-      snprintf(g_launch_note, sizeof(g_launch_note), "The path is too long.");
+      snprintf(g_launch_note, sizeof(g_launch_note), tr("app.the_path_is_too_long"));
       return 1;
    }
    if (!has_ext(out, ".gba") && !has_ext(out, ".gb") && !has_ext(out, ".gbc") &&
-       !has_ext(out, ".sfc") && !has_ext(out, ".smc") && !has_ext(out, ".zip"))
+       !has_ext(out, ".sfc") && !has_ext(out, ".smc") && !has_ext(out, ".nes") &&
+       !has_ext(out, ".fds") && !has_ext(out, ".unf") && !has_ext(out, ".unif") &&
+       !has_ext(out, ".ws") && !has_ext(out, ".wsc") && !has_ext(out, ".pc2") &&
+       !has_ext(out, ".md") && !has_ext(out, ".gen") && !has_ext(out, ".smd") &&
+       !has_ext(out, ".bin") && !has_ext(out, ".68k") && !has_ext(out, ".sms") &&
+       !has_ext(out, ".gg") && !has_ext(out, ".sg") && !has_ext(out, ".sc") &&
+       !has_ext(out, ".cue") && !has_ext(out, ".chd") && !has_ext(out, ".iso") &&
+       !has_ext(out, ".m3u") && !has_ext(out, ".zip") && !has_ext(out, ".7z"))
    {
       fe_evt("launch_param refused reason=not_a_game path=\"%s\"", out);
       snprintf(g_launch_note, sizeof(g_launch_note),
-               "%.120s is not a .gba, .gb, .gbc, .sfc, .smc or .zip file.", base_name(out));
+               "%.100s is not a supported game file.", base_name(out));
       return 1;
    }
    if (file_size(out, &size) != 0 || size <= 0)
    {
       fe_evt("launch_param refused reason=missing path=\"%s\"", out);
-      snprintf(g_launch_note, sizeof(g_launch_note), "%.180s was not found.",
+      snprintf(g_launch_note, sizeof(g_launch_note), tr("app.was_not_found"),
                out);
       return 1;
    }
@@ -1666,6 +3035,7 @@ static int rom_from_launch(char *out, size_t cap)
 }
 
 /* autoboot.txt: the first game of this run, started without the list. */
+static int g_autoboot_slot;   /* autoboot.txt's "slot=N" line, 0 none */
 static int rom_from_autoboot(char *out, size_t cap)
 {
    char path[APP_PATH_CAP], line[APP_PATH_CAP];
@@ -1678,6 +3048,19 @@ static int rom_from_autoboot(char *out, size_t cap)
       return -1;
    if (!fgets(line, sizeof(line), f))
       line[0] = '\0';
+   /* an optional second line "slot=N" (1..9) opens that save state as soon
+    * as the game runs, as a state picked on the shelf does: unattended
+    * measurements start at a chosen moment of a game (tools/vita-matrix) */
+   {
+      char l2[32];
+      g_autoboot_slot = 0;
+      if (fgets(l2, sizeof(l2), f) && !strncmp(l2, "slot=", 5))
+      {
+         int s = atoi(l2 + 5);
+         if (s >= 1 && s <= PSP_STATE_SLOT_COUNT)
+            g_autoboot_slot = s;
+      }
+   }
    fclose(f);
    n = strlen(line);
    while (n && isspace((unsigned char)line[n - 1]))
@@ -1714,7 +3097,7 @@ static void app_notice(const char *title, const char *l1, const char *l2,
    {
       uint64_t dt = plat_time_us() - t0;
       unsigned pad = pspcompat_pad();
-      const char *hint = "Press any button for the game list";
+      const char *hint = tr("app.press_any_button_for_the_game");
 
       vid_overlay_begin(1);
       /* VitAdhoc's look (vita/ui_vita_style.h): the navy page, a glow, the
@@ -1829,6 +3212,192 @@ static void sgb_border_end(void)
    }
 }
 
+/* ---- smooth hand-over (handoff_glue.h) ------------------------------------ */
+static int g_ho_want = -1;        /* what ho_set_enabled was last told      */
+
+/* ---- the truth metric: refreshes that showed no new picture ----------------
+ * Every present notes the display's refresh counter; a gap of more than one
+ * refresh to the present before it is a refresh that had nothing new to
+ * show (a miss).  Independent of the emulated frame rate: on hardware it is
+ * the one number that says "locked 60".  Counted where the picture is
+ * presented (the drawing thread's ho_draw, or the emulating thread's
+ * frame_present), so it works with hand-over on and off.  A gap of 30
+ * refreshes or more is a pause (menu, suspend), not a miss, and Steady
+ * pacing's half-rate passes are 30 fps on purpose and are not counted. */
+static unsigned g_vc_prev;
+static unsigned g_vc_miss, g_vc_pres;      /* atomics, this window */
+static unsigned g_vc_miss_total, g_vc_pres_total;
+
+static void present_note(void)
+{
+   const unsigned vc = plat_vcount();
+   const unsigned prev = g_vc_prev;
+   const unsigned d = vc - prev;
+   g_vc_prev = vc;
+   if (!prev || d < 1u || d >= 30u)
+      return;
+   __atomic_fetch_add(&g_vc_pres, 1u, __ATOMIC_RELAXED);
+   if (d > 1u && !steady_half())
+      __atomic_fetch_add(&g_vc_miss, d - 1u, __ATOMIC_RELAXED);
+}
+
+/* ---- hand-over's boot self-check ------------------------------------------------
+ * In the first seconds of a game with Smooth hand-over on, the drawing
+ * thread is the new thing between this build and 1.3.  Two things give it
+ * up for the rest of the session (one log line, the reason):
+ *  - GXM/vita2d errors on its draw path: three skipped presents (a scene
+ *    that would not begin or end: vb_ownership_get skipped_frames) in the
+ *    first HO_CHECK_WINDOWS windows;
+ *  - refreshes that showed nothing new while the emulator itself was not
+ *    late: 30 or more misses in a window, with at most 3 late frames, three
+ *    windows in a row -- the old path would have shown them.
+ * Deterministic, no timing of its own: it reads the window's counters.
+ * vita.ini handoff_check = 0 switches it off (A/B). */
+#define HO_CHECK_WINDOWS 10
+static unsigned g_sec_t0, g_sec_late0;   /* the once-a-second tick */
+static int g_ho_boot_left;        /* windows still under test            */
+static int g_ho_strikes;
+static unsigned g_ho_gxm_errs;    /* skipped presents since the start    */
+static int g_ho_fell_back;        /* given up for this game              */
+static vb_ownership_diag g_gxm0, g_gxm_last;
+static unsigned g_gxm_recovered;  /* a skipped present, then a good one  */
+
+static void ho_selfcheck_begin(void)
+{
+   vb_ownership_get(&g_gxm0);
+   g_gxm_last = g_gxm0;
+   g_ho_boot_left = g_ho_check ? HO_CHECK_WINDOWS : 0;
+   g_sec_t0 = 0;
+   g_ho_strikes = 0;
+   g_ho_gxm_errs = 0;
+   g_ho_fell_back = 0;
+   g_gxm_recovered = 0;
+   g_vc_prev = 0;
+}
+
+static void ho_window_check(unsigned vm, unsigned vp, unsigned late_delta);
+static unsigned g_vc_last_vm, g_vc_last_vp;   /* the last second's, for the handoff: line */
+
+/* Once a second (game loop, beside the handoff: line): the vcount-miss
+ * count, the GXM census and the boot self-check. */
+static void ho_second_tick(void)
+{
+   const uint32_t now = (uint32_t)plat_time_us();
+   unsigned vm, vp, late_delta;
+   if (!g_sec_t0)
+   {
+      g_sec_t0 = now ? now : 1;
+      g_sec_late0 = g_pace_late;
+      return;
+   }
+   if (now - g_sec_t0 < 1000000u)
+      return;
+   g_sec_t0 = now;
+   late_delta = g_pace_late - g_sec_late0;
+   g_sec_late0 = g_pace_late;
+   vm = __atomic_exchange_n(&g_vc_miss, 0u, __ATOMIC_RELAXED);
+   vp = __atomic_exchange_n(&g_vc_pres, 0u, __ATOMIC_RELAXED);
+   g_vc_last_vm = vm;
+   g_vc_last_vp = vp;
+   ho_window_check(vm, vp, late_delta);
+}
+
+/* The GXM census and the check, for the second just ended. */
+static void ho_window_check(unsigned vm, unsigned vp, unsigned late_delta)
+{
+   vb_ownership_diag d;
+   unsigned skipped, started;
+   const char *why = NULL;
+   vb_ownership_get(&d);
+   skipped = d.skipped_frames - g_gxm_last.skipped_frames;
+   started = d.started_frames - g_gxm_last.started_frames;
+#ifndef __vita__
+   {
+      /* the twin's stand-in for a GXM that fails (app_tests.py t_stall) */
+      static int fake = -1;
+      if (fake < 0)
+      {
+         const char *e = getenv("GBADHOC_FAKE_GXM_ERR");
+         fake = e ? atoi(e) : 0;
+      }
+      if (fake && ho_active())
+         skipped += (unsigned)fake;
+   }
+#endif
+   if (skipped && started)
+      g_gxm_recovered += skipped;      /* the next frame went through */
+   g_ho_gxm_errs += skipped;
+   g_vc_miss_total += vm;
+   g_vc_pres_total += vp;
+   /* census: error returns and recoveries on the draw path, this window and
+    * in all; fatal = vita2d gave up recovering */
+   fe_evt("vita_gxm skipped=%u recovered=%u total_skipped=%u total_recovered=%u "
+          "fatal=%u tex_blocked=%u vc_miss=%u vc_presents=%u vc_miss_total=%u/%u",
+          skipped,
+          skipped && started ? skipped : 0u, d.skipped_frames - g_gxm0.skipped_frames,
+          g_gxm_recovered, d.fatal, d.texture_blocked - g_gxm0.texture_blocked,
+          vm, vp, g_vc_miss_total, g_vc_pres_total);
+   g_gxm_last = d;
+   if (g_ho_boot_left <= 0 || g_ho_fell_back || !ho_active())
+      return;
+   g_ho_boot_left--;
+   g_ho_strikes = vm >= 30u && late_delta <= 3u ? g_ho_strikes + 1 : 0;
+   if (d.fatal || skipped >= 10u)
+      why = "gxm_errors";
+   else if (g_ho_strikes >= 3)
+      why = "vcount_misses";
+   if (why)
+   {
+      g_ho_fell_back = 1;
+      ho_set_enabled(0);
+      g_ho_want = 0;
+      fe_evt("handoff_fallback reason=%s gxm_errors=%u vc_miss=%u/%u "
+             "strikes=%d: back on the 1.3 path for this game", why,
+             g_ho_gxm_errs, vm, vp, g_ho_strikes);
+   }
+}
+
+static uint64_t g_ho_t0;          /* the drawn frame's start (its emu cost) */
+
+#ifndef __vita__
+/* GBADHOC_PIC_TRACE=file (the twin): one line per picture drawn, its frame
+ * number and a CRC of its pixels, from whichever thread draws it -- the
+ * proof that the hand-over shows exactly the pictures the old path did
+ * (app_tests.py t_handoff). */
+static void pic_trace(uint32_t seq, const uint16_t *pix, unsigned w,
+                      unsigned h, size_t pitch)
+{
+   static FILE *f;
+   static int tried;
+   uint32_t c = 0xFFFFFFFFu;
+   unsigned x, y;
+   if (!tried)
+   {
+      const char *e = getenv("GBADHOC_PIC_TRACE");
+      tried = 1;
+      f = e && *e ? fopen(e, "w") : NULL;
+   }
+   if (!f || !pix)
+      return;
+   for (y = 0; y < h; y++)
+   {
+      const uint8_t *r = (const uint8_t *)pix + (size_t)y * pitch;
+      for (x = 0; x < w * 2u; x++)
+      {
+         unsigned k;
+         c ^= r[x];
+         for (k = 0; k < 8; k++)
+            c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
+      }
+   }
+   fprintf(f, "%u %08x %ux%u\n", (unsigned)seq, (unsigned)~c, w, h);
+   fflush(f);
+}
+#define PIC_TRACE(q, p, w, h, b) pic_trace(q, p, w, h, b)
+#else
+#define PIC_TRACE(q, p, w, h, b) ((void)0)
+#endif
+
 static void sink_video(const uint16_t *pix, unsigned w, unsigned h,
                        size_t pitch_bytes)
 {
@@ -1840,9 +3409,13 @@ static void sink_video(const uint16_t *pix, unsigned w, unsigned h,
       g_fps_emu++;
    if (pix)
    {
-      /* A GBA picture wider than the console's is the wide one; of its
-       * margins, what the scale in use has room for is shown. */
-      unsigned m = (h == 160 && w > 240) ? (w - 240) / 2 : 0;
+      /* A GBA or NES wide picture is center-cropped to the console's own
+       * columns for g_last (clips, thumbnails, wake shots); g_show keeps
+       * the margins the screen has room for so both NTSC (224p -> 394x224)
+       * and PAL (240p -> 422x240) fill the full 544px height at Fit. */
+      unsigned m = (g_game_console == FE_CONSOLE_NES && w > 256) ? (w - 256) / 2
+                 : (g_game_console == FE_CONSOLE_GBA && h == 160 && w > 240)
+                   ? (w - 240) / 2 : 0;
       unsigned fit = m ? (unsigned)vid_margin_fit(w - 2 * m, h, (int)m) : 0;
       g_last.pix = pix + m;
       g_last.w = w - 2 * m;
@@ -1873,12 +3446,29 @@ static void sink_video(const uint16_t *pix, unsigned w, unsigned h,
    {
       /* pix == NULL is a repeated frame: the display is double-buffered, so
        * the previous picture is drawn again. */
+      const uint32_t seq = fe_host_frame_count();
       g_sgb_shown = sgb_compose(g_show.pix, g_show.pitch);
-      if (g_sgb_shown)
-         vid_draw_frame(g_sgb_frame, 256, 224, 256 * 2);
+      /* Smooth hand-over: the picture is copied for the drawing thread,
+       * which draws and presents it (frame_present commits it) */
+      if (ho_active() &&
+          (g_sgb_shown ? ho_stage(g_sgb_frame, 256, 224, 256 * 2, seq, 1)
+                       : ho_stage(g_show.pix, g_show.w, g_show.h,
+                                  g_show.pitch, seq, 0)))
+         ;
       else
-         vid_draw_frame(g_show.pix, g_show.w, g_show.h, g_show.pitch);
-      g_app_drew = 1;
+      {
+         if (g_sgb_shown)
+         {
+            PIC_TRACE(seq, g_sgb_frame, 256, 224, 256 * 2);
+            vid_draw_frame(g_sgb_frame, 256, 224, 256 * 2);
+         }
+         else
+         {
+            PIC_TRACE(seq, g_show.pix, g_show.w, g_show.h, g_show.pitch);
+            vid_draw_frame(g_show.pix, g_show.w, g_show.h, g_show.pitch);
+         }
+         g_app_drew = 1;
+      }
    }
    if (pix)
    {
@@ -1900,6 +3490,22 @@ static void ff_audio_push(const int16_t *lr, size_t frames)
    int16_t out[256 * 2];
    size_t i, k = 0;
    const int n = g_ff.mult;
+   if (g_pcfg.ff_audio == 2)
+   {
+      /* Normal pitch: one emulated frame's sound in `mult` is played, the
+       * seams faded (pk_ffnorm.h); the speaker still gets one refresh of
+       * sound per refresh. */
+      static int16_t keep[4096 * 2];
+      size_t n_keep = frames < 4096 ? frames : 4096, got;
+      memcpy(keep, lr, n_keep * 2 * sizeof(int16_t));
+      got = pk_ffnorm_chunk(&g_ff.norm, keep, n_keep);
+      if (got)
+      {
+         audio_push(keep, got);
+         g_ff.heard += (unsigned)got;
+      }
+      return;
+   }
    for (i = 0; i < frames; i++)
    {
       g_ff.acc[0] += lr[i * 2 + 0];
@@ -1951,6 +3557,15 @@ static int art_online(void)
    net_vita_wifi w;
    return net_vita_wifi_status(&w) && net_vita_use() != NET_VITA_ADHOC;
 }
+
+/* RetroAchievements go quiet while a link session is up: the web requests
+ * share the radio and the main thread's time with the link, and the
+ * achievements' own "will be sent when back online" path holds them until
+ * the session ends (docs/TECHNICAL.md, "Pausing the fetchers while linked"). */
+static int ra_online(void)
+{
+   return art_online() && !link_is_active();
+}
 #endif
 
 static void art_start(void)
@@ -1972,6 +3587,167 @@ static void art_start(void)
                           );
    fe_evt("art_fetch start=%d rc=%d url=%s", want, rc,
           g_sw.art_url[0] ? g_sw.art_url : "libretro");
+}
+
+/* ---- the update check (update_check.h) -------------------------------------
+ * Settings > About > Check for updates: Daily or Off.  The check runs while
+ * the home screen idles (ui_host_home_idle) and the network may be used --
+ * the same rule as the box art's.  The twin asks only the local server of
+ * vita.ini update_url, never GitHub. */
+#ifdef __vita__
+static int update_online(void)
+{
+   return ra_online();
+}
+#else
+/* The twin is always online, unless the test says Wi-Fi is off
+ * (GBADHOC_UPDATE_OFFLINE): every time the check asks is logged, so the test
+ * can count that it does not ask every frame. */
+static int update_online(void)
+{
+   if (!getenv("GBADHOC_UPDATE_OFFLINE"))
+      return 1;
+   fe_evt("update_online asked online=0");
+   return 0;
+}
+#endif
+
+static void update_begin(void)
+{
+#ifdef __vita__
+   const char *url = NULL;                 /* GitHub's, always */
+#else
+   const char *url = g_sw.update_url[0] ? g_sw.update_url : NULL;
+#endif
+   upd_start(g_app_root, url, ONLINE_APP_VERSION,
+             update_online,
+             (unsigned)(g_sw.update_timeout > 0 ? g_sw.update_timeout : 0),
+#ifdef __vita__
+             g_pcfg.update_check
+#else
+             g_pcfg.update_check && url   /* the twin: only with a test server */
+#endif
+             );
+   fe_evt("update_check begin daily=%d url=%s", g_pcfg.update_check,
+          url ? url : "github");
+}
+
+/* What an answer says, as a toast.  `home`: the home screen is up, where the
+ * newer version is announced (once a run). */
+static void update_say(int home)
+{
+   int kind, hand;
+   char text[160];
+   while (upd_take_result(&kind, &hand))
+   {
+      if (!hand)
+         continue;               /* a background try is silent, but for news */
+      if (kind == UPD_NEWER && upd_take_notice(text, sizeof(text), 1))
+         ;                       /* the notice below */
+      else if (kind == UPD_CURRENT)
+         snprintf(text, sizeof(text), tr("app.vitadhoc_is_up_to_date"));
+      else if (kind == UPD_NEWER)
+         snprintf(text, sizeof(text), tr("app.a_newer_vitadhoc_is_out"));
+      else
+         snprintf(text, sizeof(text), tr("app.could_not_check_for_updates"));
+      fe_evt("update_toast by_hand=1 text=\"%s\"", text);
+      osd_toast("%s", text);
+   }
+   if (home && upd_take_notice(text, sizeof(text), 0))
+   {
+      fe_evt("update_toast by_hand=0 text=\"%s\"", text);
+      osd_toast("%s", text);
+   }
+}
+
+void app_update_options(void)
+{
+   upd_set_daily(g_pcfg.update_check);
+   fe_evt("update_check daily=%d", g_pcfg.update_check);
+}
+
+void ui_host_update_now(void)
+{
+   if (upd_busy())
+      osd_toast(tr("toast.already_checking_for_updates"));
+   else if (upd_check_now((time_t)plat_wallclock()) != 0)
+      osd_toast(upd_busy() ? tr("toast.already_checking_for_updates")
+                           : tr("toast.no_network_to_check_with"));
+   else
+      osd_toast(tr("toast.checking_for_updates"));
+}
+
+/* The home screen, once a frame (ui_vita_home.h): the day's check starts here
+ * once it has been idle a while. */
+void ui_host_home_idle(int idle)
+{
+   upd_poll(idle, (time_t)plat_wallclock());
+   update_say(1);
+}
+
+/* ---- "Save clip" (clip_export.h) ---------------------------------------------
+ * The last ten seconds of the game, from the previews' own recording, as an
+ * animated PNG in clips/<game>-<date>.png: copied in a moment here, encoded
+ * on a thread of its own, announced by a toast when the file is there. */
+static int clip_save_now(void)
+{
+   char stem[96], path[APP_PATH_CAP], dir[APP_PATH_CAP];
+   time_t now = plat_wallclock();
+   struct tm tm;
+   unsigned n;
+   char *dot;
+   int rc = CLIPX_FAIL;
+
+   if (!g_game_loaded)
+      return CLIPX_NONE;
+   snprintf(stem, sizeof(stem), "%s", base_name(g_game.rom_path));
+   dot = strrchr(stem, '.');
+   if (dot && dot != stem)
+      *dot = '\0';
+   memset(&tm, 0, sizeof(tm));
+   gmtime_r(&now, &tm);            /* plat_wallclock is local time already */
+   if (path_fmt(dir, sizeof(dir), "%s/clips", g_app_root) != 0)
+      return CLIPX_FAIL;
+   mkdir(dir, 0777);
+   for (n = 1; n < 100; n++)
+   {
+      char tail[16] = "";
+      if (n > 1)
+         snprintf(tail, sizeof(tail), "-%u", n);
+      if (path_fmt(path, sizeof(path), "%s/%s-%04d%02d%02d-%02d%02d%02d%s.png",
+                   dir, stem, tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                   tm.tm_hour, tm.tm_min, tm.tm_sec, tail) != 0)
+         return CLIPX_FAIL;
+      if (file_size(path, NULL) != 0)
+      {
+         /* the core's frame time, as clip_save_game says it */
+         rc = clip_export_start(path, 16743, ui_active());
+         break;
+      }
+   }
+   fe_evt("clip_export start rc=%d file=%s", rc, path);
+   return rc;
+}
+
+int ui_host_clip_save(void)
+{
+   return clip_save_now();
+}
+
+/* The end of an export, from the game loop and from every menu's tick. */
+static void clip_export_service(void)
+{
+   char path[APP_PATH_CAP];
+   unsigned frames = 0, bytes = 0;
+   int ok = 0;
+   if (!clip_export_take(&ok, path, sizeof(path), &frames, &bytes))
+      return;
+   fe_evt("clip_export done ok=%d frames=%u bytes=%u file=%s", ok, frames,
+          bytes, path);
+   if (ok)
+      osd_toast(tr("toast.clip_saved"));
+   else
+      osd_toast(tr("toast.the_clip_could_not_be_saved"));
 }
 
 /* keys_script (g_sw): the buttons of keys.txt, frame by frame. */
@@ -2065,7 +3841,7 @@ static void sink_yield(void)
 
 static void loading_progress(unsigned loaded, unsigned total)
 {
-   ui_loading_update(total ? "Reading ROM" : "Checking cartridge", loaded,
+   ui_loading_update(total ? tr("app.reading_rom") : tr("app.checking_cartridge"), loaded,
                      total);
 }
 
@@ -2140,6 +3916,11 @@ static int menu_log_stop(void)
    return 1;
 }
 
+static void game_log_wake(void)
+{
+   if (fe_evt_pending() >= 4096) plat_worker_wake();
+}
+
 static void io_start(void)
 {
    /* 250 ms: how stale the log on the card may be.  The save's own cadence
@@ -2147,17 +3928,20 @@ static void io_start(void)
    g_worker = g_sw.io_thread && plat_worker_start(io_step, 250000) == 0;
    if (g_worker)
    {
-      fe_evt_set_async(plat_worker_wake);
-      /* A GB cartridge's RAM has no race-safe block scanner (the GBA core
-       * has): its battery snapshot stays on the emulation thread, as on
-       * the PSP.  The log is asynchronous either way. */
-      if (g_game.console == FE_CONSOLE_GBA)
-         fe_host_set_io(&g_io);
+      /* The log: the worker writes it every 250 ms anyway; a wake for each
+       * line made it write a few bytes (12-15 ms of card time) up to once
+       * a frame (lessons-audit 2).  Woken early only with 4 KiB waiting. */
+      fe_evt_set_async(game_log_wake);
+      /* The battery file: the GBA's blocks are scanned and written there;
+       * a GB, GBC, NES or WonderSwan cartridge's RAM is snapshotted on this
+       * thread (gb_save_flush_periodic, a memcpy) and only the write --
+       * temporary file, renames, each a walk of a big ROM folder -- goes
+       * to the worker (lessons-audit 1e: it was a visible hitch). */
+      fe_host_set_io(&g_io);
    }
    rewind_set_async(g_worker ? plat_worker_wake : NULL);
    clip_set_async(g_worker ? plat_worker_wake : NULL);
-   fe_evt("io_worker on=%d sram_async=%d", g_worker,
-          g_worker && g_game.console == FE_CONSOLE_GBA);
+   fe_evt("io_worker on=%d sram_async=%d", g_worker, g_worker);
 }
 
 static void io_stop(void)
@@ -2175,8 +3959,12 @@ static void io_stop(void)
 
 /* ---- pacing --------------------------------------------------------------- */
 
+static void app_look_window_reset(void);
+
 void app_pace_reset(void)
 {
+   ho_time_baseline();          /* stopped time is not lost time */
+   app_look_window_reset();     /* ...nor a second of play for the look */
    g_app_vc_target = plat_vcount();
    g_next_ns = plat_time_us() * 1000ull;
    g_catchup = 0;
@@ -2238,7 +4026,9 @@ static void pace_frame(void)
        * stretch the gap in the sound (the game's samples come with its
        * frames; measured on the twin: three 25 ms frames in a row were a
        * gap with the wait, none without it). */
-      if (!g_catchup)
+      /* (Smooth hand-over: the mailbox's gate is the back-pressure; the
+       * drawing thread waits for the display, this one does not.) */
+      if (!g_catchup && !ho_threaded())
       {
          static unsigned stuck;
          const int st = vid_present_state();
@@ -2269,9 +4059,9 @@ static void pace_frame(void)
    else
    {
       uint64_t now_ns = plat_time_us() * 1000ull;
-      g_next_ns += GBA_FRAME_NS;
+      g_next_ns += g_frame_ns;
       if (now_ns > g_next_ns + (g_catchup_ok ? CATCHUP_HORIZON : PACE_RESYNC_VB)
-                               * GBA_FRAME_NS)
+                               * g_frame_ns)
       {
          g_next_ns = now_ns;
          g_pace_forgiven++;
@@ -2279,8 +4069,8 @@ static void pace_frame(void)
       else if (now_ns >= g_next_ns)
       {
          g_pace_late++;
-         if (g_catchup_ok && now_ns - g_next_ns >= GBA_FRAME_NS)
-            g_catchup = (unsigned)((now_ns - g_next_ns) / GBA_FRAME_NS);
+         if (g_catchup_ok && now_ns - g_next_ns >= g_frame_ns)
+            g_catchup = (unsigned)((now_ns - g_next_ns) / g_frame_ns);
       }
       else
       {
@@ -2292,12 +4082,28 @@ static void pace_frame(void)
    }
 }
 
-/* How fast the pacer runs the game relative to a real GBA, in millionths:
- * the resampler's starting point (audio_vita.h). */
+/* How fast the pacer runs the game relative to the active console, in
+ * millionths: the resampler's starting point (audio_vita.h). */
 static unsigned pace_speed_x1e6(void)
 {
    if (g_sw.pace_mode == PACE_VSYNC)
-      return (unsigned)((double)plat_refresh_mhz() * 1000000.0 / GBA_FPS_X1000 + 0.5);
+   {
+      double fps_x1000 = GBA_FPS_X1000;
+      if (g_game_console == FE_CONSOLE_NES)
+      {
+         double nf = gbmux_nes_fps();
+         if (nf > 1.0 && nf <= 55.0)
+            return 1000000u;     /* PAL NES: gbcore_mux paces 50.007 Hz to display */
+         if (nf > 55.0)
+            fps_x1000 = nf * 1000.0;
+      }
+      else if (g_game_console == FE_CONSOLE_WSWAN)
+      {
+         /* wscore paces 75.47 Hz to 60000/1001 Hz across each refresh call. */
+         fps_x1000 = 60000.0 * 1000.0 / 1001.0;
+      }
+      return (unsigned)((double)plat_refresh_mhz() * 1000000.0 / fps_x1000 + 0.5);
+   }
    return 1000000u;
 }
 
@@ -2342,6 +4148,8 @@ void app_wide_apply(void)
       mode = g_sw.wide & 7;
    if (link_local_active())
       mode = WIDE_OFF;
+   if (look_rung(5) && g_sw.wide < 0)
+      mode = WIDE_OFF;             /* the look governor's last rung */
    if (g_sw.wide_fill >= 0)
       fill = g_sw.wide_fill;
    if (mode != g_wide_mode || fill != g_wide_fill)
@@ -2358,20 +4166,35 @@ void app_wide_apply(void)
 int app_snapshot_take(void)
 {
    unsigned w = g_last.w, h = g_last.h, y;
+   const uint16_t *src = g_last.pix;
+   unsigned max_w = g_game_console == FE_CONSOLE_GBA ? 240u : PSP_STATE_SHOT_MAX_W;
+   unsigned max_h = g_game_console == FE_CONSOLE_GBA ? 160u : PSP_STATE_SHOT_MAX_H;
 
-   if (!g_last.pix || !w || !h)
+   if (!src || !w || !h)
       return g_snap_have;         /* keep what there is */
-   if (w > 240) w = 240;
-   if (h > 160) h = 160;
+   if (w > max_w)
+   {
+      src += (w - max_w) / 2;
+      w = max_w;
+   }
+   if (h > max_h)
+   {
+      src += ((h - max_h) / 2) * (g_last.pitch / sizeof(uint16_t));
+      h = max_h;
+   }
    memset(g_snap, 0, sizeof(g_snap));
-   vid_frame_to_psp565(g_snap, SNAP_TEX, g_last.pix, w, h, g_last.pitch);
+   vid_frame_to_psp565(g_snap, SNAP_TEX, src, w, h, g_last.pitch);
    /* The edge texels once more, right and below, as the PSP's snapshot has
     * them: a filtered tap past the picture's edge reads the edge, not
     * black. */
-   for (y = 0; y < h; y++)
-      g_snap[y * SNAP_TEX + w] = g_snap[y * SNAP_TEX + w - 1];
-   memcpy(g_snap + h * SNAP_TEX, g_snap + (h - 1) * SNAP_TEX,
-          (w + 1) * sizeof(uint16_t));
+   if (w < SNAP_TEX)
+   {
+      for (y = 0; y < h; y++)
+         g_snap[y * SNAP_TEX + w] = g_snap[y * SNAP_TEX + w - 1];
+   }
+   if (h < SNAP_TEX)
+      memcpy(g_snap + h * SNAP_TEX, g_snap + (h - 1) * SNAP_TEX,
+             (w < SNAP_TEX ? w + 1 : w) * sizeof(uint16_t));
    /* The renderer keeps a GPU texture per pointer: these bytes changed. */
    vid_tex_invalidate(g_snap, sizeof(g_snap));
    g_snap_w = w;
@@ -2386,6 +4209,7 @@ int app_snapshot_take(void)
  * reader serves both.  A failed write leaves nothing (no torn picture). */
 static void scene_save(void)
 {
+   menu_files_art_changed();   /* scenes/: the list's names are stale */
    char stem[96], path[APP_PATH_CAP];
    unsigned char hdr[PSP_STATE_THUMB_HEADER_SIZE];
    char *dot;
@@ -2460,8 +4284,11 @@ void app_backdrop_from_snapshot(void)
 /* THE IN-GAME MENU OPENS OVER THE GAME (docs/UI-OVERLAY.md): the core is
  * paused from this frame on, so the snapshot is the picture the player was
  * looking at, and the menu draws it, scrimmed, behind every page. */
+static void app_look_save(const char *why);
+
 static void menu_open(const char *via)
 {
+   app_look_save("menu");       /* what the look governor learned so far */
    app_snapshot_take();
    app_backdrop_from_snapshot();
    ui_open();
@@ -2577,9 +4404,17 @@ static int state_save_slot(unsigned slot)
    uint64_t t0 = plat_time_us();
 
    if (psp_state_path_for_slot(path, sizeof(path), g_game.state_path,
-                               slot) != 0 ||
-       fe_host_state_save(path) != 0)
+                               slot) != 0)
       return -1;
+   if (fe_host_state_locked(path))
+   {
+      fe_evt("state_save slot=%u refused=locked", slot);
+      return -3;                   /* the slot's lock (Save states: L) */
+   }
+   if (fe_host_state_save(path) != 0)
+      return -1;
+   /* the slot's picture before this save goes with its .bak (Undo save) */
+   fe_host_state_keep_companions(path);
    if (preview_frame(&w, &h) == 0)
    {
       thumb_rc = state_thumb_write(path, w, h);
@@ -2608,14 +4443,57 @@ static int state_save_slot(unsigned slot)
 static int state_load_path(const char *path, const char *via);
 static void state_loaded(const char *path);
 
+/* UNDO LOAD: the moment before a state load is kept in a hidden file
+ * (Game.st0.undo, one per game), taken just before the load and put back by
+ * the Save states page's Undo.  Loads made as a game starts (Continue, the
+ * shelf) keep none: the "moment before" is a fresh boot. */
+static int state_undo_path(char *out, size_t cap)
+{
+   char p[PSP_FILE_PATH_CAP];
+   if (psp_state_path_for_slot(p, sizeof(p), g_game.state_path, 1) != 0)
+      return -1;
+   return snprintf(out, cap, "%s.undo", p) < (int)cap ? 0 : -1;
+}
+
+/* Taken to Game.st0.undo.new; the load that follows makes it the undo point
+ * (state_undo_commit) -- a load that fails leaves the old one alone. */
+static int state_undo_capture(const char *via)
+{
+   char u[PSP_FILE_PATH_CAP + 8], n[PSP_FILE_PATH_CAP + 12];
+   int rc;
+   if (state_undo_path(u, sizeof(u)) != 0)
+      return -1;
+   snprintf(n, sizeof(n), "%s.new", u);
+   rc = fe_host_state_save(n);
+   fe_evt("state_undo_capture via=%s rc=%d", via, rc);
+   return rc;
+}
+
+static void state_undo_commit(int captured, int loaded)
+{
+   char u[PSP_FILE_PATH_CAP + 8], n[PSP_FILE_PATH_CAP + 12];
+   if (!captured || state_undo_path(u, sizeof(u)) != 0)
+      return;
+   snprintf(n, sizeof(n), "%s.new", u);
+   if (!loaded)
+      remove(n);
+   else
+   {
+      remove(u);
+      if (rename(n, u) != 0)
+         remove(n);
+   }
+}
+
 static int state_load_slot(unsigned slot, const char *via)
 {
    char path[PSP_FILE_PATH_CAP];
-   int rc;
+   int rc, captured;
 
    if (psp_state_path_for_slot(path, sizeof(path), g_game.state_path,
                                slot) != 0)
       return -1;
+   captured = strcmp(via, "shelf") != 0 && state_undo_capture(via) == 0;
    {
       char alt[PSP_FILE_PATH_CAP];
       rc = fe_host_state_load(sidecar_read_path(path, g_game.legacy_state_path,
@@ -2623,6 +4501,7 @@ static int state_load_slot(unsigned slot, const char *via)
                                                 sizeof(alt)));
    }
    fe_evt("state_load slot=%u via=%s rc=%d", slot, via, rc);
+   state_undo_commit(captured, rc == 0);
    if (rc == 0)
       state_loaded(path);
    return rc;
@@ -2638,6 +4517,35 @@ static int state_load_path(const char *path, const char *via)
    return rc;
 }
 
+/* Back to the moment before the last state load.  What is there now is kept
+ * in its place, so a second Undo goes forward again. */
+static int state_undo_load(void)
+{
+   char u[PSP_FILE_PATH_CAP + 8], t[PSP_FILE_PATH_CAP + 12];
+   FILE *f;
+   int rc;
+   if (state_undo_path(u, sizeof(u)) != 0 || (f = fopen(u, "rb")) == NULL)
+      return -1;
+   fclose(f);
+   snprintf(t, sizeof(t), "%s.now", u);
+   if (fe_host_state_save(t) != 0)       /* now, aside */
+      t[0] = '\0';
+   rc = fe_host_state_load(u);
+   fe_evt("state_undo_load rc=%d", rc);
+   if (rc == 0)
+   {
+      state_loaded(u);
+      if (t[0])
+      {
+         remove(u);
+         rename(t, u);
+      }
+   }
+   else if (t[0])
+      remove(t);
+   return rc;
+}
+
 /* What follows any loaded state. */
 static void state_loaded(const char *path)
 {
@@ -2650,6 +4558,7 @@ static void state_loaded(const char *path)
       if (link_local_active())
          link_local_state_loaded(path);
       audio_flush();            /* what is queued belongs to the old timeline */
+      ho_discard();             /* ...and so are the pictures in flight     */
       app_pace_reset();         /* a load is not a late frame               */
    }
 }
@@ -2659,7 +4568,7 @@ static void state_loaded(const char *path)
  * pixels, no bars and no OSD -- with the wide view's margins when they are
  * on screen.  (The PSP writes the same frame as a BMP into its log folder;
  * a file a player goes looking for deserves a better name and place.) */
-#define SHOT_MAX_W (PSP_STATE_SHOT_MAX_W + 64)
+#define SHOT_MAX_W 448
 static void screenshot_write(void)
 {
    static unsigned char rgb[SHOT_MAX_W * PSP_STATE_SHOT_MAX_H * 3];
@@ -2672,7 +4581,7 @@ static void screenshot_write(void)
    if (!g_show.pix || !w || !h || w > SHOT_MAX_W ||
        h > PSP_STATE_SHOT_MAX_H)
    {
-      toast_now("No picture to save yet");
+      toast_now(tr("toast.no_picture_to_save_yet"));
       return;
    }
    for (y = 0; y < h; y++)
@@ -2727,14 +4636,14 @@ static void screenshot_write(void)
          if (stbi_write_png(path, (int)w, (int)h, 3, rgb, (int)w * 3))
          {
             fe_evt("screenshot file=%s w=%u h=%u", path, w, h);
-            toast_now("Screenshot saved");
+            toast_now(tr("toast.screenshot_saved"));
             return;
          }
          break;
       }
    }
    fe_evt("screenshot failed path=%s", path);
-   toast_now("Screenshot could not be saved");
+   toast_now(tr("toast.screenshot_could_not_be_saved"));
 }
 
 /* ---- power: suspend and resume ------------------------------------------------
@@ -2776,10 +4685,12 @@ static void power_service(void)
    if (e & PLAT_POWER_RESUME)
    {
       fe_evt("power resume game=%d", g_game_loaded);
+      (void)cpuclk_reapply();   /* the clocks may come back at their defaults */
       link_power(1);
       link_local_power(1);
       if (g_game_loaded)
       {
+         gbcam_resume();
          audio_flush();
          app_pace_reset();
          /* Back into the frozen frame with a plate over it, not straight
@@ -2800,7 +4711,16 @@ static void modal_tick(void)
    plat_present_hook();
    power_service();
    cpuclk_tick();               /* the second clock measurement, 8 s in */
+   {
+      /* the app has been drawing its screens for 1.5 s: this start worked */
+      static unsigned guard_frames;
+      if (guard_frames < 90 && ++guard_frames == 90)
+         boot_guard_app_ready();
+   }
    ra_pump();                   /* the server's answers, in the menus too */
+   upd_poll(0, (time_t)plat_wallclock());   /* collects; starts nothing here */
+   update_say(0);
+   clip_export_service();
    if (plat_quit_requested())
       g_running = 0;
 }
@@ -2850,20 +4770,238 @@ static void toast_now(const char *fmt, ...)
  * colours to its core (which re-converts its palettes before the next line;
  * display only, nothing a state or a link's hash holds).  At every boot and
  * whenever the Settings rows change. */
+/* The rows the player set by hand (look_glue.h): a row on Auto or at its
+ * default is the governor's. */
+static unsigned app_look_user_rows(void)
+{
+   const int c = pcfg_display_console();
+   unsigned u = 0;
+   if (g_pcfg.quality != PCFG_QUALITY_AUTO)
+      u |= 1u << LOOK_ROW_QUALITY;
+   if (g_pcfg.glow != PCFG_GLOW_DEF || g_pcfg.ambient != PCFG_AMB_ART_GAME)
+      u |= 1u << LOOK_ROW_AMBIENT;
+   if (g_pcfg.ghost)
+      u |= 1u << LOOK_ROW_BLEND;
+   if (c == FE_CONSOLE_GBA ? g_pcfg.wide != PCFG_WIDE_DEF
+                           : c == FE_CONSOLE_NES && g_pcfg.nes_wide != 0)
+      u |= 1u << LOOK_ROW_WIDE;
+   return u;
+}
+
+/* upscale_vita.c: the governor's own reading of the upscalers' job time */
+unsigned upscale_second_avg_us(void);
+
 void ui_host_look_changed(void)
 {
    int c = pcfg_display_console();
+   /* the look governor (look_glue.h): what is set by hand is not its */
+   look_set_user_rows(app_look_user_rows());
+   ahead_picture_reset();      /* another Image quality, another cost for the picture side */
    vid_set_quality(g_pcfg.quality);
-   vid_set_look(c == FE_CONSOLE_GBA ? g_pcfg.color : VID_COLOR_RAW,
-                g_pcfg.blend);
+   /* the cap is read once the drawing thread is idle (vid_set_quality waits
+    * for it): look_quality_cap also moves the MMPX flag the drawing side reads */
+   ho_guard();
+   upscale_look_cap(look_quality_cap());
+   /* LCD colours: the renderer's table (GBA, WonderSwan, NES), or the Game
+    * Boy Color's own core (gbcore); a Game Boy has its palette row */
+   vid_set_look(c == FE_CONSOLE_GBA ? g_pcfg.color
+                : c == FE_CONSOLE_WSWAN && g_pcfg.color ? VID_COLOR_WS
+                : c == FE_CONSOLE_NES && g_pcfg.color ? VID_COLOR_NES
+                : VID_COLOR_RAW,
+                pcfg_ghost_modes(c) && !look_rung(3) ? g_pcfg.ghost : 0);
+   vid_set_overlays(g_pcfg.scan, g_pcfg.grid);
+   vid_set_crt(g_pcfg.crt);
+   vid_set_text_look(g_pcfg.text_large, g_pcfg.contrast);
+   /* Settings > Display > Screen: Auto is a PS TV on a PS TV, else the
+    * reference; folded into the colour table (video_vita.c look_lut) */
+   vid_set_screen(pk_screen_resolve(g_pcfg.screen, plat_is_pstv()));
+   vid_ambient_strength(g_pcfg.glow);
+   vid_ambient_mode(app_ambient_mode());
    if (c == FE_CONSOLE_GBC)
-      gbcore_set_color_correction(g_pcfg.color ? 1 : 0);
-   fe_evt("display_look console=%s color=%d blend=%d wide=%d wide_fill=%d",
-          pcfg_console_tag(c), g_pcfg.color, g_pcfg.blend, g_pcfg.wide,
+      gbmux_set_color_correction(g_pcfg.color ? 1 : 0);
+   if (c == FE_CONSOLE_NES)
+      app_nes_options();             /* the wide view's soft edges follow the glow */
+   fe_evt("display_look console=%s color=%d ghost=%d scan=%d grid=%d glow=%d "
+          "wide=%d wide_fill=%d", pcfg_console_tag(c), g_pcfg.color,
+          g_pcfg.ghost, g_pcfg.scan, g_pcfg.grid, g_pcfg.glow, g_pcfg.wide,
           g_pcfg.wide_fill);
+   fe_evt("display_screen console=%s crt=%d screen=%s profile=%s",
+          pcfg_console_tag(c), g_pcfg.crt, pk_screen_tag(g_pcfg.screen),
+          pk_screen_tag(vid_screen_profile()));
    fe_evt("display_quality console=%s quality=%d", pcfg_console_tag(c),
           g_pcfg.quality);
    app_wide_apply();
+}
+
+/* ---- the look governor (look_glue.h) ------------------------------------- */
+/* (g_overlay_name: declared at the top of the file) */
+static struct
+{
+   uint32_t gen;                  /* the generation applied */
+   uint64_t t0;                   /* this second's start (0: not started) */
+   unsigned vc0;                  /* the display's count then */
+   uint64_t emu_sum;              /* the drawn frames' own work this second */
+   unsigned emu_n;
+   uint64_t draw0;                /* the drawing side's totals then */
+   uint32_t drawn0;
+   unsigned late0;
+} g_lk;
+
+/* The governed look, applied (at a safe point: the xBRZ factor's change
+ * makes new textures, never in the middle of a picture). */
+static void app_look_apply(const char *why)
+{
+   g_lk.gen = look_generation();
+   ui_host_look_changed();
+   vid_ambient_mode(app_ambient_mode());
+   if (g_game_console == FE_CONSOLE_NES)
+      app_nes_options();
+   fe_evt("look_apply why=%s mask=%u cap=%d gen=%u", why, look_mask(),
+          look_quality_cap(), look_generation());
+}
+
+/* The game's memory: <root>/look/<console>/<xx>/<name>.look */
+static void app_look_begin(void)
+{
+   char path[APP_PATH_CAP];
+   const char *name = base_name(g_game.rom_path);
+   const char *dot = strrchr(name, '.');
+   size_t stem = dot && dot != name ? (size_t)(dot - name) : strlen(name);
+   if (path_fmt(path, sizeof(path), "%s/look/%s/%02x/%.*s.look", g_app_root,
+                sidecar_console_dir((fe_console_t)g_game_console),
+                (unsigned)(sidecar_crc32(name, stem) >> 24), (int)stem,
+                name) != 0)
+      path[0] = '\0';
+   look_begin(path, (int)plat_arm_mhz(), app_look_user_rows());
+   memset(&g_lk, 0, sizeof(g_lk));
+   look_safe_point(LOOK_AT_START);
+   upscale_look_cap(look_quality_cap());
+   if (look_generation() != g_lk.gen)
+      app_look_apply("start");     /* the look this game needed last time */
+   fe_evt("look_start mask=%u user_rows=%u memory=%d", look_mask(),
+          app_look_user_rows(), path[0] ? file_size(path, NULL) == 0 : 0);
+}
+
+/* ui_host_hooks.h: the Image quality row while the governor eased it */
+const char *ui_host_look_label(void)
+{
+   static char l[40];
+   const int cap = look_quality_cap();
+   if (!look_running() || !look_steps_on_row(LOOK_ROW_QUALITY))
+      return NULL;
+   (void)cap;
+   snprintf(l, sizeof(l), tr("app.auto_eased"),
+            look_tier_name()[0] ? look_tier_name() : "sharp");
+   return l;
+}
+
+/* ui_host_hooks.h: Settings > About > Extra CPU core */
+/* The rewind chip in the interface language (rewind_vita.h; its weak English
+ * one is the unit test's). */
+const char *rewind_chip_format(int oldest)
+{
+   return tr(oldest ? "ui.rewind_chip_oldest" : "ui.rewind_chip");
+}
+
+const char *ui_host_core4_status(void)
+{
+   /* The row is "Extra CPU core" + a short value ("in use" / "not available" /
+    * "off"): core4_status() is the whole sentence (the players' About line),
+    * whose long form ran over the row's own label.  The reason is in the help
+    * line under the list. */
+   static char v[24];
+   const char *s = core4_status(), *c = strstr(s, ": "), *e;
+   size_t n;
+   if (c)
+      s = c + 2;
+   e = strstr(s, " (");
+   n = e ? (size_t)(e - s) : strlen(s);
+   if (n >= sizeof(v))
+      n = sizeof(v) - 1;
+   memcpy(v, s, n);
+   v[n] = 0;
+   return !strcmp(v, "in use") ? tr("settings.value.in_use")
+        : !strcmp(v, "off") ? tr("settings.value.off")
+        : !strcmp(v, "not available") ? tr("settings.value.not_available") : v;
+}
+
+/* ui_host_hooks.h: the Fourth core row changed; the probe and the thread
+ * layout are decided once at start, so the new choice applies next start */
+void app_core4_options(void)
+{
+   boot_guard_release();              /* the row was changed: theirs again */
+   fe_evt("core4_option off=%d applies=next_start", g_pcfg.core4_off);
+}
+
+static void app_look_save(const char *why)
+{
+   const int a = look_save();
+   if (a)
+      fe_evt("look_memory %s why=%s", a == 1 ? "written" : "deleted", why);
+}
+
+/* the clock stopped (a menu, a pause, a load): the second starts again */
+static void app_look_window_reset(void)
+{
+   g_lk.t0 = 0;
+   look_reset_window();
+}
+
+/* Once per pass of play: a drawn frame's own work (emu_us); once a second
+ * the governor hears how the second went. */
+static void app_look_pass(uint32_t emu_us, int counts)
+{
+   const uint64_t now = plat_time_us();
+   uint64_t dsum;
+   uint32_t dn;
+   if (!look_running())
+      return;
+   ho_draw_stats(&dsum, &dn);
+   if (!counts)
+   {
+      g_lk.t0 = 0;              /* fast forward, a link: not the game's look */
+      return;
+   }
+   if (!g_lk.t0)
+   {
+      g_lk.t0 = now;
+      g_lk.vc0 = plat_vcount();
+      g_lk.emu_sum = 0;
+      g_lk.emu_n = 0;
+      g_lk.draw0 = dsum;
+      g_lk.drawn0 = dn;
+      g_lk.late0 = g_pace_late;
+      return;
+   }
+   g_lk.emu_sum += emu_us;
+   g_lk.emu_n++;
+   if (now - g_lk.t0 >= 1000000u)
+   {
+      const float ref = 16683.0f;
+      const int refreshes = (int)(plat_vcount() - g_lk.vc0);
+      const uint32_t drawn = dn - g_lk.drawn0;
+      const int handoff = ho_active();
+      const int half = steady_half();
+      int missed;
+      char line[320];
+      if (handoff)
+         missed = !half && refreshes > (int)drawn ? refreshes - (int)drawn : 0;
+      else
+         missed = (int)(g_pace_late - g_lk.late0);
+      (void)look_second(g_lk.emu_n ? (float)g_lk.emu_sum / g_lk.emu_n / ref : 0.f,
+                        drawn && handoff ? (float)(dsum - g_lk.draw0) / drawn / ref
+                                         : 0.f,
+                        (float)upscale_second_avg_us() / ref, refreshes, missed,
+                        handoff, half);
+      /* (a change applies at once: the governor itself waited for a safe
+       * point, or forced it after 12 s) */
+      if (look_generation() != g_lk.gen)
+         app_look_apply("second");
+      if (look_census_line(line, sizeof(line)))
+         fe_evt("%s", line);
+      g_lk.t0 = 0;
+      app_look_pass(0, 1);      /* the next second starts now */
+   }
 }
 
 /* ui_host_hooks.h: the chip shows the link layer's status line, when the
@@ -2908,6 +5046,7 @@ static void ff_set(int on)
    g_ff.heard = 0;
    g_ff.acc[0] = g_ff.acc[1] = 0;
    g_ff.acc_n = 0;
+   pk_ffnorm_reset(&g_ff.norm, g_ff.mult ? g_ff.mult : 2);
    g_ff.uncapped = on && !g_ff.mult;
    g_ff.frames0 = g_game_loaded ? fe_host_frame_count() : 0;
    g_ff.vc0 = plat_vcount();
@@ -3101,8 +5240,8 @@ static void ff_frame(unsigned fired, int session, int local)
       /* Both consoles of a session run in step: there is no 3x of that.
        * Nor of the local link, where one press would drive two games. */
       if (press || !g_ff.locked_told)
-         toast_now(session ? "Fast forward is off during a link session"
-                           : "Fast forward is off while two games are linked");
+         toast_now(session ? tr("toast.fast_forward_is_off_during_a")
+                           : tr("toast.fast_forward_is_off_while_two"));
       g_ff.locked_told = 1;
       want = 0;
       g_ff.toggled = 0;
@@ -3157,7 +5296,7 @@ static void fps_chip_frame(void)
          unsigned fps10 = (unsigned)((uint64_t)g_fps_emu * 10000000ull / el);
          unsigned drawn = (unsigned)(((uint64_t)g_fps_drawn * 1000000ull +
                                       el / 2) / el);
-         snprintf(g_fps_text, sizeof(g_fps_text), "%u.%u fps (%u)",
+         snprintf(g_fps_text, sizeof(g_fps_text), tr("app.fps"),
                   fps10 / 10, fps10 % 10, drawn);
          osd_chip_fps(g_fps_text);
       }
@@ -3205,6 +5344,56 @@ static void window_begin(void)
           g_pace_forgiven, g_caught, g_caught ? g_caught_us / g_caught : 0,
           g_win.swap_sum / g_win.n, g_win.swap_max, g_q_taken, g_q_glass,
           g_q_waits);
+   {
+      /* CENSUS (one line a window): each default-on 1.4 feature says it is
+       * there and what it did, so a run proves it acted (gate: census).
+       * steady = Steady pacing on / windows spent drawing every second
+       * frame; wide = the NES wide picture shown; jit = blocks the GBA
+       * recompiler translated this window (gpsp_jit_counters). */
+      extern uint32_t gpsp_jit_counters(uint32_t *out, uint32_t n);
+      extern uint32_t gpsp_smc_partial_active(void);
+      extern uint32_t smc_partial_emergencies;
+      static unsigned emerg_told;
+      static uint32_t jl[16];
+      uint32_t jc[16], d[16];
+      int k;
+      memset(jc, 0, sizeof(jc));
+      gpsp_jit_counters(jc, 16);
+      for (k = 0; k < 16; k++)
+      {
+         d[k] = jc[k] - jl[k];
+         jl[k] = jc[k];
+      }
+      fe_evt("census steady=%d half_passes=%u wide=%d jit_blocks=%u console=%d",
+             g_pcfg.steady_pacing, g_steady_half_passes,
+             g_game_console == FE_CONSOLE_NES ? nescore_wide_shown() : -1,
+             (unsigned)(d[0] + d[1]), g_game_console);
+      /* the recompiler this window (cpu_threaded.c gpsp_jit_counters): RAM
+       * flushes that discard code, code-write traps, tag-only flushes,
+       * blocks translated, VM syncs, revived, reclaims, dispatch-cache hits;
+       * also the census of smc_partial and dispatch_cache */
+      if (g_game_console == FE_CONSOLE_GBA)
+         fe_evt("vita_jit smc_partial=%u ram_flush=%u smc_traps=%u tag_flush=%u "
+                "blocks=%u vm_syncs=%u revived=%u reclaims=%u dcache_hits=%u "
+                "emergencies=%u", gpsp_smc_partial_active(), d[4], d[6], d[7],
+                d[0] + d[1], d[2], d[8], d[13], d[14], smc_partial_emergencies);
+      if (g_game_console == FE_CONSOLE_GBA)
+      {
+         /* the window's worst frame: demand vs speculative blocks, VM syncs
+          * and their time, translation time, ROM pages (cpu_threaded.c) */
+         extern uint32_t gpsp_jit_worst_line(char *buf, uint32_t cap);
+         char wl[320];
+         if (gpsp_jit_worst_line(wl, sizeof(wl)))
+            fe_evt("%s", wl);
+      }
+      if (smc_partial_emergencies && !emerg_told)
+      {
+         emerg_told = 1;
+         fe_evt("JIT EMERGENCY smc_partial_emergencies=%u: a full flush stood in "
+                "for a partial one (must stay 0; docs/TECHNICAL.md)",
+                smc_partial_emergencies);
+      }
+   }
    g_caught = g_caught_us = 0;
    g_q_taken = g_q_glass = g_q_waits = 0;
    g_win.swap_sum = g_win.swap_max = 0;
@@ -3224,18 +5413,12 @@ static void window_begin(void)
                    rs.wait_avg_us, rs.wait_max_us, rs.checked,
                    rs.bad_frames, rs.bad_px, rs.log_entries, rs.log_overflows);
       }
-      /* xBRZ drawn by the GPU this window (pictures), and the GPU's time
-       * over a frame as last measured (its guard's samples, or every frame
-       * with gpu_time = 1). */
+      /* The GPU's time over a frame as last measured (gpu_time = 1). */
       {
-         static unsigned gx_last;
-         unsigned gx, gn, gavg, gmax;
-         int gon = vid_gpu_xbrz(&gx);
+         unsigned gn, gavg, gmax;
          vid_gpu_time_stats(&gn, &gavg, &gmax);
-         if (gon || gx != gx_last || gn)
-            fe_evt("vita_gpu xbrz=%d pictures=%u samples=%u gpu_us=%u/%u",
-                   gon, gx - gx_last, gn, gavg, gmax);
-         gx_last = gx;
+         if (gn)
+            fe_evt("vita_gpu samples=%u gpu_us=%u/%u", gn, gavg, gmax);
       }
       /* The slowest of each part of drawing the picture this window
        * (video_vita.h vid_draw_parts): what makes a frame's `blt` long. */
@@ -3256,8 +5439,8 @@ static void window_begin(void)
       vid_upscale_stats(&up);
       if (up.jobs || up.dropped)
       {
-         int ids[2], k, n = upscale_thread_ids(ids, 2);
-         static const char *const tag[2] = { "up0", "up1" };
+         int ids[3], k, n = upscale_thread_ids(ids, 3);
+         static const char *const tag[3] = { "up0", "up1", "up2" };
          for (k = 0; k < n; k++)
             plat_thread_watch(tag[k], ids[k]);
          fe_evt("vita_upscale filter=%s jobs=%u us=%u/%u dropped=%u "
@@ -3324,7 +5507,7 @@ static void window_begin(void)
    {
       /* Where the threads ran this window: core/affinity/us run/preempted
        * by threads/by interrupts/moved between cores (plat.h). */
-      char line[400];
+      char line[480];
       plat_thread_report(line, sizeof(line));
       if (line[0])
          fe_evt("vita_threads %s", line);
@@ -3338,6 +5521,11 @@ static void window_begin(void)
 /* At its end: what the iteration's work cost, the wait not included. */
 static void window_note(uint32_t work_us)
 {
+   /* The fourth core's watchdog: one beat of the emulator's own clock and a
+    * look at the threads on that core, once per frame (a paused game or an
+    * open menu never reaches here, so it never trips on them).  A trip has
+    * already moved the threads back to the user cores. */
+   (void)core4_poll(plat_time_us());
    g_win.work_sum += work_us;
    if (work_us > g_win.work_max)
       g_win.work_max = work_us;
@@ -3379,6 +5567,8 @@ static void game_identity(void)
          else
             g_game.code[0] = '\0';
       }
+      else if (g_game.console == FE_CONSOLE_NES || g_game.console == FE_CONSOLE_WSWAN)
+         g_game.gb_title[0] = '\0';          /* no title field: the name is */
       else if (fseek(f, 0x134, SEEK_SET) == 0 &&
                fread(g_game.gb_title, 1, 16, f) == 16)
          g_game.gb_title[16] = '\0';
@@ -3410,7 +5600,7 @@ static void game_state_reset(void)
    g_blit_suppress = 0;
    g_app_drew = 0;
    g_app_keys = 0;
-   g_prev_pad = pspcompat_pad();   /* what is held now is not a new press */
+   g_prev_pad = pad_now();   /* what is held now is not a new press */
    g_pad_block = g_prev_pad;
    g_chord_frames = 0;
    chord_guard_reset();
@@ -3497,7 +5687,12 @@ static void save_import(const char *rom_path, const char *save_path,
 {
    static const char *const ra_dirs[] = {
       "", "/mGBA", "/gpSP", "/Gambatte", "/SameBoy", "/TGB Dual",
-      "/Gearboy", "/VBA-M", "/VBA Next"
+      "/Gearboy", "/VBA-M", "/VBA Next",
+      /* the NES cores of RetroArch */
+      "/FCEUmm", "/Nestopia", "/Mesen", "/QuickNES",
+      /* ...and its WonderSwan core (beetle-wswan: library name "Beetle
+       * WonderSwan"; older builds "Beetle Cygne") */
+      "/Beetle WonderSwan", "/Beetle Cygne"
    };
    char stem[APP_PATH_CAP], cand[APP_PATH_CAP], probe[APP_PATH_CAP + 8];
    const char *bn = base_name(rom_path), *dot;
@@ -3536,18 +5731,20 @@ static void save_import(const char *rom_path, const char *save_path,
    {
       char dir[APP_PATH_CAP];
       snprintf(dir, sizeof(dir), "%.*s", (int)(bn - rom_path), rom_path);
-      TRY("this folder", "%s%s.srm", dir, stem)
+      TRY(tr("app.this_folder"), "%s%s.srm", dir, stem)
       if (!from && gb)
       {
          /* Game.sav is Game.gba's (or a zipped GBA game's) when that
           * cartridge is beside it */
-         char probe2[APP_PATH_CAP + 8];
+         char probe2[APP_PATH_CAP + 8], probe3[APP_PATH_CAP + 8];
          if ((path_fmt(probe, sizeof(probe), "%s%s.gba", dir, stem) != 0 ||
               file_size(probe, NULL) != 0) &&
              (path_fmt(probe2, sizeof(probe2), "%s%s.zip", dir, stem) != 0 ||
-              file_size(probe2, NULL) != 0))
+              file_size(probe2, NULL) != 0) &&
+             (path_fmt(probe3, sizeof(probe3), "%s%s.7z", dir, stem) != 0 ||
+              file_size(probe3, NULL) != 0))
          {
-            TRY("this folder", "%s%s.sav", dir, stem)
+            TRY(tr("app.this_folder"), "%s%s.sav", dir, stem)
          }
       }
    }
@@ -3563,7 +5760,7 @@ static void save_import(const char *rom_path, const char *save_path,
       fe_evt("save_import failed from=\"%s\" to=\"%s\" size=%ld", cand,
              save_path, size);
       snprintf(g_import_note, sizeof(g_import_note),
-               "A save was found but could not be copied");
+               tr("app.a_save_was_found_but_could"));
       return;
    }
    fe_evt("save_import from=\"%s\" to=\"%s\" size=%ld where=%s", cand,
@@ -3574,7 +5771,7 @@ static void save_import(const char *rom_path, const char *save_path,
       if (rename(cand, probe) != 0)
          fe_evt("save_import keep_source rename_failed path=\"%s\"", cand);
    }
-   snprintf(g_import_note, sizeof(g_import_note), "Save imported from %s",
+   snprintf(g_import_note, sizeof(g_import_note), tr("app.save_imported_from"),
             from);
    /* A save from RetroArch (its folder, or Game.srm beside the game) stays
     * in step with RetroArch's file from now on (save_sync.h). */
@@ -3583,7 +5780,7 @@ static void save_import(const char *rom_path, const char *save_path,
       save_sync_link(save_path, cand);
       if (save_sync_enabled())
          snprintf(g_import_note, sizeof(g_import_note),
-                  "Save from RetroArch - kept in sync");
+                  tr("app.save_from_retroarch_kept_in_sync"));
    }
 }
 
@@ -3603,8 +5800,8 @@ static int vita_ini_put(const char *key, const char *value)
 }
 
 /* The overlay for a game: overlays/<stem>.png, else overlays/<console>.png
- * (none when Screen overlay is off). */
-static char g_overlay_name[96];
+ * (none when Screen overlay is off).  (g_overlay_name: above, with the
+ * look governor's use of it.) */
 static char g_overlay_rom[APP_PATH_CAP];
 static fe_console_t g_overlay_console;
 
@@ -3613,7 +5810,9 @@ static void overlay_apply(const char *rom_path, fe_console_t console)
    char op[APP_PATH_CAP], stem[APP_PATH_CAP];
    const char *tag = console == FE_CONSOLE_GBC ? "gbc" :
                      console == FE_CONSOLE_GB ? "gb" :
-                     console == FE_CONSOLE_SNES ? "snes" : "gba";
+                     console == FE_CONSOLE_SNES ? "snes" :
+                     console == FE_CONSOLE_NES ? "nes" :
+                     console == FE_CONSOLE_WSWAN ? "ws" : "gba";
    char *dot;
 
    if (rom_path != g_overlay_rom)
@@ -3642,22 +5841,50 @@ static void overlay_apply(const char *rom_path, fe_console_t console)
    }
    /* The glow beside the picture is for a picture with nothing else beside
     * it: a bezel or shell the player put there is not covered by it. */
-   vid_ambient_mode(g_overlay_name[0] ? PCFG_AMB_OFF : g_pcfg.ambient);
-}
-
-int ui_host_grid_level(void) { return g_sw.grid; }
-
-void ui_host_grid_set(int level)
-{
-   char v[8];
-   g_sw.grid = level < 1 ? 1 : level > 10 ? 10 : level;
-   vid_set_lcd_strength(g_sw.grid * 20);
-   snprintf(v, sizeof(v), "%d", g_sw.grid);
-   fe_evt("grid_strength level=%d saved=%d", g_sw.grid,
-          vita_ini_put("grid_strength", v) == 0);
+   vid_ambient_mode(app_ambient_mode());
 }
 
 int ui_host_sync_ra_on(void) { return g_sync_ra; }
+
+/* The menu action "Export save for other emulators" (docs/SAVES.md): the
+ * running game's save as a plain file, `dest` = SS_DEST_RETROARCH (where
+ * RetroArch looks) or SS_DEST_ROM_SAV (Game.sav beside the game).  0 = done or
+ * already there; `note` is the sentence to show, `where` the file's path.  Not
+ * tied to the Sync RetroArch saves setting. */
+int ui_host_export_save(int dest, char *where, size_t wcap, char *note, size_t cap)
+{
+   int kind = g_game.console == FE_CONSOLE_GBA ? SS_KIND_GBA :
+              g_game.console == FE_CONSOLE_GBC ? SS_KIND_GBC :
+              g_game.console == FE_CONSOLE_GB ? SS_KIND_GB :
+              g_game.console == FE_CONSOLE_NES ? SS_KIND_NES : SS_KIND_WSWAN;
+   fe_host_sram_flush(1);      /* the bytes the game has now, on the card */
+   return save_sync_export_now(g_game.save_path, g_game.rom_path, kind, dest,
+                               where, wcap, note, cap);
+}
+
+/* Settings > This game > Game Boy type: the running game's line in
+ * gb_override.txt (gbkind.h), the file the list scan and the direct launch
+ * already read; used from the next start. */
+int ui_host_gb_kind_get(void)
+{
+   char ovr[APP_PATH_CAP];
+   if (path_fmt(ovr, sizeof(ovr), "%s/gb_override.txt", g_app_root) != 0)
+      return 0;
+   (void)gbk_overrides_load(ovr);
+   return gbk_override_for(g_game.rom_path);
+}
+
+int ui_host_gb_kind_set(int kind)
+{
+   char ovr[APP_PATH_CAP];
+   if (path_fmt(ovr, sizeof(ovr), "%s/gb_override.txt", g_app_root) != 0)
+      return -1;
+   kind = kind == GBK_GB ? GBK_GB : kind == GBK_GBC ? GBK_GBC : GBK_NONE;
+   if (gbk_override_store(ovr, g_game.rom_path, kind) != 0)
+      return -1;
+   (void)gbk_overrides_load(ovr);
+   return 0;
+}
 
 void ui_host_sync_ra_set(int on)
 {
@@ -3708,6 +5935,40 @@ static void ab_apply(void)
 int ui_host_ab_circle(void) { return ab_circle(); }
 void ui_host_buttons_changed(void) { ab_apply(); }
 
+/* Settings > Controls > Button test: the hardware as it is now (ui_host_hooks.h). */
+void ui_host_btn_read(ui_btn_state *s)
+{
+   plat_pad pp;
+   plat_touch_pt pt[6];
+   int x[4], y[4], i, n;
+   memset(s, 0, sizeof(*s));
+   memset(&pp, 0, sizeof(pp));
+   pp.lx = pp.ly = pp.rx = pp.ry = 128;
+   plat_pad_read(&pp);
+   s->buttons = pp.buttons & 0xFFFFu;
+   s->lx = pp.lx;
+   s->ly = pp.ly;
+   s->rx = pp.rx;
+   s->ry = pp.ry;
+   s->front_n = plat_touch_points(pt, 6);
+   if (s->front_n > 0)
+   {
+      s->front_x = pt[0].x;
+      s->front_y = pt[0].y;
+   }
+   n = plat_rear_points(pt, 4);
+   for (i = 0; i < n; i++)
+   {
+      x[i] = pt[i].x;
+      y[i] = pt[i].y;
+   }
+   s->rear_n = n;
+   s->rear = ctl_rear_zones(x, y, n);
+   s->front_use = zapper_active() ? tr("app.aims_and_fires_zapper")
+                : g_sw.touch_menu && g_pcfg.touch && g_pcfg.tap_menu ? tr("app.a_tap_opens_the_menu")
+                : tr("app.nothing");
+}
+
 int ui_host_overlay_on(void) { return g_sw.overlays; }
 
 void ui_host_overlay_set(int on)
@@ -3724,9 +5985,9 @@ const char *ui_host_overlay_name(void)
    /* in the game list: what the console's own file would be */
    if (!g_overlay_rom[0] && g_sw.overlays)
    {
-      static const char *const tag[4] = { "gba", "gb", "gbc", "snes" };
+      static const char *const tag[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes", "nes", "ws", "md", "sms", "gg", "sg", "scd" };
       char op[APP_PATH_CAP];
-      int c = g_pcfg.console >= 0 && g_pcfg.console < 4 ? g_pcfg.console : 0;
+      int c = g_pcfg.console >= 0 && g_pcfg.console < FE_CONSOLE_COUNT ? g_pcfg.console : 0;
       if (path_fmt(op, sizeof(op), "%s/overlays/%s.png", g_app_root, tag[c]) == 0 &&
           file_size(op, NULL) == 0)
          snprintf(g_overlay_name, sizeof(g_overlay_name), "%s.png", tag[c]);
@@ -3784,11 +6045,34 @@ int ui_host_zip_console(const char *path, unsigned size)
    if (g_zipc[slot].key == key && g_zipc[slot].size == size)
       return g_zipc[slot].console;
    c = zip_rom_peek(path, &e) == 0 ? e.console : -1;
+   if (c == FE_CONSOLE_MD)
+   {
+      /* a .bin in the archive gets the loose file's test: SEGA at 0x100 or an SMD header (another system's .bin is not listed) */
+      size_t nl = strlen(e.name);
+      if (nl > 4 && !strcasecmp(e.name + nl - 4, ".bin"))
+      {
+         unsigned char head[0x110];
+         int got = zip_rom_head(path, &e, head, sizeof(head));
+         if (got < 0 || !gamedb_md_head_ok(head, (unsigned)got, e.usize))
+            c = -1;
+      }
+   }
    g_zipc[slot].key = key;
    g_zipc[slot].size = size;
    g_zipc[slot].console = (signed char)c;
    fe_evt("zip_peek path=\"%s\" console=%d entry=\"%s\"", path, c, e.name);
    return c;
+}
+
+/* Why the last zip_unpack refused (a line for the notice); "" when it did not */
+static char g_arc_note[96];
+
+/* The notice's last line for an archive that did not start */
+static const char *arc_note(const char *path)
+{
+   if (g_arc_note[0])
+      return g_arc_note;
+   return has_ext(path, ".7z") ? tr("app.the_7z_file_could_not_be") : tr("app.the_zip_file_could_not_be");
 }
 
 static int zip_unpack(const char *zip, fe_console_t console, char *out,
@@ -3807,15 +6091,51 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
       why = rc == -2 ? "zip_unsupported" : "zip_no_game";
    else if (e.console != (int)console)
       why = "zip_other_console";
+   g_arc_note[0] = '\0';
    if (why)
    {
+      if (rc == -2 && e.usize > ZIP_ROM_MAX)
+         snprintf(g_arc_note, sizeof(g_arc_note), tr("app.the_game_in_it_is_over"), ZIP_ROM_MAX >> 20);
+      else if (rc == -2 && e.method == 7 && e.csize > SZ_ROM_BLOCK_MAX)
+         snprintf(g_arc_note, sizeof(g_arc_note), tr("app.its_block_is_over_mb_too"), SZ_ROM_BLOCK_MAX >> 20);
+      else if (rc == -2)
+         snprintf(g_arc_note, sizeof(g_arc_note), tr("app.it_is_encrypted_or_packed_in"));
+      else if (rc != 0)
+         snprintf(g_arc_note, sizeof(g_arc_note), tr("app.no_game_this_app_can_start"));
+      else
+         snprintf(g_arc_note, sizeof(g_arc_note), tr("app.the_game_in_it_is_for"));
       fe_evt("boot_refused reason=%s path=%s", why, zip);
       return -1;
    }
    ext = console == FE_CONSOLE_GBC ? ".gbc" : console == FE_CONSOLE_GB ? ".gb"
        : console == FE_CONSOLE_SNES ? ".smc" : ".gba";
+   if (console == FE_CONSOLE_NES)
+   {
+      /* the entry's own kind: a disk image, a UNIF file or an iNES cartridge */
+      size_t nl = strlen(e.name);
+      ext = nl > 5 && !strcasecmp(e.name + nl - 5, ".unif") ? ".unif"
+          : nl > 4 && !strcasecmp(e.name + nl - 4, ".unf") ? ".unf"
+          : nl > 4 && !strcasecmp(e.name + nl - 4, ".fds") ? ".fds" : ".nes";
+   }
+   if (console == FE_CONSOLE_WSWAN)
+   {
+      size_t nl = strlen(e.name);
+      ext = nl > 4 && !strcasecmp(e.name + nl - 4, ".wsc") ? ".wsc"
+          : nl > 4 && !strcasecmp(e.name + nl - 4, ".pc2") ? ".pc2" : ".ws";
+   }
+   if (ui_console_is_sega(console))
+   {
+      /* the entry's own extension: md.bin runs it as the console the launch file names, and an SMD file is told by its bytes */
+      static const char *const sx[] = { ".md", ".gen", ".smd", ".bin", ".68k", ".sms", ".gg", ".sg", ".sc" };
+      size_t nl = strlen(e.name), k;
+      ext = console == FE_CONSOLE_MD ? ".md" : console == FE_CONSOLE_SMS ? ".sms"
+          : console == FE_CONSOLE_GG ? ".gg" : ".sg";
+      for (k = 0; k < sizeof(sx) / sizeof(sx[0]); k++)
+         if (nl > strlen(sx[k]) && !strcasecmp(e.name + nl - strlen(sx[k]), sx[k]))
+            ext = sx[k];
+   }
    snprintf(stem, sizeof(stem), "%s", base_name(zip));
-   stem[strlen(stem) - 4] = '\0';                      /* ".zip" */
+   stem[strlen(stem) - arc_ext_len(zip)] = '\0';          /* ".zip" or ".7z" */
    if (path_fmt(dir, sizeof(dir), "%s/unzipped", g_app_root) != 0 ||
        path_fmt(out, cap, "%s/%s%s", dir, stem, ext) != 0 ||
        path_fmt(key, sizeof(key), "%s.key", out) != 0 ||
@@ -3860,11 +6180,13 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
       }
    }
    remove(key);
+   ui_loading_update(tr("app.unpacking_game"), 0, 0);   /* the loading screen, when it is up: a big .7z takes a moment */
    rc = zip_rom_extract(zip, &e, out);
    fe_evt("zip_unpack rc=%d entry=\"%s\" method=%d size=%lu path=%s", rc,
           e.name, e.method, e.usize, out);
    if (rc != 0)
    {
+      snprintf(g_arc_note, sizeof(g_arc_note), rc == -2 ? (e.method == 7 ? tr("app.it_is_damaged_or_packed_in") : tr("app.the_game_in_it_is_damaged")) : tr("app.the_game_in_it_could_not"));
       fe_evt("boot_refused reason=%s path=%s",
              rc == -2 ? "zip_crc" : "zip_extract", zip);
       return -1;
@@ -3881,6 +6203,29 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
    }
    *size = (long)e.usize;
    return 0;
+}
+
+/* The game id a Two players room names for a SNES library file (the list's Settings > Two players filters the rooms with it).
+ * A zip is unpacked as the start would do it (the same cache, so the start does not unpack it twice). */
+int ui_host_snes_game_id(const char *path, char out[9])
+{
+   char un[APP_PATH_CAP];
+   long usz = 0;
+
+   if (!path || !out)
+      return 0;
+   out[0] = '\0';
+   if (is_arc(path))
+   {
+      zip_rom_entry e;
+      fe_console_t zc = FE_CONSOLE_SNES;
+      if (zip_rom_peek(path, &e) >= -2 && e.console >= 0 && ui_console_is_sega(e.console))
+         zc = (fe_console_t)e.console;
+      if (zip_unpack(path, zc, un, sizeof(un), &usz) != 0)
+         return 0;
+      path = un;
+   }
+   return link_snes_game_id(path, out);
 }
 
 static int game_boot(const char *rom_path, fe_console_t console)
@@ -3900,7 +6245,7 @@ static int game_boot(const char *rom_path, fe_console_t console)
       fe_evt("boot_refused reason=no_rom path=%s", rom_path);
       return -1;
    }
-   if (has_ext(rom_path, ".zip"))
+   if (is_arc(rom_path))
    {
       /* A zipped game: the cartridge is unpacked once into unzipped/ and
        * started from there; its saves and states stay beside the .zip,
@@ -3985,10 +6330,18 @@ static int game_boot(const char *rom_path, fe_console_t console)
             gpath[0] = 0;
       }
       pcfg_game_begin(gpath, (int)console);
+      g_zap_told = -1;
+      g_zap_trig = 0;
+      g_zap_keep = 0;
+      /* The crash-loop guard: the marker for this start; a game that closed
+       * the app twice in a row starts with the safe picture */
+      if (boot_guard_game_begin(rom_path, guard_risky((int)console)) &&
+          boot_guard_take_look())
+         pcfg_game_safe_look();
    }
    vid_set_mode(g_pcfg.scale, g_pcfg.filter);
    ui_host_look_changed();
-   vid_ambient_mode(g_pcfg.ambient);
+   vid_ambient_mode(app_ambient_mode());
    vid_ambient_fallback(ui_console_shade((int)console));
    overlay_apply(rom_path, console);
    fe_evt("display_profile console=%s scale=%s filter=%s ambient=%d "
@@ -4004,7 +6357,11 @@ static int game_boot(const char *rom_path, fe_console_t console)
    if (psp_rom_path_suffix(g_game.save_path, sizeof(g_game.save_path),
                            rom_path,
                            console == FE_CONSOLE_GBA ? ".sav" :
-                           console == FE_CONSOLE_GBC ? ".gbc.sav" : ".gb.sav")
+                           console == FE_CONSOLE_NES ? ".srm" :
+                           console == FE_CONSOLE_WSWAN ? ".srm" :
+                           gbk_ext_kind(rom_path) == GBK_GBC ||
+                           (gbk_ext_kind(rom_path) == GBK_NONE &&
+                            console == FE_CONSOLE_GBC) ? ".gbc.sav" : ".gb.sav")
           != 0 ||
        sidecar_state1(g_game.state_path, sizeof(g_game.state_path),
                       g_app_root, rom_path, console) != 0 ||
@@ -4017,16 +6374,46 @@ static int game_boot(const char *rom_path, fe_console_t console)
    }
    {
       sidecar_mig mig;
+      char flat[APP_PATH_CAP];
       sidecar_make_dirs(g_app_root);
-      sidecar_migrate(g_game.legacy_state_path, g_game.state_path, &mig);
+      if (sidecar_flat_of(flat, sizeof(flat), g_game.state_path) != 0)
+         flat[0] = '\0';
+      /* 1.2 beside the ROM, 1.3 flat: into the game's bucket, once */
+      sidecar_migrate_game(g_game.legacy_state_path, flat, g_game.state_path, &mig);
+      {
+         char d[APP_PATH_CAP];
+         const char *sl = strrchr(g_game.state_path, '/');
+         if (sl && (size_t)(sl - g_game.state_path) < sizeof(d))
+         {
+            memcpy(d, g_game.state_path, (size_t)(sl - g_game.state_path));
+            d[sl - g_game.state_path] = '\0';
+            mkdir(d, 0777);       /* the bucket, for the states to come */
+         }
+      }
       if (mig.moved || mig.copied || mig.failed || mig.kept)
          fe_evt("sidecar_migrate rom=%s moved=%u copied=%u failed=%u kept=%u",
                 rom_path, mig.moved, mig.copied, mig.failed, mig.kept);
+      /* a file beside the ROM that the game's folder has a copy of: out of
+       * the ROM folder (save_sync.h), so it holds the ROM and its save */
+      if (mig.kept)
+         (void)save_sync_tidy_beside_rom(g_game.legacy_state_path,
+                                         g_game.state_path);
    }
    save_import(rom_path, g_game.save_path, console);
    {
       char sync_note[160];
+      int kind = console == FE_CONSOLE_GBA ? SS_KIND_GBA :
+                 console == FE_CONSOLE_GBC ? SS_KIND_GBC :
+                 console == FE_CONSOLE_GB ? SS_KIND_GB :
+                 console == FE_CONSOLE_NES ? SS_KIND_NES : SS_KIND_WSWAN;
       save_sync_game_start(g_game.save_path, sync_note, sizeof(sync_note));
+      if (sync_note[0])
+         snprintf(g_import_note, sizeof(g_import_note), "%s", sync_note);
+      /* 1.4: a plain copy for RetroArch, once per game (save_sync.h); the
+       * sentence is shown once, the census line every start */
+      save_sync_set_game(g_game.save_path, rom_path, kind);
+      save_sync_heal_game(g_game.save_path, rom_path, kind, sync_note,
+                          sizeof(sync_note));
       if (sync_note[0])
          snprintf(g_import_note, sizeof(g_import_note), "%s", sync_note);
    }
@@ -4057,6 +6444,8 @@ static int game_boot(const char *rom_path, fe_console_t console)
    cfg.wallclock      = plat_wallclock;
    cfg.gb_palette     = g_pcfg.gb_palette;
    cfg.gbc_raw_colors = !g_pcfg.gbc_color_correction;
+   /* the Game Boy core: this game's own choice, else Settings > Gameplay > Game Boy core */
+   cfg.gb_accurate    = g_pgame.on && g_pgame.gb_core >= 0 ? g_pgame.gb_core : g_pcfg.gb_core;
    cfg.boot_status    = loading_stage;
 
    if (console == FE_CONSOLE_GBA)
@@ -4114,8 +6503,52 @@ static int game_boot(const char *rom_path, fe_console_t console)
    if (!g_sw.drc)
       fe_host_option_set("gpsp_drc", "disabled");
    gpsp_rom_load_progress = loading_progress;
+   if (console == FE_CONSOLE_NES)
+   {
+      /* disksys.rom (the Disk System BIOS, supplied by the player) beside the
+       * game or in the app folder */
+      char sysdir[APP_PATH_CAP];
+      if (path_fmt(sysdir, sizeof(sysdir), "%s/nes", g_app_root) == 0)
+         gbmux_nes_system_dir(sysdir);
+   }
+   if (console == FE_CONSOLE_WSWAN)
+      app_ws_options();          /* this game's Rotation, Vertical play, palette */
+   if (console == FE_CONSOLE_NES)
+      app_nes_options();         /* Wide view */
+   if (console == FE_CONSOLE_GBA)
+   {
+      /* before the load: they take effect at load / reset (both machines) */
+      extern void gpsp_smc_partial_set(uint32_t on);
+      extern void gbab_gpsp_smc_partial_set(uint32_t on) __attribute__((weak));
+      extern void gpsp_dispatch_cache_set(uint32_t on) __attribute__((weak));
+      extern void gbab_gpsp_dispatch_cache_set(uint32_t on) __attribute__((weak));
+      extern void gpsp_jit_lazy_set(uint32_t on, uint32_t budget);
+      extern void gbab_gpsp_jit_lazy_set(uint32_t on, uint32_t budget) __attribute__((weak));
+      gpsp_jit_lazy_set((uint32_t)g_jit_lazy, (uint32_t)g_jit_lazy_budget);
+      if (gbab_gpsp_jit_lazy_set)
+         gbab_gpsp_jit_lazy_set((uint32_t)g_jit_lazy, (uint32_t)g_jit_lazy_budget);
+      gpsp_smc_partial_set((uint32_t)g_sw.smc_partial);
+      if (gbab_gpsp_smc_partial_set)
+         gbab_gpsp_smc_partial_set((uint32_t)g_sw.smc_partial);
+      if (gpsp_dispatch_cache_set)
+         gpsp_dispatch_cache_set((uint32_t)g_sw.dispatch_cache);
+      if (gbab_gpsp_dispatch_cache_set)
+         gbab_gpsp_dispatch_cache_set((uint32_t)g_sw.dispatch_cache);
+      fe_evt("jit_switches smc_partial=%d dispatch_cache=%d jit_lazy_exits=%d "
+             "jit_lazy_budget=%d", g_sw.smc_partial, g_sw.dispatch_cache,
+             g_jit_lazy, g_jit_lazy_budget);
+   }
    rc = fe_host_boot(&cfg);
    gpsp_rom_load_progress = NULL;
+   {
+      double fps = console == FE_CONSOLE_NES && rc == 0 ? gbmux_nes_fps() : 0.0;
+      g_frame_ns = fps > 1.0 ? (uint64_t)(1e9 / fps + 0.5) : GBA_FRAME_NS;
+      /* the NES machine's calls come once per refresh (vsync) or once per
+       * g_frame_ns (timer): a 50 Hz game runs 5 frames of 6 on the first */
+      gbmux_set_display_rate(g_sw.pace_mode == PACE_VSYNC
+                             ? (double)plat_refresh_mhz() / 1000.0
+                             : 1e9 / (double)g_frame_ns);
+   }
    /* The link menus' view of this game: can it host a Link Cable room in
     * this boot (instance B loaded)? */
    mgift_vita_game(rc == 0 && console == FE_CONSOLE_GBA ? g_game.code
@@ -4133,22 +6566,29 @@ static int game_boot(const char *rom_path, fe_console_t console)
    }
    ui_loading_finish(1);
    g_game_loaded = 1;
+   if (fe_host_gb_core_notice_take() == 1)
+      osd_toast(tr("toast.accurate_core_can_t_run_this_cartridge"));
    g_faults_seen = fe_host_guest_faults();   /* the count is the process's */
    fe_evt("gba_cable_ready=%d", fe_host_gba_cable_ready());
    plat_memory_report();        /* now the core has taken its memory */
 
+   g_steady_at_boot = 1;
+   app_steady_options();
+   g_steady_at_boot = 0;
+   g_ahead_began = 0;
+   app_quick_options();       /* Quick response: this game's mode */
    g_audio_ok = audio_start(fe_host_sample_rate(), pace_speed_x1e6()) == 0;
    fe_evt("audio on=%d in_rate=%u out_rate=%u grain=%u speed_x1e6=%u",
           g_audio_ok, fe_host_sample_rate(), AUDIO_OUT_RATE, AUDIO_GRAIN,
           pace_speed_x1e6());
    if (!g_audio_ok)
-      osd_toast("Audio output unavailable");
+      osd_toast(tr("toast.audio_output_unavailable"));
    if (g_import_note[0])
       osd_toast("%s", g_import_note);
    if (g_patch_note[0])
    {
       if (!g_game.patched)
-         osd_toast("Patch not applied");
+         osd_toast(tr("toast.patch_not_applied"));
       osd_toast("%s", g_patch_note);
    }
    io_start();
@@ -4157,14 +6597,22 @@ static int game_boot(const char *rom_path, fe_console_t console)
       /* (a zipped game's checksum and header are the unpacked file's) */
       int n = cheats_load(g_app_root, g_game.zipped ? g_game.boot_path
                                                     : g_game.rom_path, console);
+#ifdef __vita__
+      int pend = cheats_db_pending();
+      fe_evt("cheats_load n=%d enabled=%d match=%d db=\"%s\" deferred=%d", n,
+             cheats_enabled_count(), pend ? 0 : cheats_db_match(),
+             pend ? "" : cheats_db_game(), pend);
+#else
       fe_evt("cheats_load n=%d enabled=%d match=%d db=\"%s\"", n,
              cheats_enabled_count(), cheats_db_match(), cheats_db_game());
+#endif
    }
    link_game_begin();
    link_local_game_begin();
    osd_session_chip_refresh();
    sgb_border_begin();
    sensor_game_begin();         /* before the rewind sizes its log */
+   gbcam_game_begin();
    rewind_configure(g_pcfg.rewind, g_pcfg.rewind_mb);
    rewind_game_begin();
    resume_game_begin();
@@ -4188,8 +6636,10 @@ static void game_unload(int hold)
 {
    unsigned frames = fe_host_frame_count();
 
+   boot_guard_game_end();       /* a clean leave: the start worked */
    pcfg_game_end();             /* its own settings written, the console's back */
    sensor_game_end();
+   gbcam_game_end();
 
    if (hold)
    {
@@ -4223,6 +6673,7 @@ static void game_unload(int hold)
    fe_host_shutdown();
    g_game_loaded = 0;
    cheats_unload();
+   ui_cheat_search_free();
    if (hold) ui_return_tick();
 
    /* A fresh boot's per-game state. */
@@ -4265,7 +6716,18 @@ static void menu_action(ui_action act)
       int rc = link_locks_states() ? -1
              : state_save_slot((unsigned)ui_state_slot());
       if (!ui_state_save_done(rc))
-         osd_toast(rc == 0 ? "State saved" : "State save FAILED");
+         osd_toast(rc == 0 ? tr("toast.state_saved") : rc == -3 ? tr("toast.slot_is_locked")
+                                                      : tr("toast.state_save_failed"));
+      break;
+   }
+   case UI_ACT_UNDOLOAD:
+   {
+      int rc = link_locks_states() ? -1
+             : ra_hardcore_active() ? -2 : state_undo_load();
+      if (rc == -2)
+         fe_evt("hardcore_refused what=state_load via=undo");
+      if (!ui_state_load_done(rc))
+         osd_toast(rc == 0 ? tr("toast.load_undone") : tr("toast.nothing_to_undo"));
       break;
    }
    case UI_ACT_LOADSTATE:
@@ -4277,9 +6739,11 @@ static void menu_action(ui_action act)
       if (rc == -2)
          fe_evt("hardcore_refused what=state_load via=menu");
       if (!ui_state_load_done(rc))
-         osd_toast(rc == 0 ? "State loaded"
-                   : rc == -2 ? "Hardcore mode: states cannot be loaded"
-                              : "No state to load");
+         osd_toast(rc == 0 ? tr("toast.state_loaded")
+                   : rc == -2 ? tr("toast.hardcore_mode_states_cannot_be_loaded")
+                   : fe_host_state_other_core_take()
+                       ? tr("toast.this_state_is_from_the_other_gb_core")
+                       : tr("toast.no_state_to_load"));
       break;
    }
 
@@ -4291,9 +6755,9 @@ static void menu_action(ui_action act)
       /* The menu stays open on its waiting page and reads the outcome from
        * the view (link_view_set): the room, or the reason. */
       if (link_local_active())
-         g_view_error = "Stop the two-player game on this Vita first.";
+         g_view_error = tr("app.stop_the_two_player_game_on");
       else if (mgift_vita_active())
-         g_view_error = "Stop Mystery Gift first.";
+         g_view_error = tr("app.stop_mystery_gift_first");
       else
       {
          g_view_err_part = ERR_NET;
@@ -4303,9 +6767,9 @@ static void menu_action(ui_action act)
    case UI_ACT_NET_JOIN:
       /* The menu has closed; what to join is *ui_join_target(). */
       if (link_local_active())
-         toast_now("Stop the two-player game on this Vita first");
+         toast_now(tr("toast.stop_the_two_player_game_on"));
       else if (mgift_vita_active())
-         toast_now("Stop Mystery Gift first");
+         toast_now(tr("toast.stop_mystery_gift_first"));
       else
          link_action(0);
       break;
@@ -4313,12 +6777,21 @@ static void menu_action(ui_action act)
       /* Stop hosting, cancel a Host still coming up, or end the session. */
       link_disconnect();
       break;
+   case UI_ACT_ONLINE_OPEN_JOIN:
+      /* The room's game is another file than the running one: leave this
+       * game (no notice: the player chose it), open that file, and join
+       * the room once it is up (the target is still *ui_join_target()). */
+      snprintf(g_next_rom, sizeof(g_next_rom), "%s", ui_online_open_path());
+      g_join_pending = g_next_rom[0] != '\0';
+      if (g_join_pending)
+         app_quit_game("");
+      break;
 
    /* ---- Play together: two players on this Vita (part B, local_vita.c).
     * The menu stays open on its page for all three. */
    case UI_ACT_NET_LOCAL:
       if (link_net_busy())
-         g_view_error = "End the network game first.";
+         g_view_error = tr("app.end_the_network_game_first");
       else
       {
          g_view_err_part = ERR_LOCAL;
@@ -4376,8 +6849,59 @@ static void menu_action(ui_action act)
  * latency, and it costs nothing to give back.  The pacer then waits for the
  * blank the flip happens on, so the next frame's pad is read just after
  * it. */
+/* The drawing side of smooth hand-over (handoff_glue.h): on the drawing
+ * thread, what frame_present below does on this one. */
+static void ho_draw(const uint16_t *pix, unsigned w, unsigned h, size_t pitch,
+                    uint32_t seq, int user, const void *extra)
+{
+   const uint64_t ts0 = plat_time_us();
+   uint32_t d;
+   (void)user;
+   (void)seq;                  /* only the picture trace reads it */
+   PIC_TRACE(seq, pix, w, h, pitch);
+   vid_draw_frame(pix, w, h, pitch);
+   osd_draw_snap((const osd_snap *)extra);
+   {
+      const uint64_t ts = plat_time_us();
+      plat_present_hook();
+      vid_swap();
+      present_note();
+      d = (uint32_t)(plat_time_us() - ts);
+      g_win.swap_sum += d;
+      if (d > g_win.swap_max)
+         g_win.swap_max = d;
+      ho_note_present_wait(d);   /* the cost handed to the pacer leaves this out */
+   }
+   (void)ts0;
+}
+
 static void frame_present(int paced)
 {
+   int handed = 0;
+   if (ho_staged())
+   {
+      if (g_app_drew)
+         ho_abandon();           /* something drew here: that is the picture */
+      else
+      {
+         /* the toasts as of this frame go with it; its cost is this
+          * thread's work for it */
+         /* (a rewind step's picture is not a frame of play: no cost for
+          * Steady pacing, as the old path fed none; a pass that ran no
+          * frame of its own counts from its start) */
+         osd_take((osd_snap *)ho_staged_extra());
+         ho_commit(rewind_active() ? 0u
+                   : (uint32_t)(plat_time_us() - (g_ho_t0 >= g_app_frame_t0
+                                                  ? g_ho_t0 : g_app_frame_t0)));
+         handed = 1;
+      }
+   }
+   if (handed)
+      ho_consume_inline();       /* the twin: drawn here, as before */
+   else if (ho_threaded() && !g_app_drew)
+      ;                          /* the display is the drawing thread's */
+   else
+   {
    if (g_app_drew)
       osd_draw();
    if (paced || g_app_drew)      /* unlimited: only when there is a picture */
@@ -4387,10 +6911,12 @@ static void frame_present(int paced)
       uint32_t d;
       plat_present_hook();
       vid_swap();                /* presents only if a whole frame was drawn */
+      present_note();
       d = (uint32_t)(plat_time_us() - ts);
       g_win.swap_sum += d;
       if (d > g_win.swap_max)
          g_win.swap_max = d;
+   }
    }
    if (paced)
    {
@@ -4418,7 +6944,8 @@ static void frame_present(int paced)
 #endif
          spent = plat_time_us() - g_app_frame_t0;
       }
-      if (spent < HELP_UNTIL_US)
+      /* (not with a drawing thread: the upscalers are its work then) */
+      if (spent < HELP_UNTIL_US && !ho_threaded())
          upscale_help((unsigned)(HELP_UNTIL_US - spent));
       pace_frame();
    }
@@ -4538,7 +7065,7 @@ static void wake_overlay(void)
    fe_evt("wake_menu choice=%s", choice ? "game_list" : "continue");
    if (choice)
       g_quit = QUIT_GAMELIST;
-   g_prev_pad = pspcompat_pad();   /* the button that chose is not the game's */
+   g_prev_pad = pad_now();   /* the button that chose is not the game's */
    g_pad_block = g_prev_pad;
    g_tap.wait = 1;
    g_fps_t0 = 0;
@@ -4553,10 +7080,14 @@ static uint64_t g_chord2_t0;
 static void game_loop(void)
 {
    upscale_gov_reset();            /* a new game starts at the full factor */
+   g_join_frames = 0;
    while (g_running && g_quit == QUIT_NONE)
    {
       unsigned pad, pad_new, fired, frames;
-      int session, local, runs, i, rs_side, rs_flick, rw_want, tx = 0, ty = 0;
+      int session, local, runs, i, rs_side, rs_flick, rw_want, tx = 0, ty = 0, tapped;
+      int steady_on = 0;
+      uint32_t caught_now = 0;
+      uint64_t t_drawn = 0;
       plat_pad pp;
       const char *rw_note;
 
@@ -4582,11 +7113,34 @@ static void game_loop(void)
             save_fails_seen = fails;
             save_fail_told_us = plat_time_us() ? plat_time_us() : 1;
             fe_evt("save_failed_shown count=%u", fails);
-            toast_now("Save not written - is the memory card full?");
+            {
+               char line[128];
+               toast_now("%s", ds_failed_line(tr("app.save"), g_game.save_path, line,
+                                              sizeof(line)));
+            }
          }
       }
 
-      pad = pspcompat_pad();
+      {
+         static unsigned g_stick_state;
+         memset(&pp, 0, sizeof(pp));
+         pp.lx = pp.ly = pp.rx = pp.ry = 128;
+         plat_pad_read(&pp);
+         pad = pad_now();
+         if (g_pcfg.stick != CTL_STICK_MOVE)
+         {
+            int dx = (int)pp.lx - 128, dy = (int)pp.ly - 128;
+            unsigned sb = 0;
+            if (dx < -PSPCOMPAT_STICK_DEADZONE) sb |= PSP_CTRL_LEFT;
+            if (dx >  PSPCOMPAT_STICK_DEADZONE) sb |= PSP_CTRL_RIGHT;
+            if (dy < -PSPCOMPAT_STICK_DEADZONE) sb |= PSP_CTRL_UP;
+            if (dy >  PSPCOMPAT_STICK_DEADZONE) sb |= PSP_CTRL_DOWN;
+            pad &= ~(sb & ~pp.buttons);
+            if (g_pcfg.stick == CTL_STICK_CUSTOM)
+               pad |= ctl_stick_bits(CTL_STICK_CUSTOM, pp.lx, pp.ly,
+                                     &g_stick_state);
+         }
+      }
       pad_new = pad & ~g_prev_pad;
       g_prev_pad = pad;
       g_app_pad = pad;
@@ -4595,14 +7149,44 @@ static void game_loop(void)
       fired = ctl_shortcuts(&g_pcfg.controls, pad, pad_new);
       g_pad_block &= pad;
       g_pad_block |= chord_took(fired, pad);
-      g_app_keys = ctl_game_mask(&g_pcfg.controls,
-                                 chord_guard(pad & ~g_pad_block, pad));
+      {
+         unsigned gpad = chord_guard(pad & ~g_pad_block, pad);
+         g_app_keys = ctl_game_mask(&g_pcfg.controls, gpad);
+         if (g_game_console == FE_CONSOLE_WSWAN)
+         {
+            /* The WonderSwan's buttons are the Vita's own physical face layout
+             * (pspcompat_pad_raw avoids Asian Circle/Cross menu swap).  Held
+             * sideways its A and B are Circle and Cross (Triangle and Square
+             * stay Rewind and Fast-forward); upright the four face buttons are
+             * its second cross, the game's: those shortcuts give way to it
+             * there (the right stick still fast-forwards). */
+            unsigned wb = 0;
+            if (!ui_active())
+            {
+               unsigned raw = pspcompat_pad_raw();
+               unsigned raw_mask = ~g_pad_block;
+               if (ab_circle())
+               {
+                  unsigned fb = g_pad_block & (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE);
+                  if (fb && fb != (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE))
+                     raw_mask ^= PSP_CTRL_CROSS | PSP_CTRL_CIRCLE;
+               }
+               wb = ws_buttons((gpad & ~(PSP_CTRL_CROSS | PSP_CTRL_CIRCLE)) |
+                               (raw & raw_mask & (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE)) |
+                               ws_rear_keys(gpad));
+            }
+            if (wscore_showing() == WSCORE_SHOW_HORIZONTAL)
+               wb &= ~(WSCORE_SQUARE | WSCORE_TRIANGLE);
+            else
+               fired &= ~(CTL_FIRE_FF_HELD | CTL_FIRE_FF_PRESS | CTL_FIRE_REWIND);
+            wscore_set_buttons(wb);
+         }
+      }
 
       /* The right stick is no control of a Game Boy: pulled down it is
        * the "button" of a cheat cartridge (the few codes that act only
        * while it is held; cheats_vita.h), flicked sideways it switches
        * which machine of the local link the pad drives. */
-      plat_pad_read(&pp);
       if (g_sw.pad_trace > 0)
       {
          static unsigned raw_was = ~0u, pad_was = ~0u;
@@ -4617,19 +7201,21 @@ static void game_loop(void)
          }
       }
       sensor_frame(&pp);
+      gbcam_frame();
+      gbprint_frame();
       if (sensor_owns_stick())
          pp.rx = pp.ry = 128;   /* the stick is the sensor's: no gestures */
       rs_side = pp.rx < 128 - RSTICK_PUSH || pp.rx > 128 + RSTICK_PUSH;
       rs_flick = rs_side && !g_rs_side && !ui_active();
       g_rs_side = rs_side;
-      /* ...and held to the left it rewinds, once it has been there a tenth
-       * of a second (a thumb that brushes the stick does not undo a jump),
-       * for as long as it stays. */
+      /* ...and held to the left it rewinds (or right fast-forwards) when
+       * Settings > Controls says so, once it has been there a tenth of a
+       * second (a thumb that brushes the stick does not undo a jump). */
       g_rs_left = pp.rx < 128 - RSTICK_PUSH ? g_rs_left + 1 : 0;
       g_rs_right = pp.rx > 128 + RSTICK_PUSH ? g_rs_right + 1 : 0;
-      if (g_rs_right >= RSTICK_REWIND_HOLD)
+      if (g_pcfg.stick_rewind && g_rs_right >= RSTICK_REWIND_HOLD)
          fired |= FIRE_FF_STICK;
-      /* (the stick rewinds only when Settings > Controls says so) */
+      /* (the stick rewinds/FFs only when Settings > Controls says so) */
       rw_want = (fired & CTL_FIRE_REWIND) ||
                 (g_pcfg.stick_rewind && g_rs_left >= RSTICK_REWIND_HOLD);
       if (rw_want)               /* its chord contains fast forward's */
@@ -4690,10 +7276,36 @@ static void game_loop(void)
          link_local_pads(g_app_keys, keys2, have2);
       }
       link_frame();
+      if (g_join_pending && ++g_join_frames >= 20 && g_quit == QUIT_NONE)
+      {
+         /* The game for a room is up and has drawn its first frames: now
+          * join (the room is still *ui_join_target()) */
+         g_join_pending = 0;
+         fe_evt("online_join_pending go frames=%u", g_join_frames);
+         link_action(0);
+      }
       link_local_frame();
       session = link_session_up();
       if (g_quit != QUIT_NONE)
          break;                  /* app_quit_game from inside a link layer */
+      boot_guard_tick(plat_time_us());   /* 20 s of play: the start worked */
+      {
+         /* Smooth hand-over: as set (or vita.ini's override), never in a
+          * link of either kind nor the bench pair (lockstepped machines
+          * draw where they run) */
+         const int want = (g_sw.handoff >= 0 ? g_sw.handoff != 0
+                                             : g_pcfg.smooth_handoff) &&
+                          !boot_guard_safe() &&
+                          !session && !local && !g_sw.link_bench &&
+                          !link_owns_picture() && !g_ho_fell_back;
+         if (ho_running() && want != g_ho_want)
+         {
+            ho_set_enabled(want);
+            fe_evt("handoff_enabled on=%d session=%d local=%d", want,
+                   session, local);
+            g_ho_want = want;
+         }
+      }
 
       /* Turbo: one step per pad sample, for the frame about to run.  Off
        * in a link (both consoles must get the same buttons from the same
@@ -4741,7 +7353,10 @@ static void game_loop(void)
       if (ui_active())
       {
          g_menu_was_open = 1;
-         menu_frame(pad);
+         /* the corners are the game's, and Button mapping's while it waits
+          * for a button: to the rest of the menu a finger on the back is not
+          * a press (its "any button" notes would close under a grip) */
+         menu_frame(ui_capturing() ? pad : pad & ~CTL_REAR_ALL);
          if (plat_quit_requested())
             g_running = 0;
          continue;
@@ -4762,6 +7377,11 @@ static void game_loop(void)
          audio_flush();          /* the sound stopped with the game */
          app_pace_reset();
          fe_evt("menu_closed frame=%u", fe_host_frame_count());
+         /* a safe point for a change of look; Settings may have set a row
+          * by hand (ui_host_look_changed told the governor) */
+         look_safe_point(LOOK_AT_MENU);
+         if (look_generation() != g_lk.gen)
+            app_look_apply("menu");
       }
       {
          /* START and SELECT going down or up, in the log (a person's
@@ -4797,7 +7417,18 @@ static void game_loop(void)
       }
 
       /* ---- the finger ------------------------------------------------------ */
-      if (touch_tap(&tx, &ty))
+      tapped = touch_tap(&tx, &ty);
+      if (g_game_console == FE_CONSOLE_NES && zapper_active() != g_zap_told)
+      {
+         g_zap_told = zapper_active();
+         fe_evt("zapper active=%d", g_zap_told);
+      }
+      if (zapper_active())
+      {
+         zapper_frame();               /* the screen is the gun's */
+         tapped = 0;
+      }
+      if (tapped)
       {
          vid_rect_t r;
          if (g_sgb_shown)
@@ -4810,20 +7441,25 @@ static void game_loop(void)
              * The one already in hand: the menu, as with one game (found on
              * a console: with taps taken for switching there was no way to
              * the menu but the chord). */
-            if (link_local_tap(tx, ty) == 2 && g_sw.touch_menu && !pad)
+            if (link_local_tap(tx, ty) == 2 && g_sw.touch_menu && g_pcfg.tap_menu && !(pad & ~CTL_REAR_ALL))
             {
                menu_open("touch");
                continue;
             }
          }
-         else if (g_sw.touch_menu && !pad && !link_net_busy() && g_last.pix &&
-                  tx >= r.x && tx < r.x + r.w && ty >= r.y && ty < r.y + r.h)
+         else if (g_sw.touch_menu && g_pcfg.tap_menu && !(pad & ~CTL_REAR_ALL) && !link_net_busy() && g_last.pix)
          {
-            /* A tap on the game's picture opens the menu, which is the
-             * touch screen's from there on.  Conservative: a short still
-             * tap, on the picture itself, no button held (a thumb that
-             * brushes the glass in the middle of play is not one), and
-             * never while the network is in use. */
+            /* A tap on the screen opens the menu, which is the touch
+             * screen's from there on.  Conservative: a short still tap, no
+             * button held (a thumb that brushes the glass in the middle of
+             * play is not one), and never while the network is in use.
+             * ANYWHERE on the screen since 1.4: it had to be on the picture,
+             * and a Game Boy picture at a whole-number size leaves most of
+             * the glass beside it ("touching the screen for settings doesn't
+             * work on GB/GBC"); a turned WonderSwan picture likewise. */
+            fe_evt("tap_menu x=%d y=%d on_picture=%d console=%d", tx, ty,
+                   tx >= r.x && tx < r.x + r.w && ty >= r.y && ty < r.y + r.h,
+                   g_game_console);
             menu_open("touch");
             continue;
          }
@@ -4840,7 +7476,7 @@ static void game_loop(void)
       if (fired & CTL_FIRE_PAUSE)
       {
          if (session)
-            toast_now("Pause is off during a link session");
+            toast_now(tr("toast.pause_is_off_during_a_link"));
          else
             g_wake_menu = 1;
       }
@@ -4848,22 +7484,31 @@ static void game_loop(void)
       if (fired & CTL_FIRE_SAVE)
       {
          if (link_locks_states())
-            toast_now("Cannot save a state during a link session");
+            toast_now(tr("toast.cannot_save_a_state_during_a"));
          else
-            toast_now(state_save_slot(1) == 0 ? "State saved" : "Save failed");
+         {
+            int src = state_save_slot(1);
+            toast_now(src == 0 ? tr("toast.state_saved") : src == -3 ? tr("toast.slot_1_is_locked")
+                                                           : tr("toast.save_failed"));
+         }
       }
       else if (fired & CTL_FIRE_LOAD)
       {
          if (link_locks_states())
-            toast_now("Cannot load a state during a link session");
+            toast_now(tr("toast.cannot_load_a_state_during_a"));
          else if (ra_hardcore_active())
          {
             fe_evt("hardcore_refused what=state_load via=chord");
-            toast_now("Hardcore mode: states cannot be loaded");
+            toast_now(tr("toast.hardcore_mode_states_cannot_be_loaded"));
          }
          else
-            toast_now(state_load_slot(1, "chord") == 0 ? "State loaded"
-                                                        : "No saved state");
+         {
+            int lrc = state_load_slot(1, "chord");
+            toast_now(lrc == 0 ? tr("toast.state_loaded")
+                      : fe_host_state_other_core_take()
+                          ? tr("toast.this_state_is_from_the_other_gb_core")
+                          : tr("toast.no_saved_state"));
+         }
       }
       /* A state picked on the game list's shelf: once, as soon as the core
        * has run a frame. */
@@ -4879,7 +7524,7 @@ static void game_loop(void)
          {
             fe_evt("hardcore_refused what=state_load via=%s",
                    slot == PSP_STATE_RESUME ? "continue" : "shelf");
-            toast_now("Hardcore mode: starting from the save");
+            toast_now(tr("toast.hardcore_mode_starting_from_the_save"));
          }
          else if (slot == PSP_STATE_RESUME)
          {
@@ -4902,21 +7547,28 @@ static void game_loop(void)
             if (known && strcmp(had, g_patch_key[0] ? g_patch_key : "-\n"))
             {
                fe_evt("state_load via=continue refused=patch_changed");
-               toast_now("The patch changed: starting from the save");
+               toast_now(tr("toast.the_patch_changed_starting_from_the"));
             }
             else if (!known && g_game.patched && stat(g_res.path, &rs) == 0 &&
                 stat(g_game.boot_path, &ps) == 0 && rs.st_mtime < ps.st_mtime)
             {
                fe_evt("state_load via=continue refused=patched_since");
-               toast_now("Patched since it was left: starting from the save");
+               toast_now(tr("toast.patched_since_it_was_left_starting"));
             }
             else if (state_load_path(sidecar_read_path(g_res.path,
                         g_game.legacy_state_path, g_game.state_path, pt,
                         sizeof(pt)), "continue") != 0)
-               toast_now("Could not continue: starting from the save");
+               toast_now(fe_host_state_other_core_take()
+                         ? tr("toast.that_state_is_from_the_other_gb_core_starting")
+                         : tr("toast.could_not_continue_starting_from_the"));
          }
          else if (state_load_slot((unsigned)slot, "shelf") != 0)
-            toast_now("Could not load state %d", slot);
+         {
+            if (fe_host_state_other_core_take())
+               toast_now(tr("toast.this_state_is_from_the_other_gb_core"));
+            else
+               toast_now(tr("toast.could_not_load_state"), slot);
+         }
       }
       /* Not on the press that asked for the pause screen: with the default
        * bindings (TRIANGLE, and SELECT+TRIANGLE) that press is both, and a
@@ -4933,7 +7585,7 @@ static void game_loop(void)
          pcfg_display_save();    /* this console's profile only */
          fe_evt("video_mode scale=%s filter=%s", vid_scale_name(g_pcfg.scale),
                 vid_filter_name(vid_filter()));
-         toast_now("Video: %s", name);
+         toast_now(tr("toast.video"), name);
       }
       /* (not `local`: the local link fast-forwards both of its machines) */
       ff_frame(fired, session, 0);
@@ -4959,19 +7611,22 @@ static void game_loop(void)
             {
                hc_told = 1;
                fe_evt("hardcore_refused what=rewind");
-               toast_now("Hardcore mode: rewind is off");
+               toast_now(tr("toast.hardcore_mode_rewind_is_off"));
             }
             rw_want = 0;
          }
          else if (!rw_want)
             hc_told = 0;
       }
+      /* rewinding: no picture waits, the newest is shown */
+      ho_set_force_drop(g_ff.on || rw_want || rewind_active());
       i = rewind_frame(rw_want && !local, session || local ||
                        link_locks_states() || g_sw.link_bench);
       if ((rw_note = rewind_notice()) != NULL)
-         toast_now("%s", rw_note);
+         toast_now("%s", tr(rw_note));
       if (i)
       {
+         ho_discard();           /* what was in flight is of the other way */
          ra_state_loaded();      /* the frames ahead are run again */
          g_pad_block = pad;      /* its buttons are not the game's afterwards */
          g_fps_t0 = 0;
@@ -5016,8 +7671,9 @@ static void game_loop(void)
          if (g_sw.pace_mode == PACE_VSYNC)
             g_app_vc_target += n;
          else
-            g_next_ns += (uint64_t)n * GBA_FRAME_NS;
+            g_next_ns += (uint64_t)n * g_frame_ns;
          g_caught += n;
+         caught_now = n;
          g_caught_us_frame = (unsigned)(plat_time_us() - t0);
          g_caught_us += g_caught_us_frame;
       }
@@ -5025,14 +7681,43 @@ static void game_loop(void)
 
       /* ---- run the core ------------------------------------------------------ */
       runs = g_ff.mult ? g_ff.mult : 1;
+      /* Steady pacing in its half mode: two frames, the second drawn, on
+       * two refreshes (below) -- the game's speed exactly, an even cadence */
+      steady_on = !g_ff.on && !session && !local && !g_sw.link_bench &&
+                  !link_owns_picture() && steady_half();
+      if (steady_on)
+      {
+         runs = 2;
+         g_steady_half_passes++;
+      }
+      ho_set_pace(steady_on);
       for (i = 0; i < runs; i++)
       {
+         uint32_t emu_t0 = 0;
+         int ahead_run = 0;
+         if (i == runs - 1)
+            g_ho_t0 = t_drawn = plat_time_us();
          g_blit_suppress = (i != runs - 1);
          /* 3x: the two frames before the one shown are not drawn at all
           * (they were drawn and thrown away: the picture's whole cost) */
          if (g_blit_suppress)
             fe_host_skip_override(1);
+         /* Quick response: a drawn frame at normal speed is run ahead (ahead_glue.h) */
+         if (runs == 1 && ahead_mode() != AHEAD_MODE_OFF)
+         {
+            ahead_run = ahead_decide(app_ahead_blocked(session, local, steady_on, rw_want || rewind_active()));
+            fe_host_ahead_set(ahead_run);
+            emu_t0 = (uint32_t)plat_time_us();
+         }
          fe_host_run_frame();    /* -> sink_video, sink_audio */
+         if (runs == 1 && ahead_mode() != AHEAD_MODE_OFF)
+         {
+            fe_host_ahead_set(0);
+            if (!app_ahead_blocked(session, local, steady_on, rw_want || rewind_active()))
+               ahead_cost((uint32_t)plat_time_us() - emu_t0, ahead_run);
+         }
+         if (g_game_console == FE_CONSOLE_WSWAN)
+            ws_layout_hint();
          ra_frame(session || local || g_sw.link_bench);
          if (g_blit_suppress)
             fe_host_skip_override(-1);
@@ -5048,6 +7733,8 @@ static void game_loop(void)
             audio_frame();
       }
       g_blit_suppress = 0;
+      /* every frame of the pass, drawn or not (the mailbox's game clock) */
+      ho_note_emulated((uint32_t)runs + caught_now);
       frames = fe_host_frame_count();
       /* The preview keeps the game as it is played: not fast forward, not
        * a link of either kind (their timing is not to be touched), not the
@@ -5073,7 +7760,7 @@ static void game_loop(void)
             g_faults_seen = faults;
             cheats_apply();
             ra_game_reset();
-            toast_now("Emulation fault - game was reset");
+            toast_now(tr("toast.emulation_fault_game_was_reset"));
          }
       }
       keys_script_frame(fe_host_frame_count());
@@ -5084,8 +7771,78 @@ static void game_loop(void)
          g_shot_pending = 0;
          screenshot_write();
       }
+      clip_export_service();     /* a clip saved while the game ran */
 
       window_note((uint32_t)(plat_time_us() - g_app_frame_t0));
+      {
+         /* once a second: the vcount misses and the GXM census (the
+          * self-check), then the hand-over's own census (gate: census);
+          * vc_miss = refreshes that showed no new picture this second --
+          * "locked 60" on a console whatever the emulated fps */
+         char hl[320];
+         ho_second_tick();
+         if (ahead_census_line(hl, sizeof(hl)))
+         {
+            unsigned af, ax;
+            fe_host_ahead_stat(&af, &ax);
+            fe_evt("%s failed=%u", hl, ax);
+         }
+         if (ho_census_line(hl, sizeof(hl)))
+         {
+            uint64_t dsum, ssum;
+            uint32_t dn, sn;
+            ho_draw_stats(&dsum, &dn);
+            ho_swap_stats(&ssum, &sn);
+            fe_evt("%s guard_waits=%u vc_miss=%u vc_presents=%u draw_work_us=%llu "
+                   "present_wait_us=%llu pictures=%u", hl, ho_guard_waits(),
+                   g_vc_last_vm, g_vc_last_vp, (unsigned long long)dsum,
+                   (unsigned long long)ssum, dn);
+         }
+      }
+      if (ho_active() && ahead_mode() != AHEAD_MODE_OFF)
+      {
+         /* Quick response also hears the drawing thread: with xBRZ saturating it the emulating thread's cost alone looks fine
+          * (ahead_glue.h ahead_picture).  The interval is taken every pass; fast forward and rewind drop pictures on purpose. */
+         uint32_t pdraw, pmiss;
+         ho_picture_pass(&pdraw, &pmiss);
+         if (!g_ff.on && !session && !local && !g_sw.link_bench && !ui_active() && !rewind_active())
+            ahead_picture(pdraw, pmiss);
+      }
+      else
+         ho_picture_rebase();     /* not taken now (Off, no hand-over): the next interval starts from here, not from the last time */
+      if (!g_ff.on && !session && !local && !g_sw.link_bench && !ui_active())
+      {
+         int changed = 0, half = 0;
+         uint32_t cost;
+         if (ho_active())
+         {
+            /* hand-over: the cost of each picture the drawing thread
+             * finished, the larger of the two threads' work for it */
+            int ch;
+            while (ho_poll_cost(&cost))
+            {
+               ch = 0;
+               half = steady_add(cost, &ch);
+               changed |= ch;
+            }
+         }
+         else
+            half = steady_add((uint32_t)(plat_time_us() - t_drawn), &changed);
+         if (changed)
+            fe_evt("steady mode=%s frame=%u", half ? "half" : "full", fe_host_frame_count());
+      }
+      /* the look governor: this pass's drawn frame, once a second a verdict */
+      app_look_pass((uint32_t)(plat_time_us() - t_drawn),
+                    !g_ff.on && !session && !local && !g_sw.link_bench &&
+                    !ui_active() && !rewind_active() && !link_owns_picture());
+      if (steady_on)
+      {
+         /* the frame shown stands for two refreshes */
+         if (g_sw.pace_mode == PACE_VSYNC)
+            g_app_vc_target++;
+         else
+            g_next_ns += g_frame_ns;
+      }
       {
          /* A frame is bad when its own work (the catch-up frames it ran
           * for an earlier one left out) took more than 16 ms of the 16.7,
@@ -5134,6 +7891,7 @@ int main(int argc, char **argv)
    fe_evt("diag_session revision=6 history=3 file_limit=2097152 tracking=local");
    fe_evt("boot app=GBAdhoc version=%s platform=vita root=%s", GBADHOC_VERSION,
           g_app_root);
+   boot_guard_init(g_app_root);   /* settles what an earlier run left unfinished */
    /* vita.ini, read once: the switches, the extra folders and the link's
     * settings ask it for some fifty keys, each of which was an open, a scan
     * and a close of the file on the card. */
@@ -5165,9 +7923,21 @@ int main(int argc, char **argv)
    if (g_sw.up_slide != 2)
       upscale_slide_mode(g_sw.up_slide);
    vid_set_tex_mem(g_sw.tex_mem);
-   vid_set_gpu_xbrz(g_sw.gpu_xbrz);
    vid_set_gpu_time(g_sw.gpu_time);
    upscale_fade_drop(g_sw.fade_drop);
+   /* The fourth CPU core (docs/FOURTH-CORE.md): probed once, here, before
+    * any worker thread of the game exists; core4 = off in vita.ini skips it
+    * and every thread stays where 1.3 had it. */
+   {
+      /* Settings > Gameplay > Fourth core (config.ini core4 = off) or the
+       * test switch in vita.ini: either one keeps the 1.3 layout.  The row
+       * applies from the next start (threads exist from here on). */
+      char c4[16];
+      const int cfg_off = g_app_config[0] &&
+                          fe_ini_get(g_app_config, "core4", c4, sizeof(c4)) &&
+                          (c4[0] == 'o' || c4[0] == 'O' || c4[0] == '0');
+      core4_init(g_core4_off || cfg_off || boot_guard_core4_off());
+   }
    plat_thread_watch("main", 0);
    if (g_sw.main_cpu >= 0)
       fe_evt("main_cpu core=%d rc=%d", g_sw.main_cpu,
@@ -5178,17 +7948,13 @@ int main(int argc, char **argv)
    app_wide_apply();
    fe_evt("switches2 up_bench=%d xbrz_dist=%d wide=%d vm_probe=%d pad_trace=%d "
           "keys_script=%d up_slide=%d main_cpu=%d tex_mem=%d drain=%d "
-          "core_phase=%d fade_drop=%d render_thread=%d gpu_xbrz=%d "
+          "core_phase=%d fade_drop=%d render_thread=%d "
           "gpu_time=%d mhz=%u mhz_measured=%u",
           g_sw.up_bench, g_sw.xbrz_dist, g_sw.wide, g_sw.vm_probe,
           g_sw.pad_trace, g_sw.keys_script, g_sw.up_slide, g_sw.main_cpu,
           g_sw.tex_mem, g_sw.drain, g_sw.core_phase, g_sw.fade_drop,
-          g_sw.render_thread, g_sw.gpu_xbrz, g_sw.gpu_time, plat_arm_mhz(),
+          g_sw.render_thread, g_sw.gpu_time, plat_arm_mhz(),
           plat_arm_mhz_measured());
-   if (g_sw.gpu_probe == 1)
-      vid_gpu_probe();
-   vid_set_gpu_debug(g_sw.gpu_probe >= 2 ? g_sw.gpu_probe : 0);
-   vid_set_gpu_view(g_sw.gpu_view);
    if (g_sw.vm_probe > 0)
    {
       static char path[APP_PATH_CAP];
@@ -5197,6 +7963,11 @@ int main(int argc, char **argv)
    }
 
    pcfg_load(g_app_config);
+   if (boot_guard_take_app_revert())
+   {
+      pcfg_revert_risky();     /* closed twice before the list: safe picture */
+      fe_evt("boot_guard reverted_global");
+   }
    /* What every system dialog needs once per process -- the keyboard a
     * cheat's name is typed on, the ad hoc connection screen: here, before
     * either can be asked for (pspcompat.c; nothing on the twin). */
@@ -5207,7 +7978,10 @@ int main(int argc, char **argv)
    pspcompat_host_touch(plat_script_touch);
    pspcompat_host_ime(plat_script_ime);
    vid_init();
+   vglyph_dir(plat_app_dir());   /* the font files of the package: names in other alphabets */
    vid_set_mode(g_pcfg.scale, g_pcfg.filter);
+   /* Text size and High contrast apply from the first menu on */
+   vid_set_text_look(g_pcfg.text_large, g_pcfg.contrast);
    fe_evt("video backend=%s", vid_backend_name());
    ui_set_thumb_buffer(g_thumbs);
    pspcompat_host_vblank_hook(modal_tick);
@@ -5216,8 +7990,10 @@ int main(int argc, char **argv)
                 plat_app_dir()[strlen(plat_app_dir()) - 1] == ':' ? "" : "/")
           == 0)
    {
-      int n = cheats_db_open(path);
-      fe_evt("cheats_db games=%d path=%s", n, path);
+      /* opened on demand by the first cheats database query, like gamedb.txt
+       * below, so cold boot never stalls on app0:cheats.db */
+      cheats_db_open_later(path);
+      fe_evt("cheats_db_deferred path=%s", path);
    }
    if (path_fmt(path, sizeof(path), "%s%sgamedb.txt", plat_app_dir(),
                 plat_app_dir()[strlen(plat_app_dir()) - 1] == ':' ? "" : "/")
@@ -5231,9 +8007,22 @@ int main(int argc, char **argv)
    }
    if (path_fmt(path, sizeof(path), "%s/playlog.txt", g_app_root) == 0)
       play_log_load(path);
+   snes_session_collect();      /* back from snes.bin: its report */
+   if (g_snes_end_l1)
+   {
+      app_notice(g_snes_end_l1, g_snes_end_l2, NULL, 6000);
+      g_snes_end_l1 = g_snes_end_l2 = NULL;
+   }
+   boot_guard_player_end(0, -1);   /* (settled above when a report was due) */
+   {
+      char gt[64], g1[160], g2[160], gfull[400];
+      if (boot_guard_take_notice(gt, sizeof(gt), g1, sizeof(g1), g2, sizeof(g2),
+                                 gfull, sizeof(gfull)))
+         app_notice(gt, g1, g2, 9000);
+   }
    ra_boot(g_app_root, g_sw.ra_host, GBADHOC_VERSION,
 #ifdef __vita__
-           art_online
+           ra_online
 #else
            NULL
 #endif
@@ -5251,6 +8040,7 @@ int main(int argc, char **argv)
       fe_evt("vita_ini link bound=%d hits=%u", bound, fe_ini_doc_hits() - hits0);
    }
    art_start();
+   update_begin();
 
    while (g_running)
    {
@@ -5260,12 +8050,24 @@ int main(int argc, char **argv)
       /* ---- which game ---- */
       /* the launcher's game, once: a refused one is not asked again (nor
        * replaced by autoboot.txt's) when the list comes back */
-      int launched = g_launch_tried ? -1
-                                    : rom_from_launch(rom_path, sizeof(rom_path));
-      g_launch_tried = 1;
+      int launched = -1;
+      int snes_menu = 0;         /* the list's Settings > Two players (SNES): 1 host, 2 join */
+      if (g_next_rom[0])
+      {
+         /* Online: the game the room needs (nothing else is asked first) */
+         snprintf(rom_path, sizeof(rom_path), "%s", g_next_rom);
+         g_next_rom[0] = '\0';
+         launched = 0;
+      }
+      else
+      {
+         launched = g_launch_tried ? -1
+                                   : rom_from_launch(rom_path, sizeof(rom_path));
+         g_launch_tried = 1;
+      }
       if (launched == 1)
-         app_notice("This game could not be started", g_launch_note,
-                    "The launcher's path was used exactly as written.", 6000);
+         app_notice(tr("notice.this_game_could_not_be_started"), g_launch_note,
+                    tr("notice.the_launcher_s_path_was_used"), 6000);
       if (launched == 0)
       {
          console = console_for(rom_path);
@@ -5275,7 +8077,8 @@ int main(int argc, char **argv)
                rom_from_autoboot(rom_path, sizeof(rom_path)) == 0)
       {
          console = console_for(rom_path);
-         fe_evt("autoboot rom=%s", rom_path);
+         slot = g_autoboot_slot;
+         fe_evt("autoboot rom=%s slot=%d", rom_path, slot);
       }
       else
       {
@@ -5289,55 +8092,178 @@ int main(int argc, char **argv)
             fe_evt("browser exit rc=%d", br);
             break;
          }
+         /* "Join online" in the list's Settings chose this game for a room */
+         if (ui_online_take_pending())
+            g_join_pending = 1;
+         snes_menu = ui_snes_two_take();
       }
       first = 0;
       if (!g_running)
          break;
 
       /* ---- load ---- */
+      upd_stop();                /* no request of ours while a game runs */
       if (!menu_log_stop())
       {
-         app_notice("Storage is still busy", "Please try again in a moment.",
+         app_notice(tr("notice.storage_is_still_busy"), tr("notice.please_try_again_in_a_moment"),
                     NULL, 2000);
          continue;
       }
       if (console == FE_CONSOLE_SNES)
       {
+         /* Two players: Join online chose this game for a room (guest), or the list's Settings > Two players did (host or guest),
+          * or vita.ini snes_two says which */
+         const int two = g_join_pending ? 2 : snes_menu ? snes_menu : g_sw.snes_two;
+         link_snes_link snes_lk;
+         g_join_pending = 0;
          /* snes.bin takes over; it only comes back here on failure */
          char snes_arg[APP_PATH_CAP * 2 + 2];
          int src;
          snprintf(snes_arg, sizeof(snes_arg), "%s", rom_path);
-         if (has_ext(rom_path, ".zip"))
+         if (is_arc(rom_path))
          {
-            /* a zipped game: snes.bin gets the unpacked file and, after a '|'
-             * (never in a file name on the card), where its save lives: beside
-             * the zip, because unzipped/ is emptied for the next game */
+            /* a zipped game: the program gets the unpacked file and, after a
+             * '|' (never in a file name on the card), where its save lives:
+             * beside the zip, because unzipped/ is emptied for the next game */
             char un[APP_PATH_CAP];
             long usz = 0;
             size_t zl = strlen(rom_path);
-            if (zip_unpack(rom_path, FE_CONSOLE_SNES, un, sizeof(un), &usz) != 0)
+            if (zip_unpack(rom_path, console, un, sizeof(un), &usz) != 0)
             {
-               app_notice("This game could not be started", base_name(rom_path),
-                          "The zip file could not be opened.", 6000);
+               app_notice(tr("notice.this_game_could_not_be_started"), base_name(rom_path),
+                          arc_note(rom_path), 6000);
                continue;
             }
             snprintf(snes_arg, sizeof(snes_arg), "%s|%.*s.srm", un,
-                     (int)(zl - 4), rom_path);
+                     (int)(zl - arc_ext_len(rom_path)), rom_path);
+         }
+         g_snes_lk = NULL;
+         if (two)
+         {
+            char gm[APP_PATH_CAP], nm2[APP_PATH_CAP];
+            const char *bar2 = strchr(snes_arg, '|');
+            snprintf(gm, sizeof(gm), "%.*s", (int)(bar2 ? (size_t)(bar2 - snes_arg) : strlen(snes_arg)), snes_arg);
+            play_name_of(rom_path, nm2, sizeof(nm2));
+            if (snes_link_page(two == 1, gm, nm2, &snes_lk) != 0)
+               continue;            /* cancelled or failed: back to the game list */
+            g_snes_lk = &snes_lk;
+         }
+         {
+            /* 1.4: the SNES save (Game.srm beside the game or its zip) gets
+             * the same record, backup and plain copy for RetroArch as the
+             * others; snes.bin has no way to call back, so this is done now
+             * and brings the previous session's changes across */
+            char srm[APP_PATH_CAP], note[160];
+            const char *sl = strrchr(rom_path, '/');
+            const char *dt = strrchr(rom_path, '.');
+            if (dt && (!sl || dt > sl) &&
+                path_fmt(srm, sizeof(srm), "%.*s.srm",
+                         (int)(dt - rom_path), rom_path) == 0)
+            {
+               save_sync_game_start(srm, note, sizeof(note));
+               save_sync_heal_game(srm, rom_path, SS_KIND_SNES, note, sizeof(note));
+            }
+         }
+         {
+            /* the launch file (snes.bin reads it; the argument stays) and
+             * the start in Recent, as for a game run here */
+            char game[APP_PATH_CAP], save[APP_PATH_CAP], nm[APP_PATH_CAP];
+            const char *bar = strchr(snes_arg, '|');
+            const char *dt = strrchr(rom_path, '.');
+            snprintf(game, sizeof(game), "%.*s",
+                     (int)(bar ? (size_t)(bar - snes_arg) : strlen(snes_arg)),
+                     snes_arg);
+            if (bar)
+               snprintf(save, sizeof(save), "%s", bar + 1);
+            else
+               snprintf(save, sizeof(save), "%.*s.srm",
+                        (int)(dt ? (size_t)(dt - rom_path) : strlen(rom_path)),
+                        rom_path);
+            if (player_launch_write(FE_CONSOLE_SNES, game, save, rom_path, slot) != 0 && g_snes_lk)
+            {
+               /* Two players without its launch file would start the game alone while the other console waits */
+               g_snes_lk = NULL;
+               app_notice(tr("notice.the_two_player_game_could_not"), tr("notice.the_launch_file_could_not_be"), NULL, 5000);
+               continue;
+            }
+            play_name_of(rom_path, nm, sizeof(nm));
+            play_log_add(nm, (uint32_t)plat_wallclock(), 0, 1);
+            (void)play_log_save();
          }
          src = snes_launch(snes_arg);
+         g_snes_lk = NULL;
          fe_evt("snes_launch failed rc=%08x", (unsigned)src);
-         app_notice("This game could not be started", base_name(rom_path),
+         app_notice(tr("notice.this_game_could_not_be_started"), base_name(rom_path),
                     "The SNES program (snes.bin) did not start.", 6000);
+         continue;
+      }
+      if (ui_console_is_sega(console))
+      {
+         /* md.bin takes over (it only comes back here on failure).  A zipped game is unpacked to unzipped/ with its own
+          * extension; its save sits beside the zip, as the SNES one does. */
+         char game[APP_PATH_CAP], save[APP_PATH_CAP], nm[APP_PATH_CAP], note[160];
+         const char *sl = strrchr(rom_path, '/');
+         const char *dt = strrchr(rom_path, '.');
+         int src;
+         /* Two players (md.bin's link, playerkit pk_link): as for the SNES, Join online chose this game for a room (guest), or the
+          * list's Settings > Two players did, or vita.ini snes_two says which; not for the Game Gear (one controller) */
+         const int two = !ui_sega_two_ok(console) ? 0 : g_join_pending ? 2 : snes_menu ? snes_menu : g_sw.snes_two;
+         link_snes_link sega_lk;
+         g_join_pending = 0;
+         snprintf(game, sizeof(game), "%s", rom_path);
+         snprintf(save, sizeof(save), "%.*s.srm",
+                  (int)(dt && (!sl || dt > sl) ? (size_t)(dt - rom_path) : strlen(rom_path)), rom_path);
+         if (is_arc(rom_path))
+         {
+            long usz = 0;
+            if (zip_unpack(rom_path, console, game, sizeof(game), &usz) != 0)
+            {
+               app_notice(tr("notice.this_game_could_not_be_started"), base_name(rom_path),
+                          arc_note(rom_path), 6000);
+               continue;
+            }
+         }
+         g_snes_lk = NULL;
+         if (two)
+         {
+            char nm2[APP_PATH_CAP];
+            play_name_of(rom_path, nm2, sizeof(nm2));
+            if (snes_link_page(two == 1, game, nm2, &sega_lk) != 0)
+               continue;            /* cancelled or failed: back to the game list */
+            g_snes_lk = &sega_lk;
+         }
+         /* the save (Game.srm) gets the same record, backup and plain copy for RetroArch as the others; md.bin has no way
+          * to call back, so this is done now and brings the previous session's changes across */
+         save_sync_game_start(save, note, sizeof(note));
+         save_sync_heal_game(save, rom_path, console == FE_CONSOLE_MD ? SS_KIND_MD : console == FE_CONSOLE_SMS ? SS_KIND_SMS
+                                           : console == FE_CONSOLE_GG ? SS_KIND_GG : console == FE_CONSOLE_SCD ? SS_KIND_SCD : SS_KIND_SG, note, sizeof(note));
+         if (player_launch_write(console, game, save, rom_path, slot) != 0)
+         {
+            g_snes_lk = NULL;
+            app_notice(two ? tr("notice.the_two_player_game_could_not") : tr("notice.this_game_could_not_be_started"), base_name(rom_path),
+                       tr("notice.the_launch_file_could_not_be"), 6000);
+            continue;
+         }
+         play_name_of(rom_path, nm, sizeof(nm));
+         play_log_add(nm, (uint32_t)plat_wallclock(), 0, 1);
+         (void)play_log_save();
+         src = sega_launch(console, game);
+         fe_evt("sega_launch failed rc=%08x", (unsigned)src);
+         app_notice(tr("notice.this_game_could_not_be_started"), base_name(rom_path),
+                    "The Sega program (md.bin) did not start.", 6000);
          continue;
       }
       artfetch_pause(1);         /* the game has the card and the network */
       if (game_boot(rom_path, console) != 0)
       {
+         g_join_pending = 0;
+         boot_guard_game_end();     /* refused cleanly: not a crash */
          pcfg_game_end();
          artfetch_pause(0);
-         app_notice("This game could not be started",
+         app_notice(tr("notice.this_game_could_not_be_started"),
                     base_name(rom_path),
-                    "The file may be damaged or not a game for this console.",
+                    is_arc(rom_path) ? arc_note(rom_path)
+                    : tr("notice.the_file_may_be_damaged_or"),
                     6000);
          continue;
       }
@@ -5353,16 +8279,52 @@ int main(int argc, char **argv)
           * ONCE, in the first game ever played (config.ini hints, which is
           * then 0 and saved at once): how to reach the menu, and what
           * Square does. */
-         osd_toast(g_pcfg.touch && g_sw.touch_menu
-                   ? "Menu: tap the screen or hold START + SELECT. Square: fast-forward"
-                   : "Menu: hold START + SELECT. Square: fast-forward");
+         /* (UX review G1: it ran off both screen edges; 40 characters) */
+         osd_toast(g_pcfg.touch && g_sw.touch_menu && g_pcfg.tap_menu &&
+                   !zapper_active()
+                   ? tr("toast.menu_tap_the_screen_or_start")
+                   : tr("toast.menu_hold_start_select"));
          fe_evt("hints shown have=%d", g_pcfg.hints);
          g_pcfg.hints = 0;
          pcfg_save();
       }
 
       /* ---- play ---- */
+      {
+         /* Smooth hand-over (handoff_glue.h): a drawing thread for this
+          * game; anything else that draws waits for it (vid_enter_hook) */
+         const int on = ho_start((uint32_t)(g_frame_ns / 1000u),
+                                 sizeof(osd_snap), ho_draw, g_sw.draw_core,
+                                 g_sw.draw_prio);
+         g_ho_want = -1;
+         ho_selfcheck_begin();
+         vid_enter_hook = on ? ho_guard : NULL;
+         if (g_look_gov)
+            app_look_begin();      /* the best look, or what the game needed */
+         else
+            fe_evt("look_start off=1 reason=ini");
+         fe_evt("handoff_start handoff=%d started=%d where=%s setting=%d "
+                "override=%d", (g_sw.handoff >= 0 ? g_sw.handoff != 0
+                                                  : g_pcfg.smooth_handoff),
+                on, ho_where(), g_pcfg.smooth_handoff, g_sw.handoff);
+      }
       game_loop();
+      vid_enter_hook = NULL;
+      {
+         uint32_t shown = ho_shown_total();
+         ho_stop();
+         fe_evt("handoff_stop shown=%u guard_waits=%u", (unsigned)shown,
+                ho_guard_waits());
+      }
+      {
+         char sum[400];
+         look_summary(sum, sizeof(sum));
+         if (sum[0])
+            fe_evt("look_summary %s", sum);
+         app_look_save("end");
+         look_end();
+         upscale_look_cap(0);
+      }
       rt_frame_begin(RT_OFF);      /* the next game starts drawing as before */
 
       /* ---- unload ---- */
@@ -5381,6 +8343,8 @@ int main(int argc, char **argv)
           * writes, and a player who closes the app from LiveArea meanwhile
           * must not lose the save for them. */
          fe_host_sram_flush(1);
+         if (file_size(g_game.save_path, NULL) == 0)
+            ui_savset_add(g_game.save_path);   /* the list's "save present" */
          resume_game_end();         /* where it was left, for Continue */
          sgb_border_end();
          scene_save();
@@ -5392,7 +8356,7 @@ int main(int argc, char **argv)
          if (!to_list)
             break;
          if (why[0])
-            app_notice("The game was closed", why, NULL, 6000);
+            app_notice(tr("notice.the_game_was_closed"), why, NULL, 6000);
       }
    }
 
@@ -5403,10 +8367,15 @@ int main(int argc, char **argv)
    if (!clip_preview_shutdown(250000))
       fe_evt("home_clip shutdown_timeout_us=250000");
    artfetch_stop();
+   upd_stop();
+   clip_export_stop(3000000);
+   gbprint_stop();
    ra_shutdown();
    link_shutdown();
    pcfg_save();
    vid_term();
+   boot_guard_game_end();
+   boot_guard_app_ready();       /* a clean exit is a start that worked */
    fe_evt("exit ok");
    if (!menu_log_stop()) plat_exit(1); /* do not close a live writer's FILE */
    fe_evt_close();

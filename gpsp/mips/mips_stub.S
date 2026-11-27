@@ -126,7 +126,7 @@ symbol:
 .equ CPU_ALERT_IRQ,       (1 << 2)
 
 .equ SPSR_BASE,           (0x100 + 0x400 * 3)
-.equ REGMODE_BASE,        (SPSR_BASE + 24)
+.equ REGMODE_BASE,        (SPSR_BASE + 64)   # spsr is u32[16] (cpu.h)
 .equ SUPERVISOR_MODE,     (0x13)
 .equ SUPERVISOR_SPSR,     (3 * 4 + SPSR_BASE)
 .equ SUPERVISOR_LR,       ((3 * (7 * 4)) + (6 * 4) + REGMODE_BASE)
@@ -727,7 +727,7 @@ defobj(palette_ram_converted)
 defobj(oam_ram)
   .space 0x400
 defobj(spsr)
-  .space 24     # u32[6]
+  .space 64     # u32[16], indexed by mode & 0xF
 defobj(reg_mode)
   .space 196    # u32[7][7];
 

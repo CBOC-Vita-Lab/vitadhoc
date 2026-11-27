@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Written for VitAdhoc by its owner; offered under either licence so the separate players (snes.bin, md.bin) can link it. */
 /* transport_lan.h -- UDP/IPv4 backend for netdrv on a Wi-Fi network or the
  * internet, with room discovery.  The PS Vita port's transport for
  *
@@ -43,7 +45,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef PK_PLAYER
+#include "pk_lan_compat.h"   /* the separate players: MIT types of their own, no app driver headers */
+#else
 #include "netdrv.h"
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -72,8 +78,11 @@ enum
    LAN_KIND_GBA_WIRELESS = 0,    /* GBA Wireless Adapter (RFU) */
    LAN_KIND_GBA_CABLE    = 1,    /* GBA Link Cable (the mirror) */
    LAN_KIND_GB_CABLE     = 2,    /* Game Boy / Color Link Cable */
-   LAN_KIND_SHARE        = 4     /* Share game data (ROOM_SHARE): no link,
+   LAN_KIND_SHARE        = 4,    /* Share game data (ROOM_SHARE): no link,
                                     saves and states (vita/share_vita.c) */
+   LAN_KIND_PAD          = 5     /* Two players on a NES / WonderSwan game
+                                    (ROOM_PAD): both consoles run one
+                                    machine, one pad each (fe_padpair.h) */
 };
 
 #define LAN_ROOM_F_OPEN   0x01   /* accepting a JOIN right now */
@@ -132,6 +141,12 @@ enum { LAN_MODE_HOST = 0, LAN_MODE_JOIN = 1 };
 #define LAN_F_LOOPBACK   0x01
 /* Host: do not answer probes or beacon (a direct-IP-only room). */
 #define LAN_F_NO_DISCOVERY 0x02
+/* The I/O thread sends a small keepalive datagram to every session peer it
+ * has heard from (once a second), and records when anything last arrived
+ * from each, so netdrv can tell a peer whose main thread is busy (a state
+ * save, card I/O) from one that is gone: nd_transport.heard_age_us.  A
+ * build that does not know the datagram ignores it. */
+#define LAN_F_IO_KEEPALIVE 0x04
 
 typedef struct lan_config
 {
@@ -161,6 +176,11 @@ typedef struct lan_config
    uint16_t target_port;
    unsigned flags;           /* LAN_F_* */
    unsigned rx_slots;        /* netdrv RX ring depth; 0 = 256 */
+   /* New in 2.0 (online play); all zero = off. */
+   uint32_t sim_ip_be;       /* test builds: the NAT simulator (see 1.8) */
+   uint16_t sim_port;
+   uint8_t  sim_id;
+   uint16_t sim_lan_port;    /* the port this transport declares inside the simulated LAN */
 } lan_config;
 
 typedef struct lan_transport lan_transport;
@@ -254,6 +274,27 @@ typedef struct lan_stats
 
 void lan_transport_get_stats(const lan_transport *t, lan_stats *out);
 
+/* ---- census: what the wire did, for a once-a-second log line -------------
+ * Totals since the last call with reset = 1 (or since creation), counted by
+ * the I/O thread so a stalled main thread does not hide anything.
+ * `pkts_in` / `pkts_out` are datagrams from / to session peers (netdrv
+ * frames, bulk lane and keepalives; discovery excluded); `worst_gap_us` is
+ * the longest silence between two such datagrams from a peer inside the
+ * window.  `path` is "lan" or "direct": whether the peer's address is in
+ * our own subnet (internet play by room code, with punching and a relay, is
+ * not built: docs/ONLINE.md is not in this release). */
+typedef struct lan_census
+{
+   uint32_t pkts_in, pkts_out;
+   uint32_t keep_in, keep_out;
+   uint32_t worst_gap_us;
+   const char *path;
+} lan_census;
+void lan_transport_census(lan_transport *t, lan_census *out, int reset);
+/* Switch the I/O-thread keepalive on or off after creation (LAN_F_IO_KEEPALIVE
+ * at create does the same). */
+void lan_transport_set_io_keepalive(lan_transport *t, int on);
+
 /* ---- debug fault-injection shim (tests, harness) -------------------------
  * udp_transport_set_fault()'s contract: loss/dup in percent, latency/jitter
  * in milliseconds, applied to every netdrv and bulk datagram this transport
@@ -298,6 +339,100 @@ void      lan_scan_close(lan_scan *s);
  * wait_ms, return the rooms found.  <0 on socket error. */
 int lan_discovery_scan(const lan_scan_config *cfg, lan_room *out, int max,
                        unsigned wait_ms);
+
+/* ------------------------------------------------- online play: NAT layer (2.0) -- */
+/* Owner: package N.  W0 gives the declarations and stubs that say "not
+ * available"; N fills them in.  See ONLINE-2.0-PLAN.md section 2.1. */
+
+enum { LAN_STUN_IDLE = 0, LAN_STUN_RUNNING, LAN_STUN_OK, LAN_STUN_FAILED };
+enum { LAN_PUNCH_OFF = 0, LAN_PUNCH_ARMED, LAN_PUNCH_RUNNING, LAN_PUNCH_DONE, LAN_PUNCH_TIMEOUT };
+enum { LAN_RELAY_OFF = 0, LAN_RELAY_ALLOCATING, LAN_RELAY_ALLOCATED, LAN_RELAY_BINDING,
+       LAN_RELAY_READY, LAN_RELAY_FAILED };
+enum { LAN_RELAY_E_NONE = 0, LAN_RELAY_E_TIMEOUT, LAN_RELAY_E_AUTH, LAN_RELAY_E_QUOTA, LAN_RELAY_E_LOST };
+
+typedef struct lan_nat_status
+{
+   int      stun;                       /* LAN_STUN_* */
+   uint32_t pub_ip_be;  uint16_t pub_port;   /* OK: our address as the internet sees it */
+   int      sym;                        /* two servers answered differently */
+   int      open;                       /* the mapped address is our own: no NAT */
+   int      punch;                      /* LAN_PUNCH_* */
+   uint32_t peer_ip_be; uint16_t peer_port;  /* DONE: where the peer answered from */
+   int      peer_is_lan;                /* ...and it is in our own subnet */
+   int      relay;                      /* LAN_RELAY_* */
+   int      relay_err;                  /* LAN_RELAY_E_* */
+   uint32_t relay_ip_be; uint16_t relay_port; /* ALLOCATED and later: our relayed address */
+   uint32_t stun_tx, stun_rx, punch_tx, punch_rx, ack_rx, relay_tx, relay_rx, nat_foreign;
+} lan_nat_status;
+
+/* 16 bytes of real randomness for transaction ids and cookies; call before anything below. 0 = ok. */
+int  lan_transport_nat_seed(lan_transport *t, const uint8_t entropy[16]);
+/* Ask n (1..2) STUN servers for our public address.  Restarting is allowed.  0 = started. */
+int  lan_transport_stun_start(lan_transport *t, const uint32_t *ip_be, const uint16_t *port, int n);
+/* After LAN_STUN_OK: ask server 0 again every `every_ms` (0 = stop) so the mapping stays. */
+void lan_transport_stun_keep(lan_transport *t, unsigned every_ms);
+/* Accept and answer PUNCH datagrams that carry this key (the 8 characters' bytes). */
+int  lan_transport_punch_arm(lan_transport *t, const uint8_t key[8]);
+/* Send PUNCH to n (0..3) candidates until DONE or timeout_ms.  Needs punch_arm.  0 = started. */
+int  lan_transport_punch_start(lan_transport *t, const uint32_t *ip_be, const uint16_t *port, int n,
+                               unsigned timeout_ms);
+void lan_transport_punch_stop(lan_transport *t);          /* also disarms */
+/* Allocate on a TURN server with short-lived credentials (copied).  0 = started. */
+int  lan_transport_relay_start(lan_transport *t, uint32_t server_ip_be, const uint16_t *ports, int n_ports,
+                               const char *username, const char *credential);   /* n_ports 1..3, tried in order */
+/* After LAN_RELAY_ALLOCATED: permission + channel for the peer's relayed address; READY follows. */
+int  lan_transport_relay_bind(lan_transport *t, uint32_t peer_ip_be, uint16_t peer_port);
+void lan_transport_relay_stop(lan_transport *t);          /* releases the allocation, best effort */
+
+/* An allocation that outlives a program (2.0, SNES: the app forms the link, snes.bin plays it).  The server keeps
+ * an allocation by the client's 5-tuple, so the next program, bound to the SAME local port, takes it over instead
+ * of allocating again (a second Allocate would be refused, 437). */
+typedef struct lan_relay_params
+{
+   uint32_t server_ip_be;  uint16_t server_port;    /* the TURN port that answered */
+   char     user[160], pass[160];                   /* the short-lived credentials */
+   uint32_t relay_ip_be;   uint16_t relay_port;     /* our relayed address */
+   uint32_t peer_ip_be;    uint16_t peer_port;      /* the peer's relayed address (the ChannelBind target) */
+} lan_relay_params;
+/* In the program that made the relay, once READY: copy out what the next program needs and let go WITHOUT releasing
+ * (no Refresh lifetime 0): relay_stop and destroy then do nothing to the server.  0 = filled, -1 = not READY. */
+int  lan_transport_relay_handoff(lan_transport *t, lan_relay_params *out);
+/* In the next program (same local port): Refresh the existing allocation (401 then signed) and, when it answers,
+ * ALLOCATED follows, then the permission and the channel are sent again for the same peer (a ChannelBind may be
+ * repeated: it refreshes the binding) and READY follows.  FAILED with LAN_RELAY_E_LOST when the server has no
+ * such allocation.  No Allocate is sent.  0 = started. */
+int  lan_transport_relay_adopt(lan_transport *t, const lan_relay_params *p);
+/* Any thread, never blocks (a copy under the transport's mutex). */
+void lan_transport_nat_status(lan_transport *t, lan_nat_status *out);
+/* Diagnostic: how many STUN / TURN server addresses the I/O thread checks every datagram against (each check takes the NAT mutex).
+ * 0 once STUN has finished and no keep-alive runs and no relay is up: the datagrams of a running link then skip it. */
+int lan_transport_nat_listening(lan_transport *t);
+/* JOIN mode, before the netdrv session starts: the host is at this address (what create's
+ * target_ip_be/target_port do).  0 = ok, -1 = not a joiner / a session already has peers. */
+int  lan_transport_set_target(lan_transport *t, uint32_t ip_be, uint16_t port);
+/* The peer lock (2.0 security review).  Once the one peer of a session is known (online play: the
+ * punch has answered or the relay is bound) the transport takes session datagrams -- netdrv frames,
+ * the bulk lane, keepalives, echo answers -- ONLY from that address, from the addresses the room
+ * gave for it (the punch candidates, the address a keyed PUNCH came from) and from its relayed
+ * address; what anyone else sends is counted in rx_foreign and dropped on the I/O thread before it
+ * can fill a ring, count as "a peer was heard" or draw a keepalive.  Discovery, PUNCH (it carries
+ * the room's key) and STUN / TURN are not affected.  ip_be 0 = unlock.  Any thread.  0 = ok. */
+int  lan_transport_peer_lock(lan_transport *t, uint32_t ip_be, uint16_t port);
+/* ...and before the peer is known (an online connection that is still looking up its address,
+ * waiting in its room or punching): session datagrams are taken from NOBODY.  A stranger's
+ * datagram then cannot pass for "a session peer was heard" (which made lan_transport_set_target
+ * refuse the real host) or wait in a ring for the session that starts later.  The other
+ * console's first JOIN / HELLO may be dropped while this side is still held; both are repeated.
+ * lan_transport_peer_lock() ends it (with the peer, or with 0 = anyone).  Any thread. */
+void lan_transport_peer_hold(lan_transport *t);
+/* lan_transport_bulk_recv plus where the datagram came from. */
+int  lan_transport_bulk_recv_from(lan_transport *t, uint8_t src_mac[6], void *buf, size_t cap);
+
+/* lan_census.path gains the values "punch" (a punch peer is set, not in our
+ * subnet) and "relay".  lan_transport_destroy() calls relay_stop itself.
+ * All state machines tick on the I/O thread (its poll slice drops to 20 ms
+ * while STUN, punch or a TURN request is in flight); commands and status
+ * cross under the transport's mutex. */
 
 /* ------------------------------------------------------------------- helpers -- */
 

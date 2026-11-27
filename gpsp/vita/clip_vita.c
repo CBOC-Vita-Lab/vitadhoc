@@ -735,19 +735,13 @@ static uint32_t get32(const uint8_t *s)
           (uint32_t)s[3] << 24;
 }
 
-int clip_save(const char *path, unsigned us_per_tick)
+/* Which frames a clip is: the last ten seconds, up to where the game went
+ * still (see clip_vita.h).  0 = *first..*last of the ring; 1 = too little
+ * was recorded.  C.st.calm_cut says what was left off the end. */
+static int pick_range(unsigned *first_out, unsigned *last_out)
 {
-   unsigned first, last, n, i, t = 0, k;
-   size_t px, first_len, total;
-   uint16_t *a = NULL, *b = NULL;
-   uint8_t hdr[CLIP_HDR], *offs = NULL;
-   FILE *f;
-   int ok;
+   unsigned first, last, i, t = 0;
 
-   slot_idle();
-   C.st.saved = C.st.calm_cut = 0;
-   if (!C.on || !C.count)
-      return 1;
    /* Where it ends: the last frame in which something happened, and a
     * second of calm after it -- a game left standing for a while before
     * the player quit is remembered up to where it went still.  (Nothing
@@ -775,6 +769,26 @@ int clip_save(const char *path, unsigned us_per_tick)
    while (first > 0 && t + ent(first)->ticks <= CLIP_TICKS)
       t += ent(first--)->ticks;
    if (t < CLIP_TICKS_MIN)
+      return 1;
+   *first_out = first;
+   *last_out = last;
+   return 0;
+}
+
+int clip_save(const char *path, unsigned us_per_tick)
+{
+   unsigned first, last, n, i, k;
+   size_t px, first_len, total;
+   uint16_t *a = NULL, *b = NULL;
+   uint8_t hdr[CLIP_HDR], *offs = NULL;
+   FILE *f;
+   int ok;
+
+   slot_idle();
+   C.st.saved = C.st.calm_cut = 0;
+   if (!C.on || !C.count)
+      return 1;
+   if (pick_range(&first, &last) != 0)
       return 1;
    n = last - first + 1;
    px = (size_t)C.w * C.h;
@@ -845,6 +859,62 @@ fail:
    return -1;
 }
 
+/* The same ten seconds as clip_save, as a clip image in memory, for the
+ * export (clip_export.h).  The frame thread only copies: the frames from the
+ * key the first one needs to the last, still squeezed (a few hundred KiB to
+ * a few MiB), and the decoding up to the first is left to whoever reads the
+ * image (clip_open_image's skip). */
+int clip_snapshot(unsigned us_per_tick, uint8_t **img_out, size_t *len_out)
+{
+   unsigned first, last, k, i, n;
+   size_t total = 0, base;
+   uint8_t *img;
+
+   slot_idle();
+   C.st.calm_cut = 0;
+   if (!C.on || !C.count)
+      return 1;
+   if (pick_range(&first, &last) != 0)
+      return 1;
+   for (k = first; !ent(k)->key; k--)
+      ;
+   n = last - k + 1;
+   for (i = k; i <= last; i++)
+      total += ent(i)->len;
+   if (n > CLIP_FRAMES_MAX || total > CLIP_FILE_MAX)
+      return -1;
+   /* the copy must not be what runs the console out of memory */
+   if (plat_heap_free() < CLIP_HDR + 4 * ((size_t)n + 1) + total +
+                          ((size_t)CLIP_SNAP_SPARE_MB << 20))
+      return -1;
+   base = CLIP_HDR + 4 * ((size_t)n + 1);
+   img = (uint8_t *)malloc(base + total);
+   if (!img)
+      return -1;
+   memset(img, 0, CLIP_HDR);
+   memcpy(img, "VCL1", 4);
+   img[4] = (uint8_t)C.w;
+   img[5] = (uint8_t)(C.w >> 8);
+   img[6] = (uint8_t)C.h;
+   img[7] = (uint8_t)(C.h >> 8);
+   put32(img + 8, n);
+   put32(img + 12, us_per_tick);
+   put32(img + 16, (uint32_t)total);
+   put32(img + 20, first - k);            /* the frames before the clip's own */
+   total = 0;
+   put32(img + CLIP_HDR, 0);
+   for (i = 0; i < n; i++)
+   {
+      const clip_ent *e = ent(k + i);
+      memcpy(img + base + total, C.ring + e->off, e->len);
+      total += e->len;
+      put32(img + CLIP_HDR + 4 * ((size_t)i + 1), (uint32_t)total);
+   }
+   *img_out = img;
+   *len_out = base + total;
+   return 0;
+}
+
 /* ---- the player ------------------------------------------------------------ */
 
 struct clip_player
@@ -858,6 +928,8 @@ struct clip_player
    int cur;
    unsigned pos;
    int bad;
+   uint8_t *img;            /* a clip image in memory (clip_open_image): owns data */
+   unsigned skip;           /* ...frames before the clip's own (clip_skip)  */
 };
 
 void clip_close(clip_player *p)
@@ -867,7 +939,7 @@ void clip_close(clip_player *p)
    if (p->f)
       fclose(p->f);
    free(p->off);
-   free(p->data);
+   free(p->img ? p->img : p->data);
    free(p->buf[0]);
    free(p->buf[1]);
    free(p);
@@ -919,6 +991,60 @@ fail:
    clip_close(p);
    return NULL;
 }
+
+clip_player *clip_open_image(uint8_t *img, size_t len)
+{
+   clip_player *p;
+   unsigned i;
+   size_t base;
+
+   if (!img)
+      return NULL;
+   p = (clip_player *)calloc(1, sizeof(*p));
+   if (!p)
+   {
+      free(img);
+      return NULL;
+   }
+   p->img = img;                 /* from here clip_close frees it */
+   if (len < CLIP_HDR || memcmp(img, "VCL1", 4) != 0)
+      goto fail;
+   p->w = (unsigned)img[4] | (unsigned)img[5] << 8;
+   p->h = (unsigned)img[6] | (unsigned)img[7] << 8;
+   p->n = get32(img + 8);
+   p->us = get32(img + 12);
+   p->len = get32(img + 16);
+   p->skip = get32(img + 20);
+   if (!p->w || !p->h || p->w > CLIP_W_MAX || p->h > CLIP_H_MAX || !p->n ||
+       p->n > CLIP_FRAMES_MAX || p->len > CLIP_FILE_MAX || p->skip >= p->n ||
+       p->us < 1000 || p->us > 100000)
+      goto fail;
+   base = CLIP_HDR + 4 * ((size_t)p->n + 1);
+   if (len != base + p->len)
+      goto fail;
+   p->off = (uint32_t *)malloc(((size_t)p->n + 1) * sizeof(uint32_t));
+   p->buf[0] = (uint16_t *)malloc((size_t)p->w * p->h * 2);
+   p->buf[1] = (uint16_t *)malloc((size_t)p->w * p->h * 2);
+   if (!p->off || !p->buf[0] || !p->buf[1])
+      goto fail;
+   for (i = 0; i <= p->n; i++)
+   {
+      p->off[i] = get32(img + CLIP_HDR + 4 * (size_t)i);
+      if ((i == 0 && p->off[0] != 0) ||
+          (i > 0 && p->off[i] < p->off[i - 1] + 4))
+         goto fail;
+   }
+   if (p->off[p->n] != p->len)
+      goto fail;
+   p->data = img + base;
+   p->have = p->len;
+   return p;
+fail:
+   clip_close(p);
+   return NULL;
+}
+
+unsigned clip_skip(const clip_player *p) { return p ? p->skip : 0; }
 
 int clip_load(clip_player *p, size_t budget)
 {

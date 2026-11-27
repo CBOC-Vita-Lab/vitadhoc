@@ -7,6 +7,10 @@
 #include "snes9x.h"
 #include "memmap.h"
 
+#if defined(SA1_FAST_RUN) && SA1_FAST_RUN + 0 == 0
+#error "SA1_FAST_RUN needs a bit mask: build every core file with -DSA1_FAST_RUN=15"
+#endif
+
 // CBOC-Vita: inlined fast path of S9xSA1GetByte (a plain ROM/RAM block); everything else calls the original
 static alwaysinline uint8 S9xSA1GetByteF (uint32 address)
 {
@@ -71,6 +75,9 @@ static alwaysinline uint8 S9xSA1GetByteF (uint32 address)
 #include "cpuops.cpp"
 
 static inline void S9xSA1UpdateTimer (void);
+#ifdef SA1_FAST_RUN
+void S9xSA1RunSlow (void);
+#endif
 
 /* CBOC-Vita: replaying the SA-1's idle loops.
  *
@@ -114,6 +121,10 @@ static struct
 	SA1Point	pt[17];
 	int32		step[17];	// cycles from point i to the next, and which point that is
 	uint8		next[17];
+	bool		lazy;		// every step is short enough for the lazy replay (SA1_FAST_RUN & 8)
+	bool		pend;		// the SA-1 is behind: it has still to be moved up to ptarget (state 2 and virt)
+	int32		ptarget;
+	uint32		inv;		// ceil(2^32 / the loop's cycles): whole passes by multiply (exact for numbers below 65536)
 	uint8		nrd;
 	uint8		*rd_at[16];
 	uint8		rd_val[16];
@@ -161,8 +172,28 @@ static inline void sa1_put (const SA1Point &p)
 	SA1.S9xOpcodes = p.ops; SA1.S9xOpLengths = p.lens;
 }
 
+bool8 S9xSA1RomPatched = FALSE;
+
+// CBOC-Vita: run-ahead (ahead.cpp): the replay engine's own state, raw (its pointers are into memory that does not move)
+size_t S9xSA1AheadCopy (uint8 *buf, int save)
+{
+	if (buf)
+	{
+		if (save)
+			memcpy(buf, &SA1L, sizeof(SA1L));
+		else
+			memcpy(&SA1L, buf, sizeof(SA1L));
+	}
+	return sizeof(SA1L);
+}
+
 static inline bool sa1_code_in_rom (void)
 {
+	if (S9xSA1RomPatched)
+		return false;
+#ifdef CBOC_NO_SA1_REPLAY	/* build switch: never records a loop, so every SA-1 instruction is interpreted (the exactness reference) */
+	return false;
+#endif
 	return SA1.PCBase && SA1.PCBase + 0x10000 > Memory.ROM && SA1.PCBase < Memory.ROM + Memory.CalculatedSize;
 }
 
@@ -199,7 +230,18 @@ static alwaysinline bool sa1_replay (int32 target, bool keep)
 	int32		c = SA1.Cycles;
 	int			cur = SA1L.cur;
 	if (target - c > d)
-		c += ((target - c - 1) / d) * d;	// whole passes, each started below the target
+	{
+		// whole passes, each started below the target: c += ((target - c - 1) / d) * d. The quotient is almost
+		// always 1 to 3 here (a call covers one SNES CPU instruction), and the Vita's Cortex-A9 has no divide
+		// instruction (a library call of dozens of cycles, on every replayed call), so subtract while it is small.
+		int32	r = target - c - 1;			// >= d here
+		if (r < 8 * d)
+		{
+			do { c += d; r -= d; } while (r >= d);
+		}
+		else
+			c += (r / d) * d;
+	}
 	while (c < target)
 	{
 		c += SA1L.step[cur];
@@ -219,6 +261,9 @@ static alwaysinline bool sa1_replay (int32 target, bool keep)
 
 void S9xSA1ReplaySync (void)
 {
+#if defined(SA1_FAST_RUN) && (SA1_FAST_RUN & 8)
+	S9xSA1ReplayAdvance();
+#endif
 	if (SA1L.virt)
 	{
 		sa1_put(SA1L.pt[SA1L.cur]);
@@ -236,6 +281,7 @@ void S9xSA1ReplayReset (void)
  * reset or loaded from a state) */
 void S9xSA1ReplayDrop (void)
 {
+	SA1L.pend = false;
 	SA1L.virt = false;
 	SA1Rec.on = FALSE;
 	SA1L.state = 0;
@@ -247,7 +293,186 @@ void S9xSA1ReplayDrop (void)
  * nothing could interrupt it (no SA-1 timer interrupt set up; anything the SNES CPU
  * writes to the SA-1's registers ends the replay), the SA-1 only moves on along the
  * loop's points and its timer is updated, as the full call below does. */
+#ifdef SA1_FAST_RUN
+/* CBOC-Vita: the same replay call as below with its fixed costs taken out. Bit flags in
+ * SA1_FAST_RUN, a bit mask (ship -DSA1_FAST_RUN=15 on EVERY core file: bit 8's
+ * flush points live in cpuexec.cpp and sa1.cpp too):
+ *   1  the watched bytes are checked with the loop unrolled for 1 to 3 of them
+ *   2  the whole passes of the loop are counted with a multiply (the Cortex-A9 has no divide)
+ *   4  the timer step is written out for "no timer interrupt set up" (thisIRQ is false there)
+ *   8  lazy: while the loop is replayed, a call only checks that nothing changed and notes
+ *      the target; the SA-1 is moved up to the last target (and its timer stepped) when
+ *      something looks at it: S9xSA1ReplaySync, the scanline wrap, a read of the SA-1 H counter,
+ *      or a call where the loop no longer applies. Moving to the last target in one go gives
+ *      the same point as moving to each target in turn (an instruction starts while the
+ *      cycles are below the target, whatever the earlier targets were).
+ * Every flag computes exactly what the code below computes; only the work per call differs. */
+/* the SA-1 timer step for FillRAM[0x2210] & 3 == 0 (no H or V compare, so thisIRQ is false) */
+static alwaysinline void sa1_timer_idle (void)
+{
+	const uint32	t = Memory.FillRAM[0x2210];
+	const int32		delta = SA1.Cycles - SA1.PrevCycles;
+	const int32		hold = SA1.HCounter;
+	int32			h = hold + delta, ph = hold;
+	if (t & 0x80)
+	{
+		if (h >= 0x800)
+		{
+			h -= 0x800; ph -= 0x800;
+			if (++SA1.VCounter >= 0x200)
+				SA1.VCounter = 0;
+		}
+	}
+	else
+	{
+		if (h >= Timings.H_Max_Master)
+		{
+			h -= Timings.H_Max_Master; ph -= Timings.H_Max_Master;
+			if (++SA1.VCounter >= Timings.V_Max_Master)
+				SA1.VCounter = 0;
+		}
+	}
+	SA1.HCounter = h;
+	SA1.PrevHCounter = ph;
+	SA1.PrevCycles = SA1.Cycles;
+	SA1.TimerIRQLastState = FALSE;
+}
+
+/* the point the loop reaches for `target` (see sa1_replay) */
+static alwaysinline void sa1_advance (int32 target)
+{
+	int32	c = SA1.Cycles;
+	int		cur = SA1L.cur;
+	const int32	d = SA1L.pt[SA1L.n].off;
+	if (target - c > d)
+	{
+		int32	r = target - c - 1;
+#if SA1_FAST_RUN & 2
+		if (r < 65536 && (uint32) (d - 2) < 65534u)
+			c += (int32) (((uint64) (uint32) r * SA1L.inv) >> 32) * d;
+		else
+#endif
+		if (r < 8 * d)
+		{
+			do { c += d; r -= d; } while (r >= d);
+		}
+		else
+			c += (r / d) * d;
+	}
+	while (c < target)
+	{
+		c += SA1L.step[cur];
+		cur = SA1L.next[cur];
+	}
+	SA1.Cycles = c;
+	SA1L.cur = cur;
+}
+
+#if SA1_FAST_RUN & 8
+/* Brings a lazily replayed SA-1 up to date: the point for the last target, and its timer stepped
+ * over all the calls at once (the first call after a scanline wrap steps it by a large negative amount,
+ * because the wrap moves SA1.Cycles but not PrevCycles; that is just part of the sum). Calls that fell in the lazy stretch each moved the H counter by
+ * less than one line (S9xSA1Run checks that), so one subtraction per wrap here is what one
+ * subtraction per call there came to. */
+void S9xSA1ReplayAdvance (void)
+{
+	if (!SA1L.pend)
+		return;
+	SA1L.pend = false;
+	sa1_advance(SA1L.ptarget);
+	const uint32	t = Memory.FillRAM[0x2210];
+	const int32		hmax = (t & 0x80) ? 0x800 : Timings.H_Max_Master;
+	const int32		vmax = (t & 0x80) ? 0x200 : Timings.V_Max_Master;
+	int32			h = SA1.HCounter + (SA1.Cycles - SA1.PrevCycles);
+	int32			v = SA1.VCounter;
+	while (h >= hmax)
+	{
+		h -= hmax;
+		if (++v >= vmax)
+			v = 0;
+	}
+	SA1.HCounter = h;
+	SA1.VCounter = v;
+	SA1.PrevHCounter = h;		// only ever read after the next timer step has set it
+	SA1.PrevCycles = SA1.Cycles;
+	SA1.TimerIRQLastState = FALSE;
+}
+#endif
+
+#if !(SA1_FAST_RUN & 8)
+void S9xSA1ReplayAdvance (void) {}
+#endif
+
 void S9xSA1Run (void)
+{
+	if (SA1L.state == 2 && SA1L.virt)
+	{
+		const uint8	*F = Memory.FillRAM;
+		if (!((F[0x2200] & 0x60) | (F[0x2210] & 0x03)))
+		{
+			#undef CPU
+			const int32	target = CPU.Cycles * 3;
+			#define CPU SA1
+			const int	nrd = SA1L.nrd;
+			bool		ok = true;
+		#if SA1_FAST_RUN & 1
+			switch (nrd)
+			{
+				case 3: ok = *SA1L.rd_at[2] == SA1L.rd_val[2];
+				case 2: ok = ok && *SA1L.rd_at[1] == SA1L.rd_val[1];
+				case 1: ok = ok && *SA1L.rd_at[0] == SA1L.rd_val[0]; break;
+				case 0: break;
+				default:
+					for (int i = 0; i < nrd; i++)
+						if (*SA1L.rd_at[i] != SA1L.rd_val[i]) { ok = false; break; }
+			}
+		#else
+			for (int i = 0; i < nrd; i++)
+				if (*SA1L.rd_at[i] != SA1L.rd_val[i]) { ok = false; break; }
+		#endif
+			if (ok)
+			{
+			#if SA1_FAST_RUN & 8
+				if (SA1L.lazy)
+				{
+					if (SA1L.pend)
+					{
+						if ((uint32) (target - SA1L.ptarget) < 1000u)
+						{
+							SA1L.ptarget = target;
+							return;
+						}
+						S9xSA1ReplayAdvance();
+					}
+					else
+					if ((uint32) (target - SA1.Cycles) < 1000u && SA1.HCounter < ((F[0x2210] & 0x80) ? 0x800 : Timings.H_Max_Master))
+					{
+						SA1L.pend = true;
+						SA1L.ptarget = target;
+						return;
+					}
+				}
+			#endif
+				sa1_advance(target);
+			#if SA1_FAST_RUN & 4
+				sa1_timer_idle();
+			#else
+				S9xSA1UpdateTimer();
+			#endif
+				return;
+			}
+		}
+	}
+#if SA1_FAST_RUN & 8
+	S9xSA1ReplayAdvance();
+#endif
+	S9xSA1RunSlow();
+}
+
+void S9xSA1RunSlow (void)
+#else
+void S9xSA1Run (void)
+#endif
 {
 	if (SA1L.state == 2 && !(Memory.FillRAM[0x2200] & 0x60) && !(Memory.FillRAM[0x2210] & 0x03))
 	{
@@ -416,7 +641,12 @@ void S9xSA1MainLoop (void)
 						SA1L.next[i] = i + 1 == k ? 0 : i + 1;
 					}
 					SA1L.state = 2;
+					SA1L.inv = (uint32) ((0x100000000ull + SA1L.pt[k].off - 1) / (uint32) SA1L.pt[k].off);
 					SA1L.cur = 0;
+					SA1L.lazy = true;
+					for (int i = 0; i < k; i++)
+						if (SA1L.step[i] > 256)
+							SA1L.lazy = false;
 					ST(st_proven++);
 					break;		// the rest of this call is the replay's
 				}

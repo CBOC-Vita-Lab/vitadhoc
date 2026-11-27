@@ -54,5 +54,6 @@ size_t S9xMSU1Samples(void);
 class Resampler;
 void S9xMSU1SetOutput(Resampler *resampler);
 void S9xMSU1PostLoadState(void);
+size_t S9xMSU1AheadCopy(uint8 *buf, int save);	// CBOC-Vita: run-ahead (ahead.cpp)
 
 #endif

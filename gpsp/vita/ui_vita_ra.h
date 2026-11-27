@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Copyright (c) 2026 VitAdhoc contributors */
 /* ui_vita_ra.h -- Settings > Achievements: the running game's
  * RetroAchievements, in the runtime's grouping (ra_vita.h).
  *
@@ -77,9 +79,9 @@ static ui_action screen_ra(unsigned edges)
    ov_backdrop(OV_SCRIM_DENSE);
    ra_summary(&have, &total, &ph, &pt, &hc);
    snprintf(sub, sizeof(sub), "%s%s", ra_game_title(),
-            hc ? " - Hardcore" : "");
-   vw_head(sub, "ACHIEVEMENTS");
-   snprintf(sum, sizeof(sum), "%u / %u   %u / %u pts", have, total, ph, pt);
+            hc ? tr("ra.hardcore") : "");
+   vw_head(sub, tr("ra.achievements"));
+   snprintf(sum, sizeof(sum), tr("ra.pts"), have, total, ph, pt);
    ov_text_right(460, 48, sum, C_VALUE);
 
    vid_clip(0, RA_TOP - 2, VID_SCR_W, RA_BOT - RA_TOP + 4);
@@ -108,8 +110,8 @@ static ui_action screen_ra(unsigned edges)
    }
    vid_clip_off();
    if (!n)
-      vid_text(22, RA_TOP + 10, "No achievements to show.", C_DIM);
-   footer("UP/DOWN scroll   L/R page   " VID_GLYPH_O " back");
+      vid_text(22, RA_TOP + 10, tr("ra.no_achievements_to_show"), C_DIM);
+   footer(tr("hint.up_down_scroll_l_r_page"));
    return UI_ACT_NONE;
 }
 

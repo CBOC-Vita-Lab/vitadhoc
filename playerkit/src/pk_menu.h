@@ -1,0 +1,425 @@
+/*
+ * playerkit in-game menu (the control centre). Same pages, order and wording
+ * as the GBA side's in-game menu:
+ *
+ *   Resume | Save states | Play together | Cheats | Settings | Reset game | Game list | Exit
+ *   Settings > Picture | Controls | Speed
+ *
+ * Data driven: the host says which features it has (Caps) and gets callbacks;
+ * rows it does not support are shown greyed with the reason, not hidden. Pad
+ * navigation with repeat and touch (every row and button is a target at least
+ * 80 px tall, with a pressed highlight and a tap flash).
+ *
+ * Usage per frame while open:  ev = menu.update(input);  (host draws its frozen game picture)  menu.draw(gfx, text);
+ *
+ * Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE).
+ */
+#ifndef PK_MENU_H
+#define PK_MENU_H
+
+#include "pk_csearch.h"
+#include "pk_gfx.h"
+#include "pk_input.h"
+#include "pk_notice.h"
+#include "pk_states.h"
+#include <stdint.h>
+#include <string>
+#include <vector>
+
+namespace pk {
+
+/* what the host supports; a bit missing = the row is greyed with a reason */
+enum Caps : uint32_t {
+	CAP_STATES = 1u << 0,
+	CAP_UNDO = 1u << 1,           /* undo of a state load (needs capture_state) */
+	CAP_RESET = 1u << 2,
+	CAP_SHAPE = 1u << 3,
+	CAP_WIDE = 1u << 4,           /* wide view is wired (otherwise a greyed "coming" row) */
+	CAP_QUALITY = 1u << 5,
+	CAP_SCANLINES = 1u << 6,
+	CAP_LCD_GRID = 1u << 7,
+	CAP_GLOW = 1u << 8,
+	CAP_PIC_PER_GAME = 1u << 9,   /* "Apply to" for the picture settings */
+	CAP_CONTROLS = 1u << 10,      /* remapping */
+	CAP_TURBO = 1u << 11,
+	CAP_FF = 1u << 12,
+	CAP_FF_SOUND = 1u << 13,
+	CAP_FF_MODE = 1u << 14,
+	CAP_REWIND = 1u << 15,
+	CAP_CHEATS = 1u << 16,
+	CAP_PLAY_TOGETHER = 1u << 17,
+	CAP_CHEAT_EDIT = 1u << 18,    /* the host can add (add_cheat) and delete (delete_cheat) codes */
+	CAP_CHEAT_SEARCH = 1u << 19,  /* "Search memory" (pk_csearch.h): the host gives the machine's memory (search_setup) and takes a code (add_cheat_code) */
+	CAP_CRT = 1u << 20,           /* the CRT mask row (the host draws it: pk_crt.h) */
+	CAP_RA = 1u << 21,            /* RetroAchievements list (MenuHost::list_achievements -> PAGE_RA under Settings) */
+	CAP_SHOT = 1u << 22,          /* Screenshot shortcut mappable on PAGE_MAPPING (ACT_SHOT) */
+	CAP_ALL_BASIC = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_GLOW |
+	                CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CRT
+};
+
+/* rows whose value the host owns; ids are stable */
+enum RowId {
+	ROW_PIC_SHAPE = 0, ROW_PIC_WIDE, ROW_PIC_QUALITY, ROW_PIC_SCANLINES, ROW_PIC_GRID, ROW_PIC_GLOW, ROW_PIC_APPLY,
+	ROW_CTL_STICK_L, ROW_CTL_STICK_R, ROW_CTL_REAR, ROW_CTL_MAPPING, ROW_CTL_TURBO_A, ROW_CTL_TURBO_B, ROW_CTL_TURBO_MODE,
+	ROW_CTL_APPLY, ROW_CTL_RESET,
+	ROW_SPD_FF, ROW_SPD_SOUND, ROW_SPD_MODE, ROW_SPD_REWIND,
+	ROW_CTL_BTNTEST,             /* Settings > Controls > Button test (an action row: no value) */
+	ROW_PIC_CRT,                  /* CRT mask 0..10 (0 = Off), CAP_CRT */
+	ROW_PIC_SCREEN,               /* Screen: 0 Auto, 1 OLED (PCH-1000), 2 LCD (PCH-2000), 3 PS TV: one setting for every console and the app (pk_screen.h) */
+	ROW_UI_TEXT,                  /* Text size: 0 Normal, 1 Large (the Interface page) */
+	ROW_UI_CONTRAST,              /* High contrast: 0 Off, 1 On */
+	ROW_UI_LANGUAGE,              /* Language: 0 Automatic, then English, Espanol, Francais, Deutsch, Italiano, Portugues (Brasil), Japanese, Simplified Chinese (pk_i18n.h LANG_*); one setting for the app and the players (display.ini language=) */
+	ROW_UI_THEME,                 /* Theme: 0 Dark, 1 Light */
+	ROW_UI_TAPMENU,               /* Tap screen for menu: 0 Off, 1 On */
+	ROW_COUNT,
+	ROW_HOST_BASE = 1000          /* rows the host adds itself (add_host_row) have ids from here */
+};
+
+/* the values (RowId order): ROW_PIC_SHAPE 0..4 = Fit, Fit (never offered), Zoom, Stretch, Pixel perfect; ROW_PIC_WIDE 0..2 = Auto, On, Off;
+ * ROW_PIC_QUALITY 0..5 = IMGQ_* (the main app's "Image quality": Auto, Original, Enhanced 2x/3x/4x, MMPX 2x; a host hides what its
+ * scalers cannot do with set_choices_allowed); scanlines/grid/glow 0..10 (0 = Off); ROW_*_APPLY 0 All games, 1 This game;
+ * ROW_SPD_FF 0..3 = 2x, 3x, Unlimited, Unlimited Smooth (the app's names; pk_ff.h); ROW_SPD_SOUND 0 Off 1 Sped up 2 Normal pitch;
+ * ROW_SPD_MODE 0 Hold 1 Toggle; ROW_SPD_REWIND 0 Off 1 On. */
+enum { IMGQ_AUTO = 0, IMGQ_ORIGINAL, IMGQ_ENHANCED_2X, IMGQ_ENHANCED_3X, IMGQ_ENHANCED_4X, IMGQ_MMPX_2X, IMGQ_COUNT };
+enum { FFSPD_2X = 0, FFSPD_3X, FFSPD_UNLIMITED, FFSPD_SMOOTH, FFSPD_COUNT };
+/* the host rows every player shares, one wording (the main app's): "Rewind length" 0 Short, 1 Medium; "Video filter" 0 sharp bilinear, 1 bilinear */
+static const char *const kRewindLengthNames[2] = { "menu.short", "menu.medium" };
+static const char *const kVideoFilterNames[2] = { "menu.sharp_bilinear", "menu.bilinear" };
+#define PK_REWIND_LENGTH_HELP "menu.rewind_length_help"
+#define PK_VIDEO_FILTER_HELP "menu.video_filter_help"
+/* the filter row the way the app has it: under Original it shows sharp bilinear, and choosing bilinear there switches Image quality to Auto */
+
+struct CheatItem {
+	std::string name;
+	bool on;
+	bool available;     /* false: shown greyed (a code this player cannot use) */
+	CheatItem() : on(false), available(true) {}
+};
+
+struct MenuAchievement {
+	std::string title;
+	std::string desc;
+	uint32_t points;
+	bool unlocked;
+	bool hardcore;
+	std::string progress;
+	MenuAchievement() : points(0), unlocked(false), hardcore(false) {}
+};
+
+class MenuHost {
+public:
+	virtual ~MenuHost() {}
+	/* a picker or slider changed (the menu already holds the new value) */
+	virtual void on_change(int row_id, int value) { (void) row_id; (void) value; }
+	/* "Reset game" was confirmed; the menu closes after it */
+	virtual void on_reset() {}
+	/* Language was changed in the menu (Menu has already switched the texts): the host re-adds the rows whose texts it made itself
+	 * (add_host_row with a text that is not a catalogue key) and may store the choice (on_change(ROW_UI_LANGUAGE, v) came first) */
+	virtual void on_language_changed() {}
+	/* the machine's state as bytes, for Save here and for the undo copy; false if it cannot */
+	virtual bool capture_state(std::vector<uint8_t> &out) { (void) out; return false; }
+	/* put a state back; false if the core refused it */
+	virtual bool restore_state(const uint8_t *data, size_t n) { (void) data; (void) n; return false; }
+	/* RetroAchievements Hardcore: non-NULL = loading a state / undoing a load / using a cheat is refused now, and this is why (shown as the notice) */
+	virtual const char *state_load_refused() { return 0; }
+	virtual const char *cheats_refused() { return 0; }
+	/* the picture on screen now, for the thumbnails (valid until the next call) */
+	virtual bool current_frame(Frame *f) { (void) f; return false; }
+	virtual int64_t play_seconds() { return -1; }
+	/* cheats */
+	virtual void list_cheats(std::vector<CheatItem> &out) { (void) out; }
+	virtual void set_cheat(int index, bool on) { (void) index; (void) on; }
+	/* a state was saved / loaded / deleted through the menu (for the session report) */
+	virtual void on_state_touched(int slot) { (void) slot; }
+	/* the profile or a mapping changed and was stored (rc) */
+	virtual void on_controls_changed(WriteResult rc) { (void) rc; }
+	/* CAP_CHEAT_EDIT: "Add a cheat" was chosen (the host asks for the code, e.g. with the system keyboard,
+	 * and calls Menu::refresh() when the list changed); a code was confirmed for deletion */
+	virtual void add_cheat() {}
+	virtual bool delete_cheat(int index) { (void) index; return false; }
+	/* CAP_CHEAT_SEARCH. search_setup() fills the search's machine (pk_cs_init: the read callback in the console's RetroAchievements
+	 * address space, the regions of work RAM, the console's code kind); false = the machine has nothing to search. The Menu owns the
+	 * search and keeps it while the game runs (the menu may be closed and opened between two steps). A result becomes a code with
+	 * pk_cs_code and goes to add_cheat_code (true = added and on, the list was saved like a typed code). ask_search_value() opens the
+	 * keyboard for a number; the answer comes back through Menu::search_value_entered(). search_refused(): non-NULL = no search now
+	 * and why (a link session says it as the Cheats page does; Hardcore is cheats_refused()). */
+	virtual bool search_setup(pk_cs *cs) { (void) cs; return false; }
+	virtual void add_cheat_code(const std::string &code, const std::string &name) { (void) code; (void) name; }
+	virtual void ask_search_value(const std::string &title) { (void) title; }
+	virtual const char *search_refused() { return cheats_refused(); }
+	/* Writing a state on another thread: return true to take the job (the host runs States::commit(job)
+	 * there and calls Menu::state_write_done() on the game thread when it has finished); false (the default)
+	 * makes the menu write it now. wait_state_writes() must return only when no write is running; the menu
+	 * calls it before it reads or deletes a state. */
+	virtual bool queue_state_write(StateJob &job) { (void) job; return false; }
+	virtual void wait_state_writes() {}
+	/* CAP_RA: current game's achievements and an optional header summary string (e.g. "3 / 12 (HC)") */
+	virtual void list_achievements(std::vector<MenuAchievement> &out, std::string *summary) { (void) out; (void) summary; }
+};
+
+struct MenuConfig {
+	std::string game_name;          /* title at the top */
+	std::string console_label;      /* "Super Nintendo" */
+	std::string exit_label;         /* "" = the default ("Exit"); else a text or a catalogue key */
+	std::string exit_help;          /* "" = the default ("Close VitAdhoc"); else a text or a catalogue key */
+	std::string play_together_reason = "menu.reason.no_link";     /* texts or catalogue keys (tr() hands back a text that is not a key) */
+	std::string unsupported_reason = "menu.reason.unsupported";
+	uint32_t caps = CAP_ALL_BASIC;
+	uint32_t accent = 0x7B6CFF;     /* 0xRRGGBB */
+	bool enter_is_cross = true;
+	int players = 4;                /* pads the mapping page offers */
+	int system_lang = 1;            /* the Vita's system language (SCE_SYSTEM_PARAM_ID_LANG), for Language: Automatic */
+};
+
+enum MenuEvent { MENU_NONE = 0, MENU_RESUME, MENU_GAME_LIST, MENU_EXIT, MENU_RESET_DONE };
+
+struct TouchPoint {
+	bool down = false;
+	float x = 0, y = 0;     /* native 960 x 544 */
+};
+
+struct MenuInput {
+	PadSample pads[MAX_PLAYERS];
+	TouchPoint touch;
+	int dt_ms = 16;
+};
+
+class Menu {
+public:
+	Menu();
+	~Menu();
+	/* `states` may be null (then Save states is greyed). The Gfx given to draw() must outlive the Menu, or call release_textures() first. */
+	void configure(const MenuConfig &c, MenuHost *host, States *states);
+	/* the pad profile editing; any of them may be null (then Controls is greyed) */
+	void attach_input(Mapper *mapper, ProfileStore *store, const PadModel *model, Profile *profile);
+	void set_value(int row_id, int value);
+	int value(int row_id) const;
+	void set_row_note(int row_id, const std::string &reason);   /* greys the row with this reason ("" clears) */
+	/* only these choices of a picker are offered (bit i = value i); 0 = all. For a value the host cannot do
+	 * (a "Fit" shape that would equal "Original"), so no choice does nothing. */
+	void set_choices_allowed(int row_id, uint32_t mask);
+	/* A row of the host's own on PAGE_PICTURE, PAGE_CONTROLS or PAGE_SPEED: a picker with `choices`, shown
+	 * before the row `before_row` (a RowId; -1 = at the end). id >= ROW_HOST_BASE. Changes come to
+	 * MenuHost::on_change(id, value) like the built-in rows; set_value()/value() work with the id. */
+	void add_host_row(int page, int id, const std::string &label, const std::string &help,
+	                  const std::vector<std::string> &choices, int value, int before_row = -1);
+	/* the cheat list (or anything the host changed) is read again */
+	void refresh();
+	/* the answer to MenuHost::ask_search_value (ok = the keyboard was confirmed) */
+	void search_value_entered(bool ok, const std::string &text);
+	/* introspection for tests: the search's state */
+	bool search_active() const { return pk_cs_active(&cs_); }
+	int search_count() const { return (int) cs_.count; }
+	/* the host finished a write it took with queue_state_write */
+	void state_write_done(int slot, const SaveReport &rep);
+
+	/* opens on the control centre; nav_player is the pad that asked for it */
+	void open(int nav_player = 0);
+	bool is_open() const { return open_; }
+	MenuEvent update(const MenuInput &in);
+	/* Upload / free pending thumbnail and screenshot textures BEFORE opening a GXM scene on Vita. */
+	void prepare_textures(Gfx *g);
+	void draw(Gfx *g, Text *t);
+	void release_textures();
+	Notices &notices() { return notices_; }
+
+	/* introspection, for tests */
+	enum PageId { PAGE_TOP = 0, PAGE_STATES, PAGE_SETTINGS, PAGE_PICTURE, PAGE_CONTROLS, PAGE_MAPPING, PAGE_SPEED, PAGE_CHEATS, PAGE_CHEAT_SEARCH, PAGE_INTERFACE, PAGE_RA };
+	PageId page() const { return page_; }
+	int cursor() const { return cursor_; }
+	void goto_page(PageId p);
+	void select_slot(int slot);        /* 1..10 */
+	int selected_slot() const { return slot_; }
+	bool modal_open() const { return modal_ != 0; }
+	bool button_test_open() const { return modal_ == M_BTNTEST; }
+	int modal_kind() const { return modal_; }
+	enum { REGION_CARD = 1, REGION_ROW, REGION_ARROW_L, REGION_ARROW_R, REGION_SLIDER, REGION_SLOT, REGION_BUTTON, REGION_OUTSIDE, REGION_DELETE };
+	struct Region {
+		float x, y, w, h;      /* the touch area */
+		int kind, a;
+		float vx, vy, vw, vh;  /* what is drawn (for the pressed highlight and the flash) */
+		float radius;
+	};
+	const std::vector<Region> &regions() const { return regions_; }
+	float min_touch_height() const;    /* smallest height among regions fully on screen and not clipped, for tests */
+	int row_count() const { return (int) rows_.size(); }
+	const std::string &row_label(int i) const { return rows_[(size_t) i].label; }
+	std::string row_value_text(int i) const;
+	bool row_enabled(int i) const { return rows_[(size_t) i].enabled; }
+	const std::string &row_reason(int i) const { return rows_[(size_t) i].reason; }
+
+private:
+	enum { K_CHOICE = 1, K_SLIDER, K_ACTION, K_LINK, K_INFO };
+	struct Row {
+		int id;                       /* RowId, or -1 */
+		int kind;
+		std::string label, help, value_text;
+		std::vector<std::string> choices;
+		int vmin, vmax, value;
+		bool enabled;
+		std::string reason;
+		int tag;                      /* a PageId for links, an action index for mapping rows, a cheat index */
+		std::vector<int> map;         /* a picker with some choices left out: choices[i] stands for value map[i] */
+		Row() : id(-1), kind(K_INFO), vmin(0), vmax(0), value(0), enabled(true), tag(0) {}
+	};
+	enum { M_NONE = 0, M_OVERWRITE, M_DELETE, M_LIST, M_EXIT, M_RESET, M_CTL_RESET, M_CAPTURE, M_CHEAT_DELETE, M_BTNTEST };
+	enum { CARD_RESUME = 0, CARD_STATES, CARD_TOGETHER, CARD_CHEATS, CARD_SETTINGS, CARD_RESET, CARD_LIST, CARD_EXIT, CARD_COUNT };
+	enum { BTN_PRIMARY = 1, BTN_SECONDARY, BTN_LOAD, BTN_SAVE, BTN_DELETE, BTN_UNDO, BTN_CLEAR, BTN_CANCEL };
+
+	/* page and rows */
+	void build_rows();
+	void set_page(PageId p, bool push);
+	void back();
+	void clamp_cursor();
+	void ensure_visible();
+	float view_h() const;
+	float content_h() const;
+	void set_row_value(Row &r, int v);
+	void apply_value(Row &r, int v);
+	void activate_row(int i);
+	void step_row(int i, int dir);
+	bool card_visible(int c) const;
+	int step_card(int from, int dir) const;
+	int visible_card_count() const;
+	bool card_enabled(int c, std::string *why) const;
+	void activate_card(int c);
+	std::string card_help(int c) const;
+	void controls_changed();
+	void map_row_text(Row &r, int action) const;
+	/* states */
+	void refresh_slots();
+	void refresh_cheats();
+	void do_save(int slot);
+	void do_load(int slot);
+	void do_delete(int slot);
+	void do_undo();
+	void request_save(int slot);
+	/* modal */
+	void open_modal(int kind, int arg);
+	void modal_answer(bool yes);
+	void begin_capture(int action);
+	void capture_update(const MenuInput &in);
+	/* input */
+	void layout();
+	void grow_to_pitch();
+	void pad_update(const MenuInput &in);
+	void touch_update(const MenuInput &in);
+	void tap(const Region &r, float x);
+	int hit(float x, float y) const;
+	void add_region(float x, float y, float w, float h, int kind, int a, float radius, bool clip_to_view);
+	void notify(const std::string &text, NoticeKind k);
+	/* drawing */
+	void draw_backdrop(Gfx *g);
+	void draw_header(Gfx *g, Text *t, const char *title, const char *sub);
+	void draw_hints(Gfx *g, Text *t);
+	void draw_top(Gfx *g, Text *t);
+	void draw_rows(Gfx *g, Text *t);
+	void draw_states(Gfx *g, Text *t);
+	void draw_modal(Gfx *g, Text *t);
+	void draw_overlays(Gfx *g);
+	void upload_textures(Gfx *g);
+	uint32_t accent(int a) const;
+	uint32_t accent_deep() const;
+	uint32_t accent_text() const;
+	bool is_light() const;
+	uint32_t c_bg(int a = 255) const;
+	uint32_t c_text(int a = 255) const;
+	uint32_t c_text2(int a = 255) const;
+	uint32_t c_text3(int a = 255) const;
+	uint32_t c_ink(int a = 255) const;
+	uint32_t c_sheet(int a = 255) const;
+	uint32_t c_plate(int a = 255) const;
+	uint32_t c_red(int a = 255) const;
+	uint32_t c_glass(int a = 255) const;
+
+	MenuConfig cfg_;
+	MenuHost *host_;
+	States *states_;
+	Mapper *mapper_;
+	ProfileStore *store_;
+	const PadModel *model_;
+	Profile *profile_;
+	int vals_[ROW_COUNT];
+	std::string notes_[ROW_COUNT];
+	uint32_t allowed_[ROW_COUNT];
+	struct HostRow { int page, id, before; std::string label, help; std::vector<std::string> choices; int value; };
+	std::vector<HostRow> host_rows_;
+	HostRow *host_row(int id);
+	int used_slots_;
+	/* a state being written by the host's thread: shown at once from memory */
+	struct Pending { bool on; std::vector<uint16_t> thumb; int64_t saved; int64_t play; };
+	Pending pending_slot_[STATE_SLOTS];
+	bool open_;
+	PageId page_;
+	std::vector<PageId> stack_;
+	std::vector<int> cursor_stack_;
+	int cursor_;
+	int slot_;
+	int nav_player_;
+	int modal_, modal_arg_;
+	std::vector<Row> rows_;
+	std::vector<CheatItem> cheats_;
+	std::vector<MenuAchievement> ra_achs_;
+	std::string ra_summary_;
+	bool has_active_cheats_;
+	/* Search memory */
+	pk_cs cs_;
+	bool cs_ready_;                  /* search_setup() was done */
+	int cs_size_;                    /* 0..2 = 1, 2, 4 bytes (the Size row) */
+	int cs_op_;                      /* the step waiting for its typed number, -1 none */
+	int cs_n_;                       /* results listed (<= PK_CS_LIST_MAX) */
+	uint32_t cs_addr_[PK_CS_LIST_MAX], cs_val_[PK_CS_LIST_MAX];
+	void search_new();
+	void search_ask(int op);
+	void search_apply(int op, uint32_t v);
+	void search_add(int i);
+	bool search_open();
+	std::vector<Region> regions_;
+	float scroll_, scroll_target_;
+	int age_ms_;
+	int map_player_;
+	/* pad repeat and edges */
+	uint32_t prev_buttons_, ignore_mask_;
+	bool first_update_;
+	int rep_ms_[4];
+	/* touch */
+	bool t_down_;
+	int t_region_;
+	float t_x0_, t_y0_, t_x_, t_y_, t_scroll0_;
+	bool t_scrolling_, t_slider_;
+	Region flash_;
+	int flash_ms_;
+	bool have_flash_;
+	/* states data */
+	SlotInfo slots_[STATE_SLOTS];
+	std::vector<uint16_t> thumb_px_[STATE_SLOTS];
+	std::vector<uint16_t> shot_px_;
+	int shot_w_, shot_h_, shot_slot_;
+	bool undo_avail_;
+	/* textures (made in draw) */
+	Gfx *gfx_;
+	Texture *thumb_tex_[STATE_SLOTS];
+	Texture *shot_tex_;
+	bool thumbs_dirty_;
+	bool shot_dirty_;
+	/* Button test: the pad as read now, and how long Start + Select have been held */
+	PadSample bt_pad_;
+	TouchPoint bt_touch_;
+	int bt_hold_ms_, bt_touch_ms_;
+	void bt_update(const MenuInput &in);
+	void draw_btntest(Gfx *g, Text *t);
+	std::string bt_actions(uint32_t bit) const;
+	std::string exit_label() const;
+	unsigned lang_serial_;           /* the language the rows were built in (i18n_serial) */
+	float hints_left_;               /* where the hints of the top line end on the left (set by draw_hints) */
+	/* capture */
+	int cap_action_, cap_ms_, cap_window_ms_;
+	uint32_t cap_bits_;
+	/* results */
+	MenuEvent pending_;
+	Notices notices_;
+};
+
+}  // namespace pk
+
+#endif

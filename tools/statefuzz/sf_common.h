@@ -1,0 +1,196 @@
+/* sf_common.h - shared parts of the state-loader fuzz harnesses (one harness per core, see docs/TESTING.md "State loaders").
+ * Header only, C++ (g++ -std=gnu++14 -pthread). MIT licence.
+ *
+ * What a harness does: take a genuine state of a running game, damage it the way a hostile peer would (the peer computes the
+ * length and the checksums itself), repair the checksums, load it, run a few frames, repeat.  Build the core and the harness with
+ * -fsanitize=address,undefined: any memory error, undefined behaviour or endless frame is a failure.  The state that failed is
+ * written to the case directory (crash-N.st / hang-N.st) so it can be kept as a regression test.
+ *
+ *   sf_rng      deterministic generator (the same seed gives the same damage on every machine)
+ *   sf_crc32    zlib-compatible CRC-32
+ *   sf_mutate   damage a byte range of a buffer; `hot` ranges get most of the hits
+ *   sf_arm      register the buffer about to be loaded; on a sanitizer abort, a fatal signal or a hang it is saved
+ *   sf_beat     the harness calls it after every frame; no beat for `hang_s` seconds is a hang (the watchdog saves the case, exits 3)
+ */
+#ifndef SF_COMMON_H
+#define SF_COMMON_H
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <signal.h>
+#include <ctype.h>
+#include <unistd.h>
+#include <time.h>
+#include <pthread.h>
+#include <vector>
+#include <string>
+
+struct sf_rng { uint64_t s; };
+static inline void sf_seed(sf_rng *r, uint64_t seed) { r->s = seed * 0x9E3779B97F4A7C15ull + 0x1234567ull; if (!r->s) r->s = 1; }
+static inline uint32_t sf_rand(sf_rng *r)
+{
+	uint64_t x = r->s; x ^= x << 13; x ^= x >> 7; x ^= x << 17; r->s = x;
+	return (uint32_t)((x * 0x2545F4914F6CDD1Dull) >> 32);
+}
+static inline uint32_t sf_below(sf_rng *r, uint32_t n) { return n ? sf_rand(r) % n : 0; }
+
+static inline uint32_t sf_crc32(const uint8_t *p, size_t n)
+{
+	static uint32_t t[256]; static int init;
+	if (!init) { for (uint32_t i = 0; i < 256; i++) { uint32_t c = i; for (int k = 0; k < 8; k++) c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1; t[i] = c; } init = 1; }
+	uint32_t c = 0xFFFFFFFFu;
+	while (n--) c = t[(c ^ *p++) & 255] ^ (c >> 8);
+	return c ^ 0xFFFFFFFFu;
+}
+
+struct sf_range { size_t off, len; };
+
+static inline void sf_mutate(sf_rng *r, uint8_t *b, size_t blen, size_t lo, size_t hi, const std::vector<sf_range> &hot)
+{
+	static const uint32_t magic32[] = { 0, 1, 2, 3, 0x7f, 0x80, 0xff, 0x100, 0xffff, 0x10000, 0x7fffffffu, 0x80000000u, 0xfffffff0u,
+	                                    0xffffffffu, 0x00100000u, 0x01000000u, 0x0000ffffu, 0xdeadbeefu };
+	if (hi > blen) hi = blen;
+	if (hi <= lo + 8) return;
+	int hits = (int[]){ 1, 1, 2, 4, 8, 16, 64 }[sf_below(r, 7)];
+	for (int h = 0; h < hits; h++)
+	{
+		size_t at;
+		if (!hot.empty() && sf_below(r, 3) != 0)
+		{
+			const sf_range &z = hot[sf_below(r, (uint32_t)hot.size())];
+			if (z.len == 0 || z.off + z.len > blen) continue;
+			at = z.off + sf_below(r, (uint32_t)z.len);
+		}
+		else at = lo + sf_below(r, (uint32_t)(hi - lo));
+		size_t room = hi - at;
+		switch (sf_below(r, 9))
+		{
+		case 0: b[at] = (uint8_t)sf_rand(r); break;
+		case 1: b[at] ^= (uint8_t)(1u << sf_below(r, 8)); break;
+		case 2: if (room >= 4) { uint32_t v = magic32[sf_below(r, sizeof magic32 / sizeof *magic32)]; memcpy(b + at, &v, 4); } break;
+		case 3: if (room >= 2) { uint16_t v = (uint16_t)magic32[sf_below(r, sizeof magic32 / sizeof *magic32)]; memcpy(b + at, &v, 2); } break;
+		case 4: { size_t n = 1 + sf_below(r, 64); if (n > room) n = room; for (size_t i = 0; i < n; i++) b[at + i] = (uint8_t)sf_rand(r); } break;
+		case 5: { size_t n = 1 + sf_below(r, 256); if (n > room) n = room; memset(b + at, 0xff, n); } break;
+		case 6: { size_t n = 1 + sf_below(r, 256); if (n > room) n = room; memset(b + at, 0, n); } break;
+		case 7: { size_t n = 1 + sf_below(r, 128); size_t from = lo + sf_below(r, (uint32_t)(hi - lo)); if (n > room) n = room; if (from + n > hi) n = hi - from; memmove(b + at, b + from, n); } break;
+		default: if (room >= 4) { uint32_t v; memcpy(&v, b + at, 4); v += (uint32_t)(int)(sf_below(r, 9) - 4); memcpy(b + at, &v, 4); } break;
+		}
+	}
+}
+
+/* ---- the case that is being loaded: saved when something goes wrong ---------------------------------------------------- */
+static struct {
+	const uint8_t *buf; size_t len; std::string dir; std::string tag; unsigned long iter; volatile unsigned long beat; int hang_s; int saved;
+} sf_cur;
+
+static inline void sf_dump(const char *kind)
+{
+	if (!sf_cur.buf || sf_cur.saved) return;
+	sf_cur.saved = 1;
+	char p[1024]; snprintf(p, sizeof p, "%s/%s-%s-%lu.st", sf_cur.dir.c_str(), kind, sf_cur.tag.c_str(), sf_cur.iter);
+	FILE *f = fopen(p, "wb"); if (f) { fwrite(sf_cur.buf, 1, sf_cur.len, f); fclose(f); }
+	fprintf(stderr, "STATEFUZZ %s: case saved to %s\n", kind, p);
+}
+// a UBSan report must end in an abort (not exit) so that the signal handler below can save the case
+extern "C" const char *__ubsan_default_options(void) { return "print_stacktrace=1:abort_on_error=1"; }
+extern "C" const char *__asan_default_options(void) { return "detect_leaks=0:abort_on_error=1"; }
+static void sf_on_signal(int sig) { sf_dump("crash"); signal(sig, SIG_DFL); raise(sig); }
+static void sf_on_death(void) { sf_dump("crash"); }
+extern "C" void __sanitizer_set_death_callback(void (*)(void)) __attribute__((weak));
+
+static void *sf_watchdog(void *)
+{
+	unsigned long last = (unsigned long)-1; int still = 0;
+	for (;;)
+	{
+		struct timespec ts = { 0, 100 * 1000 * 1000 }; nanosleep(&ts, NULL);
+		unsigned long now = sf_cur.beat;
+		if (now != last) { last = now; still = 0; continue; }
+		if (++still >= sf_cur.hang_s * 10) { fprintf(stderr, "STATEFUZZ hang: no frame finished for %d s\n", sf_cur.hang_s); sf_dump("hang"); fflush(stderr); _exit(3); }
+	}
+	return NULL;
+}
+static inline void sf_init(const char *dir, const char *tag, int hang_s)
+{
+	sf_cur.dir = dir; sf_cur.tag = tag; sf_cur.hang_s = hang_s;
+	int sigs[] = { SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT, SIGTRAP };
+	for (int s : sigs) signal(s, sf_on_signal);
+	if (__sanitizer_set_death_callback) __sanitizer_set_death_callback(sf_on_death);
+	pthread_t t; pthread_create(&t, NULL, sf_watchdog, NULL); pthread_detach(t);
+}
+static inline void sf_arm(const uint8_t *buf, size_t len, unsigned long iter) { sf_cur.buf = buf; sf_cur.len = len; sf_cur.iter = iter; sf_cur.saved = 0; sf_cur.beat++; }
+static inline void sf_beat(void) { sf_cur.beat++; }
+
+static inline std::vector<uint8_t> sf_read_file(const char *path)
+{
+	std::vector<uint8_t> v; FILE *f = fopen(path, "rb"); if (!f) return v;
+	uint8_t tmp[65536]; size_t n; while ((n = fread(tmp, 1, sizeof tmp, f)) > 0) v.insert(v.end(), tmp, tmp + n);
+	fclose(f); return v;
+}
+
+/* ---- regression recipes: a case is kept as a few changed bytes on the state of the machine at the warm point, not as a game state ----
+ * "--base-out FILE" writes that base state and exits; a "--case X.recipe" file holds lines "OFFSET HEXBYTES" (decimal offset, bytes in hex,
+ * '#' starts a comment; a line "SIZE N" resizes first) that are applied to a base state (the first, or "--base N") before it is loaded.  tools/statefuzz/recipe.py
+ * makes one from a base and a crash case.  Checksums are bytes like any other, so a recipe carries the repaired checksum itself. */
+static const char *sf_base_out = NULL;
+static size_t sf_base_idx = 0;       /* "--base N": which of the harness's base states (the warm point, then later ones) the recipe is on */
+static void sf_write_file(const char *path, const std::vector<uint8_t> &b) { FILE *f = fopen(path, "wb"); if (!f) return; fwrite(b.data(), 1, b.size(), f); fclose(f); }
+template <class V> static void sf_base_dump(const V &bases) { if (sf_base_out && !bases.empty()) { size_t k = sf_base_idx < bases.size() ? sf_base_idx : 0; sf_write_file(sf_base_out, bases[k]); printf("base state %zu written (%zu bytes)\n", k, bases[k].size()); exit(0); } }
+static std::vector<uint8_t> sf_read_case(const char *path, const std::vector<uint8_t> &base)
+{
+	size_t l = strlen(path);
+	if (l < 7 || strcmp(path + l - 7, ".recipe")) return sf_read_file(path);
+	std::vector<uint8_t> b = base;
+	FILE *f = fopen(path, "r"); if (!f) return std::vector<uint8_t>();
+	char line[8192];
+	while (fgets(line, sizeof line, f))
+	{
+		char *p = line; while (*p == ' ' || *p == '\t') p++;
+		if (*p == '#' || *p == '\n' || !*p) continue;
+		if (!strncmp(p, "SIZE", 4)) { b.resize((size_t)strtoul(p + 4, 0, 10)); continue; }
+		char *e; size_t off = (size_t)strtoul(p, &e, 10);
+		while (*e == ' ') e++;
+		for (; isxdigit((unsigned char)e[0]) && isxdigit((unsigned char)e[1]); e += 2)
+		{
+			char h[3] = { e[0], e[1], 0 };
+			if (off < b.size()) b[off] = (uint8_t)strtoul(h, 0, 16);
+			off++;
+		}
+	}
+	fclose(f);
+	return b;
+}
+
+/* ---- load proof: a genuine state, loaded at frame N and run M frames, must end exactly where the uninterrupted run does ---- */
+/* save() -> bytes of the machine's state, load(bytes) -> 0 when loaded, run(frames, rng) runs with a scripted pad.
+ * The state bytes after the M frames are compared (a state holds the whole machine, so a clamp that changed a legitimate value
+ * shows as a difference, and a refused state as a failure).  Returns the number of failures. */
+template <class Save, class Load, class Run>
+static int sf_proof(const char *name, Save save, Load load, Run run, uint64_t seed, int M = 60, int min_frame = 1)
+{
+	static const int points[] = { 1, 97, 300, 655 };
+	int fails = 0, at = 0;
+	sf_rng rng;
+	for (int p : points)
+	{
+		if (p < min_frame) continue;   // (the GBA harness skips frame 1: the first frame's state differs on the unmodified core too)
+		sf_seed(&rng, seed + at); run(p - at, &rng); at = p;
+		std::vector<uint8_t> s = save();
+		sf_seed(&rng, 7777 + p); run(M, &rng);
+		std::vector<uint8_t> h1 = save();
+		int rc = load(s);
+		if (rc != 0) { printf("PROOF %s frame %d: the machine's own state is refused (rc %d)\n", name, p, rc); fails++; continue; }
+		sf_seed(&rng, 7777 + p); run(M, &rng);
+		std::vector<uint8_t> h2 = save();
+		size_t d = 0; while (d < h1.size() && d < h2.size() && h1[d] == h2[d]) d++;
+		if ((h1.size() != h2.size() || d < h1.size()) && getenv("STATEFUZZ_PROOF_DUMP")) { FILE *f = fopen("proof_h1.bin", "wb"); fwrite(h1.data(), 1, h1.size(), f); fclose(f); f = fopen("proof_h2.bin", "wb"); fwrite(h2.data(), 1, h2.size(), f); fclose(f); f = fopen("proof_s.bin", "wb"); fwrite(s.data(), 1, s.size(), f); fclose(f); }
+		if (h1.size() != h2.size() || d < h1.size()) { printf("PROOF %s frame %d: load at N then %d frames differs from the uninterrupted run (first byte %zu)\n", name, p, M, d); fails++; }
+		else printf("PROOF %s frame %d: load at N + %d frames == uninterrupted (%zu bytes)\n", name, p, M, h1.size());
+		// continue the uninterrupted line from where h1 left it, so the next point is a fresh frame count
+		at = p + M;
+	}
+	return fails;
+}
+#endif

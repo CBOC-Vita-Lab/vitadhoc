@@ -11,6 +11,7 @@
 #include "pad_port_pick.h"
 #include "jit_vita.h"
 #include "fe_evt.h"
+#include "fe_gbcam_fit.h"
 
 #include <malloc.h>
 #include <stdarg.h>
@@ -18,6 +19,7 @@
 #include <string.h>
 
 #include <psp2/appmgr.h>
+#include <psp2/camera.h>
 #include <psp2/audioout.h>
 #include <psp2/ctrl.h>
 #include <psp2/display.h>
@@ -120,11 +122,19 @@ const char *plat_app_dir(void)
    return "app0:";
 }
 
+static int hex_nibble(char c)
+{
+   if (c >= '0' && c <= '9') return c - '0';
+   if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+   if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+   return -1;
+}
+
 int plat_launch_param(char *out, size_t cap)
 {
    static char buf[1024];
    const char *p = NULL, *q;
-   size_t n;
+   size_t n, i, o = 0;
 
    if (!out || !cap)
       return -1;
@@ -148,10 +158,34 @@ int plat_launch_param(char *out, size_t cap)
       n--;
    if (!n)
       return -1;
-   if (n >= cap)
-      return -2;                       /* there is one, but it does not fit */
-   memcpy(out, p, n);
-   out[n] = '\0';
+   /* Decode %XX escapes (e.g. RetroFlow paths with %20) without treating '+' as space. */
+   for (i = 0; i < n; i++)
+   {
+      unsigned char ch = (unsigned char)p[i];
+      if (ch == '%' && i + 2 < n)
+      {
+         int hi = hex_nibble(p[i + 1]);
+         int lo = hex_nibble(p[i + 2]);
+         if (hi >= 0 && lo >= 0)
+         {
+            unsigned char val = (unsigned char)((hi << 4) | lo);
+            if (val != 0)
+            {
+               ch = val;
+               i += 2;
+            }
+         }
+      }
+      if (o + 1 >= cap)
+      {
+         out[0] = '\0';
+         return -2;                       /* there is one, but it does not fit */
+      }
+      out[o++] = (char)ch;
+   }
+   if (!o)
+      return -1;
+   out[o] = '\0';
    return 0;
 }
 
@@ -169,6 +203,8 @@ void plat_console(const char *line)
    sceClibPrintf("%s", line);
 }
 
+static void report_line(const char *fmt, ...)
+   __attribute__((format(printf, 1, 2)));
 static void report_line(const char *fmt, ...)
 {
    char buf[256];
@@ -213,6 +249,8 @@ void plat_sleep_us(uint32_t us)
 
 static struct { int mode; const char *path; } g_vmp;
 
+static void vmp_say(const char *fmt, ...)
+   __attribute__((format(printf, 1, 2)));
 static void vmp_say(const char *fmt, ...)
 {
    char line[200];
@@ -332,6 +370,11 @@ unsigned plat_arm_mhz(void)
 {
    int mhz = scePowerGetArmClockFrequency();
    return mhz > 0 ? (unsigned)mhz : 0;
+}
+
+int plat_is_pstv(void)
+{
+   return sceKernelIsPSVitaTV() ? 1 : 0;
 }
 
 /* SUBS + BNE: one iteration a cycle on the Cortex-A9 (the branch predicted
@@ -515,7 +558,7 @@ void plat_audio_thread_stop(void)
 
 /* ---- where the threads run ------------------------------------------------ */
 
-#define WATCH_MAX 8
+#define WATCH_MAX 12
 static struct
 {
    const char *tag;
@@ -539,7 +582,23 @@ void plat_thread_watch(const char *tag, int thid)
          return;
       }
    if (g_nwatch >= WATCH_MAX)
+   {
+      /* Reclaim a slot whose thread has already exited (e.g. across games). */
+      for (i = 0; i < g_nwatch; i++)
+      {
+         SceKernelThreadInfo info;
+         memset(&info, 0, sizeof(info));
+         info.size = sizeof(info);
+         if (sceKernelGetThreadInfo(g_watch[i].id, &info) < 0)
+         {
+            memset(&g_watch[i], 0, sizeof(g_watch[0]));
+            g_watch[i].tag = tag;
+            g_watch[i].id = thid;
+            return;
+         }
+      }
       return;
+   }
    memset(&g_watch[g_nwatch], 0, sizeof(g_watch[0]));
    g_watch[g_nwatch].tag = tag;
    g_watch[g_nwatch].id = thid;
@@ -563,13 +622,14 @@ void plat_thread_report(char *buf, size_t cap)
          continue;            /* gone (its game ended) */
       run = (uint64_t)info.runClocks;
       n += (size_t)snprintf(buf + n, n < cap ? cap - n : 0,
-                            "%s%s=c%d/%x/%u/%u/%u/%u", n ? " " : "",
+                            "%s%s=c%d/%x/%u/%u/%u/%u/%ums", n ? " " : "",
                             g_watch[i].tag, (int)info.lastExecutedCpuId,
                             (unsigned)info.currentCpuAffinityMask >> 16,
                             (unsigned)(run - g_watch[i].run),
                             info.threadPreemptCount - g_watch[i].pre,
                             info.intrPreemptCount - g_watch[i].irq,
-                            (unsigned)info.changeCpuCount - g_watch[i].moved);
+                            (unsigned)info.changeCpuCount - g_watch[i].moved,
+                            (unsigned)(run / 1000u));   /* ms run, in total */
       g_watch[i].run = run;
       g_watch[i].pre = info.threadPreemptCount;
       g_watch[i].irq = info.intrPreemptCount;
@@ -678,6 +738,67 @@ int plat_net_join(uint32_t timeout_us)
    return 1;
 }
 
+static SceUID g_job_thid = -1;
+static void (*g_job_fn)(void *);
+static void *g_job_arg;
+static int g_job_done;
+
+static int job_entry(SceSize args, void *argp)
+{
+   (void)args; (void)argp;
+   g_job_fn(g_job_arg);
+   __atomic_store_n(&g_job_done, 1, __ATOMIC_RELEASE);
+   return 0;
+}
+
+int plat_job_busy(void)
+{
+   if (g_job_thid < 0)
+      return 0;
+   if (!__atomic_load_n(&g_job_done, __ATOMIC_ACQUIRE))
+      return 1;
+   return !plat_job_join(0);
+}
+
+int plat_job_start(void (*fn)(void *), void *arg)
+{
+   if (g_job_thid >= 0)
+   {
+      if (!__atomic_load_n(&g_job_done, __ATOMIC_ACQUIRE))
+         return -1;
+      /* a finished one may still be there to be collected */
+      if (!plat_job_join(1000))
+         return -1;
+   }
+   g_job_fn = fn;
+   g_job_arg = arg;
+   __atomic_store_n(&g_job_done, 0, __ATOMIC_RELEASE);
+   /* 128 KiB: the deflate's tables are on the heap, its frames are small */
+   g_job_thid = sceKernelCreateThread("gbadhoc_job", job_entry, PRIO_BG,
+                                      0x20000, 0, 0, NULL);
+   if (g_job_thid < 0 || sceKernelStartThread(g_job_thid, 0, NULL) < 0)
+   {
+      if (g_job_thid >= 0)
+         sceKernelDeleteThread(g_job_thid);
+      g_job_thid = -1;
+      return -1;
+   }
+   plat_thread_watch("job", g_job_thid);
+   return 0;
+}
+
+int plat_job_join(uint32_t timeout_us)
+{
+   SceUInt tmo = timeout_us;
+   if (g_job_thid < 0)
+      return 1;
+   if (sceKernelWaitThreadEnd(g_job_thid, NULL, &tmo) < 0)
+      return 0;
+   sceKernelDeleteThread(g_job_thid);
+   g_job_thid = -1;
+   return 1;
+}
+
 void plat_thread_sleep_us(uint32_t us)
 {
    sceKernelDelayThread(us);
@@ -768,6 +889,32 @@ static uint32_t face_buttons(uint32_t b)
    return b;
 }
 
+/* The samples the controller service buffered since the last call (it keeps
+ * the latest 64, one per refresh): every button seen down in one of them. */
+unsigned plat_pad_pressed(void)
+{
+   static int have;
+   static SceUInt64 last;
+   SceCtrlData d[16];
+   unsigned b = 0;
+   int n, i;
+   memset(d, 0, sizeof(d));
+   n = sceCtrlPeekBufferPositive(0, d, 16);
+   if (n <= 0)
+      return 0;
+   if (!have)
+   {
+      have = 1;
+      last = d[n - 1].timeStamp;
+      return 0;
+   }
+   for (i = 0; i < n; i++)
+      if (d[i].timeStamp > last)
+         b |= d[i].buttons;
+   last = d[n - 1].timeStamp;
+   return face_buttons(b);
+}
+
 void plat_pad_read(plat_pad *pad)
 {
    SceCtrlData d;
@@ -780,6 +927,23 @@ void plat_pad_read(plat_pad *pad)
       return;
    }
    pad->buttons = face_buttons(d.buttons);  /* PLAT_BTN_* are SCE_CTRL_* */
+   pad->lx = d.lx;
+   pad->ly = d.ly;
+   pad->rx = d.rx;
+   pad->ry = d.ry;
+}
+
+void plat_pad_read_raw(plat_pad *pad)
+{
+   SceCtrlData d;
+   memset(&d, 0, sizeof(d));
+   if (sceCtrlPeekBufferPositive(0, &d, 1) < 0)
+   {
+      pad->buttons = 0;
+      pad->lx = pad->ly = pad->rx = pad->ry = 128;
+      return;
+   }
+   pad->buttons = d.buttons;
    pad->lx = d.lx;
    pad->ly = d.ly;
    pad->rx = d.rx;
@@ -888,6 +1052,30 @@ int plat_touch_points(plat_touch_pt *out, int max)
    return n;
 }
 
+/* The rear panel, every finger on it (plat.h): its own units (x 0..1919, y 108..889). */
+int plat_rear_points(plat_touch_pt *out, int max)
+{
+   static int started;
+   SceTouchData td;
+   int i, n = 0;
+   if (!started)
+   {
+      sceTouchSetSamplingState(SCE_TOUCH_PORT_BACK,
+                               SCE_TOUCH_SAMPLING_STATE_START);
+      started = 1;
+   }
+   memset(&td, 0, sizeof(td));
+   if (sceTouchPeek(SCE_TOUCH_PORT_BACK, &td, 1) < 0)
+      return 0;
+   for (i = 0; i < (int)td.reportNum && n < max; i++)
+   {
+      out[n].x = td.report[i].x;
+      out[n].y = td.report[i].y;
+      n++;
+   }
+   return n;
+}
+
 /* ---- the motion sensor (plat.h) ------------------------------------------ */
 
 static int g_motion_on;
@@ -924,6 +1112,105 @@ int plat_motion_read(plat_motion *m)
    m->right_g = -st.acceleration.x;
    m->down_g  = st.acceleration.y;
    m->rate_z  = st.angularVelocity.z;
+   return 0;
+}
+
+/* ---- the camera (plat.h) --------------------------------------------------
+ * Opened the way the VitaSDK camera sample does: ABGR into a CDRAM block
+ * (256 KB, the unit the allocator hands out), read without waiting for the
+ * next frame.  176x144 is plenty for a 128x112 picture. */
+#define CAM_W 176
+#define CAM_H 144
+static int      g_cam_dev = -1;
+static SceUID   g_cam_blk = -1;
+static void    *g_cam_buf;
+static int      g_cam_miss;
+static int      g_cam_got;       /* a picture has arrived since it opened */
+
+void plat_camera_close(void)
+{
+   if (g_cam_dev >= 0)
+   {
+      sceCameraStop(g_cam_dev);
+      sceCameraClose(g_cam_dev);
+   }
+   if (g_cam_blk >= 0)
+      sceKernelFreeMemBlock(g_cam_blk);
+   g_cam_dev = -1;
+   g_cam_blk = -1;
+   g_cam_buf = NULL;
+}
+
+int plat_camera_open(int back)
+{
+   SceCameraInfo info;
+   int rc;
+   plat_camera_close();
+   g_cam_blk = sceKernelAllocMemBlock("gbcamera", SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW,
+                                      256 * 1024, NULL);
+   if (g_cam_blk < 0 || sceKernelGetMemBlockBase(g_cam_blk, &g_cam_buf) < 0)
+   {
+      fe_evt("camera open failed step=memblock");
+      plat_camera_close();
+      return -1;
+   }
+   memset(&info, 0, sizeof(info));
+   info.size = sizeof(info);
+   info.format = SCE_CAMERA_FORMAT_YUV420_PLANE;
+   info.resolution = SCE_CAMERA_RESOLUTION_176_144;
+   info.framerate = SCE_CAMERA_FRAMERATE_30_FPS;
+   info.sizeIBase = CAM_W * CAM_H;
+   info.sizeUBase = (CAM_W / 2) * (CAM_H / 2);
+   info.sizeVBase = (CAM_W / 2) * (CAM_H / 2);
+   info.pitch = 0;
+   info.pIBase = g_cam_buf;
+   info.pUBase = (uint8_t *)g_cam_buf + info.sizeIBase;
+   info.pVBase = (uint8_t *)g_cam_buf + info.sizeIBase + info.sizeUBase;
+   rc = sceCameraOpen(back ? SCE_CAMERA_DEVICE_BACK : SCE_CAMERA_DEVICE_FRONT, &info);
+   if (rc < 0)
+   {
+      fe_evt("camera open failed rc=%08x", (unsigned)rc);
+      plat_camera_close();
+      return -1;
+   }
+   g_cam_dev = back ? SCE_CAMERA_DEVICE_BACK : SCE_CAMERA_DEVICE_FRONT;
+   rc = sceCameraStart(g_cam_dev);
+   if (rc < 0)
+   {
+      fe_evt("camera start failed rc=%08x", (unsigned)rc);
+      plat_camera_close();
+      return -1;
+   }
+   g_cam_miss = 0;
+   g_cam_got = 0;
+   fe_evt("camera open back=%d", back ? 1 : 0);
+   return 0;
+}
+
+int plat_camera_read(uint8_t *out, int mirror)
+{
+   static uint8_t y[CAM_W * CAM_H];
+   SceCameraRead rd;
+   const uint8_t *p = (const uint8_t *)g_cam_buf;
+   int rc;
+   if (g_cam_dev < 0 || !p)
+      return -1;
+   memset(&rd, 0, sizeof(rd));
+   rd.size = sizeof(rd);
+   rd.mode = 1;
+   rc = sceCameraRead(g_cam_dev, &rd);
+   if (rc < 0)
+   {
+      /* no new frame yet (or a hiccup): the last picture stands.  A camera
+       * that has been giving pictures and stops is called dead after about
+       * one second of frames; a fresh one gets a few more to warm up. */
+      return ++g_cam_miss > (g_cam_got ? 60 : 180) ? -1 : 1;
+   }
+   g_cam_miss = 0;
+   g_cam_got = 1;
+   /* YUV420 planar: pIBase starts with CAM_W x CAM_H Y-luma bytes (pitch 0). */
+   sceClibMemcpy(y, p, sizeof(y));
+   fe_gbcam_fit(y, CAM_W, CAM_H, CAM_W, mirror, out);
    return 0;
 }
 

@@ -86,6 +86,10 @@ unsigned plat_refresh_mhz(void);
  * 0 and 0.  For the log. */
 unsigned plat_arm_mhz(void);
 unsigned plat_arm_mhz_measured(void);
+/* 1 on a PlayStation TV (sceKernelIsPSVitaTV), 0 on a handheld.  Settings >
+ * Display > Screen "Auto" reads it (playerkit/src/pk_screen.h).  The twin:
+ * 1 only when GBADHOC_FAKE_PSTV is set. */
+int plat_is_pstv(void);
 /* Ask for the CPU clock (500 or 444 MHz; the bus is set to 222, the GPU to
  * 222 and the crossbar to 166).  0 or more: the system took it; negative:
  * refused (no overclock plugin).  The twin: refused for 500 when
@@ -182,6 +186,12 @@ int  plat_bg_join(uint32_t timeout_us);
  * with the stack a TLS handshake needs.  Same contract. */
 int  plat_net_start(void (*fn)(void *), void *arg);
 int  plat_net_join(uint32_t timeout_us);
+/* A third one, for a job that takes seconds of CPU and is not a request
+ * (the clip export, clip_export.h): low priority, 128 KiB of stack.  Same
+ * contract again. */
+int  plat_job_start(void (*fn)(void *), void *arg);
+int  plat_job_join(uint32_t timeout_us);
+int  plat_job_busy(void);
 /* Sleep in REAL time, on a thread other than the frame thread (on the twin
  * plat_sleep_us moves the simulated clock). */
 void plat_thread_sleep_us(uint32_t us);
@@ -216,6 +226,23 @@ int  plat_motion_enable(int on);
 /* This moment's reading.  0 = read; -1 = none (not sampling, or no sensor). */
 int  plat_motion_read(plat_motion *m);
 
+/* ---- the camera (SceCamera) -----------------------------------------------
+ *
+ * For the Game Boy Camera cartridge (gbcore.h gbcore_set_camera_image): the
+ * Vita's front (back = 0) or back (back = 1) camera as the cartridge's
+ * 128x112 greyscale picture (frontend-common/fe_gbcam_fit.h), mirrored
+ * left to right when `mirror` is set.  The twin has no camera unless its
+ * script gives one (camera=ramp, step, dark, bright).  The app opens it
+ * only while the game takes pictures and closes it after about 2 s without
+ * one (main_vita.c gbcam_frame). */
+/* Start the camera.  0 = running; -1 = this console has none or it could not
+ * be started (a PS TV, another app using it). */
+int  plat_camera_open(int back);
+void plat_camera_close(void);
+/* The newest picture into out[128 * 112].  0 = a picture; 1 = none new yet;
+ * -1 = the camera has stopped working. */
+int  plat_camera_read(uint8_t *out, int mirror);
+
 /* ---- the pad ------------------------------------------------------------- */
 
 /* Button bits: the Vita's own (SCE_CTRL_*), so plat_vita.c copies the word. */
@@ -242,6 +269,13 @@ typedef struct plat_pad
 } plat_pad;
 
 void plat_pad_read(plat_pad *pad);
+/* Same as plat_pad_read(), without the Cross/Circle face-button swap. */
+void plat_pad_read_raw(plat_pad *pad);
+/* The buttons that were down at ANY moment since the previous call (port 0,
+ * PLAT_BTN_* bits, the face swap applied): a tap shorter than the time
+ * between two plat_pad_read calls (a slow frame, Steady pacing's two frames
+ * a pass) is still seen once.  The first call answers 0. */
+unsigned plat_pad_pressed(void);
 /* A AND B BUTTONS: 1 = plat_pad_read / plat_pad_read2 hand CROSS and CIRCLE
  * to the app exchanged (the physical Circle comes back as PLAT_BTN_CROSS and
  * the other way round), so the app's whole input -- menus, game buttons,
@@ -274,6 +308,10 @@ int  plat_pad_read2(plat_pad *pad);
  * (vita/local_vita.c); pspcompat_touch is the UI's one finger. */
 typedef struct plat_touch_pt { int x, y; } plat_touch_pt;
 int  plat_touch_points(plat_touch_pt *out, int max);
+/* Every finger on the REAR panel, in the panel's own units (x 0..1919,
+ * y 108..889).  Sampling starts at the first call.  For the rear touch panel
+ * (Settings > Controls; ctl_map.h ctl_rear_zones). */
+int  plat_rear_points(plat_touch_pt *out, int max);
 
 /* ---- the twin's script: a finger and a keyboard ----------------------------
  * The Vita's touch panel and system keyboard are pspcompat.c's (the UI's).

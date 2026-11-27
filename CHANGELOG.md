@@ -1,5 +1,638 @@
 # What's New
 
+## Version 2.0 — 2026-11-27
+
+The biggest VitAdhoc update yet: eleven consoles in one native app, true 16:9
+Wide View at 60 fps, room-code online play on `vitadhoc.psvita.dev`, and major
+real-hardware CPU, boot, launch, cover, and menu speedups verified on a physical
+PS Vita (see [Performance](docs/PERFORMANCE.md) and [Known Issues](KNOWN-ISSUES.md)).
+
+**Real-hardware Vita tuning (`rc7`)**
+
+- **Generic GBA self-modifying code (SMC) cache upgrade:** Expanded the RAM
+  translation cache (`SMCR_MAXVER=256`, Move-To-Front LRU, `src_hash` pre-filter,
+  `1.5 MiB` carve) and fixed a pre-existing `jit_lazy_exits` watermark bug.
+  Eliminates dynarec thrashing in all SMC-heavy GBA games and modern ROM hacks
+  (`ipatix` `hq_mixer`, CFRU, `pokeemerald` hacks like *Pokemon Unbound* and
+  *Radical Red*) with 100% bit-exact output (*Pokemon Unbound* battles: 34.08 ->
+  locked 60.0 fps on Vita, 209x less JIT time, 0 reclaims).
+- **SNES & Genesis 60 fps LookGovernor & Core 0 scaler wakeup fix:** Resolved
+  `PACE_HALF` 30 fps deadlocks and Core 0 scaler helper wakeup starvation so
+  heavy titles (*Super Mario RPG*, *Yoshi's Island*, *Super Mario Kart*, *Gunstar
+  Heroes*, *Sonic 2*) hold 59.8-60.0 fps with Wide View active (and `xBR 2x` +
+  Wide View together on *Gunstar Heroes*).
+- **Best-looking defaults on NES & GB/GBC:** Removed the NTSC NES vertical
+  margin clamp so Wide View fills `956x544` full height at Fit with zero
+  letterbox bars, and raised GB/GBC `Auto` xBRZ from `3x` to **`4x`**
+  (`640x576 -> 604x544` Fit).
+- **Vita FAT32 boot, launch, cover-checking & browsing speedups:** Deferred
+  `cheats.db` + `rom_crc` opening (cold boot DB init 4,880 ms -> 0.016 ms;
+  interactive Home Screen in 55.8 ms), single-pass cached `sidecar_migrate`,
+  in-memory `art_dir_cache`, skipped blocking `.vh565` launch writes (1,091-ROM
+  NES launch >40 s -> 3.6 s cold / 0.88 s warm), persistent HTTP/1.1 Keep-Alive
+  two-pass box-art-first cover checking (249/930 covers in ~10 s on Vita Wi-Fi),
+  lock-free menu loader pools, CDRAM texture recycling, 1 GPU upload/frame cap,
+  and multi-sample D-pad tap latching (0 UI waits, 0 GPU blocks).
+
+**An Accurate Game Boy core**
+
+- **Game Boy core: Standard / Accurate** (Settings, and per game). Accurate is Gambatte (GPL-2.0), a cycle-accurate
+  Game Boy and Game Boy Color core, beside TGB Dual, which stays the default. Same battery files, palettes, colour
+  correction, cheats, achievements, rewind, fast forward and Quick response (with zero-initialized `SaveState` for deterministic state loads and run-ahead); its own save states (not loaded
+  across cores). Link play and the Camera, MBC6, MBC7 and Super Game Boy borders stay on TGB Dual, with a notice.
+  Test ROMs: 53 of 60 pass (TGB Dual 36 of 60, docs/COMPATIBILITY.md). Costs more time per frame
+  than TGB Dual; not run on a Vita (Known Issues).
+
+**Four new consoles**
+
+- **Sega Genesis / Mega Drive, Master System, Game Gear and SG-1000.** Each has
+  its own shelf in the console list, with box art, names, descriptions,
+  Starred, Recent, play time, Continue, ten state slots with pictures, cheats,
+  patches and RetroArch save import, like the Super NES. They play in their
+  own program (`md.bin`).
+- **Sega CD / Mega CD** is its own console in the list ("Sega CD"), played by
+  the same Sega program. Discs: `.cue` + `.bin`, `.iso` and `.chd`, with audio
+  tracks in raw, wav or Ogg; they are read from storage as the game runs. It
+  needs your own Sega CD BIOS (see INSTALL), which VitAdhoc cannot include.
+  Continue, ten states, rewind, fast forward, cheats, RetroAchievements, wide
+  view, smoothing and Two players work as on the Genesis. Saves (internal
+  backup RAM and the RAM cartridge: 512 KB by default, a setting for other
+  sizes or none) are kept per game, and the cartridges of the other sizes you
+  tried are kept in the same file. A disc whose region has no BIOS on the
+  Vita says which BIOS it uses instead of leaving a black screen. Reading
+  and unpacking the disc runs on a helper thread (tested on the PC only).
+- **Every Sega game gets the full treatment**: rewind, fast forward, the same
+  picture choices as every other console, RetroAchievements (with Hardcore),
+  and a remappable pad (Genesis A / B / C on Square / Cross / Circle, X / Y / Z
+  on L / Triangle / R).
+- **A few lines of history for NES, WonderSwan and Sega games**, like the
+  Game Boy and Super NES have: from Wikipedia, built in (about 850 NES, 670
+  Genesis, 210 Master System, 115 Game Gear, 27 SG-1000 and a few WonderSwan
+  games). A description now appears only when the article is about that very
+  game on that console: not another console's game of the same name, not a
+  series, not a remake on another system. This also removed about 460 Game Boy,
+  Game Boy Color, Game Boy Advance and Super NES descriptions that described
+  another game; those games show none. Sega CD games use the same list.
+- **No sprite flicker** on the Master System, Game Gear and SG-1000: all the
+  sprites on a line are drawn, not every other frame. The game itself runs
+  exactly the same.
+- **Quick response** shows a button press one frame sooner, with the game
+  running exactly as without it. Game Boy, Game Boy Color, NES, WonderSwan,
+  the Sega consoles and the Super NES have it (Settings, and per game); it is
+  on Auto by default where a frame is cheap enough and off in linked and
+  online play, in fast forward and in rewind. The Super NES player keeps the
+  machine with a light copy of its own, so the picture thread and the caches
+  go on as they were (heavy Super NES games have no room for it on a Vita, and
+  Auto then does not start). Not offered for Game Boy Advance: see Known
+  Issues.
+
+**Cheat search**
+
+- **Search memory on every console's Cheats page**, as RetroArch and mGBA have
+  it: choose the size of the number, start a new search, then narrow it with
+  Equal to, Not equal to, Greater than or Less than a number you type, or
+  Changed, Unchanged, Increased or Decreased since the last step. With 50
+  results or fewer they are listed with their value, and one choice makes a
+  cheat that keeps it, in each console's usual code and saved like a typed
+  one. Game Boy Advance, Game Boy, Game Boy Color, NES, WonderSwan, Super NES,
+  Genesis, Sega CD, Master System, Game Gear and SG-1000, in the app and in
+  both players, with the same words. It searches work RAM, only while the menu
+  is open, and is off while linked and in Hardcore like the other cheats.
+  Tested on the PC only. On the Game Boy, NES, WonderSwan, Super NES and
+  Master System family the Size row also offers "2 bytes, any address" and "4
+  bytes, any address" for numbers kept at odd addresses. The Game Boy's
+  one-console two-player mode says Search memory is not available there (the
+  game's memory cannot be read); a suspended Cheats page no longer offers
+  START search; the note after a step no longer covers the help line.
+
+**A library you can organise**
+
+- **Collections.** Make lists of your own (Road trip, Two at once, Backlog):
+  press Select + Square on a game (the Home screen also has a Lists button) to
+  add it to a collection, take it out, make a new one with the on-screen
+  keyboard, rename one or delete one. A collection holds games of every console;
+  each console's list shows the ones it has. Select steps through them after
+  Games, Starred and Recent, as soon as it is pressed; Select + Square takes
+  that step back and opens the page. A `collections.txt` saved with a byte
+  order mark is read; one that was not read whole says it cannot be changed
+  safely, rather than that it is too big. They are kept in `collections.txt` beside
+  `config.ini`, written whole at every change: a write that fails leaves the
+  old file as it was and says so.
+- **Most played** (the longest first) and **Not played yet** appear once
+  something has been played, from the play time VitAdhoc already keeps. There
+  is no "Two players" view: none of the bundled data says how many players a
+  game has, and a guess would be wrong.
+- **RetroArch and Emu4Vita++ playlists** (`.lpl` files in
+  `ux0:data/retroarch/playlists` and `ux0:data/EMU4VITAPLUS/playlists`, plus
+  `uma0:`, `imc0:` and `ur0:`) show as read-only collections in both JSON and
+  legacy 6-line formats. Their games are matched to yours by path, then file
+  name (including `.zip#` and `.7z#` archive entries), then checksum (the
+  bundled No-Intro table names the checksum; no game file is read). Playlists
+  for unsupported systems are skipped automatically, and VitAdhoc never writes
+  to them.
+
+**Smoother play**
+
+- **Sega sound on its own core.** The Genesis / Mega Drive's FM chip (the
+  YM2612) makes its sound on a separate core in the Sega player, as the Super
+  NES sound chip does, so the main core has less to do in music-heavy games.
+  The sound, the picture and the saved game are exactly the same as before
+  (checked bit for bit over 30 sample games, with saves, rewind, Quick response
+  and the Sega CD). If the helper falls behind, the main core finishes the work
+  itself, so the sound never drops. On by default (`fm_thread=0` in
+  `md/threads.ini` turns it off). Measured on a computer, not yet on a Vita.
+
+- **Faster Super NES Mode 7 and wide view.** Games with a rotating or
+  scaling floor (Super Metroid's intro, F-Zero, Pilotwings) draw that floor
+  with fewer instructions, and a wide-view margin that did not change since
+  the last frame is not drawn again. The pictures, the sound and the game
+  state are identical to before (checked on 15 games, 3000 frames each).
+  Measured on a computer, not yet on a Vita.
+
+- **Faster pixel-art scaling in the Super NES and Sega players.** The Enhanced
+  looks (xBR 2x and 3x, MMPX 2x) now run in NEON: xBR takes about half the
+  instructions (counted exactly in an ARM emulator on test pictures; MMPX
+  somewhat fewer). The pictures are identical to before, byte for byte
+  (checked on many generated pictures under an ARM emulator). Not yet timed
+  on a Vita.
+
+- **Smooth 50 Hz for European games.** PAL games on the Vita's 60 Hz screen
+  no longer show one picture twice every tenth of a second. The game, its sound
+  and its input run at their true speed; scrolling just looks even. On by
+  default for Super NES, Sega and NES. True 50 Hz and Fast 60 Hz stay as
+  choices.
+- **Faster Super FX games** (Doom, Stunt Race FX): the Super FX chip
+  now runs on a much faster exact interpreter, so the 3D view should animate
+  closer to the real console. Results are identical to the old one on every
+  game tested.
+- **Skipped frames can't change a game.** Fast forward, Steady pacing and
+  catching up after a long frame now leave every console exactly as a drawn
+  frame would, including the Sega sprite flags that games read.
+- **The home screen appears at once**, even on a big card in a slow adapter.
+  It shows "Finding games... N found" while it looks, and Circle stops the
+  search.
+
+**Better picture**
+
+- **Wide view for GBA and the Sega consoles.** On GBA, Wide view now defaults to
+  `On + any game` (`WIDE_AUTO`, `Soft edges`) so the catalogue gets full-width
+  Wide view out of the box (turn it off per game if edges misbehave). The
+  Genesis, Master System, Game Gear and SG-1000 fill the Vita's whole width
+  like the Super NES and NES: the real picture stays pixel exact in the
+  middle; the sides show more of the world you have already seen, or a soft
+  continuation of the edge. Never a guessed tile. Auto, On and Off in the menu.
+- **Smoothing for the Super NES and the Sega consoles**: xBR upscaling like
+  the other consoles, chosen for you by Image quality Auto (Super NES and Mega
+  Drive / Sega CD offer Auto, Original, Enhanced 2x and MMPX 2x; Master
+  System, Game Gear and SG-1000 also offer Enhanced 3x, automatically stepping
+  down to Enhanced 2x when Pixel-perfect + Wide view exceeds the `1024 × 576`
+  texture budget instead of falling back to unscaled sharp bilinear).
+- **NES Wide View upscaling & Sharp Bilinear**: NES Wide View
+  (`424×224` / `424×240`) now supports full 2x CPU upscaling (`xBRZ 2x`,
+  `Scale2x`, `MMPX 2x`, `UP_MAX_W = 448`) and crisp Sharp Bilinear
+  (`1344×720` render target).
+- **The same looks on every console.** Ambient glow, Scanlines, LCD grid and
+  LCD ghosting all have their own 0 to 10 strength, with the same names
+  everywhere. WonderSwan gets LCD colours, the NES gets NTSC colours, Game
+  Gear composes LCD and Screen colour profiles in a single LUT pass, and GBA
+  games start with GBA screen colours, which suit the Vita's screen better.
+- **Screen size and the other picture rows read the same in the app and in the
+  Super NES and Sega players**: Fit (it was called Original in the players),
+  Zoom, Stretch (was Full screen in the players), Pixel perfect; values start
+  with a capital letter everywhere (Off, On, Sharp bilinear, Bilinear, Soft
+  edges). Image quality starts at Auto and Wide view is on in every console;
+  the Super NES and Sega players call their on-by-default Wide view setting
+  Auto (On forces the full margin).
+- **Screen colours, Light theme & Tap screen for menu (`display.ini`).**
+  Auto, OLED (PCH-1000), LCD (PCH-2000) or PS TV: a mild correction for the
+  screen you play on, synced globally in `display.ini` alongside `Text size`,
+  `High contrast`, `Theme` (`Dark` / `Light`), `Tap screen for menu` and
+  `Language` across all eleven consoles (app and both players). LCD
+  and PS TV leave the picture as it is. OLED takes a little saturation off
+  (92%) and a touch of contrast (curve 1.06), which are estimates, not
+  measurements. Auto picks PS TV on a PS TV and LCD otherwise (the Vita cannot
+  tell the two handhelds apart, so owners of the first model choose OLED by
+  hand). It is folded into the colour table the picture already uses, so it
+  costs no extra pass; GBA screen colours and Game Gear LCD colours apply first.
+- **CRT mask.** A new row next to Scanlines, 0 (off, the default) to 10: a
+  fine red, green and blue stripe pattern like an aperture grille, with
+  stripes that follow the size of the picture on screen. One extra drawn
+  rectangle per frame (a small stripe texture, multiplied in); no shaders.
+  Higher values darken the picture a little (about 30% at 10), so raise the
+  brightness if you like it strong. In the app and in both players.
+- **Text size and High contrast (the first two rows of Settings > Interface
+  in the app, and Settings > Interface in both players).** Both are global.
+  High contrast pushes pale text to white and dark text to black and gives
+  the app a pure black or white page. Large makes text 20% bigger where the
+  page has been laid out for it: every page of the players' menus; in the
+  app, the home screen, the console list, the in-game menu, Settings (there
+  a value too long for its row ends in "..." and a help text too long for
+  two large lines stays at the normal size), Save states, Cheats (with Add a
+  code and Search memory) and the Play together page (a hint line too wide at
+  the larger size stays at the normal size). The app's other pages (Button
+  mapping, Button test, Cover picture, the pages Play together opens and the
+  plain list view) keep the normal size for now, apart from their title and
+  pop-up messages: larger letters ran over each other and off the bottom edge
+  there (see KNOWN-ISSUES).
+- **Game Boy colours.** Original Game Boy games are coloured the way a Game
+  Boy Color coloured them (GBC auto), with the twelve start-up palettes, the
+  Super Game Boy's 32 and the plain greys to choose from.
+- **Game Boy and Game Boy Color games are told apart by the cartridge**, not
+  the file name.
+
+**Clips and updates**
+
+- **Save clip.** A new card in the in-game menu saves the last ten seconds of
+  the game as an animated PNG in `clips/<game>-<date>-<time>.png`, at the
+  game's own size, every frame exactly as drawn. It reuses the recording the
+  home screen's previews already keep, so it costs no extra memory while you
+  play, and it is encoded on a thread of its own: the game is not held up.
+  A toast says when it is saved. Game Boy, Game Boy Color, Game Boy Advance,
+  NES and WonderSwan (the consoles the app plays itself); the Super NES and
+  Sega players do not keep a recording yet. In the in-game menu the cards are
+  a little narrower to make room.
+- **Check for updates.** Settings > About: Daily (default) or Off. Once a day
+  at most, while the home screen is idle and Wi-Fi is up, the app asks GitHub
+  for the latest release and, if it is newer, says so once on the home screen
+  ("VitAdhoc X.Y is out: get it with the CBOC Vita Installer or from
+  GitHub"). Nothing is downloaded or installed, nothing about you is sent, and
+  a failure is silent. X on the row checks now (the footer says so). The
+  notice is said once for each new version, not on every start, and with
+  Wi-Fi off the check looks again every few seconds, not every frame. The HTTPS client gained four
+  Sectigo root certificates (the ones GitHub's certificates chain to), trusted
+  for `api.github.com` only: online play's connections accept what they did.
+
+**Controls and gameplay**
+
+- **A console picker.** Triangle drops a list of every console under the top
+  bar, with its game count; Triangle or Down moves along it. A tap on a row
+  picks it.
+- **Undo for save states, and slot lock, on every console.** R undoes your
+  last load or slot overwrite (persisted across sessions in the players); L
+  locks a slot (shared `.lock` flag) so nothing overwrites or deletes it,
+  including quick save. **Start** also resumes/closes the Super NES and Sega
+  pause menus, and Cheats controls are unified across all eleven consoles
+  (`Triangle` = Add, `Square` = Delete).
+- **Cheat search** also covers Game Boy Color banked work RAM (banks 2–7 at
+  `0x10000`–`0x15FFF`, generating `92..97` GameShark codes).
+- **Full PlayerKit parity in the Super NES and Sega players** (`snes.bin` /
+  `md.bin`): in-game **Achievements** viewer (`Settings > Achievements`,
+  `CAP_RA`), **Light theme** and **Tap screen for menu** synced across all
+  eleven systems via `display.ini`, mappable PNG **Screenshots** (`ACT_SHOT`,
+  written via `stb_image_write.h` to `screenshots/` or `vita.ini screenshots=`),
+  aligned Sega console accent colours, in-place Mega Drive region timing updates
+  (`set_frame_us()`) without tearing down the draw thread, and `.smd` 512-byte
+  header removal + 16 KiB block deinterleaving normalized for netplay.
+- **Right-stick Rewind and Left stick setting across all eleven consoles:**
+  Right-stick Rewind / Fast forward is now enabled by default everywhere
+  (`stick_rewind = 1` in the app, right-stick left in both players), and
+  `Settings > Controls > Left stick` (`D-pad` / `Custom` / `Off`) is exposed
+  in the app as well as in the players. Hold the right stick left to rewind
+  (up to about a minute in the players), right to fast forward.
+- **RetroAchievements shows more:** a mark when an achievement is one step
+  away, a progress count ("3/10") and the live value of a leaderboard run.
+- **`.7z` games everywhere `.zip` works.** Every console lists, unpacks and
+  plays a game kept in a `.7z` (LZMA and LZMA2): the first game file in the
+  archive, checked against its checksum, unpacked once, with saves and states
+  named after the archive. A game over 32 MB, or a solid archive whose block is
+  over 64 MB, is refused with a notice that says so instead of running out of
+  memory. Encrypted archives are not read. Checked on the PC only; how long a
+  big archive takes to unpack on a Vita is not measured.
+- **Sega CD games on several discs.** A `.m3u` list names the discs of one game:
+  the library shows the list once and hides its discs, saves and saved moments
+  are kept under the list's name, and Settings > Speed > Change disc in the
+  game opens the disc tray, swaps the disc and closes it, as a console would.
+  A saved moment remembers which disc was in. A list with no disc line (a
+  music playlist, another system's list) is not listed as a game. A game
+  that was played from its first disc before the list existed takes that
+  disc's save and saved moments over on its first start (copied, the first
+  disc's files stay). Checked on the PC with synthetic discs; no real
+  multi-disc game has run.
+- **Fast forward at normal pitch**, with the sound kept low and smooth.
+- **Tap screen for menu** can be turned off for thumbs that touch the screen;
+  Start + Select always opens the menu.
+- **Rear touch panel across all eleven consoles** (both in the main app and in
+  the Super NES and Sega players). Settings > Controls > Rear touch panel (Off
+  by default) makes the panel's four corners inputs that Button mapping can
+  give to any button, shortcut or turbo button; Settings > This game can
+  switch it on or off for one game. Across all eleven consoles (`eboot.bin`,
+  `snes.bin` and `md.bin`), a unified 12% outer edge grip inset and ~8% center
+  crosshair deadzone filter out resting hands on the Vita's rear grips. On a
+  WonderSwan, raw unswapped physical buttons (`Circle = A`, `Cross = B`, even on
+  Asian Vitas) stay consistent across pad, rear touch corners and Button test.
+- **The NES Zapper on the touch screen.** Duck Hunt, Hogan's Alley, Wild Gunman,
+  Gumshoe and the other games that use the light gun (the game's own database
+  says which) take the touch screen as the gun: touch the picture to aim, and
+  the trigger is pulled while your finger is down. A tap no longer opens the
+  menu in those games (Start + Select does), and nothing is drawn for the gun.
+  Settings > This game > Port 2 (Auto, Zapper, Controller) forces the Zapper on
+  for any game or turns it off. Checked on PC with test cartridges, not with the
+  real games, and not on a Vita.
+- **Button test** (Settings > Controls): shows every button, both sticks, the
+  touch screen and the four corners of the rear panel as you press them, with
+  what each one does for the console you are on, so you can check a worn button
+  or a mapping. Hold Start + Select to leave (or a finger on the bottom line,
+  if one of the two is the worn button). The Super NES and Sega players
+  have the same page in their menu's Controls.
+- **More covers found and safer cover matching**: cover lookup now peeks
+  inside `.zip` and `.7z` archives, strips GoodTools `[...]` tags and expands
+  short region codes, protects ROM hacks from matching the unpatched base GBA
+  header, follows HTTP redirects, and a failed save now says what is really
+  wrong instead of "the card is full".
+- **Online link-cable cartridge picker**: when joining a GBA or Game Boy link
+  session with a different cartridge, an in-app picker lets you choose which
+  copy to open; Mega Drive library scanning skips Sega CD `.bin` tracks.
+- **GBA fixes** for Top Gun: Combat Zones, Polarium Advance, Rock 'N Roll
+  Racing, Activision Anthology and X-Men: Reign of Apocalypse.
+
+- **Game Boy Camera.** The Pocket Camera cartridge boots, takes pictures and
+  keeps its 128 KB of photos. The picture comes from the Vita's front camera
+  (mirrored, like a mirror), its back camera, or a `camera.png` you put in the
+  data folder (Settings > This game > Camera: Front / Back / Picture file); a
+  Vita without a camera, or one that cannot start it, uses the file or a test
+  picture. Exposure, gain, edge enhancement and the dither pattern the game
+  sets are followed; a real camera's sensor noise and infrared glow are not.
+  The Vita's camera runs only while the game is taking pictures and is
+  switched off after about two seconds without one, so a Camera game left in
+  its menus does not drain the battery. The gain steps follow a smoother
+  curve than the sensor's decibel table (a picture differs from earlier test
+  builds), and the cartridge's RAM reads 0 during a capture, as on hardware.
+- **Game Boy Printer.** Games that print (Game Boy Camera, Pokemon's Pokedex,
+  Zelda DX's photos, ...) find a printer on the cable when nobody is linked.
+  A print is saved as a PNG in `prints/` (`<game>-<date>-<n>.png`) in the
+  game's colours, grey by default, and a toast says "Printed: saved to prints".
+  Long pictures printed in bands are one file, and the file is written while
+  the game keeps running. Settings > This game > Game Boy Printer turns it
+  Off; it never answers during a link.
+
+**Online and multiplayer**
+
+- **Online play by room code.** One of you hosts and gets a code of five
+  characters; the other types it. No router settings, no accounts. The Vitas
+  link directly when they can and through a relay when they cannot.
+- **Every two-player console.** GBA Link Cable and Wireless Adapter, Game Boy
+  and Game Boy Color Link Cable, save and state sharing, and now Two players
+  for NES, WonderSwan, Super NES, Genesis / Mega Drive, Sega CD, Master
+  System and SG-1000. The join finds your copy of the game for you. On a cable each of
+  you can bring your own game (Ruby with Sapphire).
+- **Safe to join.** Every emulator now checks a game state sent by the other
+  player, or read from a file, before using it.
+- Both Vitas need VitAdhoc 2.0.
+
+**GBA sprite order**
+
+- **Sprites that overlap are drawn in the real console's order**, so a sprite
+  no longer peeks through a menu in Golden Sun and Mario Golf. The rule was
+  already in 1.4; 2.0 checked it line by line against a reference renderer on
+  both games and added a pixel-by-pixel test cartridge. Host results; see
+  docs/COMPATIBILITY.md.
+
+**Game Boy accuracy**
+
+- **Game Boy and Game Boy Color games follow the real console more closely.**
+  The Game Boy core was measured against the public test ROMs (blargg's
+  suites, dmg-acid2 and cgb-acid2) and the failures that games can notice were
+  fixed: the flags after PUSH AF, DAA, ADD SP and LD HL,SP+n; the ten sprites
+  per line limit and which sprite is on top where they overlap; the HALT bug;
+  the 20 clocks an interrupt takes; and sound registers reading back their
+  unused bits as 1. The CPU test ROM (cpu_instrs) went from 2 of 11 passing to
+  all 11, and dmg-acid2 and cgb-acid2 now draw the reference picture. Some
+  games draw a line differently when more than ten sprites share it, as on a
+  real Game Boy. Host results; see docs/COMPATIBILITY.md.
+- **Game Boy sound registers are exact.** The last sound tests that failed
+  (blargg dmg_sound and cgb_sound: 8 and 9 of 13 passing) pass now, 13 of 13
+  each. The sweep of square channel 1 writes its new pitch back where the next
+  write to its registers finds it; channel 3 has its own clock, so reading or
+  writing wave RAM while it plays gives what the real console gives, and a
+  retrigger on a Game Boy corrupts the start of wave RAM as it does there.
+  Ordinary games sound the same (a sound register write now takes effect a few
+  clocks later, well under one sample). Old save states load. Host results.
+
+**Interface languages**
+
+- **The app speaks eight languages**: English, Spanish, French, German,
+  Italian, Brazilian Portuguese, Japanese and Simplified Chinese. Pick one in
+  Settings > Interface > Language, or leave it on Automatic to follow the Vita
+  system language. The texts are plain files in `lang/` in the package, so a
+  fix or a new translation needs no new build. The seven translations are
+  machine translations, checked for fit on every page but still waiting for
+  native speakers (`lang/REVIEW-NEEDED.md`); corrections are welcome.
+- Dates read the way each language writes them (`3 oct 2026`, `2026年10月3日`),
+  the Game Boy core row and its messages, the Settings values (On/Off,
+  Theme, Game list look...), the rewind chip, the room pill and the "played
+  3 days ago" line are translated too. Section titles keep their accents in
+  sentence case (`Paramètres`).
+
+**Names in every alphabet**
+
+- Japanese (kana and kanji), Korean, fullwidth forms, accented Latin, Greek and
+  Cyrillic names now show as written in the app and in the Super NES and Sega
+  players' menus, instead of `?`. Names are never cut in the middle of a
+  character, and long ones wrap at sensible places.
+
+**Your language in the players**
+
+- The Super NES and Sega players speak the language of the app: English,
+  Spanish, French, German, Italian, Brazilian Portuguese, Japanese and
+  Simplified Chinese. Settings > Interface has a Language row (Automatic
+  follows the Vita's system language; one the players do not have gives
+  English) and the choice is kept in `display.ini` next to the app's. Menus,
+  notices, help lines and error screens change at once, without restarting
+  the game. The texts live in `lang/pk_<code>.txt` (see
+  `lang/TRANSLATING-players.md`); a text a file lacks shows in English, and
+  the log stays English. Long translations wrap or end in an ellipsis rather
+  than shrink; every screen was checked with a test language 35% longer than
+  English. All seven translations ship with them (`lang/pk_<code>.txt`),
+  updated across all eight languages with the new Light theme, Tap screen for
+  menu, Achievements viewer and Screenshot strings.
+- **Japanese and Chinese text works everywhere**: every text path (menus,
+  toasts, help lines, paragraphs, the in-game menu, both players) draws kana,
+  kanji and hanzi from the bundled fonts, and a Simplified Chinese interface
+  draws the shared characters in their Chinese forms (new `cjkfont-sc.otf`,
+  the 6763 GB 2312 hanzi, SIL OFL). Lines break between any two such
+  characters, never inside a Latin word, never start with a closing mark such
+  as the full stop and never end with an opening bracket; nothing is cut in
+  half. The Settings help line and the Play together paragraphs, which broke
+  only at spaces, now break on whole characters. Checked on the PC test twin
+  with machine-translated test catalogues.
+
+**Under the hood**
+
+- A TLS client, STUN, hole punching and a relay client of our own, and the
+  small room service they talk to.
+- New shared kits, `playerkit` (menus, pacing, look governor, link) and
+  `widekit` (wide view), so every console behaves the same way.
+- The experimental GPU xBRZ (off by default and too slow) is gone, so the
+  whole main app can be one GPL-2.0 program. The CPU xBRZ filter and every
+  other picture choice are unchanged. An old `gpu_xbrz = 1` line in `vita.ini`
+  is ignored; no saved setting selected it.
+- A fuzz-tested state loader on every core, a test gate, and 2.0 rc5
+  hardening across online play, cores, archives and Vita packaging:
+  - **Online 2.0 reliability & worker hardening:** TURN nonce-generation tracking
+    and auth-retry hardening (`nat_turn.c`); automatic STUN fallback to
+    `stun.l.google.com` when `stun.cloudflare.com` cannot be reached; clean
+    guest-leave TURN state reset; host gameplay-progress preservation on
+    unexpected partner disconnect (`FE_GBLINK_E_PEER_LOST` / `LE_PEER_LOST`)
+    while still rolling back on desync (guest rolls back cleanly); and
+    Cloudflare Worker budget, edge-limiter and TURN mint/rollback hardening
+    under concurrent guest swaps.
+  - **WonderSwan Button Test & raw pad alignment:** WonderSwan reads unswapped
+    physical pad buttons (`pspcompat_pad_raw()`) on Asian Vitas so `Circle = A`
+    and `Cross = B` (without `Triangle`/`Square`) stay consistent across the
+    Vita pad, rear touch corners and Button test.
+  - **Archive & Vita FAT32 safety:** `.7z` extraction on Vita uses
+    `sceKernelAllocMemBlock` for large 2 MB+ blocks, and `.zip`, `.7z`, battery
+    saves (`uma0:` RetroArch fallback added) and update checks promote files via
+    safe two-step `.old` replacement on Vita FAT32.
+  - **Core, threading & packaging polish:** GBA ARMv7/Thumb-2 dynarec upgrades
+    (7th cached guest register `r10` for GBA `r7`/`r6`, palette dirty flag
+    `REG_PAL_UPDATED`, flagless VRAM mirror + ARMv7 `ubfx` masking & Thumb-2
+    `cbnz`/`cbz` fast-path stubs, ARM PC-relative literal pool folding,
+    single-instruction Thumb `NEG` via `RSBS`, and Phase-A IWRAM `POP`/`LDMIA sp`
+    load fastpath — checked bit-for-bit on ARMv7/emulated ARM vs x86), bitmask
+    audio buffer wrapping (`gpsp/sound.c`), ARMv7 SMP acquire/release atomics
+    (`fe_host.c`) and `SceKernelLwMutexWork` (`save_sync.c`), Gambatte
+    zero-initialized `SaveState` (`gambatte.cpp`), lazy upscaler LUT
+    allocations and semaphore worker wakeups (`upscale_vita.c`, `mmpx_vita.c`,
+    `xbrz.cpp`), `core4` draw-thread affinity integration (`handoff_glue.cpp`),
+    Cortex-A9 scalar Mode 7 pixel loop (`snes/core/tileimpl.h`), per-depth Super
+    FX fast tables (`fxfast.cpp`), SNES mosaic run-ahead parity fix (`gfx.cpp`)
+    & `ahead.cpp` vector cleanup, Sega dirty SAT/VSRAM VDP chunk tracking +
+    semaphore `wait_idle()` + FM worker yield, 30-frame low-hit cooldown on
+    SNES/MD wide caches, Sega CD coalesced read-ahead wakeups + 16 KB miss fill
+    + stale worker reaping, WonderSwan fast 2bpp tile LUT (`tcache.c`),
+    Japanese/Simplified Chinese/German UI text polish, and `APP_VER = 02.00` in
+    `PARAM.SFO` decoupled from link compatibility (`CORE_VERSION`).
+
+Full engineering list: [docs/TECHNICAL.md](docs/TECHNICAL.md#version-20-changes).
+
+## Version 1.4
+
+- **Your saves reach RetroArch** (GitHub #3, which also had the Game Boy
+  tap-to-open-menu fix: a tap on the screen opens the menu on every console). A save made by an older version (or one that
+  was never taken from RetroArch) is now also written, once, as a plain
+  `Game.srm` where RetroArch looks, with one sentence saying where. A RetroArch
+  file that is newer or different is never overwritten: both are kept and you
+  are told which is which; an older one is backed up first. Odd files an older
+  version left beside the game go to the app's folder. Settings > This game >
+  Export save for other emulators makes a plain `.srm` or `.sav` on request.
+  See docs/SAVES.md.
+- **Game names** (GitHub #16; Settings > Library): show the game's title or its file name.
+  Games that would show the same name, such as ROM hacks of one game, also
+  show their file name under it.
+- **NES and Famicom games.** A fifth shelf, NES, beside GBA, GB, GBC and SNES:
+  `.nes`, `.fds` (Famicom Disk System, with your own `disksys.rom`), `.unf` and
+  `.unif` games, zipped too. They play inside VitAdhoc like Game Boy games:
+  ten state slots with pictures, Continue, fast forward, Game Genie cheats,
+  patches, play time and Recent, per-game settings, RetroAchievements and the
+  RetroArch save import. Hold Start + Select for the menu. Found in
+  `ux0:ROMS/NES` and `ux0:roms/NES`, any folder inside `ux0:ROMS/`, RetroFlow's
+  NES folder and your own folders; saves are `Game.srm` beside the game. Box
+  art and title screens come by checksum or name like the other consoles.
+  Rewind works as for Game Boy games; two-player link play is not available
+  for NES games. PAL games run at their own 50 frames a second (five of six
+  refreshes) instead of 20% fast.
+- **WonderSwan and WonderSwan Color games.** A sixth shelf, WS, for `.ws`,
+  `.wsc` and `.pc2` games (zipped too), found in `ux0:ROMS/WS`, `ux0:ROMS/WSC`,
+  `ux0:roms/WS`, `ux0:roms/WSC`, RetroFlow's "Bandai - WonderSwan" folders and
+  any folder inside `ux0:ROMS/`. They play inside VitAdhoc with states,
+  Continue, rewind, fast forward, cheats (RAM codes `AAAAA:VV`), patches,
+  play time, per-game settings, RetroAchievements and the RetroArch save
+  import (Beetle WonderSwan folder); saves are `Game.srm` beside the game,
+  the file RetroArch uses. Vertical games turn upright by themselves; the
+  game's settings have **Rotation** (Auto, Horizontal, Vertical), **Vertical
+  play** (Upright, or Turn the Vita) and **Palette** (Greyscale or the LCD's
+  tint). The first time a game turns, a hint says where the buttons are.
+  The console runs at 75 frames a second: each Vita refresh shows a blend
+  of the frames it covers (Settings > Display > Smooth 75 Hz motion; on by
+  default).
+- **NES wide view** (Settings > Display, with the NES selected: Wide view
+  Auto, On or Off; Auto by default). A scrolling NES game fills the 16:9
+  screen: the original picture stays exactly as it is in the middle, the sides
+  show the game's own picture where it is known (what the level has already
+  shown, and a map of the level kept for the next visit), and fade where it is
+  not. Nothing is guessed. Auto goes back to the plain picture when there is
+  nothing to show at the sides.
+- **Steady pacing** (Settings > Gameplay, on by default). When a busy moment
+  cannot be drawn at the full rate, every second frame is shown, evenly,
+  while the game keeps its true speed and sound; every frame comes back after
+  about three seconds with room to spare. The same as the SNES player.
+- **Smooth hand-over** (Settings > Gameplay, on by default). The picture is
+  drawn and shown on a second core while the game runs on its own, so heavy
+  picture options no longer slow the game down. Off in link play. Turn it off
+  if the picture ever misbehaves.
+- **The best look by default.** Image quality is Auto on every install (it
+  was Original on a fresh one): xBRZ smoothing over sharp bilinear (no more
+  uneven nearest pixels as the base filter), starting at a ceiling for each
+  console (GBA, GB, GBC and WonderSwan xBRZ 3x, NES 2x; 4x only when you set
+  it by hand). A game that cannot hold 60 with it is eased one small, least
+  visible step at a time (the ambient glow's moving picture first, then the
+  xBRZ size, MMPX 2x, the frame blend, and last sharp bilinear), gets the
+  look back when there is room, and remembers what it needed. The wide view
+  and the screen fill are never given up. The Image quality row then reads,
+  for example, "Auto (xBRZ 3x, eased)". A row you set yourself is never
+  touched. The wide view's margins now continue the picture's own edges by
+  default instead of black bars.
+- **MMPX 2x smoothing.** A new smoothing step between xBRZ 2x and sharp
+  bilinear: it costs less than xBRZ and keeps pixel art crisp. GBA games that
+  draw their whole picture every frame in software 3D (Need for Speed, Driver,
+  SSX) start on sharp bilinear automatically. Every choice stays available in
+  Settings.
+- **Super NES, European games at their true speed.** PAL games run at 50 Hz
+  (five frames per six refreshes) instead of 20 % fast. Menu row **PAL games
+  speed**: True 50 Hz (default) or Fast 60 Hz.
+- **Super NES wide view, on by default.** Every SNES game fills the 16:9
+  screen without costing a frame: the real picture is kept in the middle, the
+  sides show real picture where the game can afford it and fade into a soft
+  extension elsewhere, and never a wrong tile. Per side, the side the camera
+  came from can show real picture. Menu: Wide view Auto (adapts), On (full
+  margin) or Off.
+- **Super NES picture and sound.** Menu row **Image quality** (Auto,
+  Original, Enhanced 2x, Enhanced 3x, MMPX 2x): Auto eases the scaler and the
+  blends only when a game cannot hold 60. A new audio
+  pacer fixes crackle and uneven sound (GitHub #15). Snes9x fixes made after
+  1.63 are in, plus cheats, ten state slots with pictures and a new in-game
+  menu.
+- **Super FX games run faster.** About 10 to 15 percent less work for each
+  Super FX instruction, with identical pictures and sound on the 15 games
+  tested; Doom, Stunt Race FX and the like get more game speed.
+- **GBA stutter and picture fixes.** Games that rewrite their own code
+  flush only the part that changed, and a dispatch cache cuts the work of
+  jumping between translated blocks, so fewer stutters. Sprite priority is
+  exact and several renderer bugs are fixed.
+- **Reliability.** Waiting for a helper thread has a time limit, so a stalled
+  helper can no longer hang the app; a hand-over self-check falls back by
+  itself if the drawing thread misbehaves; saves and the log are written off
+  the game thread; the fourth CPU core is used when the CapUnlocker plugin
+  provides it. Link play waits 20 seconds before it gives a silent partner up
+  and keeps the connection alive from its own thread. Achievements pause
+  while two consoles are linked.
+- **Menus.** Settings opens on the most useful section (Display in a game,
+  Interface on the home screen) in a clearer order, and rows that do not
+  apply to the current console are hidden. An always-visible button hint
+  line sits under the home screen buttons, touch targets are bigger and
+  messages are never cut off. Wide view's fill row is called Screen fill.
+- **Settings for every default.** Each of the choices above has a row in
+  Settings, so nothing here is hidden behind a file.
+- **For testers.** `tools/vita-matrix` runs unattended test sessions on a
+  Vita and puts everything back afterwards; the log has per-thread CPU and
+  missed-refresh counts; switches in `vita.ini` bring back the 1.3 behaviour
+  for comparison.
+- **NES and WonderSwan cheat lists.** Cheats > the game's list now has
+  ready-made codes for NES and WonderSwan games too (found by the game's
+  checksum, then by its name), besides the codes you type yourself.
+- **Export save for other emulators** (Settings > This game, in a game): X
+  makes the save a plain file for RetroArch, or a `.sav` beside the game
+  (LEFT / RIGHT choose), whatever Sync RetroArch saves says.
+- **Top bar.** With six consoles the tabs are drawn smaller when they need
+  to be, all of them before the search icon, and each tab can be tapped to go
+  to its console (the fifth one was hidden under the search icon).
+- **Settings fix.** In Settings > Library the names of Cover picture and Sync
+  RetroArch saves were swapped: each row wore the other's name. They are the
+  right way round now.
+- **SNES menu hint.** The game page and the loading screen of a SNES game say
+  to hold L + R + Start for the menu.
+
 ## Version 1.3.1
 
 **Snappier menus and a new look.**

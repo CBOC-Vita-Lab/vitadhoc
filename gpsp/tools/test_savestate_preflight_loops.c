@@ -84,6 +84,9 @@ u32 reg[64];
 u32 gbp_get_state(void) { return 0; }
 void rumble_restore_state(bool gbp_active) { (void)gbp_active; }
 void video_reload_counters(void) {}
+/* The wide picture's hook (wide.c is a renderer feature): the preflight
+ * test never reaches a completed load, so there is nothing to observe. */
+void wide_state_loaded(void) {}
 
 static int rejects_late_channel(const char *label, int bad_dma,
                                 int bad_ds, int bad_gs)
@@ -406,7 +409,7 @@ int main(int argc, char **argv)
   failures += rejects_dma_field("DMA repeat flag out of range", "repeat", 0, 2);
   failures += rejects_dma_field("DMA sound channel out of range", "dsc", 1, 3);
   failures += rejects_dma_field("DMA IRQ flag out of range", "irq", 0, 2);
-  failures += rejects_backup_range("backup type out of range", "backup-type", 4);
+  failures += rejects_backup_range("backup type out of range", "backup-type", BACKUP_NONE + 1);
   failures += rejects_backup_range("flash bank out of range", "flash-bank-num", 2);
   failures += rejects_backup_range("EEPROM address out of range", "eeprom-addr", 0xFFFFFFFFu);
   failures += rejects_backup_range("EEPROM base counter out of range", "eeprom-counter", 2);

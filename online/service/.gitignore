@@ -1,0 +1,4 @@
+node_modules/
+deploy-logs/
+zone-logs/
+.wrangler/

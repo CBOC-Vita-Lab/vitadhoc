@@ -50,7 +50,7 @@ import zlib
 from PIL import ImageChops
 
 import app_tests as A
-from app_tests import Suite, menu_pick, game_pixels, EXIT_APP
+from app_tests import Suite, menu_pick, set_down, game_pixels, EXIT_APP
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROMS = os.path.join(HERE, "..", "tests", "rewind", "rom")
@@ -308,7 +308,7 @@ def t_battery(S):
                   "%d:rstick-left:%d\n%d:shot=after.png\n%d:shot=later.png\n"
                   % (T0 - 5, T0, H, T0 + H + 1, T0 + H + 30))
         script += "%d:start+select:20\n" % (T0 + H + 400)
-        script += "".join("+8:down\n" for _ in range(6)) + "+8:cross\n+8:cross\n"
+        script += "".join("+8:down\n" for _ in range(7)) + "+8:cross\n+8:cross\n"
         r = S.run(name, script, autoboot="gbadhoc-test.gba", args=args)
         S.clean(r)
         ends = rewind_ends(r)
@@ -344,7 +344,7 @@ def t_battery(S):
         script = "200:a:5\n"
         script += "".join("%d:shot=%s\n" % (t + c, n) for n, t in want.items())
         script += "%d:start+select:20\n" % (max(want.values()) + c + 400)
-        script += "".join("+8:down\n" for _ in range(6)) + "+8:cross\n+8:cross\n"
+        script += "".join("+8:down\n" for _ in range(7)) + "+8:cross\n+8:cross\n"
         s = S.run(name + "_straight", script, autoboot="gbadhoc-test.gba",
                   args=args)
         S.clean(s)
@@ -369,7 +369,7 @@ def t_battery_gb(S):
                   "%d:rstick-left:%d\n%d:shot=after.png\n" %
                   (T0 - 5, T0, H, T0 + H + 1))
         script += "%d:start+select:20\n" % (T0 + H + 400)
-        script += "".join("+8:down\n" for _ in range(6)) + "+8:cross\n+8:cross\n"
+        script += "".join("+8:down\n" for _ in range(7)) + "+8:cross\n+8:cross\n"
         r = S.run(name, script, autoboot=cart, extra=extra(cart))
         S.clean(r)
         ends = rewind_ends(r)
@@ -425,7 +425,7 @@ def t_guards(S):
     # Rewind), stepped once to the
     # left of "1 min" is "30 s"; the game loop hears of it when the menu
     # closes
-    r = S.run("rw_setting", menu_pick(4, wait=120) + "+20:up\n" + "+8:up\n" * 10 +
+    r = S.run("rw_setting", menu_pick(4, wait=120) + set_down(14) +  # Rewind: fourteen rows down (2.0: CRT mask and Screen joined Display above it)
               "+10:shot=row.png\n+4:left\n+10:shot=row30.png\n"
               "+4:circle\n+10:circle\n+60:rstick-left:30\n+40:quit\n",
               autoboot="gbadhoc-test.gba")

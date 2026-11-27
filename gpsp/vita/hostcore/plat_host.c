@@ -34,7 +34,7 @@
  *        [--shot F:file.png]... [--shot-dir DIR] [--wav file.wav]
  *        [--input SCRIPT] [--input-file FILE]
  *        [--refresh-mhz 60000] [--work-us 3000] [--slow F:N:US] [--flip-queue N]
- *        [--gpu-progs] [--gpu-us US]
+ *        [--gpu-us US]
  *        [--suspend F] [--worker]
  *        [--echo] [--heap-free-mb N]
  *
@@ -45,6 +45,8 @@
  *     FRAME:touch=X/Y[:DURATION]   a finger on the screen at native X, Y
  *                                  (960x544) for DURATION frames (3: a tap)
  *     FRAME:drag=X0/Y0/X1/Y1:DURATION   ...moving from one point to another
+ *     FRAME:rear=X/Y[:DURATION]    a finger on the REAR panel at its own
+ *                                  units (x 0..1919, y 108..889) for DURATION frames (3)
  *     FRAME:type=TEXT              what the system keyboard returns the
  *                                  next time it is opened (a few frames
  *                                  after it opens); "type=" alone cancels
@@ -55,6 +57,14 @@
  *                                  taken away (hot-plug: with these in the
  *                                  script it exists as the latest one says,
  *                                  and before the first, the opposite)
+ *     FRAME:wait=TEXT              the script clock stops at FRAME until a
+ *                                  new line of the app's log holds TEXT
+ *                                  (--realtime only; 240 s at most, 8 s for a hold; the
+ *                                  waits come in order, at most 256)
+ *     FRAME:hold=BUTTONS=TEXT      the same wait with BUTTONS held down all
+ *                                  the while: a press that cannot be missed
+ *                                  by a slow loop (the app logs what the
+ *                                  press did; the press ends then)
  *     FRAME:quit                   end the run (as --frames)
  *
  * FRAME is absolute, or "+N": N frames after the previous entry ENDED.
@@ -72,13 +82,19 @@
 #include "../plat.h"
 #include "../video_vita.h"
 #include "fe_evt.h"
+#include "fe_gbcam_fit.h"
 #include "fe_util.h"
 
 #include <ctype.h>
 #include <signal.h>
 #include <sys/time.h>
+#ifdef __APPLE__
+/* macOS: no SYS_gettid (pthread_threadid_np), and <ucontext.h> is refused
+ * without _XOPEN_SOURCE: <signal.h> already has ucontext_t */
+#else
 #include <sys/syscall.h>
 #include <ucontext.h>
+#endif
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -124,15 +140,24 @@ static struct
    struct { unsigned frame, len; uint32_t buttons; int pad2; } press[MAX_PRESS];
    unsigned    npress;
    int         have_pad2;
-   struct { unsigned frame, len; int x0, y0, x1, y1; } touch[MAX_TOUCH];
+   struct { unsigned frame, len; int x0, y0, x1, y1; int rear; } touch[MAX_TOUCH];
    unsigned    ntouch;
    struct { unsigned frame; char text[TYPE_CAP]; int cancel; } type[MAX_TYPE];
    unsigned    ntype;
    /* motion=R/D/Z: the motion sensor from that frame on (plat.h) */
    struct { unsigned frame; float right_g, down_g, rate_z; } motion[MAX_TYPE];
    unsigned    nmotion;
+   /* camera=ramp|step|dark|bright: the camera shows that picture from that
+    * frame on (plat.h plat_camera_open; without any it has none) */
+   struct { unsigned frame; int kind; } camera[MAX_TYPE];
+   unsigned    ncamera;
    int         no_motion;         /* --no-motion: a PS TV, no sensor */
    unsigned    suspend_at[8], nsuspend;
+   /* FRAME:wait=TEXT: the script clock stops at FRAME until the app's own
+    * log (<root>/log/gbadhoc.log) gets a new line holding TEXT (or 240 s go
+    * by): the test waits for the screen it needs, not for a guessed time */
+   struct { unsigned frame; char text[SHOT_PATH / 4]; uint32_t buttons; } wait[256];
+   unsigned    nwait;
    struct { unsigned frame; int on; } plug[16];
    unsigned    nplug;
    unsigned    quit_at;           /* 0 = none */
@@ -181,10 +206,114 @@ static uint64_t refresh_ns(void)
    return 1000000000000ull / opt.refresh_mhz;
 }
 
-/* The refresh the script and the screenshots count: sleeps taken out. */
+/* ---- FRAME:wait=TEXT ------------------------------------------------------ */
+static pthread_mutex_t wait_mu = PTHREAD_MUTEX_INITIALIZER;
+static unsigned wait_next;        /* the next wait entry to reach           */
+static int      waiting;
+static unsigned wait_frame;       /* the frame the clock stands at          */
+static uint64_t wait_t0_ns, wait_poll_ns;
+static long     wait_log_from;
+static long     wait_match_end;   /* where the line that ended the last wait finished (-1: it timed out) */
+
+static long wait_log_size(FILE **fp)
+{
+   char path[1024];
+   snprintf(path, sizeof(path), "%s/log/gbadhoc.log", opt.root);
+   *fp = fopen(path, "rb");
+   if (!*fp)
+      return -1;
+   fseek(*fp, 0, SEEK_END);
+   return ftell(*fp);
+}
+
+/* Is TEXT in what the log gained since the wait began? */
+static pthread_t main_tid;
+static int main_tid_set;
+
+static int wait_seen(const char *text)
+{
+   FILE *f;
+   long n, from = wait_log_from;
+   char *buf;
+   int hit = 0;
+   /* with no worker thread the menu's log is written by the main thread, when 12 KB are queued: the poll on the main
+    * thread is the writer too, so the line is on disk when the wait looks */
+   if (!opt.worker && main_tid_set && pthread_equal(pthread_self(), main_tid))
+      fe_evt_service();
+   n = wait_log_size(&f);
+   if (n < 0)
+      return 0;
+   if (n < from)                  /* the log rotated: all of it is new */
+      from = 0;
+   if (n - from > (1 << 20))
+      from = n - (1 << 20);
+   buf = malloc((size_t)(n - from) + 1);
+   if (buf)
+   {
+      size_t got;
+      fseek(f, from, SEEK_SET);
+      got = fread(buf, 1, (size_t)(n - from), f);
+      buf[got] = '\0';
+      {
+         char *m = strstr(buf, text), *e;
+         hit = m != NULL;
+         if (m && (e = strchr(m, '\n')))
+            wait_match_end = from + (long)(e - buf) + 1;
+         else
+            wait_match_end = -1;
+      }
+      free(buf);
+   }
+   fclose(f);
+   return hit;
+}
+
+/* The refresh the script and the screenshots count: sleeps (and waits) taken out. */
 static unsigned script_frame(void)
 {
-   return (unsigned)((now_ns() - slept_ns) / refresh_ns());
+   unsigned f;
+   long chained = -1;
+   if (!opt.nwait || !opt.realtime)
+      return (unsigned)((now_ns() - slept_ns) / refresh_ns());
+   pthread_mutex_lock(&wait_mu);
+   f = (unsigned)((now_ns() - slept_ns) / refresh_ns());
+   if (waiting)
+   {
+      uint64_t t = now_ns();
+      if (t - wait_t0_ns > (opt.wait[wait_next].buttons ? 8000000000ull : 240000000000ull) ||
+          (t - wait_poll_ns > 40000000ull && (wait_poll_ns = t, wait_seen(opt.wait[wait_next].text))))
+      {
+         slept_ns += t - wait_t0_ns;
+         waiting = 0;
+         wait_next++;
+         f = (unsigned)((t - slept_ns) / refresh_ns());
+         chained = wait_match_end;
+      }
+      else
+         f = wait_frame;
+   }
+   if (!waiting && wait_next < opt.nwait && f >= opt.wait[wait_next].frame)
+   {
+      FILE *lf;
+      wait_frame = opt.wait[wait_next].frame;
+      wait_t0_ns = slept_ns + (uint64_t)wait_frame * refresh_ns();
+      wait_poll_ns = 0;
+      wait_match_end = -1;
+      if (!opt.worker && main_tid_set && pthread_equal(pthread_self(), main_tid))
+         fe_evt_service();            /* what was logged before the wait is on disk before it begins */
+      wait_log_from = wait_log_size(&lf);
+      if (lf)
+         fclose(lf);
+      if (wait_log_from < 0)
+         wait_log_from = 0;
+      /* a wait that follows another at once starts where that one's line ended: a line logged since is its to see */
+      if (chained >= 0 && chained < wait_log_from)
+         wait_log_from = chained;
+      waiting = 1;
+      f = wait_frame;
+   }
+   pthread_mutex_unlock(&wait_mu);
+   return f;
 }
 
 /* ---- GBADHOC_PCPROF=file: a statistical profile of the guest -------------
@@ -210,9 +339,23 @@ static void pcp_handler(int sig, siginfo_t *si, void *vuc)
    i = __atomic_fetch_add(&pcp_n, 1, __ATOMIC_RELAXED);
    if (i >= PCPROF_CAP)
       return;
+#ifdef __APPLE__
+   {
+      uint64_t tid64 = 0;
+      pthread_threadid_np(NULL, &tid64);
+      pcp_buf[i].tid = (int)tid64;
+   }
+#else
    pcp_buf[i].tid = (int)syscall(SYS_gettid);
-#if defined(__arm__)
+#endif
+#if defined(__APPLE__) && defined(__aarch64__)
+   pcp_buf[i].pc = (uintptr_t)__darwin_arm_thread_state64_get_pc(uc->uc_mcontext->__ss);
+#elif defined(__APPLE__)
+   pcp_buf[i].pc = (uintptr_t)uc->uc_mcontext->__ss.__rip;
+#elif defined(__arm__)
    pcp_buf[i].pc = uc->uc_mcontext.arm_pc;
+#elif defined(__aarch64__)
+   pcp_buf[i].pc = (uintptr_t)uc->uc_mcontext.pc;
 #else
    pcp_buf[i].pc = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
 #endif
@@ -487,9 +630,11 @@ static void parse_input(const char *script, unsigned *cursor)
       if (n > 5 && !strncasecmp(p, "shot=", 5))
          add_shot(frame, p + 5, n - 5);
       else if ((n > 6 && !strncasecmp(p, "touch=", 6)) ||
+               (n > 5 && !strncasecmp(p, "rear=", 5)) ||
                (n > 5 && !strncasecmp(p, "drag=", 5)))
       {
          int drag = (p[0] | 0x20) == 'd', v[4] = { 0, 0, 0, 0 }, k;
+         int rear = (p[0] | 0x20) == 'r';
          const char *q = strchr(p, '=') + 1;
          for (k = 0; k < (drag ? 4 : 2); k++)
          {
@@ -511,6 +656,7 @@ static void parse_input(const char *script, unsigned *cursor)
          opt.touch[opt.ntouch].y0 = v[1];
          opt.touch[opt.ntouch].x1 = drag ? v[2] : v[0];
          opt.touch[opt.ntouch].y1 = drag ? v[3] : v[1];
+         opt.touch[opt.ntouch].rear = rear;
          opt.ntouch++;
       }
       else if (n >= 5 && !strncasecmp(p, "type=", 5))
@@ -522,6 +668,21 @@ static void parse_input(const char *script, unsigned *cursor)
          opt.type[opt.ntype].text[n - 5] = '\0';
          opt.type[opt.ntype].cancel = n == 5;
          opt.ntype++;
+      }
+      else if (n > 7 && !strncasecmp(p, "camera=", 7))
+      {
+         static const char *const kinds[] = { "ramp", "step", "dark", "bright" };
+         int k;
+         if (opt.ncamera >= MAX_TYPE)
+            break;
+         for (k = 0; k < 4; k++)
+            if (n - 7 == strlen(kinds[k]) && !strncasecmp(p + 7, kinds[k], n - 7))
+               break;
+         if (k == 4)
+            break;
+         opt.camera[opt.ncamera].frame = frame;
+         opt.camera[opt.ncamera].kind = k;
+         opt.ncamera++;
       }
       else if (n > 7 && !strncasecmp(p, "motion=", 7))
       {
@@ -538,6 +699,42 @@ static void parse_input(const char *script, unsigned *cursor)
          opt.motion[opt.nmotion].down_g = d;
          opt.motion[opt.nmotion].rate_z = z;
          opt.nmotion++;
+      }
+      else if (n > 5 && !strncasecmp(p, "wait=", 5))
+      {
+         if (opt.nwait >= 256 || n - 5 >= sizeof(opt.wait[0].text) ||
+             (opt.nwait && opt.wait[opt.nwait - 1].frame > frame))
+            break;
+         opt.wait[opt.nwait].frame = frame;
+         memcpy(opt.wait[opt.nwait].text, p + 5, n - 5);
+         opt.wait[opt.nwait].text[n - 5] = '\0';
+         opt.wait[opt.nwait].buttons = 0;
+         opt.nwait++;
+      }
+      else if (n > 5 && !strncasecmp(p, "hold=", 5) && memchr(p + 5, '=', n - 5))
+      {
+         /* hold=BUTTONS=TEXT: the buttons are down, and the clock stands, until TEXT is logged */
+         const char *q = p + 5, *eq = memchr(p + 5, '=', n - 5), *stop = p + n;
+         uint32_t buttons = 0;
+         if (opt.nwait >= 256 || (size_t)(stop - eq - 1) >= sizeof(opt.wait[0].text) ||
+             (opt.nwait && opt.wait[opt.nwait - 1].frame > frame))
+            break;
+         for (;;)
+         {
+            size_t k = 0;
+            while (q + k < eq && q[k] != '+')
+               k++;
+            buttons |= button_named(q, k);
+            q += k;
+            if (q >= eq)
+               break;
+            q++;
+         }
+         opt.wait[opt.nwait].frame = frame;
+         memcpy(opt.wait[opt.nwait].text, eq + 1, (size_t)(stop - eq - 1));
+         opt.wait[opt.nwait].text[stop - eq - 1] = '\0';
+         opt.wait[opt.nwait].buttons = buttons;
+         opt.nwait++;
       }
       else if (n == 4 && !strncasecmp(p, "quit", 4))
          opt.quit_at = frame ? frame : 1;
@@ -634,6 +831,11 @@ int plat_init(int argc, char **argv)
 {
    unsigned cursor = 0;
    int i;
+   main_tid = pthread_self();
+   main_tid_set = 1;
+#ifdef __APPLE__
+   signal(SIGPIPE, SIG_IGN);       /* no MSG_NOSIGNAL on macOS: a send to a closed socket is an error, not a signal */
+#endif
    pcprof_init();
    for (i = 1; i < argc; i++)
    {
@@ -667,10 +869,7 @@ int plat_init(int argc, char **argv)
       else if (!strcmp(a, "--no-motion"))        opt.no_motion = 1;
       else if (!strcmp(a, "--heap-free-mb") && v) { opt.heap_free_mb = (unsigned)atoi(v); i++; }
       else if (!strcmp(a, "--echo"))             opt.echo = 1;
-      /* vback_soft.c: run the GPU programs (shaders/) as the console
-       * would, per pixel -- slow; off, the twin has none */
-      else if (!strcmp(a, "--gpu-progs"))        setenv("GBADHOC_SOFT_PROGS", "1", 1);
-      /* ...and what a timed present says the GPU took (vb_gpu_stats) */
+      /* what a timed present says the GPU took (vb_gpu_stats) */
       else if (!strcmp(a, "--gpu-us") && v)      { setenv("GBADHOC_SOFT_GPU_US", v, 1); i++; }
       else if (!strcmp(a, "--realtime"))         opt.realtime = 1;
       else if (!strcmp(a, "--suspend") && v)
@@ -844,6 +1043,11 @@ static unsigned g_fake_arm;
 unsigned plat_arm_mhz(void) { return g_fake_arm; }
 /* The tests' stand-ins (GBADHOC_FAKE_*): a console that refuses 500, an
  * overclock plugin's folders under GBADHOC_FAKE_UR0, a measured clock. */
+int plat_is_pstv(void)
+{
+   return getenv("GBADHOC_FAKE_PSTV") ? 1 : 0;
+}
+
 unsigned plat_arm_mhz_measured(void)
 {
    const char *e = getenv("GBADHOC_FAKE_MHZ");
@@ -911,6 +1115,22 @@ void plat_frame_ran(void)
        frames_ran < opt.slow_at + opt.slow_n)
       us = opt.slow_us;
    frames_ran++;
+   {
+      /* GBADHOC_SKIP_MOD=N (twin only): the next frame is emulated but not
+       * drawn unless its number is a multiple of N -- what fast forward
+       * (N=3), the half mode (N=2) and catching up do; the proof that an
+       * undrawn frame leaves the machine as it would have been is
+       * docs/TESTING.md "undrawn frames". */
+      extern void fe_host_skip_override(int skip);
+      static long skip_mod = -2;
+      if (skip_mod == -2)
+      {
+         const char *e = getenv("GBADHOC_SKIP_MOD");
+         skip_mod = e && *e ? atol(e) : 0;
+      }
+      if (skip_mod > 1)
+         fe_host_skip_override((frames_ran % (unsigned long)skip_mod) != 0);
+   }
    if (!opt.realtime)
       sim_advance(__atomic_load_n(&sim_ns, __ATOMIC_RELAXED) + (uint64_t)us * 1000u);
 }
@@ -979,11 +1199,19 @@ void plat_present_hook(void)
                      opt.shot[i].path);
          else
             snprintf(path, sizeof(path), "%s", opt.shot[i].path);
-         if (vid_dump_ge(path) == 0)
-            fe_evt("host_shot frame=%u emu=%u file=%s", f, frames_ran,
-                   opt.shot[i].path);
-         else
-            fprintf(stderr, "host: cannot write %s\n", path);
+         {
+            /* vback_soft.c: the text-fit audit's boxes are kept by this name */
+            extern const char *vb_soft_shot_tag;
+            int rc;
+            vb_soft_shot_tag = opt.shot[i].path;
+            rc = vid_dump_ge(path);
+            vb_soft_shot_tag = NULL;
+            if (rc == 0)
+               fe_evt("host_shot frame=%u emu=%u file=%s", f, frames_ran,
+                      opt.shot[i].path);
+            else
+               fprintf(stderr, "host: cannot write %s\n", path);
+         }
       }
    }
 }
@@ -1131,6 +1359,59 @@ int plat_net_join(uint32_t timeout_us)
    return 1;
 }
 
+static pthread_t job_thread;
+static int job_on;
+static void (*job_fn)(void *);
+static void *job_arg;
+static int job_ended;
+
+static void *job_main_thread(void *p)
+{
+   (void)p;
+   job_fn(job_arg);
+   __atomic_store_n(&job_ended, 1, __ATOMIC_RELEASE);
+   return NULL;
+}
+
+int plat_job_busy(void)
+{
+   if (!job_on)
+      return 0;
+   if (!__atomic_load_n(&job_ended, __ATOMIC_ACQUIRE))
+      return 1;
+   return !plat_job_join(0);
+}
+
+int plat_job_start(void (*fn)(void *), void *arg)
+{
+   if (job_on && !plat_job_join(1000))
+      return -1;
+   job_fn = fn;
+   job_arg = arg;
+   __atomic_store_n(&job_ended, 0, __ATOMIC_RELEASE);
+   if (pthread_create(&job_thread, NULL, job_main_thread, NULL) != 0)
+      return -1;
+   job_on = 1;
+   return 0;
+}
+
+int plat_job_join(uint32_t timeout_us)
+{
+   uint32_t waited = 0;
+   if (!job_on)
+      return 1;
+   while (!__atomic_load_n(&job_ended, __ATOMIC_ACQUIRE) && waited < timeout_us)
+   {
+      usleep(10000);
+      waited += 10000;
+   }
+   if (!__atomic_load_n(&job_ended, __ATOMIC_ACQUIRE))
+      return 0;                          /* still running: left as it is */
+   pthread_join(job_thread, NULL);
+   job_on = 0;
+   return 1;
+}
+
 void plat_thread_sleep_us(uint32_t us)
 {
    usleep(us);
@@ -1143,8 +1424,10 @@ void plat_thread_watch(const char *tag, int thid)
 
 void plat_thread_report(char *buf, size_t cap)
 {
+   /* The console's line, with nothing to measure: zeros, so the census line
+    * is there on a twin too (the run time is the last field, in ms). */
    if (buf && cap)
-      buf[0] = '\0';
+      snprintf(buf, cap, "main=c0/0/0/0/0/0/0ms");
 }
 
 int plat_thread_pin(int core)
@@ -1168,6 +1451,7 @@ static pthread_cond_t  wk_cv = PTHREAD_COND_INITIALIZER;
 static void          (*wk_step)(void);
 static int             wk_run, wk_kick;
 static int             wk_created;
+static volatile int    wk_done;               /* wk_main has returned (no pthread_timedjoin_np on macOS) */
 
 static void *wk_main(void *arg)
 {
@@ -1188,6 +1472,7 @@ static void *wk_main(void *arg)
    }
    pthread_mutex_unlock(&wk_mu);
    wk_step();                                 /* the last pass */
+   __atomic_store_n(&wk_done, 1, __ATOMIC_RELEASE);
    return NULL;
 }
 
@@ -1201,6 +1486,7 @@ int plat_worker_start(void (*step)(void), uint32_t period_us)
    wk_step = step;
    wk_run = 1;
    wk_kick = 0;
+   wk_done = 0;
    if (pthread_create(&wk_thread, NULL, wk_main, NULL) != 0)
    {
       wk_run = 0;
@@ -1240,7 +1526,21 @@ int plat_worker_stop_checked(void)
    pthread_mutex_unlock(&wk_mu);
    clock_gettime(CLOCK_REALTIME, &until);
    until.tv_sec += 5;
+#ifdef __linux__
    if (pthread_timedjoin_np(wk_thread, NULL, &until) != 0) return 0;
+#else
+   {
+      int waited_ms = 0;
+      while (!__atomic_load_n(&wk_done, __ATOMIC_ACQUIRE) && waited_ms < 5000)
+      {
+         usleep(1000);
+         waited_ms++;
+      }
+      if (!__atomic_load_n(&wk_done, __ATOMIC_ACQUIRE))
+         return 0;
+      pthread_join(wk_thread, NULL);
+   }
+#endif
    wk_created = 0;
    return 1;
 }
@@ -1255,6 +1555,8 @@ static void pad_at(plat_pad *pad, int pad2)
       if (opt.press[i].pad2 == pad2 && f >= opt.press[i].frame &&
           f < opt.press[i].frame + opt.press[i].len)
          b |= opt.press[i].buttons;
+   if (!pad2 && opt.nwait && waiting)
+      b |= opt.wait[wait_next].buttons;
    pad->buttons = b & 0xFFFFu;
    pad->lx = (b & HOST_LS_LEFT) ? 0 : (b & HOST_LS_RIGHT) ? 255 : 128;
    pad->ly = (b & HOST_LS_UP) ? 0 : (b & HOST_LS_DOWN) ? 255 : 128;
@@ -1265,6 +1567,35 @@ static void pad_at(plat_pad *pad, int pad2)
 static int g_face_swap;
 
 void plat_pad_face_swap(int on) { g_face_swap = on ? 1 : 0; }
+
+/* The script's buttons on every refresh since the last call: the twin's
+ * picture of the console's buffered samples (plat_vita.c). */
+unsigned plat_pad_pressed(void)
+{
+   static int have;
+   static unsigned last;
+   unsigned i, f = script_frame(), from, b = 0;
+   if (getenv("GBADHOC_NO_PADLATCH"))
+      return 0;                    /* (twin: the old behaviour, to compare) */
+   if (!have)
+   {
+      have = 1;
+      last = f;
+      return 0;
+   }
+   from = last + 1;
+   last = f;
+   for (i = 0; i < opt.npress; i++)
+      if (!opt.press[i].pad2 && opt.press[i].frame <= f &&
+          opt.press[i].frame + opt.press[i].len > from)
+         b |= opt.press[i].buttons;
+   if (opt.nwait && waiting)
+      b |= opt.wait[wait_next].buttons;
+   b &= 0xFFFFu;
+   if (g_face_swap && ((b & PLAT_BTN_CROSS) != 0) != ((b & PLAT_BTN_CIRCLE) != 0))
+      b ^= PLAT_BTN_CROSS | PLAT_BTN_CIRCLE;
+   return b;
+}
 
 static void face_swap_pad(plat_pad *pad)
 {
@@ -1277,6 +1608,11 @@ void plat_pad_read(plat_pad *pad)
 {
    pad_at(pad, 0);
    face_swap_pad(pad);
+}
+
+void plat_pad_read_raw(plat_pad *pad)
+{
+   pad_at(pad, 0);
 }
 
 /* The second controller: there from the start when the script names it
@@ -1306,6 +1642,43 @@ int plat_pad_read2(plat_pad *pad)
    pad_at(pad, 1);
    face_swap_pad(pad);
    return 1;
+}
+
+/* ---- the camera (plat.h): the script's camera= entries ------------------- */
+
+static int camera_on;
+
+int plat_camera_open(int back)
+{
+   (void)back;
+   camera_on = opt.ncamera > 0;
+   return camera_on ? 0 : -1;
+}
+
+void plat_camera_close(void)
+{
+   camera_on = 0;
+}
+
+int plat_camera_read(uint8_t *out, int mirror)
+{
+   static uint8_t big[320 * 240];
+   unsigned i, f = script_frame();
+   int kind = -1, x, y;
+   if (!camera_on)
+      return -1;
+   for (i = 0; i < opt.ncamera; i++)
+      if (f >= opt.camera[i].frame)
+         kind = opt.camera[i].kind;
+   if (kind < 0)
+      return 1;
+   for (y = 0; y < 240; y++)
+      for (x = 0; x < 320; x++)
+         big[y * 320 + x] = (uint8_t)(kind == 0 ? x * 255 / 319 :
+                                      kind == 1 ? (x < 160 ? 40 : 200) :
+                                      kind == 2 ? 30 : 220);
+   fe_gbcam_fit(big, 320, 240, 320, mirror, out);
+   return 0;
 }
 
 /* ---- the motion sensor (plat.h): the script's motion= entries ------------- */
@@ -1340,12 +1713,13 @@ int plat_motion_read(plat_motion *m)
 
 /* Every touch entry that is down this frame is a finger (the script's
  * overlapping touch= entries are a multi-touch). */
-int plat_touch_points(plat_touch_pt *out, int max)
+static int touch_points(plat_touch_pt *out, int max, int rear)
 {
    unsigned i, f = script_frame();
    int n = 0;
    for (i = 0; i < opt.ntouch && n < max; i++)
-      if (f >= opt.touch[i].frame && f < opt.touch[i].frame + opt.touch[i].len)
+      if (opt.touch[i].rear == rear &&
+          f >= opt.touch[i].frame && f < opt.touch[i].frame + opt.touch[i].len)
       {
          int span = opt.touch[i].len > 1 ? (int)opt.touch[i].len - 1 : 1;
          int k = (int)(f - opt.touch[i].frame);
@@ -1356,11 +1730,23 @@ int plat_touch_points(plat_touch_pt *out, int max)
    return n;
 }
 
+int plat_touch_points(plat_touch_pt *out, int max)
+{
+   return touch_points(out, max, 0);
+}
+
+/* The rear panel, the script's rear= fingers (the panel's own units). */
+int plat_rear_points(plat_touch_pt *out, int max)
+{
+   return touch_points(out, max, 1);
+}
+
 int plat_script_touch(int *nx, int *ny)
 {
    unsigned i, f = script_frame();
    for (i = 0; i < opt.ntouch; i++)
-      if (f >= opt.touch[i].frame && f < opt.touch[i].frame + opt.touch[i].len)
+      if (!opt.touch[i].rear &&
+          f >= opt.touch[i].frame && f < opt.touch[i].frame + opt.touch[i].len)
       {
          /* a drag arrives at its end point on its last frame */
          int span = opt.touch[i].len > 1 ? (int)opt.touch[i].len - 1 : 1;

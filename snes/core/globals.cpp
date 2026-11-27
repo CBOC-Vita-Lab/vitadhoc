@@ -28,6 +28,7 @@ struct InternalPPU		IPPU;
 struct SDMA				DMA[8];
 struct STimings			Timings;
 struct SGFX				GFX;
+int						g_s9x_fastpix = 1;		// CBOC-Vita: see tileimpl.h; not renamed in the renderer copies on purpose
 struct SBG				BG;
 struct SLineData		LineData[240];
 struct SLineMatrixData	LineMatrixData[240];

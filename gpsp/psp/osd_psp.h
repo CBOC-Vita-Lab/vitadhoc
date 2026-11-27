@@ -9,11 +9,39 @@
 extern "C" {
 #endif
 
-void osd_toast(const char *fmt, ...);
+void osd_toast(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void osd_chip_session(const char *text);  /* NULL/"" hides the chip */
 void osd_chip_ff(const char *text);       /* NULL/"" hides the chip */
 void osd_chip_fps(const char *text);      /* top-left; NULL/"" hides */
+/* Achievement indicators (RetroAchievements, vita/ra_vita.c), drawn small in
+ * the corners, never over the middle of the game:
+ *   challenge   a chip per active challenge (bottom right), until hidden
+ *   progress    "title 3/10" under the toasts, hidden by the runtime or by
+ *               a timeout of its own
+ *   tracker     a leaderboard attempt's live value (bottom left)
+ * Off (osd_ind_enable(0)) draws and keeps nothing. */
+void osd_ind_enable(int on);
+void osd_ind_challenge(unsigned id, int on, const char *title);
+void osd_ind_progress(const char *title, const char *progress); /* NULL hides */
+void osd_ind_tracker(const char *text);                         /* NULL hides */
+void osd_ind_clear(void);
 void osd_draw(void);
+/* The same pass in two halves, for a picture drawn on another thread
+ * (vita/handoff_glue.h): osd_take() on the thread that owns the toasts
+ * copies what is to be drawn and counts the toast's time down, as
+ * osd_draw() would; osd_draw_snap() draws that copy, touching nothing
+ * else of this module. */
+typedef struct osd_snap
+{
+   char toast[168];            /* UTF-8: a name in Japanese takes 3 bytes a letter */
+   char chip_session[32], chip_ff[24], chip_fps[64];
+   char ind_tracker[24], ind_progress[160], ind_chal[8];   /* chal: initials */
+   short ind_chal_n, ind_progress_badge;
+   short toast_y, toast_slim, any;
+   short toast_glass;       /* Vita: a page's toast, above the footer */
+} osd_snap;
+void osd_take(osd_snap *s);
+void osd_draw_snap(const osd_snap *s);
 /* Forget every toast and chip: the in-process return to the game list
  * starts the next game with the OSD a fresh boot has. */
 void osd_reset(void);

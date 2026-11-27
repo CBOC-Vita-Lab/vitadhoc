@@ -17,6 +17,7 @@
 #include "stb_image_write.h"
 #include "host.h"
 #include "s9x_prof.h"
+#include "audio_sim.h"
 
 static uint64_t now_ns(void)
 {
@@ -122,12 +123,30 @@ static void usage(void)
 	    "  --shot-prefix P    PNG file prefix (default shot_)\n"
 	    "  --wav FILE         write all audio (32040 Hz stereo)\n"
 	    "  --timing FILE      CSV: frame,total_us,cpu_us,apu_us,ppu_us,chip_us,front_us (enables profiling)\n"
-	    "  --srm FILE         battery RAM file (loaded if present, saved at exit)\n"
+	    "  --cheats-root DIR  load/keep the game's cheat list in DIR/cheats/<rom name>.cht (RetroArch format)\n"
+	    "  --cheat CODE       add a code (Game Genie XXXX-XXXX, Action Replay AAAAAAVV, raw AAAAAA=VV), repeatable\n"
+	    "  --cheat-toggle F:I:0|1  at frame F switch entry I off/on;  --cheat-remove I;  --cheat-disable-all;  --cheat-list\n"
+	    "  --peek HEX         print the work RAM byte at that offset at the end;  '-' as ROM with --cheat-decode CODE: decode only\n"
+	    "  --srm FILE         battery RAM file (loaded if present, saved at exit; exit status 3 when the save failed)\n"
+	    "  --srm-async        save the way the Vita's writer thread does (take / write / forget); --unblock PATH: if the save\n"
+	    "                     failed remove PATH and try once more\n"
+	    "  --backup-dir DIR   keep the verified backup of an existing save in DIR (default: <save>.bak)\n"
 	    "  --save-state FILE --state-frame N   save a state after frame N\n"
 	    "  --load-state FILE --state-frame N   load a state before frame N\n"
 	    "  --pad2/--pad3/--pad4/--pad5 SCRIPT  scripts for pads 2..5 (pads 3-5 need --opt multitap=1)\n"
 	    "  --nowait           use the non-blocking video fetch of the Vita (hash file lists new pictures: serial w h hash)\n"
-	    "  --opt NAME=VALUE   core option (block_vram sprite_tiles interp superfx_clock transparency echo_buffer), repeatable\n"
+	    "  --render-half      steady pacing's half mode: only even frames are rendered (the core's render-off path for the\n"
+	    "                     others); --hashes then lists the rendered frames only. Emulation and audio must not change.\n"
+	    "  --render-mod N     render only every Nth frame (fast forward draws 1 in 3); emulation and audio must not change\n"
+	    "  --ahead N          from frame N on run every drawn frame ahead (Quick response): the picture is the next frame's\n"
+	    "  --ahead-verify     with --ahead: every way back compares the machine with the one saved\n"
+	    "  --digests FILE     the machine's digest after every frame (snes_host_machine_digest)\n"
+	    "  --peek-sum         print a hash of all work RAM and battery RAM at the end\n"
+	    "  --opt NAME=VALUE   core option (block_vram sprite_tiles interp superfx_clock gsu_cycles gsu_fast transparency echo_buffer), repeatable\n"
+	    "  --audio-sim SCEN   audio pacing simulation in virtual time (S1..S7, S2+, S2-, all); ROM may be '-' for none.\n"
+	    "                     with --tone (or ROM '-') the source is a synthetic tone, else the core's audio;\n"
+	    "                     --legacy runs the first player's audio behaviour; --wav FILE writes the 48 kHz output;\n"
+	    "                     --sim-minutes N sets the length; --sim-verbose prints a line per virtual second\n"
 	    "  --summary          print one summary line (fps, split) on stdout\n"
 	    "  --name NAME        label used in the summary line\n");
 }
@@ -142,8 +161,22 @@ int main(int argc, char **argv)
 	std::vector<PadEv> script, script2, script3, script4, script5;
 	struct Opt { std::string k; int v; };
 	std::vector<Opt> opts;
-	bool nowait = false;
+	bool nowait = false, render_half = false, peek_sum = false;
+	int render_mod = 0;
+	int ahead_from = -1;
+	bool ahead_verify = false;
+	const char *digests = 0;
+	const char *backup_dir = 0, *unblock = 0;
+	bool srm_async = false;
 	bool summary = false;
+	std::vector<std::string> cheat_codes, cheat_decode;
+	struct CTog { int frame, index, on; };
+	std::vector<CTog> ctog;
+	const char *cheats_root = 0;
+	int peek = -1, cheat_remove = -1;
+	bool cheat_list = false, cheat_disable_all = false;
+	AudioSimArgs sim;
+	bool want_sim = false, force_tone = false;
 	for (int i = 2; i < argc; i++) {
 		auto arg = [&](const char *n) { return !strcmp(argv[i], n) && i + 1 < argc; };
 		if (arg("--frames")) frames = atoi(argv[++i]);
@@ -154,6 +187,17 @@ int main(int argc, char **argv)
 		else if (arg("--wav")) wav = argv[++i];
 		else if (arg("--timing")) timing = argv[++i];
 		else if (arg("--srm")) srm = argv[++i];
+		else if (arg("--backup-dir")) backup_dir = argv[++i];
+		else if (arg("--unblock")) unblock = argv[++i];
+		else if (!strcmp(argv[i], "--srm-async")) srm_async = true;
+		else if (arg("--cheat")) cheat_codes.push_back(argv[++i]);
+		else if (arg("--cheat-decode")) cheat_decode.push_back(argv[++i]);
+		else if (arg("--cheats-root")) cheats_root = argv[++i];
+		else if (arg("--cheat-toggle")) { CTog t; if (sscanf(argv[++i], "%d:%d:%d", &t.frame, &t.index, &t.on) == 3) ctog.push_back(t); }
+		else if (arg("--cheat-remove")) cheat_remove = atoi(argv[++i]);
+		else if (arg("--peek")) peek = (int) strtol(argv[++i], 0, 16);
+		else if (!strcmp(argv[i], "--cheat-list")) cheat_list = true;
+		else if (!strcmp(argv[i], "--cheat-disable-all")) cheat_disable_all = true;
 		else if (arg("--save-state")) sstate = argv[++i];
 		else if (arg("--load-state")) lstate = argv[++i];
 		else if (arg("--state-frame")) state_frame = atoi(argv[++i]);
@@ -166,9 +210,33 @@ int main(int argc, char **argv)
 			char k[64]; int v = 0;
 			if (sscanf(argv[++i], "%63[^=]=%d", k, &v) == 2) opts.push_back({ k, v });
 		}
+		else if (arg("--audio-sim")) { sim.scenario = argv[++i]; want_sim = true; }
+		else if (arg("--sim-minutes")) sim.minutes = atof(argv[++i]);
+		else if (!strcmp(argv[i], "--sim-verbose")) sim.verbose = true;
+		else if (arg("--sim-kp")) sim.kp = atof(argv[++i]);
+		else if (arg("--sim-ki")) sim.ki = atof(argv[++i]);
+		else if (!strcmp(argv[i], "--tone")) force_tone = true;
+		else if (!strcmp(argv[i], "--legacy")) sim.legacy = true;
 		else if (!strcmp(argv[i], "--summary")) summary = true;
 		else if (!strcmp(argv[i], "--nowait")) nowait = true;
+		else if (!strcmp(argv[i], "--render-half")) render_half = true;
+		else if (!strcmp(argv[i], "--peek-sum")) peek_sum = true;
+		else if (arg("--render-mod")) render_mod = atoi(argv[++i]);
+		else if (arg("--ahead")) ahead_from = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "--ahead-verify")) ahead_verify = true;
+		else if (arg("--digests")) digests = argv[++i];
 		else { usage(); return 2; }
+	}
+	if (!cheat_decode.empty()) {
+		/* no ROM needed: "snes_twin - --cheat-decode CODE" prints the code as address=value cells (Game Genie, Action Replay, raw), or the error */
+		int bad = 0;
+		for (auto &c : cheat_decode) {
+			char raw[700], canon[700];
+			int n = snes_host_cheat_decode(c.c_str(), raw, sizeof raw);
+			if (n > 0 && snes_host_cheat_validate(c.c_str(), canon, sizeof canon) > 0) printf("%s -> %s (%d cell%s, %s)\n", c.c_str(), raw, n, n == 1 ? "" : "s", canon);
+			else { printf("%s -> error %d\n", c.c_str(), n); bad++; }
+		}
+		return 0;
 	}
 	std::set<int> shotset;
 	if (shots) {
@@ -177,13 +245,38 @@ int main(int argc, char **argv)
 		while (p < t.size()) { size_t q = t.find(',', p); if (q == std::string::npos) q = t.size(); shotset.insert(atoi(t.substr(p, q - p).c_str())); p = q + 1; }
 	}
 
+	if (want_sim) {
+		sim.tone = force_tone || !strcmp(rom, "-");
+		sim.wav = wav;
+		if (!sim.tone) {
+			if (snes_host_init()) { fprintf(stderr, "init failed\n"); return 1; }
+			char e[128] = "";
+			if (snes_host_load_rom(rom, NULL, e, sizeof e)) { fprintf(stderr, "load failed: %s\n", e); return 1; }
+		}
+		return audio_sim_run(sim);
+	}
 	if (snes_host_init()) { fprintf(stderr, "init failed\n"); return 1; }
 	for (auto &o : opts) if (snes_host_set_option(o.k.c_str(), o.v)) { fprintf(stderr, "unknown option %s\n", o.k.c_str()); return 2; }
+	if (backup_dir) snes_host_set_backup_dir(backup_dir);
 	char err[128] = "";
 	if (snes_host_load_rom(rom, srm, err, sizeof err)) { fprintf(stderr, "load failed: %s\n", err); return 1; }
 
 	fprintf(stderr, "%s\n", snes_host_rom_info());
+	if (cheats_root) {
+		int r = snes_host_cheats_load(cheats_root);
+		fprintf(stderr, "cheats: %d entries loaded\n", r);
+	}
+	if (cheat_remove >= 0) { char et[200]; printf("cheat remove %d -> %d\n", cheat_remove, snes_host_cheat_remove(cheat_remove)); if (snes_host_cheat_error(et, sizeof et)) printf("cheat file: %s\n", et); }
+	for (auto &c : cheat_codes) {
+		int r = snes_host_cheat_add(c.c_str(), NULL);
+		char et[200];
+		printf("cheat add %s -> %d\n", c.c_str(), r);
+		if (snes_host_cheat_error(et, sizeof et)) printf("cheat file: %s\n", et);
+	}
 	FILE *hf = hashes ? fopen(hashes, "w") : 0;
+	FILE *df = digests ? fopen(digests, "w") : 0;
+	if (ahead_verify) snes_host_ahead_verify(1);
+	int ahead_plain = 0;
 	FILE *tf = timing ? fopen(timing, "w") : 0;
 	if (tf) fprintf(tf, "frame,total_us,cpu_us,apu_us,ppu_us,chip_us,front_us\n");
 	std::vector<int16_t> pcm;
@@ -207,14 +300,19 @@ int main(int argc, char **argv)
 				snes_host_set_pad(k + 1, em[k]);
 			}
 		}
+		for (auto &t : ctog) if (t.frame == f) { char et[200]; printf("cheat toggle frame %d index %d on %d -> %d\n", f, t.index, t.on, snes_host_cheat_enable(t.index, t.on)); if (snes_host_cheat_error(et, sizeof et)) printf("cheat file: %s\n", et); }
 		if (lstate && f == state_frame) {
 			int r = snes_host_state_load(lstate);
 			fprintf(stderr, "load state: %d\n", r);
 		}
+		if (render_half) snes_host_set_render((f & 1) == 0);
+		if (render_mod > 1) snes_host_set_render(f % render_mod == 0);
 		uint64_t t0 = now_ns(), c0 = cpu_ns();
 		if (prof_on) { memset(g_s9xp.acc, 0, sizeof g_s9xp.acc); memset(g_s9xp.cnt, 0, sizeof g_s9xp.cnt); g_s9xp.cur = S9XP_CPU; g_s9xp.sp = 0; g_s9xp.last = s9xp_now(); }
-		snes_host_run_frame();
+		if (ahead_from >= 0 && f >= ahead_from) { if (snes_host_run_frame_ahead() != 0) ahead_plain++; }
+		else snes_host_run_frame();
 		if (prof_on) s9xp_enter(S9XP_FRONT), s9xp_leave();
+		if (df) fprintf(df, "%d %016llx\n", f, (unsigned long long) snes_host_machine_digest());
 		uint64_t t1 = now_ns(), c1 = cpu_ns();
 		tot_ns += t1 - t0;
 		wall_tot_ns += t1 - t0;
@@ -245,6 +343,8 @@ int main(int argc, char **argv)
 			}
 			continue;
 		}
+		if (render_half && (f & 1)) continue;
+		if (render_mod > 1 && f % render_mod) continue;
 		v = snes_host_video(&w, &h, &pitch);
 		if (hf) fprintf(hf, "%d %d %d %016llx\n", f, w, h, (unsigned long long) fnv(v, w, h, pitch));
 		if (shotset.count(f)) {
@@ -259,10 +359,52 @@ int main(int argc, char **argv)
 		while ((n = snes_host_audio_take(abuf.data(), 4096)) > 0)
 			if (wav) pcm.insert(pcm.end(), abuf.begin(), abuf.begin() + n * 2);
 	}
+	if (peek >= 0) printf("peek %05X = %02X\n", peek, snes_host_peek_wram((uint32_t) peek));
+	if (peek_sum) {
+		uint64_t hs = 1469598103934665603ull;
+		for (uint32_t o = 0; o < 0x20000; o++) { hs ^= (uint8_t) snes_host_peek_wram(o); hs *= 1099511628211ull; }
+		const uint8_t *sr = snes_host_sram_data();
+		for (size_t o = 0; sr && o < snes_host_sram_size(); o++) { hs ^= sr[o]; hs *= 1099511628211ull; }
+		printf("ramsum %016llx\n", (unsigned long long) hs);
+	}
+	if (cheat_disable_all) snes_host_cheat_disable_all();
+	if (cheat_list)
+		for (int k = 0, n = snes_host_cheat_count(); k < n; k++) {
+			snes_cheat_info ci;
+			snes_host_cheat_get(k, &ci);
+			printf("cheat %d: %s | %s | %s%s\n", k, ci.label, ci.code, ci.enabled ? "on" : "off", ci.usable ? "" : " (not a code)");
+		}
 	if (hf) fclose(hf);
+	if (df) fclose(df);
 	if (tf) fclose(tf);
+	if (ahead_from >= 0) {
+		uint64_t as[8];
+		snes_host_ahead_stat(as);
+		printf("ahead: frames=%llu plain=%d vram_blocks=%llu obj_rebuilds=%llu save_bytes=%llu verified=%llu differed=%llu save_us=%.1f back_us=%.1f why=%s\n",
+		    (unsigned long long) as[0], ahead_plain, (unsigned long long) as[1], (unsigned long long) as[2], (unsigned long long) as[3],
+		    (unsigned long long) as[4], (unsigned long long) as[5], as[0] ? as[6] / 1e3 / as[0] : 0.0, as[0] ? as[7] / 1e3 / as[0] : 0.0, snes_host_ahead_why());
+	}
 	if (wav) write_wav(wav, pcm);
-	if (srm && snes_host_sram_dirty()) fprintf(stderr, "sram save: %d\n", snes_host_sram_save());
+	int save_rc = 0;
+	if (srm && snes_host_sram_dirty()) {
+		/* the same calls as the Vita player: --srm-async copies the RAM (take), writes the copy (write) and, when that
+		 * fails, forgets it so the RAM counts as unsaved again, exactly as the Vita's writer thread loop does */
+		std::vector<uint8_t> buf(256 * 1024);
+		for (int attempt = 0; attempt < 2; attempt++) {
+			if (srm_async) {
+				size_t n = snes_host_sram_take(buf.data(), buf.size());
+				save_rc = snes_host_sram_write(buf.data(), n);
+				if (save_rc) snes_host_sram_forget();
+			} else
+				save_rc = snes_host_sram_save();
+			char why[200] = "";
+			snes_host_save_error(why, sizeof why);
+			fprintf(stderr, "sram save%s: %d%s%s (still unsaved: %d)\n", attempt ? " (retry)" : "", save_rc, why[0] ? " " : "", why, snes_host_sram_dirty());
+			if (!save_rc || !unblock) break;
+			remove(unblock);   /* the cause is gone: retry once, as the player does after its back-off */
+			unblock = 0;
+		}
+	}
 
 	/* fps comes from the thread's CPU time, not the wall clock: the build machine
 	 * is shared and wall time includes time spent waiting for a core. */
@@ -287,5 +429,5 @@ int main(int argc, char **argv)
 		printf("          ppu busy=%.3f s batches/fr=%.1f main waited %.2f/fr for %.3f s\n", st.ppu_busy_ns / 1e9, (double) st.ppu_batches / frames, (double) st.ppu_waits / frames, st.ppu_wait_ns / 1e9);
 	}
 	snes_host_shutdown();
-	return 0;
+	return save_rc ? 3 : 0;
 }

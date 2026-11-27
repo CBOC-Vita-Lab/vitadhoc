@@ -24,6 +24,17 @@ by its upstream commit in the log below:
              (src/rcheevos/runtime_progress.c)
   - 284de96  keeps unlock times in encore mode (src/rc_client.c; the app does
              not use encore mode; the field is unlock_time_softcore here)
+  - db8ca2e  null checks in rc_client (develop, 2026-10-30, "add null checks to
+             rc_client functions"; a local patch on v12.5.0, 2026-11-12): the
+             award callback's mastery scan is in a helper that returns when
+             client->game is NULL; failed allocations in the achievement and
+             leaderboard lists and the game-hash list are returned, not used;
+             a NULL display name counts as length 0; the hash-array sizes and
+             the start-session error order follow upstream (src/rc_client.c).
+             Upstream's diff names src/client/rc_client_*.c; here those four
+             files are one src/rc_client.c, so the hunks were applied there,
+             with the award-callback hunk and the game-hash hunk adapted by
+             hand (the mastery code is not the same in the two layouts).
 Not taken: 'rich presence lookup tree' balancing (cab7f7f, only speeds up
 huge lookups), 'survive a failed allocation' (e3e7e86, needs the new source
 layout), the restructure/rebranding/API-rename commits, hashes for consoles

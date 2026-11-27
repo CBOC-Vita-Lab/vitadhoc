@@ -17,6 +17,121 @@ namespace {
 	// Here are the tile converters, selected by S9xSelectTileConverter().
 	// Really, except for the definition of DOBIT and the number of times it is called, they're all the same.
 
+#if defined(__ARM_NEON) && defined(LSB_FIRST)
+	static const uint8 kTileBitMask[16] = {
+		0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01,
+		0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01
+	};
+
+	#define S9X_EXPAND2(pl, r0, r1) \
+		vcombine_u8(vdup_lane_u8((pl), (r0)), vdup_lane_u8((pl), (r1)))
+
+	uint8 ConvertTile2 (uint8 *pCache, uint32 TileAddr, uint32)
+	{
+		const uint8 *tp = &Memory.VRAM[TileAddr];
+		uint32 w0, w1, w2, w3;
+		memcpy(&w0, tp +  0, 4); memcpy(&w1, tp +  4, 4);
+		memcpy(&w2, tp +  8, 4); memcpy(&w3, tp + 12, 4);
+		if ((w0 | w1 | w2 | w3) == 0)
+		{
+			const uint8x16_t z = vdupq_n_u8(0);
+			vst1q_u8(pCache +  0, z); vst1q_u8(pCache + 16, z);
+			vst1q_u8(pCache + 32, z); vst1q_u8(pCache + 48, z);
+			return BLANK_TILE;
+		}
+		const uint8x16_t bm = vld1q_u8(kTileBitMask);
+		const uint8x8x2_t pl0 = vld2_u8(tp);
+		#define DO_ROWS2(r0, r1, off) do { \
+			uint8x16_t acc = vtstq_u8(S9X_EXPAND2(pl0.val[0], r0, r1), bm); \
+			acc = vsriq_n_u8(vtstq_u8(S9X_EXPAND2(pl0.val[1], r0, r1), bm), acc, 1); \
+			vst1q_u8(pCache + (off), vshrq_n_u8(acc, 6)); \
+		} while (0)
+		DO_ROWS2(0, 1,  0);
+		DO_ROWS2(2, 3, 16);
+		DO_ROWS2(4, 5, 32);
+		DO_ROWS2(6, 7, 48);
+		#undef DO_ROWS2
+		return TRUE;
+	}
+
+	uint8 ConvertTile4 (uint8 *pCache, uint32 TileAddr, uint32)
+	{
+		const uint8 *tp = &Memory.VRAM[TileAddr];
+		uint32 nz = 0;
+		for (int i = 0; i < 32; i += 4)
+		{
+			uint32 w;
+			memcpy(&w, tp + i, 4);
+			nz |= w;
+		}
+		if (!nz)
+		{
+			const uint8x16_t z = vdupq_n_u8(0);
+			vst1q_u8(pCache +  0, z); vst1q_u8(pCache + 16, z);
+			vst1q_u8(pCache + 32, z); vst1q_u8(pCache + 48, z);
+			return BLANK_TILE;
+		}
+		const uint8x16_t bm = vld1q_u8(kTileBitMask);
+		const uint8x8x2_t pl0 = vld2_u8(tp);
+		const uint8x8x2_t pl1 = vld2_u8(tp + 16);
+		#define DO_ROWS4(r0, r1, off) do { \
+			uint8x16_t acc = vtstq_u8(S9X_EXPAND2(pl0.val[0], r0, r1), bm); \
+			acc = vsriq_n_u8(vtstq_u8(S9X_EXPAND2(pl0.val[1], r0, r1), bm), acc, 1); \
+			acc = vsriq_n_u8(vtstq_u8(S9X_EXPAND2(pl1.val[0], r0, r1), bm), acc, 1); \
+			acc = vsriq_n_u8(vtstq_u8(S9X_EXPAND2(pl1.val[1], r0, r1), bm), acc, 1); \
+			vst1q_u8(pCache + (off), vshrq_n_u8(acc, 4)); \
+		} while (0)
+		DO_ROWS4(0, 1,  0);
+		DO_ROWS4(2, 3, 16);
+		DO_ROWS4(4, 5, 32);
+		DO_ROWS4(6, 7, 48);
+		#undef DO_ROWS4
+		return TRUE;
+	}
+
+	uint8 ConvertTile8 (uint8 *pCache, uint32 TileAddr, uint32)
+	{
+		const uint8 *tp = &Memory.VRAM[TileAddr];
+		uint32 nz = 0;
+		for (int i = 0; i < 64; i += 4)
+		{
+			uint32 w;
+			memcpy(&w, tp + i, 4);
+			nz |= w;
+		}
+		if (!nz)
+		{
+			const uint8x16_t z = vdupq_n_u8(0);
+			vst1q_u8(pCache +  0, z); vst1q_u8(pCache + 16, z);
+			vst1q_u8(pCache + 32, z); vst1q_u8(pCache + 48, z);
+			return BLANK_TILE;
+		}
+		const uint8x16_t bm = vld1q_u8(kTileBitMask);
+		const uint8x8x2_t pl0 = vld2_u8(tp);
+		const uint8x8x2_t pl1 = vld2_u8(tp + 16);
+		const uint8x8x2_t pl2 = vld2_u8(tp + 32);
+		const uint8x8x2_t pl3 = vld2_u8(tp + 48);
+		#define DO_ROWS8(r0, r1, off) do { \
+			uint8x16_t acc = vtstq_u8(S9X_EXPAND2(pl0.val[0], r0, r1), bm); \
+			acc = vsriq_n_u8(vtstq_u8(S9X_EXPAND2(pl0.val[1], r0, r1), bm), acc, 1); \
+			acc = vsriq_n_u8(vtstq_u8(S9X_EXPAND2(pl1.val[0], r0, r1), bm), acc, 1); \
+			acc = vsriq_n_u8(vtstq_u8(S9X_EXPAND2(pl1.val[1], r0, r1), bm), acc, 1); \
+			acc = vsriq_n_u8(vtstq_u8(S9X_EXPAND2(pl2.val[0], r0, r1), bm), acc, 1); \
+			acc = vsriq_n_u8(vtstq_u8(S9X_EXPAND2(pl2.val[1], r0, r1), bm), acc, 1); \
+			acc = vsriq_n_u8(vtstq_u8(S9X_EXPAND2(pl3.val[0], r0, r1), bm), acc, 1); \
+			acc = vsriq_n_u8(vtstq_u8(S9X_EXPAND2(pl3.val[1], r0, r1), bm), acc, 1); \
+			vst1q_u8(pCache + (off), acc); \
+		} while (0)
+		DO_ROWS8(0, 1,  0);
+		DO_ROWS8(2, 3, 16);
+		DO_ROWS8(4, 5, 32);
+		DO_ROWS8(6, 7, 48);
+		#undef DO_ROWS8
+		return TRUE;
+	}
+
+	#undef S9X_EXPAND2
+#else
 	#define DOBIT(n, i) \
 		if ((pix = *(tp + (n)))) \
 		{ \
@@ -102,6 +217,7 @@ namespace {
 	}
 
 	#undef DOBIT
+#endif
 
 	#define DOBIT(n, i) \
 		if ((pix = hrbit_odd[*(tp1 + (n))])) \

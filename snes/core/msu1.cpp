@@ -281,6 +281,53 @@ void S9xMSU1Generate(size_t sample_count)
 }
 
 
+// CBOC-Vita: run-ahead (ahead.cpp). The registers, the sample position and the track as a frame left them; on the way back
+// the files are put where the registers say (a seek only when the look-ahead frame moved them, the track opened again only
+// when that frame changed it). buf NULL: the size; save 1 copies into buf, 0 copies back.
+struct SMSU1Ahead
+{
+	struct SMSU1 m;
+	size_t pf;
+	uint32 loop;
+	bool open;
+};
+
+size_t S9xMSU1AheadCopy(uint8 *buf, int save)
+{
+	if (!buf)
+		return sizeof(SMSU1Ahead);
+	SMSU1Ahead *a = (SMSU1Ahead *) buf;
+	if (save)
+	{
+		a->m = MSU1;
+		a->pf = partial_frames;
+		a->loop = audioLoopPos;
+		a->open = audioStream != NULL;
+		return sizeof(SMSU1Ahead);
+	}
+	const bool was_open = audioStream != NULL;
+	const uint32 was_track = MSU1.MSU1_CURRENT_TRACK, was_apos = MSU1.MSU1_AUDIO_POS, was_dpos = MSU1.MSU1_DATA_POS;
+	MSU1 = a->m;
+	partial_frames = a->pf;
+	audioLoopPos = a->loop;
+	bool seek = false;
+	if (a->open != was_open || (a->open && a->m.MSU1_CURRENT_TRACK != was_track))
+	{
+		AudioClose();
+		if (a->open)
+		{
+			std::string extension = "-" + std::to_string(MSU1.MSU1_CURRENT_TRACK) + ".pcm";
+			audioStream = S9xMSU1OpenFile(extension.c_str());
+		}
+		seek = true;
+	}
+	if (audioStream && (seek || was_apos != MSU1.MSU1_AUDIO_POS))
+		REVERT_STREAM(audioStream, MSU1.MSU1_AUDIO_POS, 0);
+	if (dataStream && was_dpos != MSU1.MSU1_DATA_POS)
+		REVERT_STREAM(dataStream, MSU1.MSU1_DATA_POS, 0);
+	return sizeof(SMSU1Ahead);
+}
+
 uint8 S9xMSU1ReadPort(uint8 port)
 {
 	switch (port)

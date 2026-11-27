@@ -5,6 +5,9 @@ loopback network: vita/link_vita.c from the menus to the session and back.
     ./link_tests.py x86               both twins the x86 one
     ./link_tests.py armhf             both the armhf one under qemu-arm (the
                                       ARM dynarec, the Vita's): the core set
+    ./link_tests.py aarch64           both the aarch64 one (GBA interpreter) under
+                                      qemu-aarch64 (QEMU_A64 to change)
+    ./link_tests.py mixed64           an x86 twin and an aarch64 twin
     ./link_tests.py mixed             an x86 twin and an armhf twin: they
                                       must refuse to mirror, and may play a
                                       Game Boy link
@@ -46,13 +49,20 @@ import subprocess
 import sys
 import time
 
-from app_tests import HERE, QEMU, Result, Suite, worst_diff
+from app_tests import HERE, QEMU, QEMU_A64, Result, Suite, worst_diff
 
 GP = os.path.normpath(os.path.join(HERE, "..", ".."))
-LINKTEST = os.path.join(GP, "tools", "linktest", "linktest.gba")
+def _linktest(name):
+    """the cartridge the gate built into its out dir (GATE_LINKTEST_DIR), else the committed one"""
+    d = os.environ.get("GATE_LINKTEST_DIR")
+    p = os.path.join(d, name) if d else ""
+    return p if p and os.path.exists(p) else os.path.join(GP, "tools", "linktest", name)
+
+
+LINKTEST = _linktest("linktest.gba")
 GBLINK = os.path.join(HERE, "testrom", "gblink.gb")
 FAKE_IGD = os.path.join(GP, "netdrv", "tests", "fake_igd.py")
-LINKTEST_B = os.path.join(GP, "tools", "linktest", "linktest_b.gba")
+LINKTEST_B = _linktest("linktest_b.gba")
 
 # The linktest cartridge's result block (tools/linktest/linktest.h), in
 # 32-bit words from 0x02000000.
@@ -64,6 +74,10 @@ LT_PEEK = "02000000:44"
 
 
 def exe_of(arch):
+    # GBADHOC_HOST_<ARCH> (x86 / armhf): a twin built elsewhere (make ARCH=x86 B=<dir>)
+    alt = os.environ.get("GBADHOC_HOST_" + arch.upper().replace("-", "_"))
+    if alt:
+        return alt
     return os.path.join(HERE, "build", arch, "gbadhoc_host")
 
 
@@ -96,7 +110,15 @@ class Twin:
         self.rom = os.path.basename(rom)
         with open(os.path.join(self.root, "autoboot.txt"), "w") as f:
             f.write(self.rom + "\n")
-        cfg = {"nick": nick}
+        # Image quality Original: a realtime twin pays 1.4's default xBRZ in
+        # its own wall-clock time (a slow frame per refresh on this host),
+        # which these scripts' timings were not made for; the network is
+        # what they test.  A test can still hand its own quality.
+        cfg = {"nick": nick, "quality_gba": 1, "quality_gb": 1,
+               "quality_gbc": 1}
+        # LINK_TEST_GB_CORE=1: every Game Boy console has Settings > Game Boy core on Accurate (Link play must still run Standard)
+        if os.environ.get("LINK_TEST_GB_CORE"):
+            cfg["gb_core"] = int(os.environ["LINK_TEST_GB_CORE"])
         cfg.update(config or {})
         with open(os.path.join(self.root, "config.ini"), "w") as f:
             for k, v in cfg.items():
@@ -129,7 +151,8 @@ class Twin:
     def start(self):
         with open(os.path.join(self.out, "script.txt"), "w") as f:
             f.write(self.script)
-        cmd = (QEMU if self.arch.startswith("armhf") else []) + [
+        cmd = (QEMU if self.arch.startswith("armhf") else
+               QEMU_A64 if self.arch.startswith("aarch64") else []) + [
             exe_of(self.arch), "--root", self.root, "--realtime",
             "--shot-dir", self.out, "--input-file",
             os.path.join(self.out, "script.txt")]
@@ -186,8 +209,10 @@ class Tests:
         self.mode = mode
         # who is what: x86 = both x86; armhf = both armhf; mixed = A x86,
         # B armhf
-        self.arch_a = "armhf" if mode == "armhf" else "x86"
-        self.arch_b = "x86" if mode == "x86" else "armhf"
+        # aarch64 = both aarch64; mixed64 = A x86, B aarch64
+        self.arch_a = {"armhf": "armhf", "aarch64": "aarch64"}.get(mode, "x86")
+        self.arch_b = {"x86": "x86", "aarch64": "aarch64",
+                       "mixed64": "aarch64"}.get(mode, "armhf")
         self.slow = mode != "x86"
         # A twin under qemu cannot draw sixty pictures a second, let alone
         # run two GBAs at it.  Its display is told to refresh more slowly
@@ -516,8 +541,9 @@ def t_wifi_cable(T):
     for r, who, ch in ((ra, "A", 0), (rb, "B", 2)):
         im = r.shot("running.png")
         left, right = im.getpixel((200, 20)), im.getpixel((700, 20))
-        T.check(left[ch] > 200 and left[2 - ch] < 60 and right[1] > 150 and
-                right[0] < 60 and right[2] < 60,
+        # (dominance, not pure colours: the picture's default colour look softens them)
+        T.check(left[ch] > 180 and left[ch] - left[2 - ch] > 80 and right[1] > 130 and
+                right[1] - right[0] > 40 and right[1] - right[2] > 60,
                 "%s: the cartridge's own screen while linked: role band %s "
                 "(%s), verdict band green %s" %
                 (who, left, "red: parent" if ch == 0 else "blue: child",
@@ -627,9 +653,9 @@ def t_gba_two_games(T):
     """GBA Link Cable between two DIFFERENT games (the trade between
     versions: Ruby with Sapphire): each Vita fetches the other's game over
     the link, keeps it in its cache, runs both machines from their own
-    cartridges and saves.  Small cartridges (identified whole) both ways,
-    then 1 MiB ones (identified by slices) with a second session that finds
-    the games in the cache."""
+    cartridges and saves.  Small cartridges (identified whole) both ways
+    (this part), then 1 MiB ones (gba_two_games_big, a scenario of its own, so each
+    fits a ten-minute run)."""
     if not os.path.exists(LINKTEST_B):
         T.S.note("no tools/linktest/linktest_b.gba (make -C tools/linktest "
                  "VARIANT_B=1): skipped")
@@ -638,6 +664,16 @@ def t_gba_two_games(T):
     two_games_session(T, "small, T hosts", LINKTEST, LINKTEST_B, False)
     T.begin("gba_two_games_ba")
     two_games_session(T, "small, B hosts", LINKTEST_B, LINKTEST, False)
+
+
+def t_gba_two_games_big(T):
+    """GBA Link Cable between two different games, 1 MiB cartridges
+    (identified by slices), with a second session that finds the games in
+    the cache."""
+    if not os.path.exists(LINKTEST_B):
+        T.S.note("no tools/linktest/linktest_b.gba (make -C tools/linktest "
+                 "VARIANT_B=1): skipped")
+        return
     T.begin("gba_two_games_big")
     d = T.dir
     big_a = os.path.join(d, "ruby.gba")
@@ -697,24 +733,38 @@ def t_share(T, replace=False):
     mine = bytes((i * 13 + 5) & 0xFF for i in range(32768))
     # replace: B has a save of its own, so taking A's asks first ("Replace
     # your save?", X replace) and keeps B's as linktest.sav.bak.
-    ask = press(21, "cross") if replace else ""
+    # d: the longer walk to the Link setup rows (Settings opens on Theme
+    # since 1.4) makes B join about a second later
+    d = 3
+    ask = press(21 + d, "cross") if replace else ""
     late = 2 if replace else 0
-    down7 = keys(*(["down"] * 7))
+    # Settings opens on Theme in the game list (1.4): down past the rest of
+    # Interface (5) and RetroAchievements' Account and Hardcore (2) to Link
+    # setup, then Name ... OSD (7) to Share game data; Join is one more.
+    # Every step waits for the row's own log line (settings_row), so a press a
+    # busy machine dropped or doubled cannot move the walk; the last step also
+    # names the row it must land on (SET_SHARE = row 8, SET_JOIN = 9, the Link
+    # setup section's rows 1..9 in ui_psp.c).
+    def to_row(n, row):
+        return "".join("+%d:hold=down=settings_row row=%s\n" % (GAP, row if i == n - 1 else "")
+                       for i in range(n))
+    down7 = to_row(16, 8)
+    down8 = to_row(17, 9)
     a = T.twin("a", T.arch_a, LINKTEST, "Alice",
                press(2, "start") + down7 + "+20:shot=settings.png\n" +
                keys("cross", first=AFTER_SHOT) + shot(8, "sharing.png") +
-               shot(26, "shared.png") + press(28, "circle") +
-               shot(30, "after.png") + quit_at(32),
+               shot(26 + d, "shared.png") + press(28 + d, "circle") +
+               shot(30 + d, "after.png") + quit_at(32 + d),
                extra={"roms/linktest.sav": sav})
     b = T.twin("b", T.arch_b, LINKTEST, "Bob",
-               press(5, "start") + down7 + keys("down") +
+               press(5, "start") + down8 +
                "+20:shot=settings.png\n" + keys("cross", first=AFTER_SHOT) +
-               shot(14, "list.png") + press(15, "cross") +
-               shot(18, "their.png") + press(19, "cross") +
-               (shot(20, "ask.png") if replace else "") + ask +
-               shot(24 + late, "done.png") + press(25 + late, "circle") +
-               press(26 + late, "circle") + shot(28 + late, "after.png") +
-               quit_at(32 + late),
+               shot(14 + d, "list.png") + press(15 + d, "cross") +
+               shot(18 + d, "their.png") + press(19 + d, "cross") +
+               (shot(20 + d, "ask.png") if replace else "") + ask +
+               shot(24 + late + d, "done.png") + press(25 + late + d, "circle") +
+               press(26 + late + d, "circle") + shot(28 + late + d, "after.png") +
+               quit_at(32 + late + d),
                extra={"roms/linktest.sav": mine} if replace else None)
     for t in (a, b):
         os.remove(os.path.join(t.root, "autoboot.txt"))   # the game list
@@ -820,6 +870,8 @@ def t_three_sessions(T):
     """Three sessions in one boot: host, end, join, end, host again."""
     T.begin("three_sessions")
     # 1: A hosts, B joins, A ends.  2: B hosts, A joins, B ends.  3: as 1.
+    # (The second and third are given ~20 s: the first hash check comes at 240
+    # frames, and a guest plays only some 24 frames a second.)
     # An emulated ARM twin on a busy machine spends most of a short session
     # setting it up: each one runs e seconds longer there, so that every
     # session reaches at least one hash check.
@@ -827,17 +879,17 @@ def t_three_sessions(T):
     a = T.twin("a", T.arch_a, LINKTEST, "Alice",
                host(EARLY) + disconnect(16 + e) +
                join_first(26 + e, wait=2.5, shot="join2.png") +
-               shot(34 + e, "second.png") +
-               host(48 + 2 * e) + shot(58 + 3 * e, "third.png") +
-               disconnect(62 + 3 * e) +
-               shot(68 + 3 * e, "after.png") + quit_at(70 + 3 * e))
+               shot(36 + e, "second.png") +
+               host(54 + 2 * e) + shot(64 + 3 * e, "third.png") +
+               disconnect(75 + 3 * e) +
+               shot(81 + 3 * e, "after.png") + quit_at(83 + 3 * e))
     b = T.twin("b", T.arch_b, LINKTEST, "Bob",
                join_first(EARLY, wait=2.5) +
-               host(21 + e) + disconnect(40 + 2 * e) +
-               join_first(50 + 2 * e, wait=2.5) +
-               shot(58 + 3 * e, "third.png") +
-               shot(68 + 3 * e, "after.png") + quit_at(70 + 3 * e))
-    ra, rb = T.run([a, b], 70 + 3 * e)
+               host(21 + e) + disconnect(47 + 2 * e) +
+               join_first(56 + 2 * e, wait=2.5) +
+               shot(64 + 3 * e, "third.png") +
+               shot(81 + 3 * e, "after.png") + quit_at(83 + 3 * e))
+    ra, rb = T.run([a, b], 83 + 3 * e)
     T.clean(ra, "A")
     T.clean(rb, "B")
     for r, who, roles in ((ra, "A", ["host", "guest", "host"]),
@@ -890,16 +942,20 @@ def gb_verdict(T, r, who, role, save="gblink.gb.sav"):
 def t_wifi_gb(T):
     """Wi-Fi, Game Boy Link Cable: two Game Boys per console, bytes each way."""
     T.begin("wifi_gb")
+    # An emulated ARM twin plays some 5 frames a second on a busy machine,
+    # and the 200 bytes each way need a few hundred frames: it is given
+    # e seconds more before the cable is pulled.
+    e = 14 if T.slow else 0
     a = T.twin("a", T.arch_a, GBLINK, "Alice",
                host(2, "host.png") + shot(11, "linking.png") +
-               press(15, "a", 20) + shot(17, "running.png") +
-               disconnect(26, "session.png") + shot(33, "after.png") +
-               quit_at(35), vita={"link_peek": "C000:2"})
+               press(15, "a", 20) + shot(17 + e, "running.png") +
+               disconnect(26 + e, "session.png") + shot(33 + e, "after.png") +
+               quit_at(35 + e), vita={"link_peek": "C000:2"})
     b = T.twin("b", T.arch_b, GBLINK, "Bob",
-               join_first(4, wait=3) + shot(17, "running.png") +
-               shot(33, "after.png") + quit_at(35),
+               join_first(4, wait=3) + shot(17 + e, "running.png") +
+               shot(33 + e, "after.png") + quit_at(35 + e),
                vita={"link_peek": "C000:2"})
-    ra, rb = T.run([a, b], 35)
+    ra, rb = T.run([a, b], 35 + e)
     T.clean(ra, "A")
     T.clean(rb, "B")
     rooms = rb.evt("link_scan_room")
@@ -922,6 +978,148 @@ def t_wifi_gb(T):
     T.check(sum(sa) > sum(sb) + 60 and sum(sb) > 60,
             "the two screens: master lighter than slave, neither black "
             "(%s / %s)" % (sa, sb))
+
+
+def snes_two_walk(downs=17):
+    """The SNES tab, the list's Settings (START), `downs` rows to Two players, X: its page (app_tests.t_snes_two)."""
+    return ("%d:triangle:%d\n" % (at(1), PRESS) + keys("triangle", "triangle", "start", first=40) +
+            keys(*(["down"] * downs), first=60) + keys("cross", first=30))
+
+
+def t_snes_two(T):
+    """SNES Two players from the game list's Settings: one console hosts on Same Wi-Fi, the other joins from the room
+    list; both form the link (loopback), write launch/snes.ini with the link.* keys and try to start snes.bin (the twin
+    cannot: the part after the hand-over is snes/twin's link_test.py)."""
+    T.begin("snes_two")
+    rom = os.path.join(T.dir, "Super One (USA).sfc")
+    with open(rom, "wb") as f:
+        f.write(bytes(0x8000))
+    a = T.twin("a", T.arch_a, rom, "Alice",
+               snes_two_walk() + keys("cross", "cross") + shot(12, "hosting.png") + quit_at(26),
+               config={"ui_home": 0, "hints": 0})
+    b = T.twin("b", T.arch_b, rom, "Bob",
+               snes_two_walk() + keys("down", "cross", "cross") + "+30:hold=cross=snes_two_join\n" + "+%d:shot=rooms.png\n" % dur(5) +
+               "+%d:shot=after.png\n" % dur(8) + quit_at(26),     # no further press: it would start the game again, over the link file
+               config={"ui_home": 0, "hints": 0})
+    for t in (a, b):
+        os.remove(os.path.join(t.root, "autoboot.txt"))     # the list, not the game
+    ra, rb = T.run([a, b], 26)
+    T.clean(ra, "A", allow="could not be started")
+    T.clean(rb, "B", allow="could not be started")
+    T.check(ra.has(r"^EVT snes_two_go role=host conn=0") and rb.has(r"^EVT snes_two_go role=guest conn=0"),
+            "A hosted and B joined from the page, both on Same Wi-Fi")
+    rooms = rb.evt("snes_two_join")
+    T.check(rooms and rooms[0].get("addr", "").startswith("127.0.0.1:"), "B joined the room the list showed (%s)" % [e["_"] for e in rooms])
+    for r, who in ((ra, "A"), (rb, "B")):
+        rd = r.evt("snes_link_ready")
+        T.check(rd and rd[0].get("ok") == "1" and rd[0].get("mode") == "lan",
+                "%s: the link formed (snes_link_ready ok=1 mode=lan: %s)" % (who, [e["_"] for e in rd]))
+        T.check(r.has(r"^EVT snes_launch_file ok=1") and r.has(r"^EVT snes_launch rom="),
+                "%s: the launch file is written and snes.bin asked for" % who)
+        lf = os.path.join(r.root, "launch", "snes.ini")
+        kv = dict(l.rstrip("\n").split("=", 1) for l in open(lf) if "=" in l) if os.path.exists(lf) else {}
+        T.check(kv.get("link.mode") == "lan" and kv.get("link.role") == ("host" if who == "A" else "guest"),
+                "%s: launch/snes.ini carries the link (role %s mode %s)" % (who, kv.get("link.role"), kv.get("link.mode")))
+        T.radio_free(r, who)
+        T.picture(r, who, "rooms.png" if who == "B" else "hosting.png")
+    ka = dict(l.rstrip("\n").split("=", 1) for l in open(os.path.join(ra.root, "launch", "snes.ini")) if "=" in l)
+    kb = dict(l.rstrip("\n").split("=", 1) for l in open(os.path.join(rb.root, "launch", "snes.ini")) if "=" in l)
+    T.check(ka.get("link.local_port") and kb.get("link.peer", "").endswith(":" + ka["link.local_port"]),
+            "B's launch file names A's address (%s, A listens on %s)" % (kb.get("link.peer"), ka.get("link.local_port")))
+    T.check(ka.get("link.compat") and ka.get("link.compat") == kb.get("link.compat"),
+            "both carry the same pad compat word (%s)" % ka.get("link.compat"))
+
+
+def nes_rom():
+    """A public NES game for the Two players scenarios (never committed): the file VITADHOC_NES_ROM names, or
+    nes15-NTSC.nes somewhere under GATE_NES_ROMS (the nes-test-roms collection).  None: the scenario is skipped."""
+    f = os.environ.get("VITADHOC_NES_ROM")
+    if f and os.path.isfile(f):
+        return f
+    top = os.environ.get("GATE_NES_ROMS")
+    if top and os.path.isdir(top):
+        for d, _, fs in os.walk(top):
+            if "nes15-NTSC.nes" in fs:
+                return os.path.join(d, "nes15-NTSC.nes")
+    return None
+
+
+def ws_rom():
+    """A public WonderSwan game for the Two players scenarios (never committed): the file GATE_WS_ONLINE_ROM names
+    (the gate's own variable, falling back to GATE_WS_ROM; a homebrew test ROM is enough: the session only needs a
+    running machine).  None: skipped."""
+    f = os.environ.get("GATE_WS_ONLINE_ROM") or os.environ.get("GATE_WS_ROM")
+    return f if f and os.path.isfile(f) else None
+
+
+def sg_rom():
+    """A public SG-1000 game (a homebrew build): the file GATE_SG_ROM names, or the first .sg under GATE_MD_SMS_ROMS."""
+    f = os.environ.get("GATE_SG_ROM")
+    if f and os.path.isfile(f):
+        return f
+    top = os.environ.get("GATE_MD_SMS_ROMS")
+    if top and os.path.isdir(top):
+        for d, _, fs in sorted(os.walk(top)):
+            for n in sorted(fs):
+                if n.lower().endswith(".sg"):
+                    return os.path.join(d, n)
+    return None
+
+
+def pad_checks(T, ra, rb):
+    """A Two players session (NES / WonderSwan / the mirror of one machine): both ran it, in step, to an agreed end,
+    and the guest has its own game back."""
+    for r, who, n in ((ra, "A", 1), (rb, "B", 2)):
+        T.check(r.has(r"gblink_pad start role=%s" % ("host" if n == 1 else "guest")),
+                "%s: the Two players session started (fe_padpair)" % who)
+        T.check(r.has(r"link_running player=%d" % n), "%s: linked as Player %d" % (who, n))
+        T.check(r.has(r"gblink_done "), "%s: an agreed end" % who)
+        T.check(r.has(r"gblink_resume how=live_end rc=0"), "%s: the machine is the player's again" % who)
+        T.radio_free(r, who)
+    T.same_machines(ra, rb)
+    da, db = ra.evt("gblink_done"), rb.evt("gblink_done")
+    T.check(da and db and da[-1]["frame"] == db[-1]["frame"] and da[-1]["hash"] == db[-1]["hash"] and
+            int(da[-1]["frame"]) > 300,
+            "the same last frame and the same machine on both (%s / %s)" % (da and da[-1]["_"][:40], db and db[-1]["_"][:40]))
+
+
+def t_nes_two(T):
+    """Wi-Fi, Two players on a NES game: one machine on both consoles, a pad each (fe_padpair)."""
+    rom = nes_rom()
+    if not rom:
+        T.S.note("no NES game (VITADHOC_NES_ROM, or GATE_NES_ROMS with nes15-NTSC.nes): skipped")
+        return
+    pad_two(T, "nes_two", rom)
+
+
+def t_ws_two(T):
+    """Wi-Fi, Two players on a WonderSwan game: one machine on both consoles, a pad each (fe_padpair)."""
+    rom = ws_rom()
+    if not rom:
+        T.S.note("no WonderSwan game (GATE_WS_ONLINE_ROM or GATE_WS_ROM): skipped")
+        return
+    pad_two(T, "ws_two", rom)
+
+
+def pad_two(T, name, rom):
+    T.begin(name)
+    e = 14 if T.slow else 0
+    pa = "".join(press(14 + i, k, 12) for i, k in enumerate(["a", "right", "down", "start", "left", "b", "up", "a"]))
+    pb = "".join(press(14.5 + i, k, 12) for i, k in enumerate(["start", "left", "a", "up", "right", "b", "down", "a"]))
+    a = T.twin("a", T.arch_a, rom, "Alice", host(2, "host.png") + shot(11, "linking.png") + pa +
+               shot(24 + e, "running.png") + disconnect(28 + e, "session.png") + shot(35 + e, "after.png") +
+               quit_at(37 + e))
+    b = T.twin("b", T.arch_b, rom, "Bob", join_first(4, wait=3) + pb + shot(24 + e, "running.png") +
+               shot(35 + e, "after.png") + quit_at(37 + e))
+    ra, rb = T.run([a, b], 37 + e)
+    T.clean(ra, "A")
+    T.clean(rb, "B")
+    rooms = rb.evt("link_scan_room")
+    T.check(rooms and rooms[-1]["kind"] == "5" and rooms[-1]["compatible"] == "1",
+            "B's list shows a Two players room of its game")
+    pad_checks(T, ra, rb)
+    T.picture(ra, "A", "running.png")
+    T.picture(rb, "B", "running.png")
 
 
 GBLOCAL = os.path.join(HERE, "testrom", "gblocal.gb")
@@ -965,21 +1163,22 @@ GBLINK_CGB = os.path.join(HERE, "testrom", "gblink-cgb.gbc")
 GBLINK_FAST = os.path.join(HERE, "testrom", "gblink-cgbfast.gbc")
 
 
-def t_gb_mixed(T):
+def t_gb_mixed(T, fast=False):
     """A Game Boy and a Game Boy Color cartridge over the network link (Red
     with Gold, Yellow with Crystal): .gb on one console, .gbc on the other,
-    each machine its own hardware, in both directions, and a Color in
-    double speed against a Game Boy at normal speed."""
+    each machine its own hardware, in both directions (this part), and a
+    Color in double speed against a Game Boy at normal speed (gb_mixed_fast,
+    a scenario of its own, so each fits a ten-minute run)."""
     if not all(os.path.exists(p) for p in (GBLINK, GBLINK_CGB, GBLINK_FAST)):
         T.S.note("no testrom/gblink-cgb*.gbc (make -C testrom gb): skipped")
         return
-    for tag, ra_rom, rb_rom, what in (
-            ("gb_cgb", GBLINK, GBLINK_CGB, "Game Boy hosts, Color joins"),
-            ("cgb_gb", GBLINK_CGB, GBLINK, "Color hosts, Game Boy joins"),
+    for tag, ra_rom, rb_rom, what in ((
             ("gb_fast", GBLINK, GBLINK_FAST,
              "Game Boy with a Color in double speed"),
             ("fast_gb", GBLINK_FAST, GBLINK,
-             "Color in double speed with a Game Boy")):
+             "Color in double speed with a Game Boy")) if fast else (
+            ("gb_cgb", GBLINK, GBLINK_CGB, "Game Boy hosts, Color joins"),
+            ("cgb_gb", GBLINK_CGB, GBLINK, "Color hosts, Game Boy joins"))):
         T.begin("gb_mixed_" + tag)
         a = T.twin("a", T.arch_a, ra_rom, "Alice",
                    host(2, "host.png") + shot(11, "linking.png") +
@@ -1012,6 +1211,12 @@ def t_gb_mixed(T):
         T.same_machines(ra, rb)
         gb_verdict(T, ra, "A", 1, os.path.basename(ra_rom) + ".sav")
         gb_verdict(T, rb, "B", 2, os.path.basename(rb_rom) + ".sav")
+
+
+def t_gb_mixed_fast(T):
+    """A Game Boy against a Game Boy Color in double speed over the network
+    link, in both directions (the rest of gb_mixed)."""
+    t_gb_mixed(T, fast=True)
 
 
 def t_gb_extra_folder(T):
@@ -1123,6 +1328,8 @@ class FakeRouter:
 
 def t_internet(T):
     """Internet: the host's public address by UPnP, a join by address."""
+    # 2.0: the typed address is the hidden "Direct address" connection; a
+    # saved net_conn 1 turns into Online on load unless link_direct = 1.
     port = T.begin("internet")
     # how long the pretend router may take over one answer: an emulated ARM
     # twin asks once a refresh, twelve times a second
@@ -1134,7 +1341,7 @@ def t_internet(T):
                shot(6, "host_public.png") + shot(16, "running.png") +
                disconnect(26) + shot(31, "after.png") + quit_at(36),
                config={"net_conn": 1},
-               vita={"link_peek": LT_PEEK, "link_upnp_ms": ms,
+               vita={"link_direct": 1, "link_peek": LT_PEEK, "link_upnp_ms": ms,
                      "link_upnp": "127.0.0.1:%d" % router.ssdp})
     # B: Join a game opens the address page on the last address used, the
     # cursor on its Join key; then the list of that one address.
@@ -1144,7 +1351,7 @@ def t_internet(T):
                "%d:shot=join_list.png\n" % at(10.5) + press(11.4, "cross") +
                shot(16, "running.png") + shot(31, "after.png") + quit_at(36),
                config={"net_conn": 1, "net_addr1": "127.0.0.1:%d" % port},
-               vita={"link_peek": LT_PEEK})
+               vita={"link_direct": 1, "link_peek": LT_PEEK})
     ra, rb = T.run([a, b], 36)
     T.clean(ra, "A")
     T.clean(rb, "B")
@@ -1183,7 +1390,7 @@ def t_internet(T):
     a = T.twin("a", T.arch_a, LINKTEST, "Alice",
                host(EARLY) + shot(12, "host_closed.png") + press(14, "down") +
                keys("cross") + shot(18, "after.png") + quit_at(19),
-               config={"net_conn": 1}, vita={"link_upnp": "127.0.0.1:9"})
+               config={"net_conn": 1}, vita={"link_direct": 1, "link_upnp": "127.0.0.1:9"})
     ra, = T.run([a], 19)
     T.clean(ra, "A")
     T.check(ra.has(r"link_upnp failed"), "A: no gateway answered, and the "
@@ -1202,7 +1409,7 @@ def t_internet(T):
                host(EARLY) + shot(12, "host_noaddr.png") + press(14, "down") +
                keys("cross") + shot(18, "after.png") + quit_at(19),
                config={"net_conn": 1},
-               vita={"link_upnp": "127.0.0.1:%d" % router.ssdp,
+               vita={"link_direct": 1, "link_upnp": "127.0.0.1:%d" % router.ssdp,
                      "link_upnp_ms": ms})
     ra, = T.run([a], 19)
     T.clean(ra, "A")
@@ -1425,7 +1632,7 @@ def t_host_quits(T):
     T.begin("host_quits")
     a = T.twin("a", T.arch_a, LINKTEST, "Alice",
                host(EARLY) + "%d:start+select:24\n" % at(16) +
-               keys("down", "down", "down", "down", "down", "cross", "cross") +
+               keys("down", "down", "down", "down", "down", "down", "cross", "cross") +
                shot(21, "list.png") + quit_at(30))
     b = T.twin("b", T.arch_b, LINKTEST, "Bob",
                join_first(EARLY, wait=2.5) + shot(14, "running.png") +
@@ -1455,18 +1662,21 @@ def t_host_quits(T):
 def lost_run(T, name, how):
     """B is killed (or frozen) mid-session; how long until A says so."""
     T.begin(name)
+    # netdrv gives a silent peer ND_PEER_DEAD_US (20 s) before the link is
+    # called lost: B is struck at 16 s, A says so at about 36 s, and the
+    # frozen B is thawed only after that (at 44 s) to find the link gone.
     a = T.twin("a", T.arch_a, LINKTEST, "Alice",
-               host(EARLY) + shot(14, "running.png") + shot(18.5, "waiting.png") +
-               shot(29, "after.png") + quit_at(40))
+               host(EARLY) + shot(14, "running.png") + shot(26, "waiting.png") +
+               shot(52, "after.png") + quit_at(60))
     b = T.twin("b", T.arch_b, LINKTEST, "Bob",
-               join_first(EARLY, wait=2.5) + quit_at(40))
+               join_first(EARLY, wait=2.5) + quit_at(60))
     t = {}
 
     def strike():
         t["ok"] = a.wait_log(r"link_running", 5)
         b.signal(signal.SIGKILL if how == "kill" else signal.SIGSTOP)
         t["at"] = time.time()
-        t["seen"] = a.wait_log(r"link_ended ", 30 * T.k)
+        t["seen"] = a.wait_log(r"link_ended ", 40 * T.k)
         t["took"] = time.time() - t["at"]
 
     def revive():
@@ -1474,13 +1684,13 @@ def lost_run(T, name, how):
 
     actions = [(16, strike)]
     if how == "stop":
-        actions.append((32, revive))
-    ra, rb = T.run([a, b], 40, actions)
+        actions.append((44, revive))
+    ra, rb = T.run([a, b], 60, actions)
     T.clean(ra, "A")
     T.check(t.get("ok"), "the session was running when B was struck")
-    T.check(t.get("seen") and t["took"] < 12 * T.k,
+    T.check(t.get("seen") and t["took"] < 28 * T.k,
             "A says the link is lost %.1f s after B %s (netdrv's limit is "
-            "8 s of silence)" % (t.get("took", -1),
+            "20 s of silence)" % (t.get("took", -1),
                                  "was killed" if how == "kill" else "froze"))
     T.check(ra.has(r"link_stall_note"),
             "A: 'Waiting for the other Vita...' while it waits")
@@ -1496,7 +1706,7 @@ def lost_run(T, name, how):
     if how == "stop":
         T.check(rb.rc == 0 and rb.has(r"link_ended state=4 ran=1") and
                 rb.has(r"link_net_down radio=0"),
-                "B, thawed 16 s later: finds the link gone, ends it, plays "
+                "B, thawed 28 s later: finds the link gone, ends it, plays "
                 "on and leaves cleanly (exit %s)" % rb.rc)
     return t.get("took", -1)
 
@@ -1703,10 +1913,11 @@ def t_cancel(T):
     b = T.twin("b", T.arch_b, LINKTEST, "Bob",
                adhoc_go(EARLY, join=True) + shot(5, "joining.png") +
                press(6, "circle") + shot(8, "cancelled.png") +
-               adhoc_go(9, join=True) + shot(32, "noanswer.png") +
-               press(33, "circle") + shot(35, "after.png") + quit_at(36),
+               adhoc_go(9, join=True) + shot(33, "noanswer.png") +
+               press(35, "circle") + shot(37, "after.png") + quit_at(38),
                config={"net_conn": 2}, net=adhoc_net(T, 2, [1]), extra=lm)
-    rb, = T.run([b], 36)
+    # (the join gives up 20 s after it began, about 36 s in: O at 33 s left it 0.15 s and lost that race now and then)
+    rb, = T.run([b], 38)
     T.clean(rb, "B")
     T.check(rb.has(r"link_phase 1 -> 2 kind=1") and
             rb.has(r"link_cancel phase=joining"),
@@ -1792,14 +2003,75 @@ def t_mixed_refuse(T):
     T.picture(rb, "B", "refused.png")
 
 
-TESTS = [("wifi_cable", t_wifi_cable), ("gba_two_games", t_gba_two_games), ("fast_link", t_fast_link), ("share", t_share), ("share_replace", t_share_replace), ("mgift", t_mgift), ("gb_two_carts", t_gb_two_carts), ("gb_mixed", t_gb_mixed), ("gb_extra_folder", t_gb_extra_folder), ("three_sessions", t_three_sessions),
+def sega_two_files(T, con):
+    """(path, console id) of the cartridge for a Sega console: the public homebrew for SG-1000 when there is one,
+    else a synthetic image (the app only forms the link; the player starts afterwards)."""
+    from app_tests import sega_rom
+    name, num = {"md": ("Alpha Quest (USA).md", 6), "sms": ("Master One.sms", 7), "sg": ("Tiny One.sg", 9)}[con]
+    real = sg_rom() if con == "sg" else None
+    path = os.path.join(T.dir, os.path.basename(real) if real else name)
+    with open(path, "wb") as f:
+        f.write(open(real, "rb").read() if real else sega_rom("md" if con == "md" else "sms", 0x20000 if con == "md" else 0x8000))
+    return path, num
+
+
+def sega_two_walk():
+    """The Sega console's list, START for Settings, the rows down to Two players, X: its page."""
+    from app_tests import SNES_TWO_DOWNS
+    return "90:start\n+30:shot=settings.png\n" + "+10:down\n" * SNES_TWO_DOWNS + "+20:shot=row.png\n+10:cross\n+30:shot=page.png\n"
+
+
+def t_sega_two(T):
+    """Sega Two players (Genesis, Master System, SG-1000) from the list's Settings: one console hosts on Same Wi-Fi, the
+    other joins from the room list; both form the link (loopback) and write launch/<console>.ini for md.bin"""
+    for con in os.environ.get("SEGA_ONLY", "md,sms,sg").split(","):
+        T.begin("sega_two_" + con)
+        rom, num = sega_two_files(T, con)
+        cfg = {"ui_home": 0, "hints": 0, "console": num}
+        a = T.twin("a", T.arch_a, rom, "Alice",
+                   sega_two_walk() + keys("cross", "cross") + shot(12, "hosting.png") + quit_at(26), config=dict(cfg))
+        b = T.twin("b", T.arch_b, rom, "Bob",
+                   sega_two_walk() + keys("down", "cross", "cross") + "+30:hold=cross=snes_two_join\n" +
+                   "+%d:shot=rooms.png\n" % dur(5) +
+                   "+%d:shot=after.png\n" % dur(8) + quit_at(26), config=dict(cfg))
+        for t in (a, b):
+            os.remove(os.path.join(t.root, "autoboot.txt"))
+        ra, rb = T.run([a, b], 26)
+        T.clean(ra, "A", allow="could not be started")
+        T.clean(rb, "B", allow="could not be started")
+        T.check(ra.has(r"^EVT snes_two_go role=host conn=0") and rb.has(r"^EVT snes_two_go role=guest conn=0"),
+                "%s: A hosted and B joined from the page, both on Same Wi-Fi" % con)
+        T.check(ra.has(r"link_snes_begin role=host .*console=%s" % con), "%s: the room's console is %s" % (con, con))
+        rooms = rb.evt("snes_two_join")
+        T.check(rooms and rooms[0].get("addr", "").startswith("127.0.0.1:"), "%s: B joined the room the list showed (%s)" %
+                (con, [e["_"] for e in rooms]))
+        ks = []
+        for r, who, role in ((ra, "A", "host"), (rb, "B", "guest")):
+            rd = r.evt("snes_link_ready")
+            T.check(rd and rd[0].get("ok") == "1" and rd[0].get("mode") == "lan",
+                    "%s: %s: the link formed (snes_link_ready ok=1 mode=lan: %s)" % (con, who, [e["_"] for e in rd]))
+            lf = os.path.join(r.root, "launch", con + ".ini")
+            kv = dict(l.rstrip("\n").split("=", 1) for l in open(lf) if "=" in l) if os.path.exists(lf) else {}
+            ks.append(kv)
+            T.check(kv.get("link.mode") == "lan" and kv.get("link.role") == role,
+                    "%s: %s: launch/%s.ini carries the link (role %s mode %s)" % (con, who, con, kv.get("link.role"), kv.get("link.mode")))
+            T.radio_free(r, who)
+            T.picture(r, who, "rooms.png" if who == "B" else "hosting.png")
+        ka, kb = ks
+        T.check(ka.get("link.local_port") and kb.get("link.peer", "").endswith(":" + ka["link.local_port"]),
+                "%s: B's launch file names A's address (%s, A listens on %s)" % (con, kb.get("link.peer"), ka.get("link.local_port")))
+        T.check(ka.get("link.compat") and ka.get("link.compat") == kb.get("link.compat"),
+                "%s: both carry the same pad compat word (%s)" % (con, ka.get("link.compat")))
+
+
+TESTS = [("wifi_cable", t_wifi_cable), ("gba_two_games", t_gba_two_games), ("gba_two_games_big", t_gba_two_games_big), ("fast_link", t_fast_link), ("share", t_share), ("share_replace", t_share_replace), ("mgift", t_mgift), ("gb_two_carts", t_gb_two_carts), ("gb_mixed", t_gb_mixed), ("gb_mixed_fast", t_gb_mixed_fast), ("gb_extra_folder", t_gb_extra_folder), ("three_sessions", t_three_sessions),
          ("wifi_gb", t_wifi_gb), ("wifi_adapter", t_wifi_adapter),
          ("internet", t_internet), ("adhoc", t_adhoc),
          ("room_full", t_room_full), ("different_build", t_different_build),
          ("host_quits", t_host_quits), ("link_lost", t_link_lost),
          ("lossy", t_lossy), ("wifi_lost", t_wifi_lost),
-         ("cancel", t_cancel), ("suspend", t_suspend),
-         ("mixed_refuse", t_mixed_refuse)]
+         ("cancel", t_cancel), ("suspend", t_suspend), ("snes_two", t_snes_two),
+         ("nes_two", t_nes_two), ("ws_two", t_ws_two), ("sega_two", t_sega_two), ("mixed_refuse", t_mixed_refuse)]
 # Which tests a mode runs when none are named.  x86: everything but the
 # mixed pair's.  armhf (under qemu, five times the wall time): the sessions
 # and what depends on the machines or on timing; the menus' own refusals
@@ -1807,17 +2079,19 @@ TESTS = [("wifi_cable", t_wifi_cable), ("gba_two_games", t_gba_two_games), ("fas
 # refusal, and the two kinds of link that do not need matching backends.
 RUNS = {
     "x86": [n for n, _ in TESTS if n != "mixed_refuse"],
-    "armhf": ["wifi_cable", "gba_two_games", "three_sessions", "wifi_gb", "wifi_adapter",
+    "armhf": ["wifi_cable", "gba_two_games", "gba_two_games_big", "three_sessions", "wifi_gb", "wifi_adapter",
               "internet", "adhoc", "room_full", "host_quits", "link_lost",
               "lossy", "suspend"],
     "mixed": ["mixed_refuse", "wifi_gb", "wifi_adapter"],
+    "aarch64": ["wifi_cable", "wifi_gb", "wifi_adapter", "adhoc", "host_quits"],
+    "mixed64": ["wifi_cable", "wifi_gb", "wifi_adapter"],
 }
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("mode", nargs="?", default="x86",
-                    choices=("x86", "armhf", "mixed"))
+                    choices=("x86", "armhf", "mixed", "aarch64", "mixed64"))
     ap.add_argument("--only")
     ap.add_argument("--hz", type=int, default=0,
                     help="the twins' display rate (60; 12 under qemu)")

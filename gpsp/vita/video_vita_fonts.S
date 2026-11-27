@@ -4,26 +4,34 @@
  * start-up; vstyle.c makes its six sizes (Outfit for titles) on first use.
  * Assemble with -I<gpsp>/assets/fonts (vita/ui.mk and the host Makefile do).
  */
-   .section .rodata
+#ifdef __APPLE__
+/* Mach-O: constants live in __TEXT,__const and C symbols carry an underscore */
+#define FONT_RODATA .section __TEXT,__const
+#define FSYM(n) _##n
+#else
+#define FONT_RODATA .section .rodata
+#define FSYM(n) n
+#endif
+   FONT_RODATA
    .balign 4
-   .global vv_font_regular
-   .global vv_font_regular_end
-vv_font_regular:
+   .global FSYM(vv_font_regular)
+   .global FSYM(vv_font_regular_end)
+FSYM(vv_font_regular):
    .incbin "Inter-Regular.ttf"
-vv_font_regular_end:
+FSYM(vv_font_regular_end):
    .balign 4
-   .global vv_font_semibold
-   .global vv_font_semibold_end
-vv_font_semibold:
+   .global FSYM(vv_font_semibold)
+   .global FSYM(vv_font_semibold_end)
+FSYM(vv_font_semibold):
    .incbin "Inter-SemiBold.ttf"
-vv_font_semibold_end:
+FSYM(vv_font_semibold_end):
    .balign 4
-   .global vv_font_display_md
-vv_font_display_md:
+   .global FSYM(vv_font_display_md)
+FSYM(vv_font_display_md):
    .incbin "Outfit-Medium.ttf"
    .balign 4
-   .global vv_font_display_sb
-vv_font_display_sb:
+   .global FSYM(vv_font_display_sb)
+FSYM(vv_font_display_sb):
    .incbin "Outfit-SemiBold.ttf"
    .byte 0
 #if defined(__linux__) && defined(__ELF__)

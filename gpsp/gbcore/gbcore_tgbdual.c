@@ -19,6 +19,8 @@
 #include <string.h>
 
 #include "tgbdual/gb.h"
+#include "tgbdual/_cgb_dmg_pal.h"
+#include "tgbdual/_cgb_lcd_table.h"
 
 /* Largest cartridge any supported mapper addresses (MBC5: 512 x 16 KiB). */
 #define GBCORE_ROM_MAX (8u * 1024u * 1024u)
@@ -56,11 +58,14 @@ struct gbcore {
   uint16_t prev_buttons;
   int skip_render;
   int headless;                /* gbcore_set_headless */
+  int quiet;                   /* gbcore_set_quiet: a look-ahead frame */
   unsigned lines;              /* scanlines run in the current frame */
   uint8_t header[0x1C];        /* ROM 0x134..0x14F: identity for states */
   size_t rom_bytes;            /* the cartridge image's size (cheats) */
   int tilt_set;                /* gbcore_set_tilt has published a sample */
   uint32_t tilt;               /* MBC7 accelerometer: x | y << 16 */
+  int cam_set;                 /* gbcore_set_camera_image has published a picture */
+  uint8_t cam[128 * 112];      /* Game Boy Camera: the picture it looks at */
 };
 
 static gbcore_t *active;
@@ -76,10 +81,23 @@ static unsigned palette_id = GBCORE_PALETTE_AUTO;
  * changed it, and the zero-initialised part (.bss) is simply cleared.  A
  * build that links the adapter without that script has no marks, and
  * gbcore_power_on fails. */
+#ifdef TGB_SECT_D
+/* Mach-O (hostcore ARCH=macos): no linker script; the instance is compiled
+ * with its .data and .bss in two sections of their own (corebuild.mk, the
+ * -include of sect.h that also defines TGB_SECT_D / TGB_SECT_Z), and the
+ * linker's section$start$ / section$end$ symbols are the marks. */
+extern char tgb_image_data_start[] __asm("section$start$__DATA$" TGB_SECT_D) __attribute__((weak));
+extern char tgb_image_data_end[] __asm("section$end$__DATA$" TGB_SECT_D) __attribute__((weak));
+extern char tgb_image_bss_start[] __asm("section$start$__DATA$" TGB_SECT_Z) __attribute__((weak));
+extern char tgb_image_bss_end[] __asm("section$end$__DATA$" TGB_SECT_Z) __attribute__((weak));
+#define TGB_KEEP_SECTION "__DATA,__tgb_keep"
+#else
 extern char tgb_image_data_start[] __attribute__((weak));
 extern char tgb_image_data_end[] __attribute__((weak));
 extern char tgb_image_bss_start[] __attribute__((weak));
 extern char tgb_image_bss_end[] __attribute__((weak));
+#define TGB_KEEP_SECTION ".bss.gbcore_keep"
+#endif
 
 /* Outside the cleared range (the script places .bss.gbcore_keep first). */
 static struct {
@@ -87,7 +105,7 @@ static struct {
   size_t size;
   int taken;
   int failed;
-} image __attribute__((section(".bss.gbcore_keep")));
+} image __attribute__((section(TGB_KEEP_SECTION)));
 
 /* Byte loops the sanitizer leaves alone: the ranges include the padding
  * AddressSanitizer puts between instrumented globals. */
@@ -145,7 +163,7 @@ word tgb_dmg_palette[12];
                             ((((rgb) >> 11) & 0x1f) << 5) | \
                             ((((rgb) >> 3) & 0x1f) << 10)))
 
-static const uint32_t palette_rgb[GBCORE_PALETTE_COUNT][4] = {
+static const uint32_t palette_rgb[GBCORE_PALETTE_GBC_AUTO][4] = {
   /* AUTO outside SGB: MasterBoy's default greys. */
   { 0xFFFFFF, 0xA8A8A8, 0x585858, 0x000000 },
   { 0xFFFFFF, 0xA8A8A8, 0x585858, 0x000000 },
@@ -156,16 +174,94 @@ static const uint32_t palette_rgb[GBCORE_PALETTE_COUNT][4] = {
 };
 
 static const char *const palette_names[GBCORE_PALETTE_COUNT] = {
-  "Auto", "Grey", "DMG green", "Pocket"
+  "Super Game Boy", "Grey", "DMG green", "Pocket",
+  "GBC auto",
+  "GBC Up - brown", "GBC Up+A - red", "GBC Up+B - dark brown",
+  "GBC Left - blue", "GBC Left+A - dark blue", "GBC Left+B - grayscale",
+  "GBC Down - pastel", "GBC Down+A - orange", "GBC Down+B - yellow",
+  "GBC Right - green", "GBC Right+A - dark green", "GBC Right+B - inverted",
+  "SGB 1-A", "SGB 1-B", "SGB 1-C", "SGB 1-D", "SGB 1-E", "SGB 1-F",
+  "SGB 1-G", "SGB 1-H",
+  "SGB 2-A", "SGB 2-B", "SGB 2-C", "SGB 2-D", "SGB 2-E", "SGB 2-F",
+  "SGB 2-G", "SGB 2-H",
+  "SGB 3-A", "SGB 3-B", "SGB 3-C", "SGB 3-D", "SGB 3-E", "SGB 3-F",
+  "SGB 3-G", "SGB 3-H",
+  "SGB 4-A", "SGB 4-B", "SGB 4-C", "SGB 4-D", "SGB 4-E", "SGB 4-F",
+  "SGB 4-G", "SGB 4-H"
 };
+
+/* tgb_port.h: the DMG palette holds GBC colours (lcd.c shows them through
+ * the GBC LCD model, as a GBC's screen shows them). */
+int tgb_dmg_is_cgb;
+
+/* The colours of `id` as BGR555 x 12 (BG, OBJ0, OBJ1); `header` is the
+ * cartridge header from 0x134 (NULL: none loaded).  Returns the GBC boot
+ * ROM combination, or -1 for a palette that is not a GBC one. */
+static int palette_colors(unsigned id, const uint8_t *header,
+                          unsigned short out[12])
+{
+  unsigned i;
+  if (id >= GBCORE_PALETTE_SGB_1A && id <= GBCORE_PALETTE_SGB_4H)
+  {
+    unsigned short c[4];
+    tgbshared_sgbpal_colors(id - GBCORE_PALETTE_SGB_1A, c);
+    for (i = 0; i < 12; i++)
+      out[i] = c[i & 3];
+    return -1;
+  }
+  if (id >= GBCORE_PALETTE_GBC_AUTO)
+  {
+    unsigned combo = id == GBCORE_PALETTE_GBC_AUTO
+      ? (header ? tgbshared_cgbpal_auto(header) : 0)
+      : tgbshared_cgbpal_manual(id - GBCORE_PALETTE_GBC_UP);
+    tgbshared_cgbpal_colors(combo, out);
+    return (int)combo;
+  }
+  if (id == GBCORE_PALETTE_AUTO)
+  {
+    unsigned short c[4];
+    tgbshared_sgbpal_colors(0, c);   /* SGB's default; a game sets its own */
+    for (i = 0; i < 12; i++)
+      out[i] = c[i & 3];
+    return -1;
+  }
+  for (i = 0; i < 12; i++)
+    out[i] = BGR555(palette_rgb[id][i & 3]);
+  return -1;
+}
 
 static void palette_apply(void)
 {
-  unsigned i;
-  const uint32_t *p = palette_rgb[palette_id];
-  for (i = 0; i < 12; i++)
-    tgb_dmg_palette[i] = BGR555(p[i & 3]);
+  int combo = palette_colors(palette_id, active ? active->header : NULL,
+                             tgb_dmg_palette);
+  tgb_dmg_is_cgb = combo >= 0;
   gb_invalidate_palette(0);
+}
+
+int gbcore_palette_preview(unsigned palette, uint16_t rgb565[12])
+{
+  return gbcore_palette_preview_for(palette, active ? active->header : NULL, rgb565);
+}
+
+int gbcore_palette_preview_for(unsigned palette, const uint8_t *header, uint16_t rgb565[12])
+{
+  unsigned short c[12];
+  unsigned i;
+  int combo;
+  if (palette >= GBCORE_PALETTE_COUNT)
+    palette = GBCORE_PALETTE_AUTO;
+  combo = palette_colors(palette, header, c);
+  for (i = 0; i < 12; i++)
+  {
+    unsigned r = c[i] & 0x1f, g = (c[i] >> 5) & 0x1f, b = (c[i] >> 10) & 0x1f;
+    if (combo >= 0 && tgb_cgb_lcd)
+      rgb565[i] = MAKE_COLOR(_cgb_lcd_curve[r], _cgb_lcd_green[(g << 5) | b],
+                             _cgb_lcd_curve[b]);
+    else
+      rgb565[i] = MAKE_COLOR((r << 3) | (r >> 2), (g << 3) | (g >> 2),
+                             (b << 3) | (b >> 2));
+  }
+  return combo;
 }
 
 void gbcore_set_palette(unsigned palette)
@@ -433,6 +529,33 @@ int gbcore_has_tilt(gbcore_t *core)
 {
   return core && core == active && rom_get_loaded() &&
          rom_get_info()->cart_type == 0x22;
+}
+
+/* Game Boy Camera (cartridge 0xFC, tgbdual/gbcam.h): whether the loaded game
+ * is one, and the 128x112 greyscale picture its sensor looks at.  Without
+ * one the core shows a test pattern. */
+int gbcore_has_camera(gbcore_t *core)
+{
+  return core && core == active && rom_get_loaded() &&
+         rom_get_info()->cart_type == 0xFC;
+}
+
+void gbcore_set_camera_image(gbcore_t *core, const uint8_t *grey_128x112)
+{
+  if (!core || !grey_128x112)
+    return;
+  memcpy(core->cam, grey_128x112, sizeof(core->cam));
+  core->cam_set = 1;
+}
+
+unsigned gbcore_camera_requests(gbcore_t *core)
+{
+  return gbcore_has_camera(core) ? mbc_cam_starts() : 0;
+}
+
+const unsigned char *gbe_getCameraImage(void)
+{
+  return active && active->cam_set ? active->cam : NULL;
 }
 
 void gbe_setBibrate(char bibrate)
@@ -983,7 +1106,7 @@ static void frame_end(gbcore_t *core)
   core->audio_acc %= GB_CLOCK_HZ;
   if (samples > core->audio_capacity)
     samples = core->audio_capacity;
-  if (core->headless)
+  if (core->headless || core->quiet)
   {
     /* Drop the frame's sound-register writes unheard.  They changed the
      * register side of the APU when they were made (apu_write ->
@@ -1438,6 +1561,64 @@ int gbcore_state_load(gbcore_t *core, const void *source, size_t size)
   return 0;
 }
 
+/* ---- Quick response (gbcore.h): the way back from a look-ahead frame ---- */
+#define AHEAD_CARRY 64u
+static void ahead_carry_put(const gbcore_t *core, uint8_t *p)
+{
+  memset(p, 0, AHEAD_CARRY);
+  put_le32(p + 0, (uint32_t)core->frame_number);
+  put_le32(p + 4, (uint32_t)(core->frame_number >> 32));
+  put_le32(p + 8, (uint32_t)rtc.base);
+  put_le32(p + 12, (uint32_t)((uint64_t)rtc.base >> 32));
+  put_le32(p + 16, (uint32_t)rtc.halted_count);
+  put_le32(p + 20, (uint32_t)((uint64_t)rtc.halted_count >> 32));
+  put_le32(p + 24, (uint32_t)rtc.halted);
+  put_le32(p + 28, (uint32_t)rtc.carry);
+  put_le32(p + 32, (uint32_t)wall_last);
+  put_le32(p + 36, (uint32_t)((uint64_t)wall_last >> 32));
+}
+
+static void ahead_carry_get(gbcore_t *core, const uint8_t *p)
+{
+  core->frame_number = (uint64_t)get_le32(p + 0) | ((uint64_t)get_le32(p + 4) << 32);
+  rtc.base = (int64_t)((uint64_t)get_le32(p + 8) | ((uint64_t)get_le32(p + 12) << 32));
+  rtc.halted_count = (int64_t)((uint64_t)get_le32(p + 16) | ((uint64_t)get_le32(p + 20) << 32));
+  rtc.halted = (int)get_le32(p + 24);
+  rtc.carry = (int)get_le32(p + 28);
+  wall_last = (int64_t)((uint64_t)get_le32(p + 32) | ((uint64_t)get_le32(p + 36) << 32));
+}
+
+size_t gbcore_ahead_size(gbcore_t *core)
+{
+  size_t n = gbcore_state_size(core);
+  return n ? n + AHEAD_CARRY : 0;
+}
+
+long gbcore_ahead_save(gbcore_t *core, void *destination, size_t capacity)
+{
+  size_t n = gbcore_state_size(core);
+  if (!n || capacity < n + AHEAD_CARRY || gbcore_state_save(core, destination, capacity) != (long)n)
+    return -1;
+  ahead_carry_put(core, (uint8_t *)destination + n);
+  return (long)(n + AHEAD_CARRY);
+}
+
+int gbcore_ahead_load(gbcore_t *core, const void *source, size_t size)
+{
+  if (!core || core != active || size < AHEAD_CARRY)
+    return -1;
+  if (gbcore_state_load(core, source, size - AHEAD_CARRY) != 0)
+    return -1;
+  ahead_carry_get(core, (const uint8_t *)source + size - AHEAD_CARRY);
+  return 0;
+}
+
+void gbcore_set_quiet(gbcore_t *core, int quiet)
+{
+  if (core)
+    core->quiet = quiet ? 1 : 0;
+}
+
 int gbcore_power_on(void)
 {
   image_keep();
@@ -1720,6 +1901,12 @@ uint64_t gbcore_sync_hash(gbcore_t *core)
   {
     uint8_t timing[36];
     apu_save_cpu_timing(timing);
+    h = sync_bytes(h, timing, sizeof(timing));
+  }
+  {
+    /* the channel 3 clock decides what a wave RAM read returns while it plays */
+    uint8_t timing[12];
+    apu_save_wave_timing(timing);
     h = sync_bytes(h, timing, sizeof(timing));
   }
   {

@@ -1,4 +1,7 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Copyright (c) 2026 VitAdhoc contributors */
 /* ra_vita.c -- see ra_vita.h. */
+#include "i18n.h"
 #include "ra_vita.h"
 
 #include <stdio.h>
@@ -13,6 +16,7 @@
 #include "../psp/osd_psp.h"
 #include "cheats_vita.h"
 #include "plat.h"
+#include "pk_utf8.h"         /* titles are UTF-8 (playerkit/src) */
 #include "ra_http.h"
 
 #define RA_FILE   "retroachievements.txt"
@@ -38,17 +42,23 @@ static struct
    char path[600];                 /* the account file */
    char user[64], token[96];       /* as kept on the card */
    int  hardcore;                  /* the setting */
+   int  indic;                     /* the indicators setting (default on) */
+   unsigned frame;                 /* emulated frames, for throttling */
+   unsigned prog_at;               /* frame of the last progress update */
+   unsigned ping_n;                /* pings sent (rich presence) */
    int  login_busy;
    char login_name[64];
    int  game_on;                   /* between ra_game_begin and _end */
    int  game_hardcore;             /* the setting as the game started */
    int  game_state;                /* 0 loading, 1 has achievements, -1 none */
-   char game_title[64];
+   char game_title[128];
    int  framed;                    /* a frame was emulated since ra_pump */
    int  inflight;                  /* the net thread's job: 0, CALL, HASH */
    int  hash_want;                 /* the game's file is to be hashed */
+   int  hash_nes;                  /* ...as an NES file (RA console 7) */
    unsigned game_gen, hash_gen;    /* which game a hash answer is for */
    char hash_path[600];
+   int  pending_boot;              /* booted while offline / signing in: hash once login_done succeeds */
    int  was_linked;
    int  stale;                     /* progress must start over */
    ra_ach *list;
@@ -165,6 +175,7 @@ static void account_load(void)
    f = fopen(R.path, "r");
    R.user[0] = R.token[0] = '\0';
    R.hardcore = 0;
+   R.indic = 1;
    if (!f)
       return;
    while (fgets(line, sizeof(line), f))
@@ -181,6 +192,8 @@ static void account_load(void)
          snprintf(R.token, sizeof(R.token), "%s", v);
       else if (!strcmp(line, "hardcore"))
          R.hardcore = atoi(v) != 0;
+      else if (!strcmp(line, "indicators"))
+         R.indic = atoi(v) != 0;
    }
    fclose(f);
 }
@@ -198,7 +211,7 @@ static int account_save(void)
               "kept).\n");
    if (R.user[0] && R.token[0])
       fprintf(f, "user=%s\ntoken=%s\n", R.user, R.token);
-   fprintf(f, "hardcore=%d\n", R.hardcore);
+   fprintf(f, "hardcore=%d\nindicators=%d\n", R.hardcore, R.indic);
    if (fclose(f) != 0)
    {
       remove(tmp);
@@ -235,7 +248,7 @@ static int account_save(void)
 
 static void RC_CCONV on_event(const rc_client_event_t *e, rc_client_t *client)
 {
-   char t[96];
+   char t[192];
    (void)client;
    switch (e->type)
    {
@@ -244,24 +257,24 @@ static void RC_CCONV on_event(const rc_client_event_t *e, rc_client_t *client)
              e->achievement->points, e->achievement->title);
       snprintf(t, sizeof(t), "%s (%u)", e->achievement->title,
                e->achievement->points);
-      toast("Achievement: %s", t);
+      toast(tr("toast.achievement"), t);
       if (R.list)
          ra_list_build();           /* the page shows it at once */
       break;
    case RC_CLIENT_EVENT_GAME_COMPLETED:
       fe_evt("ra_completed hardcore=%d", R.game_hardcore);
-      toast(R.game_hardcore ? "Mastered: %s" : "Completed: %s", R.game_title);
+      toast(R.game_hardcore ? tr("toast.mastered") : tr("toast.completed"), R.game_title);
       break;
    case RC_CLIENT_EVENT_SUBSET_COMPLETED:
-      toast("Set completed: %s", e->subset ? e->subset->title : "");
+      toast(tr("toast.set_completed"), e->subset ? e->subset->title : "");
       break;
    case RC_CLIENT_EVENT_LEADERBOARD_STARTED:
       fe_evt("ra_lboard start id=%u", e->leaderboard->id);
-      toast("Leaderboard attempt: %s", e->leaderboard->title);
+      toast(tr("toast.leaderboard_attempt"), e->leaderboard->title);
       break;
    case RC_CLIENT_EVENT_LEADERBOARD_FAILED:
       fe_evt("ra_lboard failed id=%u", e->leaderboard->id);
-      toast("Leaderboard attempt failed: %s", e->leaderboard->title);
+      toast(tr("toast.leaderboard_attempt_failed"), e->leaderboard->title);
       break;
    case RC_CLIENT_EVENT_LEADERBOARD_SUBMITTED:
       fe_evt("ra_lboard submit id=%u value=%s", e->leaderboard->id,
@@ -270,7 +283,59 @@ static void RC_CCONV on_event(const rc_client_event_t *e, rc_client_t *client)
       snprintf(t, sizeof(t), "%s %s", e->leaderboard->title,
                e->leaderboard->tracker_value ? e->leaderboard->tracker_value
                                              : "");
-      toast("Submitted: %s", t);
+      toast(tr("toast.submitted"), t);
+      break;
+   case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW:
+      fe_evt("ra_challenge show id=%u title=\"%s\"", e->achievement->id,
+             e->achievement->title);
+      osd_ind_challenge(e->achievement->id, 1, e->achievement->title);
+      break;
+   case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_HIDE:
+      fe_evt("ra_challenge hide id=%u", e->achievement->id);
+      osd_ind_challenge(e->achievement->id, 0, NULL);
+      break;
+   case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_SHOW:
+   case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_UPDATE:
+      /* The runtime shows it for two seconds and moves it on as the value
+       * changes; a value that changes every frame is drawn at most every
+       * 20th, and the first one always. */
+      if (e->type == RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_SHOW ||
+          R.frame - R.prog_at >= 20)
+      {
+         R.prog_at = R.frame;
+         fe_evt("ra_progress %s id=%u progress=\"%s\"",
+                e->type == RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_SHOW
+                ? "show" : "update", e->achievement->id,
+                e->achievement->measured_progress);
+         osd_ind_progress(e->achievement->title,
+                          e->achievement->measured_progress);
+      }
+      break;
+   case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_HIDE:
+      fe_evt("ra_progress hide");
+      osd_ind_progress(NULL, NULL);
+      break;
+   case RC_CLIENT_EVENT_LEADERBOARD_TRACKER_SHOW:
+      fe_evt("ra_tracker show id=%u value=\"%s\"",
+             e->leaderboard_tracker->id, e->leaderboard_tracker->display);
+      osd_ind_tracker(e->leaderboard_tracker->display);
+      break;
+   case RC_CLIENT_EVENT_LEADERBOARD_TRACKER_UPDATE:
+      osd_ind_tracker(e->leaderboard_tracker->display);   /* no log: per frame */
+      break;
+   case RC_CLIENT_EVENT_LEADERBOARD_TRACKER_HIDE:
+      fe_evt("ra_tracker hide id=%u", e->leaderboard_tracker->id);
+      osd_ind_tracker(NULL);
+      break;
+   case RC_CLIENT_EVENT_LEADERBOARD_SCOREBOARD:
+      fe_evt("ra_scoreboard id=%u rank=%u of=%u score=%s",
+             e->leaderboard_scoreboard->leaderboard_id,
+             e->leaderboard_scoreboard->new_rank,
+             e->leaderboard_scoreboard->num_entries,
+             e->leaderboard_scoreboard->submitted_score);
+      snprintf(t, sizeof(t), tr("ra.rank_of"), e->leaderboard_scoreboard->new_rank,
+               e->leaderboard_scoreboard->num_entries);
+      toast("%s", t);
       break;
    case RC_CLIENT_EVENT_SERVER_ERROR:
       fe_evt("ra_server_error api=%s rc=%d msg=\"%s\"",
@@ -278,15 +343,15 @@ static void RC_CCONV on_event(const rc_client_event_t *e, rc_client_t *client)
              e->server_error->result,
              e->server_error->error_message ? e->server_error->error_message
                                             : "");
-      toast("RetroAchievements: %s", e->server_error->error_message);
+      toast(tr("toast.retroachievements"), e->server_error->error_message);
       break;
    case RC_CLIENT_EVENT_DISCONNECTED:
       fe_evt("ra_disconnected");
-      toast("%s", "Achievements will be sent when back online");
+      toast("%s", tr("toast.achievements_will_be_sent_when_back"));
       break;
    case RC_CLIENT_EVENT_RECONNECTED:
       fe_evt("ra_reconnected");
-      toast("%s", "Achievements sent");
+      toast("%s", tr("toast.achievements_sent"));
       break;
    case RC_CLIENT_EVENT_RESET:
       /* Only asked for when Hardcore is switched on mid-game, which this
@@ -296,6 +361,14 @@ static void RC_CCONV on_event(const rc_client_event_t *e, rc_client_t *client)
    default:
       break;
    }
+}
+
+/* The runtime's clock (the progress pill's two seconds, the ping every 30):
+ * the app's monotonic one, which the host twin simulates. */
+static rc_clock_t RC_CCONV now_ms(const rc_client_t *client)
+{
+   (void)client;
+   return (rc_clock_t)(plat_time_us() / 1000u);
 }
 
 static void RC_CCONV on_log(const char *msg, const rc_client_t *client)
@@ -338,15 +411,24 @@ static void RC_CCONV login_done(int result, const char *error,
       if (with_password)
       {
          if (account_save() != 0)
-            toast("%s", "Signed in, but the account could not be kept");
+            toast("%s", tr("toast.signed_in_but_the_account_could"));
          else
-            toast("Signed in to RetroAchievements as %s", u->display_name);
+            toast(tr("toast.signed_in_to_retroachievements_as"), u->display_name);
+      }
+      if (R.pending_boot && R.hash_path[0] && !R.game_on)
+      {
+         R.pending_boot = 0;
+         R.game_on = 1;
+         R.game_hardcore = R.hardcore;
+         rc_client_set_hardcore_enabled(R.rc, R.game_hardcore);
+         cheats_hardcore(R.game_hardcore);
+         R.hash_want = 1;
       }
       return;
    }
    if (with_password)
    {
-      toast("Sign-in failed: %s", error ? error : "no answer");
+      toast(tr("toast.sign_in_failed"), error ? error : tr("toast.no_answer"));
       /* the account that was signed in before stays the one */
       if (R.user[0] && R.token[0])
          token_login();
@@ -358,7 +440,7 @@ static void RC_CCONV login_done(int result, const char *error,
       R.token[0] = '\0';
       R.retry_login = 0;
       account_save();
-      toast("%s", "RetroAchievements: please sign in again");
+      toast("%s", tr("toast.retroachievements_please_sign_in_again"));
    }
    else
    {
@@ -368,8 +450,8 @@ static void RC_CCONV login_done(int result, const char *error,
       R.retry_login = 1;
       R.retry_wait = RETRY_PUMPS;
       if (!R.retry_told)
-         toast("RetroAchievements: %s",
-               error ? error : "could not sign in, will try again");
+         toast(tr("toast.retroachievements"),
+               error ? error : tr("toast.could_not_sign_in_will_try"));
       R.retry_told = 1;
    }
 }
@@ -387,6 +469,8 @@ void ra_boot(const char *data, const char *host, const char *version,
       fe_evt("ra_boot FAILED");
       return;
    }
+   osd_ind_enable(R.indic);
+   rc_client_set_get_time_millisecs_function(R.rc, now_ms);
    rc_client_enable_logging(R.rc, RC_CLIENT_LOG_LEVEL_WARN, on_log);
    rc_client_set_event_handler(R.rc, on_event);
    if (host && host[0])
@@ -433,6 +517,32 @@ void ra_shutdown(void)
 
 static void hash_done(const ra_http_res *res);
 
+/* The runtime's ping is how rich presence reaches the site (m=<text>, sent
+ * every couple of minutes while a game runs): say what went out. */
+static void ping_log(const char *post, int status)
+{
+   const char *m = post ? strstr(post, "&m=") : NULL;
+   char rp[96];
+   size_t n = 0;
+   if (m)
+      for (m += 3; *m && *m != '&' && n + 1 < sizeof(rp); m++)
+      {
+         if (*m == '+')
+            rp[n++] = ' ';
+         else if (*m == '%' && m[1] && m[2])
+         {
+            char hx[3] = { m[1], m[2], 0 };
+            rp[n++] = (char)strtol(hx, NULL, 16);
+            m += 2;
+         }
+         else
+            rp[n++] = *m;
+      }
+   rp[n] = '\0';
+   R.ping_n++;
+   fe_evt("ra_ping n=%u status=%d rich_presence=\"%s\"", R.ping_n, status, rp);
+}
+
 void ra_pump(void)
 {
    ra_http_res res;
@@ -451,6 +561,8 @@ void ra_pump(void)
             R.tail = NULL;
          fe_evt("ra_http api=%s status=%d len=%u note=%s", c->api,
                 res.status, (unsigned)res.len, res.note);
+         if (!strcmp(c->api, "ping"))
+            ping_log(c->post, res.status);
          r.body = res.body ? res.body : "";
          r.body_length = res.len;
          r.http_status_code = res.status;
@@ -465,7 +577,8 @@ void ra_pump(void)
       /* A game's hash first: its achievements wait on it. */
       if (R.hash_want)
       {
-         if (ra_http_hash_file(R.hash_path) == 0)
+         if ((R.hash_nes ? ra_http_hash_file_nes(R.hash_path)
+                         : ra_http_hash_file(R.hash_path)) == 0)
          {
             R.hash_want = 0;
             R.hash_gen = R.game_gen;
@@ -542,6 +655,19 @@ int ra_hardcore_pref(void)
    return R.hardcore;
 }
 
+int ra_indicators_pref(void)
+{
+   return R.indic;
+}
+
+void ra_indicators_set(int on)
+{
+   R.indic = on ? 1 : 0;
+   osd_ind_enable(R.indic);
+   account_save();
+   fe_evt("ra_indicators_setting on=%d", R.indic);
+}
+
 void ra_hardcore_set(int on)
 {
    R.hardcore = on ? 1 : 0;
@@ -563,8 +689,7 @@ static void RC_CCONV game_done(int result, const char *error,
    if (result == RC_OK && g && g->id)
    {
       rc_client_get_user_game_summary(client, &s);
-      snprintf(R.game_title, sizeof(R.game_title), "%s",
-               g->title ? g->title : "");
+      pk_u8_copy(R.game_title, sizeof(R.game_title), g->title);
       /* Leaderboards are Hardcore's too: a score is sent as one. */
       R.game_state = s.num_core_achievements ||
                      rc_client_has_leaderboards(client) ? 1 : -1;
@@ -573,22 +698,22 @@ static void RC_CCONV game_done(int result, const char *error,
              R.game_hardcore, R.game_title);
       if (s.num_core_achievements)
       {
-         snprintf(t, sizeof(t), "%u of %u achievements%s",
+         snprintf(t, sizeof(t), tr("ra.of_achievements"),
                   s.num_unlocked_achievements, s.num_core_achievements,
-                  R.game_hardcore ? " - Hardcore" : "");
+                  R.game_hardcore ? tr("ra.hardcore") : "");
          toast("%s", t);
       }
       else
-         toast("%s", "No achievements for this game yet");
+         toast("%s", tr("toast.no_achievements_for_this_game_yet"));
    }
    else
    {
       R.game_state = -1;
       fe_evt("ra_game ok=0 rc=%d msg=\"%s\"", result, error ? error : "");
       if (result == RC_NO_GAME_LOADED)
-         toast("%s", "RetroAchievements does not know this version");
+         toast("%s", tr("toast.retroachievements_does_not_know_this_version"));
       else if (result != RC_ABORTED && result != RC_LOGIN_REQUIRED)
-         toast("Achievements unavailable: %s", error ? error : "no answer");
+         toast(tr("toast.achievements_unavailable"), error ? error : tr("toast.no_answer"));
    }
    if (R.game_state < 0)
    {
@@ -600,18 +725,31 @@ static void RC_CCONV game_done(int result, const char *error,
 
 void ra_game_begin(const char *boot_path, fe_console_t console)
 {
-   (void)console;
+   R.hash_nes = console == FE_CONSOLE_NES;
    R.game_on = 0;
    R.game_state = 0;
    R.game_title[0] = '\0';
    R.stale = 0;
    R.was_linked = 0;
+   R.pending_boot = 0;
    R.game_gen++;
+   snprintf(R.hash_path, sizeof(R.hash_path), "%s", boot_path ? boot_path : "");
    if (R.rc && !rc_client_get_user_info(R.rc) && !R.login_busy &&
-       R.user[0] && R.token[0])
+       R.user[0] && R.token[0] && (!R.online || R.online()))
       token_login();               /* a sign-in that did not get through */
-   if (!R.rc || (!rc_client_get_user_info(R.rc) && !R.login_busy))
+   if (!R.rc || !rc_client_get_user_info(R.rc))
+   {
+      if (R.rc && R.hash_path[0])
+      {
+         R.pending_boot = 1;
+         if (R.user[0] && R.token[0])
+         {
+            R.retry_login = 1;
+            R.retry_wait = 0;
+         }
+      }
       return;
+   }
    /* Hardcore is in force from the first frame; the achievements come
     * once the file's hash (the net thread's, ra_pump) and the server's
     * answer are in. */
@@ -619,7 +757,6 @@ void ra_game_begin(const char *boot_path, fe_console_t console)
    R.game_hardcore = R.hardcore;
    rc_client_set_hardcore_enabled(R.rc, R.game_hardcore);
    cheats_hardcore(R.game_hardcore);
-   snprintf(R.hash_path, sizeof(R.hash_path), "%s", boot_path);
    R.hash_want = 1;
 }
 
@@ -644,6 +781,9 @@ static void hash_done(const ra_http_res *res)
 void ra_game_end(void)
 {
    ra_list_free();
+   osd_ind_clear();
+   R.pending_boot = 0;
+   R.hash_path[0] = '\0';
    if (!R.game_on)
       return;
    R.game_on = 0;
@@ -675,12 +815,14 @@ void ra_frame(int linked)
       R.stale = 0;
       rc_client_deserialize_progress_sized(R.rc, NULL, 0);
    }
+   R.frame++;
    rc_client_do_frame(R.rc);
    R.framed = 1;
 }
 
 void ra_state_loaded(void)
 {
+   osd_ind_clear();                 /* the other timeline's indicators */
    if (R.game_on)
       R.stale = 1;
 }
@@ -753,9 +895,8 @@ int ra_list_build(void)
       {
          const rc_client_achievement_t *a = l->buckets[b].achievements[k];
          ra_ach *o = &R.list[n++];
-         snprintf(o->title, sizeof(o->title), "%s", a->title ? a->title : "");
-         snprintf(o->desc, sizeof(o->desc), "%s",
-                  a->description ? a->description : "");
+         pk_u8_copy(o->title, sizeof(o->title), a->title);    /* (cut between characters) */
+         pk_u8_copy(o->desc, sizeof(o->desc), a->description);
          snprintf(o->progress, sizeof(o->progress), "%s",
                   a->measured_progress);
          o->points = a->points;

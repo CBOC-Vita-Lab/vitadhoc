@@ -44,11 +44,24 @@ time is measured (`S9xSuperFXClock`, `snes_host_superfx_take_us`) and
 keep full speed (Doom 59 of 60 instead of 41) and the 3D view animates more slowly.
 The twin keeps 100%. A faster GSU interpreter is what would lift the 3D rate.
 
+Super FX pacing with the cycle-accurate GSU (Snes9x `8783b54` and follow-ups): the chip's budget per line is
+now `H_Max * SuperFXClockMultiplier / 100` GSU cycles (the real chip's speed at 100%) instead of a flat
+instruction count, so the chip runs fewer instructions per line than before (Doom 921 to 576, Stunt Race FX 920
+to 398, Yoshi's Island 681 to 443 steps a line, measured). The pacing hooks are unchanged (`S9xSuperFXClock`
+measures the GSU's time, `snes_host_set_superfx_clock` sets the share) and still work, in both modes. Option
+`gsu_cycles=0` selects the old flat budget (takes effect at the next ROM load). The game's own timing of the
+3D view follows the real chip now; whether the Vita keeps 60 is not measured here.
+
+The chip's instructions run on a block-cache interpreter (`core/fxfast.cpp`, option `gsu_fast`, 1 by default; 0 selects
+the reference interpreter `fx_run_ref`): the same results to the bit, about 2.7 times fewer host instructions
+in the chip's run function on x86 (2.2 to 3.7 times on armhf under qemu; docs/PERFORMANCE.md). `snes/twin/gsu_check.sh` (gate step `snes-gsu-fast`) compares the two
+on every Super FX ROM of a folder; a build with `-DFX_SHADOW` runs every slice with both and compares the whole chip state.
+
 ## Layout
 
 | Folder | What | Licence |
 |---|---|---|
-| `core/` | Snes9x 1.63 core sources, vendored. `PROVENANCE.md` lists the tag, commit, files and the four small local edits. | Snes9x licence (non-commercial, not GPL) |
+| `core/` | Snes9x 1.63 core sources, vendored. `PROVENANCE.md` lists the tag, commit, files, the upstream fixes taken after 1.63 and every local edit. | Snes9x licence (non-commercial, not GPL) |
 | `frontend/` | `host.cpp/.h`: the glue between Snes9x and any frontend (load ROM, run a frame, video, audio, pad, battery RAM, states). Third-party files for the Vita program in `third_party/` (vita2d, stb, Inter font). | MIT, "Copyright CBOC-Vita" |
 | `twin/` | The Linux headless runner `snes_twin` and the test scripts. | MIT |
 | `vita/` | The Vita program `snes.bin`: `main.cpp` (frontend) and the Makefile. | MIT |
@@ -74,8 +87,13 @@ GPLv2 VitAdhoc program. The SNES player is therefore a **second executable**:
 
 ```
 make -C snes/twin -j1                  # build/snes_twin  (takes a few minutes)
-snes/twin/selftest.sh                  # host glue tests: determinism, states, battery RAM, copier header
+snes/twin/selftest.sh                  # host glue tests: determinism, states, battery RAM (incl. forced write failures), copier header
+snes/twin/exact_check.sh               # proves the WAI skip and the SA-1 replay are exact (builds with and without them)
+python3 snes/twin/mt_compare.py --roms DIR   # threads on and off: frames and audio bit for bit (DIR: ROMs, not copied)
 snes/twin/conformance.py               # compare with the demo authors' reference screenshots (needs Pillow)
+make -C snes/twin build/player_twin    # the player's own code (menu, states, launch, cheats) with playerkit's software renderer
+build/player_twin test ROM SHOTS WORK  # scripted walk with checks and a PNG per screen (ROM: tests/make_cheat_rom.py)
+python3 snes/twin/pace_check.py --twin build/snes_twin --roms DIR [--expect bench.json]   # steady pacing changes nothing
 snes/twin/baseline.sh > table.md       # the baseline table below
 ```
 
@@ -90,12 +108,57 @@ snes/twin/baseline.sh > table.md       # the baseline table below
 | `--wav F` | all audio, 32040 Hz stereo |
 | `--timing F` | per-frame CSV: total, 65816 CPU, APU, PPU, chip and frontend microseconds (turns profiling on) |
 | `--summary` | one line: fps and the time split (profiling on) |
-| `--srm F` | battery RAM file, loaded if present and saved at the end (`F.bak` keeps the previous file) |
+| `--srm F` | battery RAM file, loaded if present and saved at the end. The existing file is first copied to `F.bak` (or to `--backup-dir`) and the copy read back; if that fails the save is left untouched, the error is printed and the exit status is 3 |
+| `--backup-dir D` | keep the backups of `--srm` in `D` (`name.<crc>.bak`) like the Vita |
+| `--srm-async` | save like the Vita's writer thread (take, write on a thread, forget on failure, retry) |
+| `--unblock P` | after a failed save delete `P` and retry once (used by the failure tests) |
+| `--cheat CODE` (repeatable), `--cheats-root DIR` | add a code: Game Genie `XXXX-XXXX`, Action Replay `AAAAAAVV`, raw `AAAAAA=VV`, `AAAAAA:VV` or `AAAAAA=CC?VV`. With `--cheats-root` the game's list is read from and saved to `DIR/cheats/<rom>.cht` |
+| `--cheat-toggle F:I:0\|1`, `--cheat-remove I`, `--cheat-disable-all`, `--cheat-list` | at frame F switch entry I off or on; remove an entry; switch all off; print the list |
+| `--cheat-decode CODE` (ROM `-`) | print a code as address=value cells, or the error, without a ROM |
+| `--peek HEX` | print the work RAM byte at that offset at the end of the run |
 | `--save-state F --state-frame N`, `--load-state F --state-frame N` | save after / load before frame N |
-| `--opt name=value` | core options: `block_vram`, `sprite_tiles`, `interp`, `superfx_clock`, `transparency`, `echo_buffer` |
+| `--opt name=value` | core options: `block_vram`, `sprite_tiles`, `interp`, `superfx_clock`, `gsu_cycles`, `gsu_fast`, `transparency`, `echo_buffer` |
 
 Without `--timing`/`--summary` the program prints one line with the fps from the
 thread's **CPU time** (the build machine is shared, so wall time is not used).
+
+### Save safety (`frontend/host.cpp`)
+
+Battery RAM is written as: temp file, read back and compared, rename over the save, final file read back.
+The first overwrite of an existing save needs a **verified backup** (size and checksum read back; on the Vita
+`<name>.<crc>.bak` in the backup folder, an interrupted earlier copy is replaced, a different file with the
+same name gets the next name). If any step fails the existing save is untouched, `snes_host_save_error()` gives the
+real reason (log and an on-screen note on the Vita), and the Vita retries after 10 s, doubling to 60 s,
+without blocking the game thread. A longer `.srm` than the cartridge's RAM keeps its extra bytes.
+`CMemory::SaveSRAM` is not called by the frontend and uses the same temp-and-rename write. `selftest.sh`
+forces the failures (file size limit, backup folder blocked, truncated earlier backup, name clash, temp file
+blocked, stale `.bak`, retry after unblock, sync and async) and asserts the save stays byte-identical.
+Hardware behaviour of the Vita file system (rename over an existing file, fsync) is not tested here.
+
+### Cheats (`frontend/host.cpp`, `frontend/host.h`)
+
+The engine is Snes9x's own (`core/cheats2.cpp`): each code is poked into memory at the end of every frame on the
+emulation thread, and the APU and PPU workers read none of that memory, so the threads stay exact (`selftest.sh`
+runs codes with the threads on and checks the frames equal the single thread). The host adds:
+
+- **Decoding**: Game Genie through the core's `S9xGameGenieToRaw`, Action Replay through `S9xProActionReplayToRaw`,
+  and raw `AAAAAA=VV` / `AAAAAA:VV` / `AAAAAA=CC?VV` (conditional). Up to 16 cells a code, 512 codes a game,
+  address 0 refused. `snes_host_cheat_validate` and `snes_host_cheat_decode` check a code without adding it.
+  `cheat_vectors.py` checks the Game Genie decoder against an independent Python implementation of the same
+  bit layout (300 random codes, fixed vectors, refused spellings). That is a check against the layout as written
+  in the core, not against a real cartridge's codes.
+- **The list**: `snes_host_cheats_load(root)`, `snes_host_cheat_add/enable/remove/get/count`,
+  `snes_host_cheat_disable_all`. The list is kept in RetroArch's `.cht` format in `<root>/cheats/<rom>.cht`. Keys and
+  lines this host does not use are kept. A file that exists but cannot be read is never overwritten.
+- **Writing**: the `.cht` is written like a save (temp file, read back, verified backup of the old file, rename).
+  A failed write keeps the change in memory, `snes_host_cheat_error()` gives the reason, and the next change (or
+  `snes_host_cheats_save()`) retries.
+- **Reset and state load** poke the codes again (`cheats_suspend` / `cheats_resume`).
+- **A ROM patched by a code** (Game Genie on the ROM image) switches the SA-1 idle-loop replay off for that
+  cartridge until the next load (`S9xSA1RomPatched`), because the replay assumes ROM code does not change.
+
+The Vita program's menu has a Cheats page (list, on/off, add with the system keyboard, delete; see "The in-game
+menu" below). The Snes9x cheat database is not used. Hardware behaviour of the file writes is not tested here.
 
 ### Test ROMs
 
@@ -119,7 +182,12 @@ to its battery RAM at every boot) for the `.srm` rules.
 Same ROM and pad script give identical frame hashes twice; a state saved at frame
 99 and loaded at frame 150 replays frames 100-199 bit-identically; a 512-byte
 copier header is skipped; battery RAM loads and saves (the test cartridge counts
-1 then 2); the previous save is kept as `.bak`; no `.tmp` file is left.
+1 then 2); the previous save is kept as `.bak`; no `.tmp` file is left; the save-safety failures listed under
+"Save safety"; the cheat tests (decode vectors, RAM and ROM codes, threads with codes, state load, the `.cht`
+file, a foreign file, a failed write that leaves the file byte-identical).
+With `snes_wide_twin` built, the wide view proofs run too, among them `wide_cache_proof.sh` (the margin strip cache under random writes between frames and
+lines, a VRAM counter crossing 2^32, state load, reset, margin change, the margin thread joining and leaving; each against a run without the cache, and every hit
+checked against a fresh draw).
 
 ### Screenshot conformance (`conformance.py`)
 
@@ -198,19 +266,81 @@ Reading the table:
 
 ## The Vita program (`snes.bin`)
 
-Started with `snes.bin <rom path>`. The core's picture (RGB565, 256 or 512 wide) is copied into a GPU
+Started by VitAdhoc with a launch file (`launch/snes.ini`, see "Launch protocol") or, as before, `snes.bin <rom path>`
+(`rom|save` for a zipped game). The player's behaviour is `vita/player.cpp` (portable; the Linux twin
+`twin/player_twin` runs the same code), `vita/main.cpp` is the console around it. The core's picture (RGB565, 256 or 512 wide) is copied into a GPU
 texture and everything else happens on the GPU (see "Picture" below). Sound: the core's 32040 Hz output
 resampled to 48000 Hz with linear interpolation and a rate control that holds about 60 ms in the queue.
-500 MHz is requested for the CPU (444 MHz if refused), bus 222, GPU 222, crossbar 166.
+The CPU clock follows the app's request (`cpu_mhz` in the launch file: 444 or 500; 0 or no file: 500 MHz, 444 if
+refused), bus 222, GPU 222, crossbar 166.
 
 | Vita | SNES |
 |---|---|
-| Cross / Circle / Square / Triangle | B / A / Y / X |
+| Cross / Circle / Square / Triangle | B / A / Y / X (the console's own layout; remappable) |
 | L, R, Start, Select, D-pad | the same (the left stick also acts as D-pad) |
-| L + R + Start (held together) | pause menu |
+| hold START + SELECT, or tap the picture | the in-game menu (hold L + R + Start still works) |
+| SELECT + L / SELECT + R | quick save / quick load, slot 1 |
 
-Pause menu: Resume, Picture, Multitap, Save state, Load state (L/R pick the slot, 1 to 4), Reset game, Quit to
-VitAdhoc. Menu confirm follows the console's confirm-button setting (Cross or Circle); the other is "back".
+### The in-game menu (playerkit)
+
+The same control centre as the Game Boy Advance side (`playerkit/`, MIT): Resume, Save states, Cheats,
+Settings, Reset game, Game list, Exit, every row touchable, Enter/Back by the launch file's `enter_button` (the
+console's setting without a launch file).
+
+- **Save states**: ten slots with pictures (`<root>/states/snes/<game>.st0` .. `.st9` with `.thumb`, `.shot`,
+  `.meta`: the main app's shelf reads them like GBA states). X (Enter) on an empty slot saves, on a filled one
+  loads; Square saves over a filled slot (asks first); Triangle deletes (asks); Select (or the button) undoes
+  the last load. Writes run on the writer thread; the slot shows at once. A failed write keeps the slot as it
+  was and says why (red notice).
+- **Settings > Picture**: Screen size (Fit, Zoom, Stretch, Pixel perfect: the main app's words), Pixel shape (8:7 or square),
+  Image quality (Auto, Original, Enhanced 2x, Enhanced 3x, MMPX 2x: the main app's row; Enhanced 4x is not offered, there is no 4x
+  scaler in a player), Video filter (sharp bilinear, bilinear), Scanlines, LCD grid, Ambient glow (Off, 1-10), Blend hi-res columns, Blend
+  interlace lines, Apply to (All games / This game). Stored in `snes/picture.ini` and `snes/games/<game>.ini`
+  when the menu closes (on the writer thread).
+- **Settings > Controls**: left and right stick (Off, D-pad, Buttons), rear touch panel, Multitap (Auto, On,
+  Off), Button mapping for players 1-4 (every SNES button, turbo A/B, quick save/load), turbo speed and mode,
+  Apply to (all games / this game), Reset. Stored in `controls/snes.ini` and `controls/snes/<game>.ini`.
+- **Settings > Speed**: Steady pacing (On by default, see below).
+- **Cheats**: the game's list (`<root>/cheats/<game>.cht`, RetroArch format), on/off, "Add a cheat" (the
+  system keyboard: the code, then an optional name), Delete (Triangle or the row's button, asks).
+- **Reset game**, **Game list** (back to VitAdhoc) and **Exit** (close VitAdhoc) ask first.
+- Notices (state saved/loaded, cheat on/off, a save that failed and why) clear themselves; errors have a red
+  dot and stay 5 s.
+
+The battery RAM is never written before the menu is on screen: it is handed to the writer thread after the
+menu's first frame.
+
+### Card operations per state save (measured)
+
+`strace -f` of `player_twin bench-saves DIR 20 FILL` (20 saves of a 400 KB state with pictures, three slots)
+against the same loop on the playerkit of before this change (`git show db68129:playerkit/src/...`):
+
+| per save, `strace -c` | open | rename | remove | stat | mkdir | of these failed (missing name / folder exists) |
+|---|---:|---:|---:|---:|---:|---:|
+| before | 8 | 7.4 | 10.8 | 22 | 15.4 | 26 |
+| now | 5.9 | 1.85 | 0.85 | 0 | 0 (once at start) | 0 |
+
+A replaced slot is 9 operations (temp file, read back, note emptied, picture, big picture, note; 2 renames; 1
+remove), an empty slot 6. The count does not grow with the folder (2,000 other files gave the
+same numbers); on the Vita each operation still walks the folder once, so a flat `states/snes/` with thousands
+of files stays the remaining cost (see the report for a bucketed layout). The slot list is read once (one
+folder listing) and kept in memory: opening the menu or the Save states page reads nothing from the card.
+
+### Launch protocol
+
+`<root>/launch/snes.ini` (written by VitAdhoc, keys in `playerkit/FORMATS.md`) is read at start: game, save,
+enter_button, cpu_mhz, shape/quality (unless the game has its own picture file from this menu), `ovr.*` per-game
+values (`scanlines`, `lcd_grid`, `glow`, `shape`, `quality`, `pixel_square`, `hires_blend`, `interlace_blend`,
+`multitap`, `steady_pacing`), `start` (`continue`: the resume point, only when made with the same `patch_key`;
+`slot` + `slot`), `patch` (IPS/BPS/UPS applied to the ROM in memory; the game is not started if it does not
+apply, the save and states keep the original game's name), `retroarch_save` (copied over the save when newer;
+the replaced save is kept in `backups/snes/<game>.before-retroarch.srm`). Without the file (or when its `game`
+differs from the argument: an old file) the argument is used as before. On exit `launch/session.txt` is written:
+seconds played, save changed / failed, the last error, states touched, resume point present, how it ended.
+The resume point (`states/snes/<game>.rsm`, `.rsm.pt`, `.rsm.meta`, and `scenes/<game>.shot`) is written on
+exit, every 2 minutes and about a second after the game saved (at most every 30 s), on the writer thread.
+Old states (`snes/states/<game>.st0` .. `.st3`, the four slots of earlier versions) are moved once into the same
+slot, or the first free one when it is taken; nothing is overwritten or deleted.
 
 ### Players (couch multiplayer)
 
@@ -232,10 +362,11 @@ or, with "Apply to: this game", for one game (`ux0:data/GBAdhoc/snes/games/<game
 
 | Setting | Values |
 |---|---|
-| Shape | **Original shape** (default: correct 4:3, full height, about 725x544; the side areas show the glow), Zoom (blank top/bottom rows are cropped, the picture is enlarged but not stretched), Full screen (stretched), Pixel perfect (integer height scale; Pixels: 8:7 or square) |
-| Quality | **Sharp** (default: nearest-neighbour prescale by an integer factor into a render target, then bilinear: "sharp bilinear") or Smooth (plain bilinear) |
-| Side glow | Off, 1-10 (default 5). A 64x64 and a 16x16 shrink of the game's own picture, drawn bilinear over the whole screen and darkened, refreshed every 4 frames. Replaced by a bezel when one exists |
+| Shape | **Fit** (default; it was called "Original" in earlier builds: correct 4:3, full height, about 725x544; the side areas show the glow), Zoom (blank top/bottom rows are cropped, the picture is enlarged but not stretched), Stretch (stretched), Pixel perfect (integer height scale; Pixels: 8:7 or square) |
+| Quality (Video filter) | **Sharp bilinear** (default: nearest-neighbour prescale by an integer factor into a render target, then bilinear: "sharp bilinear") or Bilinear (plain bilinear) |
+| Ambient glow | Off, 1-10 (default 5). A 64x64 and a 16x16 shrink of the game's own picture, drawn bilinear over the whole screen and darkened, refreshed every 4 frames. Replaced by a bezel when one exists |
 | CRT scanlines, LCD grid | Off, 1-10 |
+| Wide view | Auto (default), On or Off. Fills the 16:9 screen with real picture of the game beside the 4:3 frame (the game's own tiles and Mode 7 where its data proves them, soft edges elsewhere); the 256 middle columns stay the normal picture. Hi-res scenes use the normal picture. Auto is off while steady pacing thins frames. See `WIDE-INTEGRATION.md` |
 | Blend hi-res columns | Off (default) or On. For 512-wide pictures: the GPU averages each pair of columns (bilinear sample exactly between two texels, no extra pass), which smooths the dithering/transparency tricks hi-res games use. Opt-in because it softens text |
 | Blend interlace lines | Off (default) or On. The same for 448/478-high interlaced pictures: pairs of lines are averaged, which removes the line flicker |
 | Bezel | not a setting: `ux0:data/GBAdhoc/overlays/<game>.png`, else `overlays/snes.png`, a PNG (transparent window) drawn over the whole screen; it replaces the glow |
@@ -251,29 +382,140 @@ The layout maths (`frontend/picture.cpp`) is tested on Linux (`selftest.sh`); th
 ### Threads on the Vita
 
 APU worker on core 2, PPU worker on core 1, emulation (65816, DMA, GPU submission) on core 0, audio output
-thread on core 2 at a more urgent priority than the APU worker. Priorities: workers 0x60, audio 0x50, main
-thread unchanged. Switches in `ux0:data/GBAdhoc/snes/threads.ini` (`apu_thread=1`, `ppu_thread=1`, `spin=300`;
-both on by default). An idle worker polls `spin` times (a few microseconds) and then blocks on a semaphore;
+thread on core 2 at a more urgent priority than the APU worker, and a low-priority writer thread on core 1 (battery
+RAM, states, the resume point, settings and the log: nothing is written to the card on the game thread while
+playing). `audio_prio`/`main_prio` outside 0x40-0xBF are replaced by the defaults. Priorities: workers 0x60, audio 0x40, main
+thread 0x60 (`audio_prio=` / `main_prio=` in threads.ini, 0 = leave as the system made it). Switches in
+`ux0:data/GBAdhoc/snes/threads.ini` (`apu_thread=1`, `ppu_thread=1`, `spin=300`, `audio_legacy=0`; the threads
+are on by default). An idle worker polls `spin` times (a few microseconds) and then blocks on a semaphore;
 nothing spins while the game waits. The main loop never waits for the PPU worker: it queues the end-of-frame
 copy and shows the newest finished picture (normally the previous frame, one frame of display latency). The
 Linux twin keeps its exact waiting fetch for the hash checks (`--nowait` exercises the Vita's fetch: every
 picture it returns must equal a picture of the reference run).
+
+### Audio pacing (`frontend/audio_pace.cpp`)
+
+The audio thread renders 512-frame grains at 48 kHz from a lock-free ring of the core's 32040 Hz frames. A PI
+controller on the smoothed ring fill (measured at each grain start) sets the resampling ratio; the target fill is an
+adaptive cushion (70 ms, 50-140 ms, +20 ms per underrun, -5 ms after 30 s without one). An underrun, a pause and a
+resume all fade out/in over 64 frames and prime again at half the cushion; an overfull ring is trimmed with a
+crossfade. When the emulation runs slower than real time (speed over the last 8 s below 0.985) the pitch follows the
+speed. `audio_legacy=1` in threads.ini selects the first player's audio for A/B tests. The same code runs in the
+twin's `--audio-sim` (see `twin/audio_sim.sh`, results in `twin/baseline_results.md`).
+
+Log, one extra line per second (counters of the audio thread's last second):
+
+```
+A t=12 in=31987 out=48128 fill=55.6/67.4/79.7 ema=69.4 tgt=70 ratio=-4453/-2554/945 base=1.0000 ur=0/0 drop=0 trim=0 agap=10.9 w16=0 w20=0 w25=0 stall=16.8 wmax=11.4 v2
+```
+
+`in`/`out` frames pushed / rendered; `fill` ring fill in ms at grain starts (min/avg/max), `ema` smoothed fill, `tgt`
+cushion; `ratio` is (ratio-1) in ppm (min/avg/max, the slow-emulation base included), `base` the base speed; `ur=` underruns
+this second / in total; `drop` frames refused by a full ring; `trim` overfill trims; `agap` longest gap in ms between two
+`sceAudioOutOutput` returns; `w16/w20/w25` passes of the main loop whose work took over 16.7 / 20 / 25 ms; `stall` longest
+time between two passes; `wmax` longest pass; last word `v2` or `legacy`. Each underrun also gets a line of its own:
+`UNDERRUN #n (k new) at out=..s ema=..ms target->..ms ratio=..ppm queue_now=..ms work=..ms`. The log is kept in memory and
+written at most every 5 s, by the writer thread.
+
+### Steady pacing (on by default)
+
+The game always runs at its true rate (sound and input untouched). When the last second shows that drawn
+frames do not fit a refresh (10% of them over 16.7 ms, or their average over 97%), the player draws every
+second emulated frame on an exact even cadence (the other frames take the core's render-off path, as the
+governor below did); a pass that missed a refresh then runs the missed frame too, undrawn. It goes back to
+every frame only after 3 s in which every drawn frame (the cost a full-rate frame has) stayed under 80% of the
+budget (one stray spike allowed) and at least 2 s in half mode, so it does not flap. A drawn frame's cost is the
+emulation of the rendered frame plus fetching and submitting its picture, or the picture thread's work for it,
+whichever is larger. The decision is `playerkit/src/pk_pace.cpp`, a pure function with unit tests (bursts,
+sustained overload, recovery, boundary flapping). Settings > Speed > Steady pacing switches it off
+(`snes/player.ini`, `steady_pacing=0`). The log shows each change (`pace: full -> half ...`) and, on the `t=`
+line, `not_rendered=` and `pace=<mode> drawn= over= max= changes=`. `twin/pace_check.py` proves the emulation
+does not change: with odd frames not rendered (and both workers on) the audio, the RAM at the end and every
+rendered frame are identical to the normal run, on the owner's 15 games (3000 frames).
+
+### Quick response (run-ahead by one frame)
+
+Settings > Speed > Quick response (Off / Auto / On; `snes/player.ini` `quick_response`, Auto by default; the launch file's
+`ovr.quick_response` for one session) shows a button press one frame sooner, as in the app and the Sega player: the real frame runs
+without being drawn (its sound goes out), the machine is saved, the next frame runs drawn and silent with the same buttons and is shown,
+and the machine goes back (`frontend/host.cpp` `snes_host_run_frame_ahead`; the decision is `playerkit/src/pk_ahead.h`, the same
+thresholds as everywhere: it starts when the projected cost is at most half a frame, stops over 70 % or after 3 late frames in 120, and
+holds off while the drawing thread runs late). It is off in linked and online play, in fast forward, in rewind, in Steady pacing's half
+mode and while the Super FX chip is slowed to keep a game at full speed (and a pass that ran a frame ahead does not count for that chip
+pacing, so Quick response never slows the chip). RetroAchievements see the real frame only.
+
+The save is not Snes9x's state (its load resets the machine, makes the picture thread wait and take the whole video memory again and
+clears every tile cache) but a light snapshot in memory (`core/ahead.cpp`): exactly what a frame can change, found from the program
+itself (every static and global variable of the core objects, `nm`, each one classified in the file's header), copied raw; video RAM is
+compared in 32-byte blocks and only the blocks the look-ahead frame changed go back, losing only their tiles from the tile cache, marked for
+the picture thread's private copy and for the wide view's strip cache; the sprite tables (the range and time-over flags come out of them)
+are copied aside only when the look-ahead frame rebuilds them; the sound side (SPC700, DSP, ports, the samples not taken yet) is saved and
+put back by jobs in the APU thread's command stream, so nothing waits for that thread; the wide view's write stamps go back and its clock
+goes on. Chips: Super FX (with the Winter Gold cel hold), SA-1 (with the replay engine and the memory map it changes), DSP-1 to DSP-4, C4,
+OBC1, S-DD1, ST010 and MSU-1 (registers, sample position and track; the files are moved back only when the look-ahead frame moved them).
+Not offered (the row says Auto, the log says why and it never runs) for SPC7110, S-RTC, ST011 / ST018, BS-X and Sufami Turbo
+cartridges: their state is in local variables of their decoders or follows the real-time clock.
+
+Cost on the PC build (host x86_64, ms of the emulating thread's CPU per refresh, 1200 frames; host numbers only):
+
+| ROM | plain | run ahead | save + way back |
+| --- | ---: | ---: | ---: |
+| WaveHDMA (PeterLemon) | 0.43 | 0.66 | 0.018 |
+| FFVIIPrelude (SPC700 music) | 0.28 | 0.62 | 0.024 |
+| Mode 7 StarWars | 0.46 | 0.79 | 0.026 |
+| GSU 8BPP FillPoly (Super FX) | 0.58 | 1.12 | 0.041 |
+| SA-1 work cartridge (`twin/tests/make_chip_work_rom.py`) | 1.13 | 2.21 | 0.076 |
+| same, APU and picture threads on: StarWars / GSU / SA-1 | 0.21 / 0.42 / 0.87 | 0.41 / 0.76 / 1.88 | 0.024 / 0.033 / 0.077 |
+
+Snes9x's own state save and load on the same machine: 0.09 to 0.10 ms + 0.23 to 0.27 ms single thread, 0.24 to 0.28 ms + 0.6 to
+2.1 ms with the threads (the load waits for the picture thread), so the light snapshot costs 10 to 40 times less. On a Vita (model,
+docs/PERFORMANCE.md: the game thread is 3.0 to 8.3 ms a frame at IPC 1.0 and 4.2 to 11.8 ms at IPC 0.7 for the owner's 15 games) a frame
+run ahead is about twice that, so by Auto's rule (2.3 x plain + 0.6 ms at most half of 16.7 ms: a plain frame of 3.4 ms or less) it
+can start only for the lightest games at the optimistic end of the model (Super Metroid, F-Zero, Zelda, Mega Man X2, Super Mario Kart at
+IPC 1.0) and for none at IPC 0.7; everywhere else Auto simply does not start and the game runs as before. Nothing of this ran on a Vita:
+the console's log has an `ahead:` line every second (`plain_ms`, `ahead_ms`, `save_ms`, `back_ms`, starts and stops).
+
+Proof (`twin/ahead_check.sh`, gate step `snes-ahead`): per ROM a plain run and runs with every frame from frame 10 on run ahead, single
+thread and with the APU and picture threads: the sound, the work and battery RAM and the machine's digest after every frame
+(Snes9x's state but the drawing flag `PPU.RecomputeClipWindows`, the pads' state, the sprite flags) equal the plain run's; every way
+back gives the machine that was saved; the picture shown at frame n is the plain frame n + 1 (but on the first frame run ahead, which
+follows an undrawn frame as after fast forward, where the buttons change, and, in an interlaced picture, the frame after that too: its
+other field is the one of the picture before); with the wide view (single thread, threads, capture composed on another thread) the wide
+picture, margins included, equals the plain run's next frame when that run leaves frame 10 undrawn too; a small cartridge that shows the
+pad a frame after it reads it shows a press 1 frame after it plain and 0 with Quick response. All 164 public PeterLemon test programs
+(`git clone https://github.com/PeterLemon/SNES`, commit 350b394: 47 PPU programs with Mode 7, HDMA and interlace, 30 CPU and SPC700
+instruction tests, 9 SPC700 music programs, 8 MSU-1 programs (six stream their video or audio from their files; the two Bad Apple ones ship them packed and run without), 58 Super FX programs) and the
+test's own cartridges (latency, an SA-1 and a DSP-1 kept busy with real work, and one that writes video RAM and a sprite only while a
+button is held: on the frame the button is let go the look-ahead frame has written what the real frame does not write again, the one
+case where the tile cache and the picture thread's video RAM depend on the way back) pass, 300 frames each (the MSU-1 ones also 600). A
+conditional cheat (`address=condition?byte`) fires on the same frame with and without Quick response: the cheat engine's memory of each
+code is part of the machine saved. Negative controls (`ahead.cpp`
+`AHEAD_NEGATIVE_CONTROL`, built by hand): leaving out the sound side, the SA-1 registers, the video RAM compare, the sprite tables, the
+DSP-1, the work RAM or the cheat engine's memory (8) each fails the proof; leaving out the pads' state does not show on these programs (none reads the pads serially
+across a frame end), it is kept all the same. `player_twin ahead` (in `selftest.sh`) runs it through the player: Off, On, Auto light and
+Auto heavy give the same machine after every refresh through presses, fast forward, rewind, a quick save and a quick load; never under
+fast forward; Auto leaves a heavy game alone; the row and `player.ini`; the drawing thread holding it off. Not covered by a test program:
+DSP-2/3/4, C4, OBC1, S-DD1 and ST010 (their whole state is in the structures the snapshot copies; no free ROM uses them).
 
 ### Smoothness governor (off)
 
 `frontend/picture.cpp` still has a governor that would skip drawing every other frame after 24 slow ones
 (level 2; level 1, which dropped picture options, is not used). On the Vita it is not called: the picture is
 drawn on its own thread, so skipping it saved the game thread about half a millisecond while halving the
-frames shown. A frame that runs long is shown late, and after a single long frame the next refresh runs two
-frames to catch up (not when every frame is long). `gov=` in the log stays 0.
+frames shown. A frame that runs long is shown late. The main loop emulates exactly one frame per display
+refresh (the console's 60.0988 Hz against the Vita's 59.94 Hz is absorbed by the audio rate control; the former
+"two frames to catch up" branch is gone). The governor is not called and has no log field any more.
 
 Files:
 
 | File | Where |
 |---|---|
 | Battery RAM | `Game.srm` beside the ROM (RetroArch's name). Written about 2 s after it last changed, at quit and when the console suspends. The previous file is kept as `Game.srm.bak` before the first overwrite of a session. Carts whose RAM has no battery (Super FX work RAM) write nothing. |
-| Save states | `ux0:data/GBAdhoc/snes/states/<game>.st0` to `.st3` |
-| Picture settings | `ux0:data/GBAdhoc/snes/picture.ini`, `.../games/<game>.ini` |
+| Save states | `ux0:data/GBAdhoc/states/snes/<game>.st0` to `.st9` (+ `.thumb`, `.shot`, `.meta`), resume point `.rsm` |
+| Picture settings | `ux0:data/GBAdhoc/snes/picture.ini`, `.../games/<game>.ini`; steady pacing in `snes/player.ini` |
+| Controls | `ux0:data/GBAdhoc/controls/snes.ini`, `controls/snes/<game>.ini` |
+| Cheats | `ux0:data/GBAdhoc/cheats/<game>.cht` |
+| Launch / session | `ux0:data/GBAdhoc/launch/snes.ini` (read), `launch/session.txt` (written) |
 | Threads | `ux0:data/GBAdhoc/snes/threads.ini` |
 | Log | `ux0:data/GBAdhoc/snes/log.txt` (appended) |
 
@@ -282,7 +524,7 @@ Files:
 One line per second:
 
 ```
-t=12 fps=59.9 emu_fps=59.9 emu_ms=9.40 last_ms=9.7 aq=2100 | busy ms/fr: main=11.2 ppu=3.1 apu=4.8 | waits/s: ppu=0 apu=3 (0.4 ms) | gov=0 drawn=60 skipped=0 new_pic=60 fence_skip=0
+t=12 fps=59.9 emu_fps=59.9 emu_ms=9.40 last_ms=9.7 aq=2100 | busy ms/fr: main=11.2 ppu=3.1 apu=4.8 | waits/s: ppu=0 apu=3 (0.4 ms) | drawn=60 skipped=0 new_pic=60 fence_skip=0
 ```
 
 Since the speed pass the line also has `main split ms/fr: emu= copy= gpu_submit=` (the main figure divided into the core call, the picture copy and GPU submission) and `rt_reuse=` (a running total since the program started of how often a render target was reused without being redrawn). `fps` is what was shown, `emu_fps` frames the core ran, `emu_ms` time inside the core call on the main thread,
@@ -292,9 +534,10 @@ whole loop without the display wait). A frame fits when main stays under about 1
 `waits/s` counts how often the main thread had to wait for a worker and how long in total. `fence_skip` counts
 pictures not copied because the GPU still read every texture. Without threads the line also carries
 `prof(60 fr): cpu= apu= ppu= chip= front= ms/fr=` for one second in four. Other lines: `pads:` when a controller
-appears or goes, `governor:` level changes, `overlay`, `render targets:` (0 means a target could not be created).
+appears or goes, `overlay`, `render targets:` (0 means a target could not be created).
 
-Not implemented: zip files, core options in the menu, mouse/Super Scope, cheats, rewind, RTC data for
+Not implemented: zip files, core options in the menu, mouse/Super Scope, a cheat screen (the host API is in
+place, see "Cheats" above), rewind, RTC data for
 S-RTC/SPC7110 carts (their clock RAM is not saved), BS-X and Sufami Turbo, MSU-1 audio files.
 
 ## Library hook (VitAdhoc side)

@@ -19,6 +19,10 @@ void cpuclk_boot(const char *root, int fast);
 int  cpuclk_fast(void);
 /* The menu's change.  Requests the clock, writes or removes our profile. */
 void cpuclk_set(int fast);
+/* After the console slept (PLAT_POWER_RESUME): the CPU, bus and GPU clocks
+ * asked for again as the setting says; the result is logged.  Returns the
+ * system's answer for the CPU clock (negative = refused). */
+int  cpuclk_reapply(void);
 /* Called from menus (and a quiet game moment): the second measurement,
  * about 8 s after the start. */
 void cpuclk_tick(void);

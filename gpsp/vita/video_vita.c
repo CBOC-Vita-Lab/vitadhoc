@@ -37,14 +37,20 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
 
 #include "video_vita.h"
 #include "video_vita_priv.h"
 #include "video_vita_logo.h"
 #include "vstyle.h"
+#include "vglyph.h"
 #include "ambient_look.h"
+#include "pk_screen.h"         /* the screen profile and the CRT mask (playerkit/src, MIT) */
 #include "fe_evt.h"
 #include "upscale_vita.h"
+#include "mmpx_vita.h"
 #include "stb_image_write.h"
 #include "stb_image.h"           /* psp/stb_impl.c: the overlay PNG */
 
@@ -103,13 +109,21 @@ static uint32_t c565(uint16_t c, int alpha)
 
 static const uint16_t *vv_look_lut(void);
 
+/* Called first by every entry point that draws or changes how the picture
+ * is drawn: smooth hand-over (handoff_glue.h) makes the caller wait there
+ * while the drawing thread still has a picture in hand. */
+void (*vid_enter_hook)(void);
+#define VID_ENTER() do { if (vid_enter_hook) vid_enter_hook(); } while (0)
+
 void vid_frame_to_psp565(uint16_t *dst, int dst_stride, const uint16_t *src,
                          unsigned w, unsigned h, size_t pitch_bytes)
 {
    /* In the colours the game is being shown in (vid_set_look): this is the
     * picture behind the menu and on a save state's thumbnail. */
-   const uint16_t *lut = vv_look_lut();
+   const uint16_t *lut;
    unsigned x, y;
+   VID_ENTER();
+   lut = vv_look_lut();
    for (y = 0; y < h; y++)
    {
       const uint16_t *s =
@@ -129,6 +143,7 @@ void vv_frame_need(void)
 {
    if (!vb_frame_open())
    {
+      vv_text_look_apply();          /* Text size: faces baked again before any draw of this frame */
       vb_frame_begin(g_clear_req);
       g_clear_req = 0;
    }
@@ -164,15 +179,20 @@ float vid_text_advance_dev(int hd, int *worst_char, float *mean_abs)
    return vv_text_worst_dev(hd, worst_char, mean_abs);
 }
 
-void vid_set_vsync(int on) { vb_set_vsync(on); }
-void vid_set_common_dialog(int on) { vb_set_common_dialog(on); }
+void vid_set_vsync(int on) { VID_ENTER(); vb_set_vsync(on); }
+void vid_set_common_dialog(int on) { VID_ENTER(); vb_set_common_dialog(on); }
 
 /* ---- scale / filter ----------------------------------------------------- */
 
 void vid_set_mode(int scale, int filter)
 {
+   VID_ENTER();
    if (scale >= 0 && scale < VID_SCALE_MODES)
       g_scale = scale;
+   /* the LCD grid and scanlines are looks of their own now (vid_set_overlays);
+    * as a filter they are what drew under them */
+   if (filter == VID_FILTER_LCD || filter == VID_FILTER_SCANLINES)
+      filter = VID_FILTER_SHARP;
    g_requested_filter = (filter >= VID_FILTER_SHARP && filter < VID_FILTER_MODES)
             ? filter : filter ? VID_FILTER_BILINEAR : VID_FILTER_NEAREST;
    /* Original (quality 1) is no enhancement: whole-factor sizes draw plain
@@ -186,7 +206,13 @@ void vid_set_mode(int scale, int filter)
 
 void vid_set_quality(int quality)
 {
-   g_quality = quality >= 0 && quality <= 3 ? quality : 0;
+   VID_ENTER();
+   /* The Settings choice "MMPX 2x" is factor 2 made by MMPX (look_glue.cpp:
+    * Auto never overrides a hand-set quality); "4x" is factor 4. */
+   mmpx_set_choice(quality == 5);
+   if (quality == 5)
+      quality = 2;
+   g_quality = quality >= 0 && quality <= 4 ? quality : 0;
    upscale_quality(g_quality);
    vid_set_mode(g_scale, g_requested_filter);
 }
@@ -234,6 +260,7 @@ int vid_scale_step(int scale, int dir)
 
 const char *vid_cycle_preset(void)
 {
+   VID_ENTER();
    /* 3x -> fit -> fit smoothed -> stretch -> stretch smoothed -> 3x: the
     * PSP's cycle with 3x where its 1x was.  2x and the cropped 4x are opt-in
     * from Settings; from either, the cycle continues at fit. */
@@ -344,7 +371,12 @@ static void dest_geo(unsigned w, unsigned h, vid_geo *g)
       g->dh = VB_H;
       g->dw = (int)((unsigned)VB_H * w / (h ? h : 1));
       if (g->dw > VB_W)
+      {
+         /* wider than the screen (the NES wide view, 424x224): the width
+          * decides, one factor for both (never a squeezed picture) */
          g->dw = VB_W;
+         g->dh = (int)((unsigned)VB_W * h / (w ? w : 1));
+      }
       break;
    case VID_SCALE_STRETCH:
       g->dw = VB_W;
@@ -406,6 +438,18 @@ void vid_picture_rect(unsigned w, unsigned h, vid_rect_t *out)
    }
 }
 
+/* Which rows of the w x h picture that rectangle shows: all of them, but
+ * the middle ones at "4x crop" (dest_geo). */
+void vid_picture_rows(unsigned w, unsigned h, int *first, int *count)
+{
+   vid_geo g;
+   dest_geo(w, h, &g);
+   if (first)
+      *first = g.sy0;
+   if (count)
+      *count = g.sh;
+}
+
 static int geo_covers(const vid_geo *g)
 {
    return g->ox <= 0 && g->oy <= 0 && g->ox + g->dw >= VB_W &&
@@ -444,6 +488,7 @@ static int g_tex_cpu = 0;
 
 void vid_set_tex_mem(int cpu_written)
 {
+   VID_ENTER();
    g_tex_cpu = cpu_written ? 1 : 0;
 }
 
@@ -569,6 +614,7 @@ void vid_tex_invalidate(const void *p, size_t bytes)
    int i;
    if (!p)
       return;
+   VID_ENTER();
    g_tex_gen++;                    /* stage_tex: re-upload what it holds */
    for (i = 0; i < TC_MAX; i++)
    {
@@ -589,6 +635,7 @@ void vid_tex_invalidate(const void *p, size_t bytes)
 
 void vid_overlay_begin(int clear)
 {
+   VID_ENTER();
    if (!g_inited)
       vid_init();
    if (clear)
@@ -784,7 +831,7 @@ void vid_image_px(int x, int y, int w, int h, const uint16_t *pix,
  * The PSP keeps this texture in VRAM; here it is 256 x 160 texels of RAM
  * that ui_psp.c fills row by row and a cached GPU texture made from it. */
 #define SHOT_TEX_W 256
-#define SHOT_TEX_H 160
+#define SHOT_TEX_H 240
 static uint16_t g_shot[SHOT_TEX_W * SHOT_TEX_H];
 
 uint16_t *vid_shot_tex(void) { return g_shot; }
@@ -793,6 +840,7 @@ void vid_shot_rows(int y0, const void *src, int rows)
 {
    if (y0 < 0 || rows <= 0 || y0 + rows > SHOT_TEX_H || !src)
       return;
+   VID_ENTER();
    memcpy(g_shot + (size_t)y0 * SHOT_TEX_W, src,
           (size_t)rows * SHOT_TEX_W * sizeof(uint16_t));
    vid_tex_invalidate(g_shot, sizeof(g_shot));
@@ -832,12 +880,32 @@ static int      g_amb_snap_done;
 
 void vid_ambient_mode(int mode)
 {
+   VID_ENTER();
    g_amb_mode = (mode >= 0 && mode <= 2) ? mode : 0;
    g_amb_frames = 0;
 }
 
+/* Ambient glow strength 0..10.  The bars' brightness follows the players'
+ * rule (16 + 9 * level, of 255, at their 5 = 61) scaled so that 5 is the look
+ * these bars have always had; 0 is black. */
+static int g_amb_level = 5;
+
+void vid_ambient_strength(int level)
+{
+   VID_ENTER();
+   g_amb_level = level < 0 ? 0 : level > 10 ? 10 : level;
+}
+
+/* `v` (0..255) at the strength in force. */
+static unsigned amb_level_scale(unsigned v)
+{
+   unsigned o = v * (16u + 9u * (unsigned)g_amb_level) / 61u;
+   return g_amb_level ? (o > 255u ? 255u : o) : 0u;
+}
+
 void vid_ambient_fallback(uint16_t rgb565)
 {
+   VID_ENTER();
    g_amb_shade = rgb565;
    g_amb_have_shade = 1;
 }
@@ -846,6 +914,7 @@ int vid_ambient_source(void) { return g_amb_src; }
 
 void vid_ambient_resnap(void)
 {
+   VID_ENTER();
    if (g_amb_src == AMB_SRC_SNAP || (g_amb_src == AMB_SRC_NONE &&
                                      g_amb_snap_done))
    {
@@ -858,6 +927,7 @@ void vid_ambient_resnap(void)
 
 void vid_ambient_drop(void)
 {
+   VID_ENTER();
    if (g_amb_src == AMB_SRC_ART)
       g_amb_src = AMB_SRC_NONE;
 }
@@ -1052,7 +1122,9 @@ int vid_ambient_bake_art(const uint16_t *src, int stride, int w, int h,
                          int precomposed)
 {
    unsigned t0 = pspcompat_time_us(), us;
-   int rc = amb_bake(src, stride, w, h, 4, 0, 0, 0);
+   int rc;
+   VID_ENTER();
+   rc = amb_bake(src, stride, w, h, 4, 0, 0, 0);
    us = pspcompat_time_us() - t0;
    g_amb_src = rc == 0 ? AMB_SRC_ART : AMB_SRC_NONE;
    g_amb_scrim = precomposed ? AMB_SCRIM_HERO : AMB_SCRIM_BOXART;
@@ -1065,7 +1137,9 @@ int vid_ambient_bake_art(const uint16_t *src, int stride, int w, int h,
 int vid_ambient_bake_cover(const uint16_t *src, int stride, int w, int h)
 {
    unsigned t0 = pspcompat_time_us(), us;
-   int rc = amb_bake(src, stride, w, h, 4, 0, 0, AMB_COVER_BLUR_PASSES);
+   int rc;
+   VID_ENTER();
+   rc = amb_bake(src, stride, w, h, 4, 0, 0, AMB_COVER_BLUR_PASSES);
    us = pspcompat_time_us() - t0;
    g_amb_src = rc == 0 ? AMB_SRC_ART : AMB_SRC_NONE;
    g_amb_scrim = AMB_SCRIM_BOXART;
@@ -1124,7 +1198,7 @@ static void backdrop_draw(int covers)
       return;
    if (kind == 2)
    {
-      unsigned k = 255u - (unsigned)g_amb_scrim;
+      unsigned k = amb_level_scale(255u - (unsigned)g_amb_scrim);
       vb_tquad q;
       q.x0 = 0; q.y0 = 0; q.x1 = VB_W; q.y1 = VB_H;
       q.u0 = 0; q.v0 = 0; q.u1 = AMB_W; q.v1 = AMB_H;
@@ -1133,8 +1207,8 @@ static void backdrop_draw(int covers)
    }
    else if (kind == 1)
    {
-      uint32_t top = amb_dim(g_amb_shade, AMB_PAL_RAMP_TOP);
-      uint32_t bot = amb_dim(g_amb_shade, AMB_PAL_RAMP_BOT);
+      uint32_t top = amb_dim(g_amb_shade, 255 - (int)amb_level_scale(255u - AMB_PAL_RAMP_TOP));
+      uint32_t bot = amb_dim(g_amb_shade, 255 - (int)amb_level_scale(255u - AMB_PAL_RAMP_BOT));
       vb_quad(0, 0, VB_W, VB_H, top, top, bot, bot);
    }
    else if (!fresh)
@@ -1157,13 +1231,14 @@ static void backdrop_draw(int covers)
  *   LCD grid         sharp bilinear (or nearest), then a grid texture over
  *                    the picture: see lcd_tex().
  *
- * The render target is 960 x 640 -- GBA at k = 4, the largest prescale any
- * mode asks for (fit and stretch are both 3.4x tall) -- and is taken on the
- * first sharp frame.  Without it sharp falls back to bilinear.
+ * The render target is 1344 x 720 -- enough for NES / NES Wide (448 * 3)
+ * and vertical WonderSwan (224 * 3 = 672) at k = 3, and GBA Wide (282 * 4)
+ * at k = 4 -- and is taken on the first sharp frame.  Without it sharp falls
+ * back to bilinear.
  * ======================================================================== */
 
-#define SHARP_RT_W 1152        /* the wide picture's 282 columns, 4 times */
-#define SHARP_RT_H 640
+#define SHARP_RT_W 1344        /* 448 * 3: NES Wide and GBA Wide 4x */
+#define SHARP_RT_H 720         /* 240 * 3: NES and vertical WonderSwan */
 
 enum { PIC_NEAREST = 0, PIC_LINEAR = 1, PIC_SHARP = 2 };
 
@@ -1204,21 +1279,33 @@ static int picture_mode(unsigned w, const vid_geo *g, int *kx, int *ky)
    return PIC_SHARP;
 }
 
-/* The LCD grid: one alpha byte per DESTINATION pixel of the picture.  The
- * last native pixel of every source pixel -- its right column and its bottom
- * row -- is darkened, the way the gaps between an LCD's cells are.  Computed
- * as coverage, so a non-integer scale (fit is 3.4x) gets an anti-aliased
- * grid and no moire.  Rebuilt only when the picture's geometry changes. */
+/* SCANLINES and LCD GRID (docs/LOOKS.md): one alpha byte per DESTINATION
+ * pixel of the picture, drawn black over it.  Two independent looks, each
+ * 0..10 (0 off), on top of whatever draws the picture (exact, sharp, the
+ * upscalers):
+ *   grid   the last native pixel of every source pixel -- its right column
+ *          and its bottom row -- is darkened, the way the gaps between an
+ *          LCD's cells are;
+ *   scan   the bottom row alone, a little darker than the grid's.
+ * Computed as coverage, so a non-integer scale (fit is 3.4x) gets an
+ * anti-aliased grid and no moire.  Rebuilt only when the picture's geometry
+ * or a strength changes.  Strength N is N * 20 percent of the look the 1.x
+ * grid_strength 5 (= 100) gave, so a migrated value looks as it did. */
 #define LCD_ALPHA 62           /* the gap's darkness at 3x and above, of 255 */
 #define SCAN_ALPHA 96          /* ...and of a scanline                       */
 static vb_tex *g_lcd_tex;
-static int     g_lcd_dw, g_lcd_dh, g_lcd_w, g_lcd_sh, g_lcd_rows;
-static int     g_lcd_pct = 100, g_lcd_built_pct = -1;
+static int     g_lcd_dw, g_lcd_dh, g_lcd_w, g_lcd_sh;
+static int     g_scan_lvl, g_grid_lvl;           /* 0..10, as set          */
+static int     g_lcd_built_scan = -1, g_lcd_built_grid = -1;
 
-void vid_set_lcd_strength(int pct)
+void vid_set_overlays(int scan, int grid)
 {
-   g_lcd_pct = pct < 0 ? 0 : pct > 200 ? 200 : pct;
+   VID_ENTER();
+   g_scan_lvl = scan < 0 ? 0 : scan > 10 ? 10 : scan;
+   g_grid_lvl = grid < 0 ? 0 : grid > 10 ? 10 : grid;
 }
+int vid_overlay_scan(void) { return g_scan_lvl; }
+int vid_overlay_grid(void) { return g_grid_lvl; }
 static unsigned g_lcd_fail;    /* g_frame_no + 1 of a failed make, or 0 */
 
 static void lcd_axis(unsigned char *cov, int dst, int src)
@@ -1245,15 +1332,15 @@ static vb_tex *lcd_tex(unsigned w, const vid_geo *g)
 {
    static unsigned char cx[VB_W], cy[VB_H];
    unsigned char *px;
-   int x, y, strength;
-   /* SCANLINES: the row gaps alone, a little darker than the grid's. */
-   const int rows_only = (g_filter == VID_FILTER_SCANLINES);
+   int x, y, base, gs, ss;
    double k;
+   if (!g_scan_lvl && !g_grid_lvl)
+      return NULL;
    if (g->dw > VB_W || g->dh > VB_H || g->dw <= 0 || g->dh <= 0)
       return NULL;
    if (g_lcd_tex && g_lcd_dw == g->dw && g_lcd_dh == g->dh &&
-       g_lcd_w == (int)w && g_lcd_sh == g->sh && g_lcd_rows == rows_only &&
-       g_lcd_built_pct == g_lcd_pct)
+       g_lcd_w == (int)w && g_lcd_sh == g->sh &&
+       g_lcd_built_scan == g_scan_lvl && g_lcd_built_grid == g_grid_lvl)
       return g_lcd_tex;
    /* (no memory last time: try again now and then, not every frame) */
    if (g_lcd_fail && g_frame_no + 1 - g_lcd_fail < ST_RETRY)
@@ -1267,23 +1354,24 @@ static vb_tex *lcd_tex(unsigned w, const vid_geo *g)
       return NULL;
    /* A 1 px gap in a 2 px cell is half the picture: ease it off below 3x. */
    k = (double)g->dw / (double)w;
-   strength = k >= 3.0 ? LCD_ALPHA : (int)(LCD_ALPHA * (k - 1.0) / 2.0);
-   if (strength < 0)
-      strength = 0;
-   if (rows_only)
-      strength = strength * SCAN_ALPHA / LCD_ALPHA;
-   strength = strength * g_lcd_pct / 100;     /* Grid strength (vita.ini grid_strength) */
-   if (strength > 255)
-      strength = 255;
+   base = k >= 3.0 ? LCD_ALPHA : (int)(LCD_ALPHA * (k - 1.0) / 2.0);
+   if (base < 0)
+      base = 0;
+   gs = base * g_grid_lvl * 20 / 100;
+   ss = base * SCAN_ALPHA / LCD_ALPHA * g_scan_lvl * 20 / 100;
+   if (gs > 255) gs = 255;
+   if (ss > 255) ss = 255;
    lcd_axis(cx, g->dw, (int)w);
    lcd_axis(cy, g->dh, g->sh);
    for (y = 0; y < g->dh; y++)
       for (x = 0; x < g->dw; x++)
       {
-         /* 1 - (1-cx)(1-cy): the union of the column gap and the row gap. */
-         int u = rows_only ? cy[y]
-                 : 255 - ((255 - cx[x]) * (255 - cy[y]) + 127) / 255;
-         px[(size_t)y * g->dw + x] = (unsigned char)(u * strength / 255);
+         /* grid: 1 - (1-cx)(1-cy), the union of the column gap and the row
+          * gap; scan: the row gap; the two darken one after the other */
+         int ug = 255 - ((255 - cx[x]) * (255 - cy[y]) + 127) / 255;
+         int ag = ug * gs / 255, as = cy[y] * ss / 255;
+         px[(size_t)y * g->dw + x] =
+            (unsigned char)(255 - ((255 - ag) * (255 - as) + 127) / 255);
       }
    g_lcd_tex = vb_tex_create(g->dw, g->dh, VB_FMT_A8, 0);
    if (g_lcd_tex)
@@ -1293,63 +1381,105 @@ static vb_tex *lcd_tex(unsigned w, const vid_geo *g)
    }
    free(px);
    g_lcd_dw = g->dw; g_lcd_dh = g->dh; g_lcd_w = (int)w; g_lcd_sh = g->sh;
-   g_lcd_rows = rows_only;
-   g_lcd_built_pct = g_lcd_pct;
+   g_lcd_built_scan = g_scan_lvl;
+   g_lcd_built_grid = g_grid_lvl;
    return g_lcd_tex;
 }
 
-/* ---- xBRZ on the GPU ------------------------------------------------------
- * The "xBRZ smooth" filter drawn by the GPU (vback.h VB_PROG_XBRZ0..2; the
- * shaders are gpsp/vita/shaders/xbrz_*.inc) instead of the CPU upscalers:
- *
- *   pass 0  every point where four picture pixels meet, into a render
- *           target 1:1 (one pixel larger each way): which of the four it
- *           cuts, and how hard -- xBRZ's own preprocessing
- *   pass 1  per picture pixel, its four corners from those points and
- *           whether each blends as a line, into a second target 1:1
- *   pass 2  the picture at its final size: every output pixel worked out
- *           from the picture and pass 1 -- no 4x picture in between, no
- *           linear squeeze from 4x to 3.4x, every frame
- *
- * The CPU's cores do nothing for it, so there is no factor to drop at a
- * fade and no picture that comes a frame late.  OFF unless vita.ini
- * gpu_xbrz = 1: measured on the console (16 Oct, Emerald at fit), the GPU
- * took 31 ms over a frame with it against 2.6 ms with the CPU's xBRZ
- * textures -- passes 0 and 1 about 7 ms, pass 2's 444,000 pixels the rest
- * -- so it cannot hold 60 frames a second; the guard below turns it off
- * after two samples if it is asked for anyway.  It also needs the
- * system's shader compiler (ur0:data/libshacccg.suprx), which took 26 s
- * the first time (the programs are kept on the card afterwards).  Not for
- * the two pictures of a pair, which keep the CPU's. */
-#define GX_RT_W 384            /* the widest picture: the wide view's 282+ */
-#define GX_RT_H 256
-/* THE GUARD.  Whether the GPU keeps up is measured, not assumed: after the
- * first GX_FIRST pictures, then every GX_EVERY, the next GX_SAMPLE presents
- * wait for the GPU and time it (vb_gpu_time).  Over GX_SLOW_US of GPU time
- * a frame, it is measured again GX_FIRST pictures later; two slow samples
- * in a row and xBRZ goes back to the CPU's cores for the rest of the
- * session (`gpu_xbrz off reason=slow`). */
-#define GX_FIRST   60
-#define GX_EVERY   1800
-#define GX_SAMPLE  8
-#define GX_SLOW_US 10000      /* the drain serialises CPU and GPU: 16.7 ms less
-                                * the frame's ~3-5 ms of CPU, with margin */
-static int     g_gx_on = 0;    /* vid_set_gpu_xbrz                          */
-static int     g_gx_state;     /* 0 untried, 1 ready, -1 not available,
-                                * -2 too slow (the guard)                   */
-static vb_tex *g_gx_rt, *g_gx_rt0;   /* pass 1's target, pass 0's      */
-static unsigned g_gx_frames;   /* pictures drawn this way (vid_gpu_xbrz)   */
-static int      g_gx_always;   /* vid_set_gpu_time: every present timed    */
-static int      g_gx_sampling, g_gx_slow;
-static unsigned g_gx_mark, g_gx_samples, g_gx_avg, g_gx_max;
+/* CRT MASK (Settings > Display > CRT mask, 0 off, 1..10; playerkit/src/
+ * pk_screen.h has the maths and the numbers): an aperture grille, three
+ * phosphor columns per period, drawn over the picture as ONE textured quad
+ * with a multiply blend (vb_tquads_mul).  The pattern is made on the CPU
+ * once into a one row RGBA8 texture as wide as the picture on the screen
+ * (at most 960 x 1 texels = 3.8 KB) and stretched down it: columns do not
+ * change with the row, and the backends clamp rather than repeat, so the
+ * period is tiled into the row.  The column width is the whole number of
+ * screen pixels nearest a third of a source pixel (pk_crt_col_w), so it
+ * follows the on-screen pixel scale: 1 px columns up to a source pixel of
+ * 4 screen pixels, 2 px up to 7, ...  Rebuilt only when the picture's width
+ * on the screen, its source width or the strength changes.  Cost: one quad
+ * over the picture (the GPU's fill of dw x dh pixels with a multiply: about
+ * what the scanlines' quad costs; model, not measured on a console). */
+static vb_tex *g_crt_tex;
+static int     g_crt_lvl, g_crt_dw, g_crt_w, g_crt_built = -1;
+static unsigned g_crt_fail;
 
-void vid_set_gpu_xbrz(int on)
+void vid_set_crt(int strength)
 {
-   g_gx_on = on ? 1 : 0;
+   VID_ENTER();
+   g_crt_lvl = strength < 0 ? 0 : strength > 10 ? 10 : strength;
 }
+int vid_overlay_crt(void) { return g_crt_lvl; }
+
+static vb_tex *crt_tex(unsigned w, const vid_geo *g)
+{
+   static uint32_t row[VB_W];
+   uint8_t pat[4 * PK_CRT_MAX_W];
+   int x, cw, n;
+   if (!g_crt_lvl || g->dw <= 0 || g->dw > VB_W || g->dh <= 0 || !w)
+      return NULL;
+   if (g_crt_tex && g_crt_dw == g->dw && g_crt_w == (int)w &&
+       g_crt_built == g_crt_lvl)
+      return g_crt_tex;
+   if (g_crt_fail && g_frame_no + 1 - g_crt_fail < ST_RETRY)
+      return NULL;
+   g_crt_fail = g_frame_no + 1;
+   if (g_crt_tex)
+      vb_tex_destroy(g_crt_tex);
+   g_crt_tex = NULL;
+   cw = pk_crt_col_w((float)g->dw / (float)w);
+   n = pk_crt_make(g_crt_lvl, cw, pat);
+   if (!n)
+      return NULL;
+   for (x = 0; x < g->dw; x++)
+      memcpy(&row[x], pat + 4 * (x % n), 4);
+   g_crt_tex = vb_tex_create(g->dw, 1, VB_FMT_RGBA8, 0);
+   if (g_crt_tex)
+   {
+      vb_tex_update(g_crt_tex, 0, 0, g->dw, 1, row, (size_t)g->dw * 4);
+      g_crt_fail = 0;
+   }
+   g_crt_dw = g->dw; g_crt_w = (int)w; g_crt_built = g_crt_lvl;
+   return g_crt_tex;
+}
+
+static void crt_overlay_draw(unsigned w, const vid_geo *g)
+{
+   vb_tquad q;
+   vb_tex *t = crt_tex(w, g);
+   if (!t)
+      return;
+   q.x0 = (float)g->ox; q.y0 = (float)g->oy;
+   q.x1 = (float)(g->ox + g->dw); q.y1 = (float)(g->oy + g->dh);
+   q.u0 = 0; q.v0 = 0; q.u1 = (float)g->dw; q.v1 = 1;
+   vb_tquads_mul(t, &q, 1, VB_NEAREST);
+}
+
+/* The grid / scanlines over the picture just drawn at `g`, then the CRT mask. */
+static void lcd_overlay_draw(unsigned w, const vid_geo *g)
+{
+   vb_tquad q;
+   vb_tex *lcd = lcd_tex(w, g);
+   if (lcd)
+   {
+      q.x0 = (float)g->ox; q.y0 = (float)g->oy;
+      q.x1 = (float)(g->ox + g->dw); q.y1 = (float)(g->oy + g->dh);
+      q.u0 = 0; q.v0 = 0; q.u1 = (float)g->dw; q.v1 = (float)g->dh;
+      /* Black, the texture's byte as alpha. */
+      vb_tquads(lcd, &q, 1, VB_RGBA(0, 0, 0, 255), VB_NEAREST);
+   }
+   crt_overlay_draw(w, g);
+}
+
+/* ---- GPU timing (vita.ini gpu_time = 1) ---------------------------------
+ * Measuring only: every present waits for the GPU to finish and is timed
+ * (vb_gpu_time); vid_gpu_time_stats reads what was measured. */
+static int      g_gx_always;   /* vid_set_gpu_time: every present timed    */
+static unsigned g_gx_samples, g_gx_avg, g_gx_max;
 
 void vid_set_gpu_time(int on)
 {
+   VID_ENTER();
    g_gx_always = on ? 1 : 0;
    vb_gpu_time(on ? -1 : 0);
 }
@@ -1358,60 +1488,16 @@ void vid_set_gpu_time(int on)
 static void gx_guard(void)
 {
    unsigned n, avg, mx;
-   if (g_gx_always)
-   {
-      vb_gpu_stats(&n, &avg, &mx);
-      if (n)
-      {
-         g_gx_avg = avg;
-         if (mx > g_gx_max)
-            g_gx_max = mx;
-         g_gx_samples++;
-      }
+   if (!g_gx_always)
       return;
-   }
-   if (g_gx_state <= 0)
-      return;
-   if (g_gx_sampling)
+   vb_gpu_stats(&n, &avg, &mx);
+   if (n)
    {
-      if (vb_gpu_timing() > 0)
-         return;
-      vb_gpu_stats(&n, &avg, &mx);
-      g_gx_sampling = 0;
-      g_gx_mark = g_gx_frames;
-      if (!n)
-         return;
-      g_gx_samples++;
       g_gx_avg = avg;
-      g_gx_max = mx;
-      fe_evt("gpu_xbrz_time frames=%u gpu_us=%u/%u", n, avg, mx);
-      g_gx_slow = avg > GX_SLOW_US ? g_gx_slow + 1 : 0;
-      if (g_gx_slow >= 2)
-      {
-         g_gx_state = -2;
-         fe_evt("gpu_xbrz off reason=slow gpu_us=%u", avg);
-      }
-      return;
+      if (mx > g_gx_max)
+         g_gx_max = mx;
+      g_gx_samples++;
    }
-   /* (a slow sample is checked again soon, not in half a minute) */
-   if (g_gx_frames - g_gx_mark >= (g_gx_samples && !g_gx_slow ? GX_EVERY
-                                                               : GX_FIRST))
-   {
-      vb_gpu_time(GX_SAMPLE);
-      g_gx_sampling = 1;
-   }
-}
-
-/* vita.ini gpu_probe: what the shader compiler says to test programs
- * (vback.h vb_prog_probe), one `gpu_probe` line each. */
-void vid_gpu_probe(void)
-{
-   char line[512];
-   int n;
-   if (!g_inited)
-      vid_init();
-   for (n = 0; vb_prog_probe(n, line, sizeof(line)); n++)
-      fe_evt("gpu_probe %s", line);
 }
 
 /* The GPU's time over a frame, last measured (0 = never), and the slowest
@@ -1422,151 +1508,6 @@ void vid_gpu_time_stats(unsigned *samples, unsigned *avg_us, unsigned *max_us)
    if (avg_us) *avg_us = g_gx_avg;
    if (max_us) *max_us = g_gx_max;
    g_gx_max = 0;
-}
-
-static int gx_ready(void)
-{
-   if (!g_gx_on || g_filter != VID_FILTER_XBRZ || g_quality != 0)
-      return 0;
-   if (!g_gx_state)
-   {
-      /* (the first time on a console: the compiler runs, a hitch of the
-       * size `us` says, once -- afterwards the programs come from the
-       * card) */
-      const unsigned t0 = pspcompat_time_us();
-      vb_prog *p0 = vb_prog_get(VB_PROG_XBRZ0);
-      vb_prog *p1 = p0 ? vb_prog_get(VB_PROG_XBRZ1) : NULL;
-      vb_prog *p2 = p1 ? vb_prog_get(VB_PROG_XBRZ2) : NULL;
-      if (p0 && p1 && p2)
-      {
-         g_gx_rt0 = vb_tex_create(GX_RT_W, GX_RT_H, VB_FMT_RGBA8, 1);
-         g_gx_rt = vb_tex_create(GX_RT_W, GX_RT_H, VB_FMT_RGBA8, 1);
-      }
-      g_gx_state = p0 && p1 && p2 && g_gx_rt && g_gx_rt0 ? 1 : -1;
-      fe_evt("gpu_xbrz on=%d pass0=%s pass1=%s pass2=%s rt=%d us=%u",
-             g_gx_state > 0, vb_prog_status(VB_PROG_XBRZ0),
-             vb_prog_status(VB_PROG_XBRZ1), vb_prog_status(VB_PROG_XBRZ2),
-             g_gx_rt && g_gx_rt0 ? 1 : 0, pspcompat_time_us() - t0);
-   }
-   return g_gx_state > 0;
-}
-
-/* Is the GPU drawing xBRZ (for the log), and how many pictures so far. */
-int vid_gpu_xbrz(unsigned *frames)
-{
-   if (frames)
-      *frames = g_gx_frames;
-   return g_gx_state > 0 && g_gx_on && g_quality == 0;
-}
-
-/* vita.ini gpu_probe = N >= 2: at the Nth GPU picture, what passes 0 and 1
- * left in their targets
- * (texels not zero, the largest byte of each channel, a row of samples):
- * is the GPU doing them at all. */
-static int g_gx_debug;
-void vid_set_gpu_debug(int on) { g_gx_debug = on; }
-/* vita.ini gpu_xbrz_view = 1: the screen shows pass 1's bytes (red = top
- * left corner, green = top right, blue = the bottom two); 2: pass 0's,
- * 40 times brighter.  A diagnostic: is the GPU working the passes out. */
-static int g_gx_view;
-void vid_set_gpu_view(int v) { g_gx_view = v; }
-
-static void gx_debug_dump(vb_tex *t, unsigned w, unsigned h)
-{
-   static uint32_t px[GX_RT_W * GX_RT_H];
-   vb_tex *rts[3] = { g_gx_rt0, g_gx_rt, g_gx_rt };
-   const unsigned ws[3] = { w + 1, w, w }, hs[3] = { h + 1, h, h };
-   int k;
-   for (k = 0; k < 3; k++)
-   {
-      if (k == 2)
-      {
-         /* (a control: the picture itself, drawn by libvita2d's own
-          * program into the same target -- can it be read back at all) */
-         vb_tquad q;
-         q.x0 = 0; q.y0 = 0; q.x1 = (float)w; q.y1 = (float)h;
-         q.u0 = 0; q.v0 = 0; q.u1 = (float)w; q.v1 = (float)h;
-         vb_rt_begin(g_gx_rt);
-         vb_tquads(t, &q, 1, 0xFFFFFFFFu, VB_NEAREST);
-         vb_rt_end();
-      }
-      unsigned x, y, nz = 0, mx[4] = { 0, 0, 0, 0 };
-      char row[200];
-      int at = 0;
-      if (vb_tex_read(rts[k], px) != 0)
-      {
-         fe_evt("gpu_rt pass=%d read=failed", k);
-         continue;
-      }
-      for (y = 0; y < hs[k]; y++)
-         for (x = 0; x < ws[k]; x++)
-         {
-            uint32_t c = px[y * GX_RT_W + x];
-            int b;
-            if (c & 0x00FFFFFFu)
-               nz++;
-            for (b = 0; b < 4; b++)
-               if (((c >> (8 * b)) & 0xFF) > mx[b])
-                  mx[b] = (c >> (8 * b)) & 0xFF;
-         }
-      /* a few texels of the middle row */
-      for (x = 0; x < 8 && at < (int)sizeof(row) - 12; x++)
-         at += snprintf(row + at, sizeof(row) - (size_t)at, "%s%08x",
-                        x ? "," : "",
-                        (unsigned)px[(hs[k] / 2) * GX_RT_W + ws[k] / 2 + x]);
-      fe_evt("gpu_rt pass=%d w=%u h=%u nonzero=%u max=%u/%u/%u/%u mid=%s", k,
-             ws[k], hs[k], nz, mx[0], mx[1], mx[2], mx[3], row);
-   }
-}
-
-/* The w x h texture `t`, rows sy0 .. sy0+sh of it, onto g's rect.  Passes
- * 0 and 1 open scenes of their own: called before anything else of the
- * frame is drawn (as sharp bilinear's prescale is), they cost no suspended
- * frame. */
-static int gx_draw(vb_tex *t, unsigned w, unsigned h, const vid_geo *g)
-{
-   float u[VB_PROG_UNIFORMS][4];
-   vb_tquad q;
-   vb_prog *p0 = vb_prog_get(VB_PROG_XBRZ0), *p1 = vb_prog_get(VB_PROG_XBRZ1);
-   vb_prog *p2 = vb_prog_get(VB_PROG_XBRZ2);
-   if (!p0 || !p1 || !p2 || !g_gx_rt || !g_gx_rt0 || w + 1 > GX_RT_W ||
-       h + 1 > GX_RT_H || !w || !h || g->sh <= 0)
-      return 0;
-   memset(u, 0, sizeof(u));
-   u[0][0] = (float)w; u[0][1] = (float)h;
-   u[0][2] = 1.0f / (float)w; u[0][3] = 1.0f / (float)h;
-   /* 0: the points, texel (i+1, j+1) for pixel (i, j) */
-   q.x0 = 0; q.y0 = 0; q.x1 = (float)(w + 1); q.y1 = (float)(h + 1);
-   q.u0 = -1; q.v0 = -1; q.u1 = (float)w; q.v1 = (float)h;
-   vb_rt_begin(g_gx_rt0);
-   vb_pquads(p0, t, NULL, &q, 1, u);
-   vb_rt_end();
-   /* 1: each pixel's corners */
-   u[1][0] = 1.0f / (float)GX_RT_W;
-   u[1][1] = 1.0f / (float)GX_RT_H;
-   u[1][2] = g_gx_view == 2 ? 1.0f : 0.0f;
-   q.x0 = 0; q.y0 = 0; q.x1 = (float)w; q.y1 = (float)h;
-   q.u0 = 0; q.v0 = 0; q.u1 = (float)w; q.v1 = (float)h;
-   vb_rt_begin(g_gx_rt);
-   vb_pquads(p1, t, g_gx_rt0, &q, 1, u);
-   vb_rt_end();
-   if (g_gx_debug && g_gx_frames == (unsigned)g_gx_debug)
-      gx_debug_dump(t, w, h);
-   /* 2: the picture at its size */
-   backdrop_draw(geo_covers(g));
-   u[1][0] = (float)w / (float)GX_RT_W;
-   u[1][1] = (float)h / (float)GX_RT_H;
-   u[1][2] = 0.0f;
-   u[2][0] = (float)g->dw / (float)w;
-   u[2][1] = (float)g->dh / (float)g->sh;
-   u[2][2] = g_gx_view ? 1.0f : 0.0f;
-   q.x0 = (float)g->ox; q.y0 = (float)g->oy;
-   q.x1 = (float)(g->ox + g->dw); q.y1 = (float)(g->oy + g->dh);
-   q.u0 = 0; q.v0 = (float)g->sy0;
-   q.u1 = (float)w; q.v1 = (float)(g->sy0 + g->sh);
-   vb_pquads(p2, t, g_gx_rt, &q, 1, u);
-   g_gx_frames++;
-   return 1;
 }
 
 /* A whole frame: the backdrop, then the w-wide source texture `t` at g. */
@@ -1580,8 +1521,6 @@ static void picture_draw(vb_tex *t, unsigned w, const vid_geo *g)
       backdrop_draw(0);
       return;
    }
-   if (gx_ready() && gx_draw(t, w, (unsigned)vb_tex_h(t), g))
-      return;
    mode = picture_mode(w, g, &kx, &ky);
    if (mode == PIC_SHARP)
    {
@@ -1641,18 +1580,7 @@ static void picture_draw(vb_tex *t, unsigned w, const vid_geo *g)
       vb_tquads(t, &q, 1, 0xFFFFFFFFu,
                 mode == PIC_LINEAR ? VB_LINEAR : VB_NEAREST);
    }
-   if (g_filter == VID_FILTER_LCD || g_filter == VID_FILTER_SCANLINES)
-   {
-      vb_tex *lcd = lcd_tex(w, g);
-      if (lcd)
-      {
-         q.x0 = (float)g->ox; q.y0 = (float)g->oy;
-         q.x1 = (float)(g->ox + g->dw); q.y1 = (float)(g->oy + g->dh);
-         q.u0 = 0; q.v0 = 0; q.u1 = (float)g->dw; q.v1 = (float)g->dh;
-         /* Black, the texture's byte as alpha. */
-         vb_tquads(lcd, &q, 1, VB_RGBA(0, 0, 0, 255), VB_NEAREST);
-      }
-   }
+   lcd_overlay_draw(w, g);
 }
 
 static void prof_add(unsigned stage, unsigned gu)
@@ -1683,12 +1611,82 @@ static void prof_add(unsigned stage, unsigned gu)
  *           fake transparency show it steady.
  *
  * 38,400 pixels through a table: a few hundred microseconds on the console. */
-static int       g_color, g_blend;
+static int       g_color, g_blend;            /* g_blend: the strength 0..10 */
 static uint16_t *g_cc;                 /* 65536 entries, libretro 565 -> 565 */
 static int       g_cc_mode;            /* the mode g_cc was built for       */
 static uint16_t *g_look_out[2], *g_look_prev[2];
 static size_t    g_look_cap[2];
 static unsigned  g_look_w[2], g_look_h[2];   /* the frame in prev; 0 = none */
+
+/* The WonderSwan's and the NES's screens: a table over the same 65536
+ * 565 values, a lift of the black, less colour and a steeper curve -- the
+ * same kind of model as the Game Gear's (md/frontend/picture.cpp), with
+ * numbers that are estimates from how those screens looked, not
+ * measurements (nothing here has run on a console):
+ *   WonderSwan  its TFT reflective LCD: blacks a little lifted, colour 90 %
+ *   NTSC TV     a television's composite decode: colour 90 %, a 1.1 curve
+ *               (darker mid-tones than a modern panel), blacks untouched */
+static unsigned cc_quant_flat(float x, float curve, float lift,
+                              const float *thr, int maxv)
+{
+   int k;
+   if (x <= 0.0f)
+      return (unsigned)(lift * (float)maxv + 0.5f);
+   if (x >= 1.0f)
+      return (unsigned)maxv;
+   k = (int)((lift + (1.0f - lift) * x) * (float)maxv + 0.5f);
+   if (k > maxv)
+      k = maxv;
+   while (k > 0 && x < thr[k - 1])
+      k--;
+   while (k < maxv && x >= thr[k])
+      k++;
+   if ((k > 0 && x - thr[k - 1] < 1e-4f) ||
+       (k < maxv && thr[k] - x < 1e-4f))
+      return (unsigned)((lift + (1.0f - lift) * powf(x, curve)) *
+                        (float)maxv + 0.5f);
+   return (unsigned)k;
+}
+
+static void cc_build_flat(int mode)
+{
+   const float sat   = 0.90f;
+   const float curve = mode == VID_COLOR_WS ? 1.08f : 1.10f;
+   const float lift  = mode == VID_COLOR_WS ? 0.03f : 0.0f;
+   const float inv_c = 1.0f / curve;
+   float thr5[31], thr6[63], div31[32], div63[64];
+   unsigned v;
+   int k;
+   if (!g_cc)
+      g_cc = (uint16_t *)malloc(65536 * sizeof(uint16_t));
+   if (!g_cc)
+      return;
+   for (k = 0; k < 31; k++)
+   {
+      float u = (((float)k + 0.5f) / 31.0f - lift) / (1.0f - lift);
+      thr5[k] = u <= 0.0f ? -1.0f : powf(u, inv_c);
+   }
+   for (k = 0; k < 63; k++)
+   {
+      float u = (((float)k + 0.5f) / 63.0f - lift) / (1.0f - lift);
+      thr6[k] = u <= 0.0f ? -1.0f : powf(u, inv_c);
+   }
+   for (k = 0; k < 32; k++)
+      div31[k] = (float)k / 31.0f;
+   for (k = 0; k < 64; k++)
+      div63[k] = (float)k / 63.0f;
+   for (v = 0; v < 65536; v++)
+   {
+      const float c0 = div31[v >> 11], c1 = div63[(v >> 5) & 63],
+                  c2 = div31[v & 31];
+      const float y = 0.299f * c0 + 0.587f * c1 + 0.114f * c2;
+      const unsigned r = cc_quant_flat(y + (c0 - y) * sat, curve, lift, thr5, 31);
+      const unsigned g = cc_quant_flat(y + (c1 - y) * sat, curve, lift, thr6, 63);
+      const unsigned b = cc_quant_flat(y + (c2 - y) * sat, curve, lift, thr5, 31);
+      g_cc[v] = (uint16_t)((r << 11) | (g << 5) | b);
+   }
+   g_cc_mode = mode;
+}
 
 static void cc_build(int mode)
 {
@@ -1699,6 +1697,11 @@ static void cc_build(int mode)
       { 0.125f, 0.665f,  0.21f },      /* green            */
       { 0.195f, 0.075f,  0.73f } };    /* blue             */
    const float gamma = 2.2f + (mode == VID_COLOR_GBA_DARK ? 1.0f : 0.0f);
+   if (mode == VID_COLOR_WS || mode == VID_COLOR_NES)
+   {
+      cc_build_flat(mode);
+      return;
+   }
    /* Compression (x ^ 1/2.2) through a table over sqrt(x): steep near black
     * in x, nearly straight in sqrt(x), so 2048 steps are far finer than a
     * 6-bit result.  A table and sqrtf, not 200,000 powf calls: nothing
@@ -1736,20 +1739,60 @@ static void cc_build(int mode)
    g_cc_mode = mode;
 }
 
-void vid_set_look(int color, int blend)
+void vid_set_look(int color, int ghost)
 {
+   VID_ENTER();
    if (color < 0 || color >= VID_COLOR_MODES)
       color = VID_COLOR_RAW;
    if (color != VID_COLOR_RAW && (!g_cc || g_cc_mode != color))
       cc_build(color);
    g_color = (color != VID_COLOR_RAW && g_cc) ? color : VID_COLOR_RAW;
-   g_blend = blend ? 1 : 0;
+   g_blend = ghost < 0 ? 0 : ghost > 10 ? 10 : ghost;
    g_look_w[0] = g_look_w[1] = 0;     /* nothing to mix the next frame with */
 }
 
+/* SCREEN PROFILE (Settings > Display > Screen; playerkit/src/pk_screen.h): the
+ * colour table every console's picture goes through already, with the
+ * profile folded in -- table[v] = profile(console's table[v]) -- so the
+ * picture still passes through ONE 65536 entry table, no extra pass.  The
+ * neutral profiles use the console's table (or none) exactly as before.
+ * Built when the profile or the console's colour mode changes. */
+static int       g_screen;                    /* the resolved profile (PK_SCREEN_*) */
+static uint16_t *g_scr;                       /* 65536 entries: profile(console's table) */
+static int       g_scr_key = -1;              /* what g_scr was built for */
+
+static const uint16_t *look_lut(void)
+{
+   const int key = g_screen * 16 + g_color;
+   if (!pk_screen_active(g_screen))
+      return g_color ? g_cc : NULL;
+   if (!g_scr)
+      g_scr = (uint16_t *)malloc(65536 * sizeof(uint16_t));
+   if (!g_scr)
+      return g_color ? g_cc : NULL;
+   if (g_scr_key != key)
+   {
+      pk_screen_lut565(g_screen, g_color ? g_cc : NULL, g_scr);
+      g_scr_key = key;
+   }
+   return g_scr;
+}
+
+void vid_set_screen(int profile)
+{
+   VID_ENTER();
+   profile = pk_screen_clamp(profile);
+   if (profile == PK_SCREEN_AUTO)
+      profile = PK_SCREEN_LCD;       /* callers resolve Auto (pk_screen_resolve) */
+   g_screen = profile;
+   g_scr_key = -1;
+   g_look_w[0] = g_look_w[1] = 0;
+}
+int vid_screen_profile(void) { return g_screen; }
+
 static const uint16_t *vv_look_lut(void)
 {
-   return g_color ? g_cc : NULL;
+   return look_lut();
 }
 
 int vid_look_color(void) { return g_color; }
@@ -1762,10 +1805,10 @@ int vid_look_blend(void) { return g_blend; }
 static const uint16_t *look_frame(int who, const uint16_t *pix, unsigned w,
                                   unsigned h, size_t *pitch_bytes)
 {
-   const uint16_t *lut = g_color ? g_cc : NULL;
+   const uint16_t *lut = look_lut();
    const size_t n = (size_t)w * h, pitch = *pitch_bytes / 2;
    uint16_t *o, *p;
-   unsigned x, y;
+   unsigned x, y, wp;
    int mix;
 
    if (!lut && !g_blend)
@@ -1787,7 +1830,123 @@ static const uint16_t *look_frame(int who, const uint16_t *pix, unsigned w,
       }
       g_look_cap[who] = n;
    }
+   /* LCD ghosting 1..10: how much of the last frame stays (of 32) */
+   {
+      static const unsigned char w32[11] =
+         { 0, 2, 5, 8, 12, 16, 18, 20, 22, 23, 24 };
+      wp = w32[g_blend < 0 ? 0 : g_blend > 10 ? 10 : g_blend];
+   }
    mix = g_blend && g_look_w[who] == w && g_look_h[who] == h;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+   if (mix)
+   {
+      const uint16x8_t v_wc = vdupq_n_u16((uint16_t)(32u - wp));
+      const uint16x8_t v_wp = vdupq_n_u16((uint16_t)wp);
+      const uint16x8_t m_g  = vdupq_n_u16(0x003Fu);
+      const uint16x8_t m_b  = vdupq_n_u16(0x001Fu);
+      const int half = (wp == 16u);
+      for (y = 0; y < h; y++)
+      {
+         const uint16_t *s = pix + pitch * y;
+         o = g_look_out[who] + (size_t)w * y;
+         p = g_look_prev[who] + (size_t)w * y;
+         x = 0;
+         if (!lut)
+         {
+            for (; x + 8u <= w; x += 8u)
+            {
+               const uint16x8_t va = vld1q_u16(s + x);
+               const uint16x8_t vb = vld1q_u16(p + x);
+               const uint16x8_t diff = veorq_u16(va, vb);
+               if ((vgetq_lane_u64(vreinterpretq_u64_u16(diff), 0) |
+                    vgetq_lane_u64(vreinterpretq_u64_u16(diff), 1)) == 0)
+               {
+                  vst1q_u16(o + x, va);
+                  continue;
+               }
+               vst1q_u16(p + x, va);
+               {
+                  const uint16x8_t ra = vshrq_n_u16(va, 11), rb = vshrq_n_u16(vb, 11);
+                  const uint16x8_t ga = vandq_u16(vshrq_n_u16(va, 5), m_g);
+                  const uint16x8_t gb = vandq_u16(vshrq_n_u16(vb, 5), m_g);
+                  const uint16x8_t ba = vandq_u16(va, m_b), bb = vandq_u16(vb, m_b);
+                  uint16x8_t rm, gm, bm;
+                  if (half)
+                  {
+                     rm = vhaddq_u16(ra, rb);
+                     gm = vhaddq_u16(ga, gb);
+                     bm = vhaddq_u16(ba, bb);
+                  }
+                  else
+                  {
+                     rm = vshrq_n_u16(vmlaq_u16(vmulq_u16(ra, v_wc), rb, v_wp), 5);
+                     gm = vshrq_n_u16(vmlaq_u16(vmulq_u16(ga, v_wc), gb, v_wp), 5);
+                     bm = vshrq_n_u16(vmlaq_u16(vmulq_u16(ba, v_wc), bb, v_wp), 5);
+                  }
+                  vst1q_u16(o + x, vorrq_u16(vorrq_u16(vshlq_n_u16(rm, 11),
+                                                       vshlq_n_u16(gm, 5)), bm));
+               }
+            }
+         }
+         else
+         {
+            for (; x + 8u <= w; x += 8u)
+            {
+               const uint16x8_t va = vld1q_u16(s + x);
+               const uint16x8_t vb = vld1q_u16(p + x);
+               const uint16x8_t diff = veorq_u16(va, vb);
+               if ((vgetq_lane_u64(vreinterpretq_u64_u16(diff), 0) |
+                    vgetq_lane_u64(vreinterpretq_u64_u16(diff), 1)) == 0)
+               {
+                  o[x]     = lut[s[x]];     o[x + 1] = lut[s[x + 1]];
+                  o[x + 2] = lut[s[x + 2]]; o[x + 3] = lut[s[x + 3]];
+                  o[x + 4] = lut[s[x + 4]]; o[x + 5] = lut[s[x + 5]];
+                  o[x + 6] = lut[s[x + 6]]; o[x + 7] = lut[s[x + 7]];
+                  continue;
+               }
+               vst1q_u16(p + x, va);
+               {
+                  const uint16x8_t ra = vshrq_n_u16(va, 11), rb = vshrq_n_u16(vb, 11);
+                  const uint16x8_t ga = vandq_u16(vshrq_n_u16(va, 5), m_g);
+                  const uint16x8_t gb = vandq_u16(vshrq_n_u16(vb, 5), m_g);
+                  const uint16x8_t ba = vandq_u16(va, m_b), bb = vandq_u16(vb, m_b);
+                  uint16x8_t rm, gm, bm;
+                  uint16_t tmp[8];
+                  if (half)
+                  {
+                     rm = vhaddq_u16(ra, rb);
+                     gm = vhaddq_u16(ga, gb);
+                     bm = vhaddq_u16(ba, bb);
+                  }
+                  else
+                  {
+                     rm = vshrq_n_u16(vmlaq_u16(vmulq_u16(ra, v_wc), rb, v_wp), 5);
+                     gm = vshrq_n_u16(vmlaq_u16(vmulq_u16(ga, v_wc), gb, v_wp), 5);
+                     bm = vshrq_n_u16(vmlaq_u16(vmulq_u16(ba, v_wc), bb, v_wp), 5);
+                  }
+                  vst1q_u16(tmp, vorrq_u16(vorrq_u16(vshlq_n_u16(rm, 11),
+                                                     vshlq_n_u16(gm, 5)), bm));
+                  o[x]     = lut[tmp[0]]; o[x + 1] = lut[tmp[1]];
+                  o[x + 2] = lut[tmp[2]]; o[x + 3] = lut[tmp[3]];
+                  o[x + 4] = lut[tmp[4]]; o[x + 5] = lut[tmp[5]];
+                  o[x + 6] = lut[tmp[6]]; o[x + 7] = lut[tmp[7]];
+               }
+            }
+         }
+         for (; x < w; x++)
+         {
+            const uint32_t a = s[x], b = p[x];
+            const uint32_t fa = (a | (a << 16)) & 0x07E0F81Fu;
+            const uint32_t fb = (b | (b << 16)) & 0x07E0F81Fu;
+            const uint32_t fm = ((fa * (32u - wp) + fb * wp) >> 5) & 0x07E0F81Fu;
+            const unsigned m = (unsigned)((fm | (fm >> 16)) & 0xFFFFu);
+            p[x] = (uint16_t)a;
+            o[x] = lut ? lut[m] : (uint16_t)m;
+         }
+      }
+   }
+   else
+#endif
    for (y = 0; y < h; y++)
    {
       const uint16_t *s = pix + pitch * y;
@@ -1796,9 +1955,14 @@ static const uint16_t *look_frame(int who, const uint16_t *pix, unsigned w,
       if (mix)
          for (x = 0; x < w; x++)
          {
-            /* the mean of two 565 pixels, field by field, without unpacking */
-            const unsigned a = s[x], b = p[x];
-            const unsigned m = (a & b) + (((a ^ b) & 0xF7DEu) >> 1);
+            /* the new pixel and the last one mixed, field by field without
+             * unpacking: the three fields spread over a 32-bit word with
+             * room to multiply (5 = half and half, the plain mean) */
+            const uint32_t a = s[x], b = p[x];
+            const uint32_t fa = (a | (a << 16)) & 0x07E0F81Fu;
+            const uint32_t fb = (b | (b << 16)) & 0x07E0F81Fu;
+            const uint32_t fm = ((fa * (32u - wp) + fb * wp) >> 5) & 0x07E0F81Fu;
+            const unsigned m = (unsigned)((fm | (fm >> 16)) & 0xFFFFu);
             p[x] = (uint16_t)a;
             o[x] = lut ? lut[m] : (uint16_t)m;
          }
@@ -1843,10 +2007,24 @@ static struct
 } g_upt[UPSCALE_SLOTS];
 static unsigned g_up_fenced;   /* pictures not handed over: GPU still reading */
 
+/* 1.4: Image quality Auto over the base filter (sharp bilinear) is xBRZ at
+ * the largest factor the look governor allows (look_glue.h), the sharp
+ * filter where it allows none (upscale_factor 0: the plain path below).
+ * vita.ini auto_xbrz = 0 gives the 1.3 Auto (it followed the filter). */
+static int g_auto_xbrz = 1;
+
+void vid_set_auto_xbrz(int on)
+{
+   VID_ENTER();
+   g_auto_xbrz = on ? 1 : 0;
+}
+
 static int up_kind(void)
 {
    return g_filter == VID_FILTER_XBRZ ? UPSCALE_XBRZ
-        : g_filter == VID_FILTER_SCALE ? UPSCALE_SCALE : UPSCALE_NONE;
+        : g_filter == VID_FILTER_SCALE ? UPSCALE_SCALE
+        : g_quality == 0 && g_auto_xbrz && g_filter == VID_FILTER_SHARP
+          ? UPSCALE_XBRZ : UPSCALE_NONE;
 }
 
 /* Nothing is being written into the slot's textures any more, and they are
@@ -1854,7 +2032,8 @@ static int up_kind(void)
 static void up_drop(int slot)
 {
    int k;
-   upscale_forget(slot);
+   if (!upscale_forget(slot))
+      return;                    /* a helper may still write: keep the textures */
    for (k = 0; k < 2; k++)
       if (g_upt[slot].t[k])
       {
@@ -1874,6 +2053,7 @@ static void up_drop(int slot)
 void vid_pair_forget(void)
 {
    int i;
+   VID_ENTER();
    g_look_w[0] = g_look_w[1] = 0;
    for (i = 0; i < 2 && i < UPSCALE_SLOTS; i++)
       if (g_upt[i].t[0] || g_upt[i].t[1])
@@ -2072,6 +2252,7 @@ int vid_set_overlay(const char *png_path)
    int w = 0, h = 0, ch = 0;
    FILE *f;
 
+   VID_ENTER();
    if (png_path && png_path[0] && g_ovl_tex && !strcmp(png_path, g_ovl_path))
       return 0;                              /* the one already up */
    if (g_ovl_tex)
@@ -2136,6 +2317,7 @@ void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,
    vid_geo g;
    vb_tex *t, *tu;
    int f = 0, upload;
+   VID_ENTER();
 
    if (!g_inited)
       vid_init();
@@ -2146,15 +2328,7 @@ void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,
    t0 = pspcompat_time_us();
    pix = look_frame(0, pix, w, h, &pitch_bytes);
    DP_MAX(VID_DP_LOOK, pspcompat_time_us() - t0);
-   if (gx_ready())
-   {
-      /* xBRZ on the GPU (picture_draw): the CPU upscalers' textures go */
-      if (g_upt[0].t[0] || g_upt[0].t[1])
-         up_drop(0);
-      tu = NULL;
-   }
-   else
-      tu = up_stage(0, pix, w, h, pitch_bytes, g.dw, &f);
+   tu = up_stage(0, pix, w, h, pitch_bytes, g.dw, &f);
    if (tu)
    {
       t1 = pspcompat_time_us();
@@ -2163,6 +2337,7 @@ void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,
       up_quad(0, tu, f, (float)g.ox, (float)g.oy, (float)(g.ox + g.dw),
               (float)(g.oy + g.dh), 0, (float)g.sy0, (float)w,
               (float)(g.sy0 + g.sh));
+      lcd_overlay_draw(w, &g);          /* Scanlines / LCD grid on the upscaled picture */
       t2 = pspcompat_time_us();
       DP_MAX(VID_DP_DRAW, t2 - t1);
       prof_add(t1 - t0, t2 - t1);
@@ -2205,6 +2380,7 @@ void vid_image_screen(const uint16_t *pix, int texw, int texh,
    vid_geo g;
    vb_tex *t;
    int upload;
+   VID_ENTER();
    (void)texh;
    if (!pix || srcw <= 0 || srch <= 0 || alpha <= 0)
       return;
@@ -2245,6 +2421,7 @@ void vid_image_screen_soft(const uint16_t *pix, int texw, int srcw, int srch,
    vb_tex *t;
    vb_tquad q;
    int upload;
+   VID_ENTER();
    if (!pix || srcw <= 0 || srch <= 0 || alpha <= 0)
       return;
    dest_geo((unsigned)srcw, (unsigned)srch, &g);
@@ -2321,6 +2498,7 @@ void vid_draw_frame_pair(const uint16_t *left, const uint16_t *right,
    int up[2] = { 0, 0 };
    size_t amb_pb = pitch_bytes;
    int i;
+   VID_ENTER();
 
    if (!g_inited)
       vid_init();
@@ -2384,6 +2562,7 @@ void (*vid_pre_swap_hook)(void);
 
 void vid_swap(void)
 {
+   VID_ENTER();
    /* NOTHING DREW A WHOLE FRAME: hold what is on screen (see the header). */
    if (!g_filled)
       return;
@@ -2397,11 +2576,13 @@ void vid_swap(void)
    vb_present();
    g_filled = 0;
    g_frame_no++;
+   vglyph_tick();            /* (the glyph atlases: a frame has gone out) */
    gx_guard();
 }
 
 int vid_readback(uint32_t *dst)
 {
+   VID_ENTER();
    /* What vid_swap would add last is part of the picture read back (the
     * twin's screenshots are taken before the swap); drawn once a frame. */
    if (vid_pre_swap_hook && g_filled)
@@ -2499,6 +2680,9 @@ void vid_term(void)
    upscale_shutdown();
    free(g_cc);
    g_cc = NULL;
+   free(g_scr);
+   g_scr = NULL;
+   g_scr_key = -1;
    {
       int k;
       for (k = 0; k < 2; k++)
@@ -2536,6 +2720,9 @@ void vid_term(void)
    vb_tex_destroy(g_amb_tex);   g_amb_tex = NULL;
    vb_tex_destroy(g_lcd_tex);   g_lcd_tex = NULL;
    g_lcd_fail = 0;
+   vb_tex_destroy(g_crt_tex);   g_crt_tex = NULL;
+   g_crt_fail = 0;
+   g_crt_built = -1;
    vb_tex_destroy(g_sharp_rt);  g_sharp_rt = NULL;
    g_sharp_tried = 0;
    g_amb_src = AMB_SRC_NONE;

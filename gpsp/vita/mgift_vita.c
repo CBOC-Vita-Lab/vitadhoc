@@ -31,6 +31,7 @@
 #include <fcntl.h>
 #endif
 
+#include "i18n.h"
 #include "mgift_vita.h"
 #include "mgift_net.h"
 #include "mgift_cart.h"
@@ -184,7 +185,7 @@ void mgift_vita_game(const char *code4)
 static void chip(int on)
 {
    if (on)
-      snprintf(M.chip, sizeof(M.chip), "Mystery Gift");
+      snprintf(M.chip, sizeof(M.chip), tr("mgift.mystery_gift"));
    osd_chip_session(on && g_pcfg.osd_wireless ? M.chip : NULL);
 }
 
@@ -202,10 +203,10 @@ void mgift_vita_stop(int quiet)
    M.on = 0;
    M.linked = 0;
    chip(0);
-   snprintf(M.l1, sizeof(M.l1), "Not listening");
+   snprintf(M.l1, sizeof(M.l1), tr("mgift.not_listening"));
    M.l2[0] = '\0';
    if (!quiet)
-      osd_toast("Mystery Gift off");
+      osd_toast(tr("toast.mystery_gift_off"));
 }
 
 static void refuse(const char *l1, const char *l2)
@@ -223,24 +224,24 @@ void mgift_vita_start(void)
 
    if (M.on)
    {
-      osd_toast("Mystery Gift is already listening");
+      osd_toast(tr("toast.mystery_gift_is_already_listening"));
       return;
    }
    /* The PSP's interlock, direction 1: a link holds the network. */
    if (link_net_busy())
    {
-      refuse("Leave the link session first", NULL);
+      refuse(tr("mgift.leave_the_link_session_first"), NULL);
       return;
    }
    if (!net_vita_wifi_status(&w))
    {
-      refuse("Connect to Wi-Fi first",
-             "Join the phone's hotspot in the Vita's Settings");
+      refuse(tr("mgift.connect_to_wi_fi_first"),
+             tr("mgift.join_the_phone_s_hotspot_in"));
       return;
    }
    if (net_vita_claim(NET_VITA_INFRA) != 0)
    {
-      refuse("Leave ad hoc first", NULL);
+      refuse(tr("mgift.leave_ad_hoc_first"), NULL);
       return;
    }
    M.claimed = 1;
@@ -249,7 +250,7 @@ void mgift_vita_start(void)
    {
       net_vita_release(NET_VITA_INFRA);
       M.claimed = 0;
-      refuse("Could not open the socket", NULL);
+      refuse(tr("mgift.could_not_open_the_socket"), NULL);
       return;
    }
    if (mgift_cart_start() != 0)
@@ -257,8 +258,8 @@ void mgift_vita_start(void)
       sock_close();
       net_vita_release(NET_VITA_INFRA);
       M.claimed = 0;
-      refuse("This game has no wireless",
-             "Mystery Gift needs FireRed, LeafGreen or Emerald");
+      refuse(tr("mgift.this_game_has_no_wireless"),
+             tr("mgift.mystery_gift_needs_firered_leafgreen_or"));
       return;
    }
    a.s_addr = w.ip_be;
@@ -266,11 +267,11 @@ void mgift_vita_start(void)
    M.on = 1;
    M.linked = 0;
    M.secs = 0;
-   snprintf(M.l1, sizeof(M.l1), "Waiting for a gift");
-   snprintf(M.l2, sizeof(M.l2), "%s  game %s", M.ip,
+   snprintf(M.l1, sizeof(M.l1), tr("mgift.waiting_for_a_gift"));
+   snprintf(M.l2, sizeof(M.l2), tr("mgift.game"), M.ip,
             M.game[0] ? M.game : "?");
    chip(1);
-   osd_toast("Mystery Gift listening");
+   osd_toast(tr("toast.mystery_gift_listening"));
    fe_evt("mg_start ip=%s game=%s port=%u", M.ip, M.game, M.port);
 }
 
@@ -291,9 +292,9 @@ void mgift_vita_frame(void)
              parcel.frlg_size, parcel.emerald_size, rc);
       if (rc == 0)
       {
-         snprintf(M.l1, sizeof(M.l1), "Gift ready");
-         snprintf(M.l2, sizeof(M.l2), "Open MYSTERY GIFT in the game");
-         osd_toast("Gift received from the phone");
+         snprintf(M.l1, sizeof(M.l1), tr("mgift.gift_ready"));
+         snprintf(M.l2, sizeof(M.l2), tr("mgift.open_mystery_gift_in_the_game"));
+         osd_toast(tr("toast.gift_received_from_the_phone"));
       }
    }
    mgift_cart_frame();
@@ -301,8 +302,8 @@ void mgift_vita_frame(void)
    if (!M.linked && s.linked)
    {
       M.linked = 1;
-      snprintf(M.l1, sizeof(M.l1), "Game connected");
-      osd_toast("The game found the gift");
+      snprintf(M.l1, sizeof(M.l1), tr("mgift.game_connected"));
+      osd_toast(tr("toast.the_game_found_the_gift"));
       fe_evt("mg_game_linked");
    }
    if (M.linked || mgift_cart_has_card())
@@ -315,7 +316,7 @@ void mgift_vita_frame(void)
       if (secs != M.secs)
       {
          M.secs = secs;
-         snprintf(M.l2, sizeof(M.l2), "%s  game %s  no gift yet", M.ip,
+         snprintf(M.l2, sizeof(M.l2), tr("mgift.game_no_gift_yet"), M.ip,
                   M.game[0] ? M.game : "?");
       }
    }

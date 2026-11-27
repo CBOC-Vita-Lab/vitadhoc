@@ -1425,6 +1425,16 @@ bool main_check_savestate(const u8 *src)
       !bson_contains_key(p1, "video-count", BSON_TYPE_INT32) ||
       !bson_contains_key(p1, "sleep-cycles", BSON_TYPE_INT32))
     return false;
+  /* The scheduler's counters: video_count is the cycles to the next line event (one line is 1232 cycles),
+   * execute_cycles the length of the next slice (never more than that), sleep-cycles a DMA's stall.  A larger
+   * value does not crash, it makes a frame take minutes (the frame loop waits for video_count to run down). */
+  {
+    u32 v;
+    if (!bson_read_int32(p1, "video-count", &v) || (s32)v < -4096 || (s32)v > 4096 ||
+        !bson_read_int32(p1, "exec-cycles", &v) || v > 4096 ||
+        !bson_read_int32(p1, "sleep-cycles", &v) || v > 0x400000u)
+      return false;
+  }
   /* serial-irq-cycles is optional for forward compatibility with states
    * written before this field existed; missing simply means "no pending
    * serial IRQ", which is also the default after serialproto_reset. */
@@ -1448,6 +1458,11 @@ bool main_check_savestate(const u8 *src)
     if (!p)
       return false;
 
+    /* count: cycles to the timer's next overflow, at most reload << prescale (65536 << 10), a little
+     * below zero while it catches up; the catch-up loops once per reload */
+    if (!bson_read_int32(p, "count", &reload) ||
+        (s32)reload < -0x100000 || (s32)reload > 0x4000000)
+      return false;
     if (!bson_contains_key(p, "count", BSON_TYPE_INT32) ||
         !bson_contains_key(p, "reload", BSON_TYPE_INT32) ||
         !bson_contains_key(p, "prescale", BSON_TYPE_INT32) ||
@@ -1537,6 +1552,17 @@ bool main_read_savestate(const u8 *src)
       bson_read_int32(p, "irq", &timer[i].irq) &&
       bson_read_int32(p, "status", &timer[i].status)))
       return false;
+  }
+
+  /* The direct sound step is derived from the timer's reload and prescale and the output rate: it is recomputed, not
+   * taken from the state.  A tiny stored step (1/16M of a sample) made sound_timer loop 16 million times per timer
+   * event.  The same value the register writes compute, so an honest state loads exactly as saved; a stored 0 (the step was never
+ * computed, the timer has not been used for sound) is harmless and stays. */
+  for (i = 0; i < 2; i++)
+  {
+    u32 timer_reload = timer[i].reload << timer[i].prescale;
+    if (timer_reload && timer[i].frequency_step)
+      timer[i].frequency_step = direct_sound_timer_step(timer_reload, sound_frequency);
   }
 
   return true;

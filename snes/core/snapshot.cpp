@@ -1316,6 +1316,132 @@ void S9xFreezeToStream (STREAM stream)
 	delete [] soundsnapshot;
 }
 
+// CBOC-Vita: a state that comes from outside (a link host, Share game data, a file) is not trusted. The timing block (CPU, Timings)
+// drives the frame loop: a scanline counter or an event position nobody can reach makes the frame never end, or the loop read where
+// it must not. Before anything is applied the values are checked against what this machine's own timing allows; a state with
+// values no machine produces is refused and the running machine is left alone.
+static bool SnapshotTimingSane (uint8 *local_cpu, uint8 *local_timing, int version)
+{
+	if (!local_cpu)
+		return false;
+
+	struct SCPUState	c = CPU;
+	struct STimings		t = Timings;
+
+	UnfreezeStructFromCopy(&c, SnapCPU, COUNT(SnapCPU), local_cpu, version);
+	if (local_timing)		// (a snapshot of an old version has none: the machine's own timing stands)
+		UnfreezeStructFromCopy(&t, SnapTimings, COUNT(SnapTimings), local_timing, version);
+
+	const int32	hm = Timings.H_Max_Master;			// this machine's (a state only moves them within a line)
+
+	if (t.H_Max_Master != hm || t.V_Max_Master != Timings.V_Max_Master)
+		return false;
+	if (t.H_Max != hm && t.H_Max != hm - ONE_DOT_CYCLE)
+		return false;
+	if (t.V_Max != t.V_Max_Master && t.V_Max != t.V_Max_Master + 1)
+		return false;
+	if (t.HBlankStart != Timings.HBlankStart || t.HBlankEnd != Timings.HBlankEnd || t.HDMAInit != Timings.HDMAInit || t.HDMAStart != Timings.HDMAStart)
+		return false;
+	if (t.RenderPos < 0 || t.RenderPos > hm)
+		return false;
+	if (t.WRAMRefreshPos != SNES_WRAM_REFRESH_HC_v1 && t.WRAMRefreshPos != SNES_WRAM_REFRESH_HC_v2 && t.WRAMRefreshPos != SNES_WRAM_REFRESH_HC_v2 - ONE_DOT_CYCLE)
+		return false;
+	if (t.NMITriggerPos != 0xffff && (t.NMITriggerPos < -2 * hm || t.NMITriggerPos > 2 * hm))
+		return false;
+	if (t.NextIRQTimer != 0x0fffffff && (t.NextIRQTimer < -2 * hm || t.NextIRQTimer > hm * (t.V_Max_Master + 2)))
+		return false;
+	if (t.IRQTriggerCycles < 0 || t.IRQTriggerCycles > hm || t.DMACPUSync < 0 || t.DMACPUSync > hm || t.NMIDMADelay < 0 || t.NMIDMADelay > hm ||
+	    t.IRQFlagChanging < 0 || t.IRQFlagChanging > hm || t.APUSpeedup < 0 || t.APUSpeedup > 16)
+		return false;
+
+	if (c.V_Counter < 0 || c.V_Counter > t.V_Max)
+		return false;
+	if (c.Cycles < 0 || c.Cycles > 2 * hm || c.PrevCycles < -2 * hm || c.PrevCycles > 2 * hm)
+		return false;
+	if (c.WhichEvent < 1 || c.WhichEvent > 6)
+		return false;
+	if (c.NextEvent != t.HBlankStart && c.NextEvent != t.HDMAStart && c.NextEvent != t.H_Max && c.NextEvent != t.HDMAInit &&
+	    c.NextEvent != t.RenderPos && c.NextEvent != t.WRAMRefreshPos)
+		return false;
+	if (c.MemSpeed < 1 || c.MemSpeed > 24 || c.MemSpeedx2 < 1 || c.MemSpeedx2 > 48 || c.FastROMSpeed < 1 || c.FastROMSpeed > 24)
+		return false;
+
+	return true;
+}
+
+// CBOC-Vita: the Super FX block carries host pointers as offsets and several table selectors; none of that is trusted.
+// Everything that names memory is rebuilt from the machine's own values (saved before the block is applied) and every
+// selector is brought back into the range the chip's registers can produce.
+struct SnapFxKeep
+{
+	uint8 *pvRegisters, *pvRam, *pvRom;
+	uint32 nRamBanks, nRomBanks;
+};
+
+static void SnapshotSuperFXKeep (SnapFxKeep *k)
+{
+	k->pvRegisters = GSU.pvRegisters;
+	k->pvRam = GSU.pvRam;
+	k->pvRom = GSU.pvRom;
+	k->nRamBanks = GSU.nRamBanks;
+	k->nRomBanks = GSU.nRomBanks;
+}
+
+static void SnapshotSuperFXSanitize (const SnapFxKeep *k)
+{
+	GSU.pvRegisters = k->pvRegisters;
+	GSU.pvRam = k->pvRam;
+	GSU.pvRom = k->pvRom;
+	GSU.nRamBanks = k->nRamBanks;
+	GSU.nRomBanks = k->nRomBanks;
+	GSU.avRegAddr = (uint8 *) &GSU.avReg;
+
+	for (int i = 0; i < FX_RAM_BANKS; i++)
+	{
+		GSU.apvRamBank[i] = &GSU.pvRam[(i % GSU.nRamBanks) << 16];
+		GSU.apvRomBank[0x70 + i] = GSU.apvRamBank[i];
+	}
+
+	GSU.vPrgBankReg &= 0xff;
+	GSU.vRomBankReg &= 0xff;
+	GSU.vRamBankReg &= (FX_RAM_BANKS - 1);
+	GSU.vMode &= 3;
+	GSU.vCacheBaseReg &= 0xffff;
+	GSU.pvRamBank = GSU.apvRamBank[GSU.vRamBankReg];
+	GSU.pvRomBank = GSU.apvRomBank[GSU.vRomBankReg];
+	GSU.pvPrgBank = GSU.apvRomBank[GSU.vPrgBankReg];
+	GSU.pvCache = &GSU.pvRegisters[0x100];
+
+	size_t dreg = ((uint8 *) GSU.pvDreg - (uint8 *) GSU.avReg);
+	size_t sreg = ((uint8 *) GSU.pvSreg - (uint8 *) GSU.avReg);
+	if ((uintptr_t) GSU.pvDreg < (uintptr_t) GSU.avReg || dreg >= sizeof(GSU.avReg) || (dreg & 3))
+		GSU.pvDreg = &GSU.avReg[0];
+	if ((uintptr_t) GSU.pvSreg < (uintptr_t) GSU.avReg || sreg >= sizeof(GSU.avReg) || (sreg & 3))
+		GSU.pvSreg = &GSU.avReg[0];
+
+	if (GSU.vScreenHeight != 128 && GSU.vScreenHeight != 160 && GSU.vScreenHeight != 192 && GSU.vScreenHeight != 256)
+		GSU.vScreenHeight = 128;
+	if (GSU.vScreenRealHeight != 128 && GSU.vScreenRealHeight != 160 && GSU.vScreenRealHeight != 192 && GSU.vScreenRealHeight != 256)
+		GSU.vScreenRealHeight = GSU.vScreenHeight;
+	if (GSU.vScreenSize > 32768)
+		GSU.vScreenSize = 32768;
+
+	uint8 *ramEnd = GSU.pvRam + (GSU.nRamBanks * 65536);
+	if ((uintptr_t) GSU.pvScreenBase < (uintptr_t) GSU.pvRam || (uintptr_t) GSU.pvScreenBase >= (uintptr_t) ramEnd)
+		GSU.pvScreenBase = GSU.pvRam;
+	if (GSU.pvScreenBase + GSU.vScreenSize > ramEnd)
+		GSU.pvScreenBase = ramEnd - GSU.vScreenSize;
+
+	// the per column screen pointers and offsets follow from the mode, height and base: derive them again
+	uint32 prevMode = GSU.vPrevMode, dirty = GSU.vSCBRDirty, prevHeight = GSU.vPrevScreenHeight;
+	GSU.vPrevMode = ~0u;
+	fx_computeScreenPointers();
+	// the recompute is only for the safety of the pointers: leave the loaded bookkeeping as it was, so a genuine state runs on exactly as before
+	GSU.vPrevMode = prevMode;
+	GSU.vSCBRDirty = dirty;
+	GSU.vPrevScreenHeight = prevHeight;
+}
+
 int S9xUnfreezeFromStream (STREAM stream)
 {
 	const bool8 fast = Settings.FastSavestates;
@@ -1417,6 +1543,16 @@ int S9xUnfreezeFromStream (STREAM stream)
 		result = UnfreezeBlockCopy (stream, "SND", &local_apu_sound, SPC_SAVE_STATE_BLOCK_SIZE);
 		if (result != SUCCESS)
 			break;
+		{
+			// CBOC-Vita: the sound loaders walk this block by sizes the block itself can extend (the DSP copier reads a length byte, then that
+			// many bytes: up to 255 past the end of what it expects). Zero bytes behind the block keep every such read inside the allocation.
+			const size_t	pad = 1024;
+			uint8	*padded = new uint8[SPC_SAVE_STATE_BLOCK_SIZE + pad];
+			memcpy(padded, local_apu_sound, SPC_SAVE_STATE_BLOCK_SIZE);
+			memset(padded + SPC_SAVE_STATE_BLOCK_SIZE, 0, pad);
+			delete [] local_apu_sound;
+			local_apu_sound = padded;
+		}
 
 		result = UnfreezeStructCopy(stream, "CTL", &local_control_data, SnapControls, COUNT(SnapControls), version);
 		if (result != SUCCESS)
@@ -1542,6 +1678,14 @@ int S9xUnfreezeFromStream (STREAM stream)
 		result = SUCCESS;
 	} while (false);
 
+	// CBOC-Vita: a chip's block in a state for a cart that does not have that chip is ignored (its pointers have nothing to point at)
+	if (local_superfx && !Settings.SuperFX) { delete [] local_superfx; local_superfx = NULL; }
+	if (local_sa1 && !Settings.SA1) { delete [] local_sa1; local_sa1 = NULL; }
+	if (local_sa1_registers && !Settings.SA1) { delete [] local_sa1_registers; local_sa1_registers = NULL; }
+
+	if (result == SUCCESS && !SnapshotTimingSane(local_cpu, local_timing_data, version))
+		result = SNAPSHOT_INCONSISTENT;
+
 	if (result == SUCCESS)
 	{
 		uint32 old_flags     = CPU.Flags;
@@ -1562,6 +1706,10 @@ int S9xUnfreezeFromStream (STREAM stream)
 		UnfreezeStructFromCopy(&Registers, SnapRegisters, COUNT(SnapRegisters), local_registers, version);
 
 		UnfreezeStructFromCopy(&PPU, SnapPPU, COUNT(SnapPPU), local_ppu, version);
+
+		// CBOC-Vita: the Mode 7 latches (Snes9x cf2b0e5) are per-line state that a state file does not hold: they
+		// start a line unlatched, as at the end of any line, so a load never carries over the live game's flags
+		PPU.CentreXLatched = PPU.CentreYLatched = PPU.M7HOFSLatched = PPU.M7VOFSLatched = false;
 
 		struct SDMASnapshot	dma_snap;
 		UnfreezeStructFromCopy(&dma_snap, SnapDMA, COUNT(SnapDMA), local_dma, version);
@@ -1618,7 +1766,10 @@ int S9xUnfreezeFromStream (STREAM stream)
 		if (local_superfx)
 		{
 			GSU.avRegAddr = (uint8 *) &GSU.avReg;
+			SnapFxKeep fxkeep;
+			SnapshotSuperFXKeep(&fxkeep);
 			UnfreezeStructFromCopy(&GSU, SnapFX, COUNT(SnapFX), local_superfx, version);
+			SnapshotSuperFXSanitize(&fxkeep);
 		}
 
 		if (local_sa1)
@@ -1707,11 +1858,62 @@ int S9xUnfreezeFromStream (STREAM stream)
 		S9xFixCycles();
 
 		for (int d = 0; d < 8; d++)
+		{
 			DMA[d] = dma_snap.dma[d];
+			// CBOC-Vita: the transfer mode is 3 bits (it indexes the 8 entry HDMA byte count table), the flags are flags
+			DMA[d].TransferMode &= 7;
+			DMA[d].ReverseTransfer = DMA[d].ReverseTransfer ? TRUE : FALSE;
+			DMA[d].HDMAIndirectAddressing = DMA[d].HDMAIndirectAddressing ? TRUE : FALSE;
+			DMA[d].AAddressFixed = DMA[d].AAddressFixed ? TRUE : FALSE;
+			DMA[d].AAddressDecrement = DMA[d].AAddressDecrement ? TRUE : FALSE;
+		}
 		// TODO: these should already be correct since they are stored in the snapshot
 		CPU.InDMA = CPU.InHDMA = FALSE;
 		CPU.InDMAorHDMA = CPU.InWRAMDMAorHDMA = FALSE;
 		CPU.HDMARanInDMA = 0;
+
+		// CBOC-Vita: every PPU field that indexes a table or selects a mode is brought back inside the range its register can produce
+		PPU.Brightness &= 0x0f;
+		PPU.BGMode &= 7;
+		PPU.OBJSizeSelect &= 7;
+		PPU.OBJNameSelect &= 0x6000;
+		PPU.OBJNameBase &= 0xc000;
+
+		PPU.OAMAddr &= 0x1ff;
+		PPU.SavedOAMAddr &= 0x1ff;
+		PPU.FirstSprite &= 0x7f;
+		PPU.LastSprite &= 0x7f;
+		PPU.OAMFlip &= 1;
+		PPU.OAMReadFlip &= 1;
+		PPU.OAMPriorityRotation = PPU.OAMPriorityRotation ? 1 : 0;
+		PPU.ScreenHeight = (PPU.ScreenHeight == SNES_HEIGHT_EXTENDED) ? SNES_HEIGHT_EXTENDED : SNES_HEIGHT;
+		for (int b = 0; b < 4; b++)
+		{
+			PPU.BG[b].SCBase &= 0x7c00;
+			PPU.BG[b].NameBase &= 0xf000;
+			PPU.BG[b].SCSize &= 3;
+			PPU.BG[b].BGSize &= 1;
+		}
+		for (int o = 0; o < 128; o++)
+		{
+			PPU.OBJ[o].Name &= 0x1ff;
+			PPU.OBJ[o].Palette &= 7;
+			PPU.OBJ[o].Priority &= 3;
+			PPU.OBJ[o].HFlip &= 1;
+			PPU.OBJ[o].VFlip &= 1;
+		}
+		for (int c = 0; c < 6; c++)
+			if (PPU.ClipCounts[c] > 5)
+				PPU.ClipCounts[c] = 0;
+		if (PPU.VMA.Increment != 1 && PPU.VMA.Increment != 32 && PPU.VMA.Increment != 128)
+			PPU.VMA.Increment = 1;
+		switch (PPU.VMA.FullGraphicCount)
+		{
+			case 32:  PPU.VMA.Mask1 = 32 * 8 - 1;  PPU.VMA.Shift = 5; break;
+			case 64:  PPU.VMA.Mask1 = 64 * 8 - 1;  PPU.VMA.Shift = 6; break;
+			case 128: PPU.VMA.Mask1 = 128 * 8 - 1; PPU.VMA.Shift = 7; break;
+			default:  PPU.VMA.FullGraphicCount = 0; break;
+		}
 
 		S9xFixColourBrightness();
 		S9xBuildDirectColourMaps();
@@ -1736,6 +1938,7 @@ int S9xUnfreezeFromStream (STREAM stream)
 		{
 			GSU.pfPlot = fx_PlotTable[GSU.vMode];
 			GSU.pfRpix = fx_PlotTable[GSU.vMode + 5];
+			GSU.vCacheMask = 0;		// CBOC-Vita: the GSU timing's record of which cache lines were filled is not in a state file
 		}
 
 		if (local_sa1 && local_sa1_registers)

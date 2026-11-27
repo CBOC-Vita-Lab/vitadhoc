@@ -1,0 +1,451 @@
+/*
+ * Sega host: the platform independent layer between Genesis Plus GX (md/core) and a frontend, for the Mega Drive /
+ * Genesis, Master System (and Mark III), Game Gear and SG-1000 (SC-3000 cartridges). It is built into the relocatable
+ * object mdcore.o (see md/core/Makefile), which exports exactly the md_host_* functions below and nothing else, so the
+ * same discipline as nes/frontend holds even though md.bin is a separate program.
+ *
+ * Rules of the API
+ *  - Plain C, extern "C" from C++. No file access: ROMs, battery RAM and states are memory buffers owned by the caller.
+ *  - ONE instance per process (the core keeps its machine in globals), ONE thread: call everything from the thread that
+ *    runs the frames. Allocation only in md_host_init (fixed buffers) and md_host_load_mem (the 10 MB cartridge area is
+ *    allocated once and reused, plus the audio ring). Frames, pads, saves and states do not allocate.
+ *  - Deterministic: the same ROM, options, seed and pad script give the same frames, audio and state on every machine
+ *    and C library (no rand(), no wall clock). Two consoles that load the same state and get the same pads stay equal.
+ *
+ * Copyright CBOC-Vita. MIT licence (the licence of this file; the core in md/core keeps the Genesis Plus GX licence,
+ * non-commercial: a program containing mdcore.o must not be sold, and ships its full source when modified).
+ */
+#ifndef MD_HOST_H
+#define MD_HOST_H
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Pad bits. The value is the core's own pad word, so it can be passed through. Master System / Game Gear / SG-1000
+ * pads have two buttons: MD_B is button 1 and MD_C is button 2 there; MD_START is Pause (SMS / SG) or Start (GG).
+ * X Y Z MODE only exist on a six button pad and are ignored by a three button pad. Up+Down and Left+Right together are
+ * not filtered by the core (a few games rely on that on a real pad): filter in the frontend if you want. */
+enum {
+	MD_UP = 0x0001, MD_DOWN = 0x0002, MD_LEFT = 0x0004, MD_RIGHT = 0x0008,
+	MD_B = 0x0010, MD_C = 0x0020, MD_A = 0x0040, MD_START = 0x0080,
+	MD_Z = 0x0100, MD_Y = 0x0200, MD_X = 0x0400, MD_MODE = 0x0800
+};
+#define MD_BUTTON1 MD_B
+#define MD_BUTTON2 MD_C
+
+#define MD_AUDIO_RATE 48000          /* default audio rate; md_host_set_audio_rate changes it (8000..96000) */
+#define MD_MAX_WIDTH 352             /* the largest picture the core draws: 320 + 2 * 14 border pixels (only with overscan; 320 otherwise) */
+#define MD_MAX_HEIGHT 576            /* an interlaced double resolution PAL frame with borders; 480 without overscan, 224..240 normally */
+
+/* system: what md_host_load_mem was told, and what md_host_system() reports */
+enum { MD_SYS_AUTO = 0, MD_SYS_MD, MD_SYS_SMS, MD_SYS_GG, MD_SYS_SG };    /* a Sega CD game is MD_SYS_MD with md_host_is_cd() */
+enum { MD_REGION_AUTO = 0, MD_REGION_USA, MD_REGION_EUROPE, MD_REGION_JAPAN_NTSC, MD_REGION_JAPAN_PAL };
+enum { MD_PAD_AUTO = 0, MD_PAD_3, MD_PAD_6 };
+enum { MD_PIXEL_RGB565 = 1 };
+/* the six values md_host_system_hw() can name (what the core decided inside one system): "Mega Drive", "Master System II",
+ * "Master System", "Mark III", "Game Gear", "Game Gear (SMS mode)", "SG-1000", "SG-1000 II", "SC-3000" ... */
+
+/* ---- Sega CD / Mega CD (2.0) ------------------------------------------------------------------------------ */
+
+/* A Sega CD game is a disc, not a memory image: md_host_load_disc opens it from a file (the core reads sectors as the game asks, nothing of
+ * the disc is held in memory) and needs the console's BIOS, which the caller supplies and which is never part of VitAdhoc. The disc formats:
+ * .cue (with .bin tracks, one or several, CD audio tracks raw 16 bit stereo 44.1 kHz, or .wav / .ogg tracks beside the .cue), a single
+ * .bin or .iso (2048 byte cooked sectors or 2352 byte raw ones), and .chd (CD CHD, zlib / lzma / flac / zstd codecs). The machine is a Mega
+ * Drive with the Mega CD add-on: md_host_system() says MD_SYS_MD (the picture, the pads and the wide view are those of the Mega Drive), and
+ * md_host_is_cd() says 1. Everything else in this API works as for a cartridge, with these differences:
+ *  - the save is the internal backup RAM (8 KB) followed by the RAM cartridge, when one is fitted (md_host_set_option "ram_cart", 512 KB by
+ *    default as in the upstream core; Off is an empty slot that reads $FF): md_host_sram_* hold that image, always at its full size (the BIOS
+ *    formats it; an unformatted one is formatted at load). Images of a cartridge of another size that a file held are kept and written back
+ *    after it (md_host_cd_kept_cartridges), so changing the size never loses a save;
+ *  - the state is about 1.1 MB (two 68000s' RAM, the PCM chip's RAM, the CD controller), the file the player writes is that size;
+ *  - cheats are work RAM patches only (the disc has no cartridge ROM to patch);
+ *  - two consoles in one session need the same BIOS and the same disc (md_host_rom_crc is the disc's identity: the first 2 KB of the
+ *    disc's header sector and the disc's length in sectors). */
+/* Hand the host a BIOS image (128 KB: the BIOS dump of a Mega CD or Sega CD, any model) before md_host_load_disc. It is copied. The region (USA,
+ * Europe or Japan) is read from the BIOS's header; one image per region is kept, a later one of the same region replaces it. `force` 1: accept an
+ * image that does not look like a Sega CD BIOS (the test suite's stand-in only; the player never sets it).
+ * Returns the region (MD_REGION_USA / EUROPE / JAPAN_NTSC), or 0 when the data is not a Sega CD BIOS. */
+int md_host_cd_bios_add(const uint8_t *data, size_t n, int force);
+/* Test suites only (the players never call it): every later md_host_cd_bios_add behaves as if `force` were 1, so the test stand-in BIOS passes through the player's own BIOS search. */
+void md_host_cd_bios_test_force(int on);
+void md_host_cd_bios_clear(void);
+int md_host_cd_bios_count(void);           /* regions that have an image */
+/* The known dump's name for a BIOS image ("Sega CD (USA) model 1 v1.10", ...) or NULL when it is a dump this table does not know. */
+const char *md_host_cd_bios_name(const uint8_t *data, size_t n);
+/* Is the file a disc image the host can open? Reads the file's first bytes only. 1 yes (a .cue, a .chd, a Sega CD data track); 0 no.
+ * `why`, when not NULL, gets a short reason on 0. */
+int md_host_cd_probe(const char *path, char *why, size_t whylen);
+/* Load a disc and power the console on. Returns 0, else non-zero with a short reason in err (1 not initialised, 2 the disc could not be
+ * read, 3 not a Sega CD disc, 4 the core refused it, 5 no BIOS was handed over). A BIOS of another region than the disc's is used when it
+ * is the only one there is (the console region is then the BIOS's). */
+int md_host_load_disc(const char *path, char *err, size_t errlen);
+int md_host_is_cd(void);                   /* 1 when the loaded game is a disc */
+uint32_t md_host_cd_bios_crc(void);        /* CRC-32 of the BIOS image in use (0 without a disc): two linked consoles must run the same one */
+/* What the loaded disc is: its title from the header, the track count, the BIOS image in use (region and name) in one line. */
+const char *md_host_cd_info(void);
+int md_host_cd_tracks(void);               /* 0 without a disc */
+/* The first n (<= 2048) bytes of the disc's first sector (its user data), whenever a disc is loaded: what RetroAchievements hashes for a Sega CD game
+ * (rcheevos: the MD5 of the first 512 bytes). Does not disturb the machine. Returns 0, else non-zero. */
+int md_host_cd_header(uint8_t *out, size_t n);
+/* Disc reader checks for the test suite (md/twin/cd_test.cpp), on the machine just loaded and before any frame has run: the table of contents, one
+ * data sector's user data, and the last stereo sample of a run of CD-DA samples as the drive's audio path produces it. */
+int md_host_cd_test_toc(int track, int *start, int *end, int *type);          /* track 1..: first / last LBA, type 0 audio 1 mode 1 2 mode 2; returns the track count */
+int md_host_cd_test_data(int lba, uint8_t *out2048);                           /* 0 ok */
+int md_host_cd_test_audio(int track, int lba, int samples, int16_t last[2]);   /* 0 ok: reads `samples` stereo samples from sector `lba` of the track */
+/* option (md_host_set_option) "ram_cart" 0..6, set before md_host_load_disc: the RAM cartridge a game can save to besides the internal 8 KB:
+ * 0 off (an empty cartridge slot), 1..6 = 16 KB, 32 KB, 64 KB, 128 KB (the size Sega sold), 256 KB, 512 KB (default, as the upstream core). */
+/* Cartridge images of other sizes than the fitted one that the save file loaded by md_host_sram_write held: they are kept and written back
+ * with every save. Returns their number. */
+int md_host_cd_kept_cartridges(void);
+/* The region of the loaded disc from its security block (1 USA, 2 Europe, 3 Japan; 0 without a disc), a notice to show when the game starts
+ * ("" when there is nothing to say: for example that the only BIOS found is of another region, so the game may stop at the BIOS screen and
+ * what to add), and the regions a BIOS was handed over for as text ("Europe and Japan", "none"). */
+int md_host_cd_disc_region(void);
+const char *md_host_cd_notice(void);
+size_t md_host_cd_bios_regions(char *out, size_t n);
+
+/* ---- a game on several discs (an .m3u list, 2.0) -------------------------------------------------------------------------------
+ * The player tells the host the discs of the game once, after md_host_load_disc loaded disc `cur` of them (paths of .cue / .chd / .iso files,
+ * copied, at most MD_HOST_DISC_MAX of MD_HOST_DISC_PATH bytes). The machine, the save and the disc's identity stay those of the game: only
+ * the disc in the drive changes, with the drive's own tray handling the core already has (the tray status the BIOS reads, then a table of
+ * contents again when it closes), the way a player changes discs by hand:
+ *   md_host_cd_eject      the tray opens (the status the game's disc check sees). 0 = done, non-zero = no disc game or already open.
+ *   md_host_cd_swap(i)    with the tray open: disc i replaces the one in the drive (the read-ahead thread is stopped and restarted around it).
+ *                         0 = done; else a short reason in err, and the disc that was in the drive is put back.
+ *   md_host_cd_close      the tray closes: the game's drive sees a disc and reads its table of contents.
+ * A state records which disc was in the drive: loading it puts that disc in (a state of disc 2 loaded while disc 1 is in swaps them, no tray
+ * involved: the state is the whole machine). States written before this had no disc number and mean disc 1. */
+#define MD_HOST_DISC_MAX 8
+#define MD_HOST_DISC_PATH 512
+void md_host_cd_set_discs(const char (*paths)[MD_HOST_DISC_PATH], int n, int cur);
+int md_host_cd_disc_count(void);           /* discs the game has (1 for a single disc, 0 without a disc game) */
+int md_host_cd_disc_index(void);           /* the disc in the drive, 0 based */
+int md_host_cd_tray_open(void);
+int md_host_cd_eject(void);
+int md_host_cd_swap(int index, char *err, size_t errlen);
+int md_host_cd_close(void);
+
+/* ---- worker threads ---------------------------------------------------------------------------------------- */
+
+/* Optional. The VDP line renderer can run on its own thread (md/core/vdp_thread.h: a write log, bit identical pictures, sound and state).
+ * The core has no thread code: pass the platform's functions (md/core/thread_ops.h) and MD_THREAD_VDP before md_host_load_mem; the threads
+ * start inside the load and end in md_host_unload. ops = NULL or mask 0: everything on the calling thread (the default). The worker is
+ * idle whenever a host call returns, so every other API call stays valid from the calling thread only. Returns 0. */
+#define MD_THREAD_VDP 1u          /* the VDP line renderer on its own thread (Mega Drive) */
+#define MD_THREAD_VDP_SMS 2u      /* ... also for Master System / Game Gear / SG-1000 (with MD_THREAD_VDP) */
+#define MD_THREAD_FM 8u           /* the YM2612's FM synthesis on its own thread (worker id MD_WORKER_FM; md/core/fm_thread.h): bit identical sound and state; not with the Nuked chips */
+#define MD_THREAD_DISC 4u         /* a Sega CD: read the disc ahead and decode CHD hunks on a helper thread (worker id MD_WORKER_DISC): the emulating thread only copies finished blocks */
+struct md_thread_ops;
+int md_host_set_threads(const struct md_thread_ops *ops, unsigned mask);
+/* Debug and census for the VDP worker (the Linux twin's --vdp-check / --vdp-stress / census line). check: compare the worker's copy of the
+ * raw VDP state with the emulating thread's at the end of every frame and count the differences; stress: join after every drawn line (a
+ * game that reads the status register every line). Both only matter while the worker runs. */
+void md_host_vdp_debug(int check, int stress);
+unsigned long md_host_vdp_check_errors(void);
+/* The FM worker: debug flags (md/core/fm_thread.h: 1 compare the timer shadow with the chip at every join, 2 join after every run, 4 always take the queue
+ * over at a join, 8 a tiny queue), the number of differences found, a census (records, writes, runs, samples, joins, polls, takeovers, queue full waits,
+ * wake-ups, worker busy us, join wait us; returns 0 when the worker is off) and a self test of the timer shadow against the chip (differences found). */
+void md_host_fm_debug(int flags);
+unsigned long md_host_fm_check_errors(void);
+int md_host_fm_census(unsigned long out[11]);
+int md_host_fm_selftest(unsigned seed, int steps);
+/* census of the worker since it started: records queued, status joins, frame joins, polls spent waiting, queue full waits, wake-ups,
+ * VRAM patterns / whole VRAM images sent. Returns 0 when the worker is off. */
+int md_host_vdp_census(unsigned long out[11]);
+/* The disc helper's census since the disc was loaded (all 0 for a cartridge): [0] reads that touched a streamed file or the CHD, [1] served from a
+ * block the helper had finished, [2] misses (read or decoded by the emulating thread), [3] waits for a block the helper was on, [4] us the
+ * emulating thread spent in misses and waits, [5] blocks the helper finished, [6] us the helper was busy, [7] blocks read ahead and never used,
+ * [8] cache answers that differed from a direct read (debug check; always 0). */
+void md_host_cd_census(unsigned long out[10]);
+int md_host_cd_helper(void);                       /* 1 while the read-ahead thread runs */
+/* debug for the test suite: check = compare every block the cache serves with a direct read; stress = random pauses in the helper and cache answers
+ * ignored at random (more waits and misses, the same bytes). */
+void md_host_cd_debug(int check, int stress);   /* [9] worker busy us, [10] join wait us: 0 without now_us */
+/* test: the helper's next block stalls for `ms` milliseconds (once). Census [9] also counts a disc close that gave a stalled helper up (the helper is then
+ * off until it has left: md_host_set_threads again re-enables it). */
+void md_host_cd_stall(unsigned ms);
+
+/* ---- lifetime -------------------------------------------------------------------------------------------- */
+
+/* Once, before anything else. Returns 0 on success. Starts with: audio rate 48000, region automatic, FM chip "discrete
+ * YM2612", pads automatic (3 or 6 buttons from the ROM header), interlace double field, sprite limit as on hardware. */
+int md_host_init(void);
+void md_host_shutdown(void);
+
+/* Load a cartridge from memory. `name` is the file name (only its extension is used: md gen bin smd mdx 32x? sms gg sg sc
+ * ...; may be NULL), `system` MD_SYS_AUTO or a system forced by the caller. With AUTO the extension decides when it is
+ * unambiguous, and the header otherwise (".bin" is common to all: "SEGA" at 0x100 or a SMD header is a Mega Drive ROM,
+ * "TMR SEGA" at 0x1FF0 / 0x3FF0 / 0x7FF0 is a Master System / Game Gear ROM, the region nibble tells which).
+ * Interleaved (.smd) dumps and ROMs with a 512 byte header are converted by the core, byte swapped dumps too. `data` is
+ * copied: the caller may free it on return. Any previous game is unloaded first. Returns 0, else non-zero with a short
+ * reason in err (1 not initialised, 2 unreadable / too big (> 10 MB), 3 not a Sega ROM, 4 the core refused it).
+ * The console is powered on at the end of the load. Battery RAM is NOT loaded here: call md_host_sram_write afterwards. */
+int md_host_load_mem(const uint8_t *data, size_t n, const char *name, int system, char *err, size_t errlen);
+void md_host_unload(void);
+int md_host_loaded(void);
+/* The seed of the only random values the core uses (the position of the CPU in the frame after md_host_reset). Set it
+ * BEFORE md_host_load_mem / md_host_reset; the same seed gives the same machine everywhere. Default 1. */
+void md_host_set_seed(uint32_t seed);
+
+/* ---- frames ---------------------------------------------------------------------------------------------- */
+
+/* Pads: port 0 / 1 = pad 1 / 2 (the Game Gear has one). Applies to the next frame. */
+void md_host_set_pad(int port, unsigned mask);
+/* 3 or 6 buttons (MD_PAD_*). AUTO follows the ROM header (the "6" in its I/O support field), as the core does. Effective
+ * at once; it changes what the game can read, so it belongs in the emulation settings two consoles must agree on. */
+int md_host_set_pad_type(int port, int type);
+int md_host_pad_type(int port);        /* the type in force: MD_PAD_3, MD_PAD_6, or 0 when the system has two button pads */
+
+/* Run one frame (from the start of vertical blank to the next). Cheats are applied inside. */
+void md_host_run_frame(void);
+/* Run-ahead by one frame ("Quick response"): runs ONE real frame without drawing it (its sound is kept), saves the machine, runs the
+ * frame after it with the same buttons, drawn and silent, and puts the machine back. What is on screen is then one frame newer than the
+ * machine, so a button press shows one frame sooner; the machine itself, its sound and its save are those of md_host_run_frame() called
+ * once (checked by md/twin/ahead_check.sh). `shown` is called while the machine is still the one of the drawn picture (the wide view's
+ * analysis belongs there). Returns 0 when it ran ahead, 1 when it ran a plain frame instead: the render flag is off, there is no memory,
+ * or there is no game (md_host_ahead_possible() = 0). Serial EEPROM and flash chips are carried with the state.
+ * Costs a second frame of emulation and a state save and load per frame. Not for linked play. */
+int md_host_run_frame_ahead(void (*shown)(void *user), void *user);
+int md_host_ahead_possible(void);
+int md_host_ahead_debug_tail(void);                 /* debug: the look-ahead frame and the way back only (the machine must not change) */
+void md_host_ahead_stat(unsigned long out[2]);      /* frames run ahead; times the look-ahead frame wrote battery RAM and it was put back */
+void md_host_reset(void);              /* the console's reset button: the game stays loaded; uses the seed */
+/* Render flag: 0 = the next frames skip drawing (game logic, sound and the state are identical; the video buffer keeps the
+ * last drawn picture). For fast forward and rewind. Default 1.  An undrawn frame still runs the sprite
+ * pass of every line, because the collision and overflow bits of the VDP status come out of it (md/twin/ahead_check.sh). */
+void md_host_set_render(int on);
+
+/* ---- video ----------------------------------------------------------------------------------------------- */
+
+/* Everything a picture pipeline needs about the frame just run. `w` x `h` is the picture in the buffer (what md_host_video
+ * returns); the native fields describe the machine's own picture before the optional processing here: native_w x native_h is
+ * 256x192 / 256x224 / 256x240 (Master System, H32 Mega Drive), 320x224 / 320x240 (H40), 160x144 (Game Gear window). An
+ * interlaced double resolution Mega Drive frame has h = 2 * native_h with the "interlace" option on (md_host_set_option),
+ * and h = native_h with it off. `serial` increases whenever any of the fields changes (a game that switches H32 / H40 or
+ * 224 / 240 lines mid-game), so a pipeline re-reads this only when it differs from the last value. */
+typedef struct md_video_info {
+	int w, h;                  /* picture in the buffer (after the SMS border crop) */
+	int native_w, native_h;    /* the machine's visible area: 256 / 320 / 160 by 144 / 192 / 224 / 240 */
+	int system;                /* MD_SYS_* of the loaded game */
+	int h40;                   /* 1: 320 pixel wide mode */
+	int interlace;             /* 0 none, 1 interlaced (single field output), 2 interlaced, double resolution output (h = 2 * native_h) */
+	int pal;                   /* 1: 50 Hz timings (313 lines) */
+	int left_mask;             /* Master System: pixels at the left edge the game masks with the backdrop colour (8 or 0); still in the picture unless sms_border is on */
+	int crop_left, crop_right; /* pixels removed at the left / right by the sms_border option (already out of w) */
+	int gg_window;             /* 1: the 160x144 Game Gear LCD window (native_w x native_h is that window), 0: the full 256x192 (option gg_extra) */
+	int gg_band;               /* 1: the Game Gear wide view's picture: 256x144, the LCD window in its middle (option gg_band; w = 256, native_w = 256) */
+	double dar;                /* display aspect ratio (width / height) of the picture, from the pixel clock; 0 = square pixels */
+	double par;                /* pixel aspect ratio (a pixel's width / height) behind dar */
+	double fps;                /* 59.9227 / 49.7014 (the console's frame rate) */
+	unsigned serial;
+} md_video_info;
+
+/* The last drawn frame as RGB565 (the only pixel format, MD_PIXEL_RGB565), pitch in bytes; valid until the next
+ * md_host_run_frame. The picture starts at the top left of the buffer. */
+const uint16_t *md_host_video(int *width, int *height, int *pitch_bytes);
+void md_host_video_info(md_video_info *vi);
+int md_host_pixel_format(void);
+/* Draw straight into a buffer the caller owns (a texture, a wide-view canvas): at least MD_MAX_HEIGHT rows of pitch_px
+ * pixels (pitch_px >= MD_MAX_WIDTH). NULL goes back to the internal buffer. Effective from the next frame. */
+void md_host_set_framebuffer(uint16_t *buf, int pitch_px);
+
+/* ---- wide view --------------------------------------------------------------------------------------------- */
+
+/* Mega Drive: the VDP worker (or the core's own renderer) can draw a strip of picture beyond each side of the screen, into the frame buffer next
+ * to the picture: `margin` pixels (0..MD_WIDE_MAX, 0 = off) at columns -margin .. -1 and w .. w + margin - 1 of every drawn line. The machine, the
+ * picture inside the screen, the sound and the saved state are identical with the strips on and off (the strip pass saves and restores the
+ * sprite status; tests: md/twin/selftest.sh). The frame buffer must be a canvas: give md_host_set_framebuffer(canvas + MD_WIDE_MAX,
+ * MD_WIDE_PITCH) (rows of MD_WIDE_PITCH pixels, MD_MAX_HEIGHT of them); with the internal buffer the margin stays 0.
+ * Lines the strip cannot be drawn for (interlace, display off, a window plane that is not empty at the edge, per 2-cell vertical scroll whose
+ * columns at the edge differ) have MDW_STRIP clear in md_wide_frame, or the side's bit clear in md_wide_line.side; the strip pixels of such a
+ * line are not written (stale). Returns the margin in force. */
+#define MD_WIDE_MAX 96
+#define MD_WIDE_PITCH 512            /* MD_WIDE_MAX + 320 + MD_WIDE_MAX */
+int md_host_set_wide_margin(int margin);
+/* Which planes the strips contain (bit 0 plane A, bit 1 plane B; default 3). A plane left out is drawn as nothing in the strips: the strip
+ * pixel is then transparent wherever no sprite and no other plane drew (md_wide_frame.opq says which pixels are opaque). Sprites are always in. */
+void md_host_set_wide_planes(int mask);
+
+/* What the line renderer saw for each line of the frame just run (the Mega Drive in mode 5 and, for the Master System / Game Gear, in mode 4
+ * with xs[0] / ys[0] = the scroll registers as the line used them, col_mask 31, ntab = the name table base). Same layout as the core's
+ * wide_line_t (md/core/vdp_render.h). */
+enum { MDW_ON = 1, MDW_STRIP = 2, MDW_WINDOW = 4, MDW_VSCROLL = 8, MDW_IM2 = 16, MDW_H40 = 32, MDW_M4 = 64, MDW_WFULL = 128 /* the window plane takes the whole line */ };
+/* md_wide_line.side: which strips the line has and what is in them */
+enum { MDS_L = 1, MDS_R = 2,             /* the left / right strip was drawn */
+       MDS_NOA_L = 4, MDS_NOA_R = 8,     /* ... without plane A (the window plane takes that side of the line; plane B and the sprites go on) */
+       MDS_OVR_A = 16, MDS_OVR_B = 32,   /* the strips of this line were drawn from a learned row of plane A / B (md_host_wide_row) */
+       MDS_PAL = 64,                     /* 8 bit consoles: the palette changed inside the picture (md_wide_frame.pal is not this line's) */
+       MDS_VSE = 128 };                  /* per 2-cell vertical scroll: the strips scroll like the column at their edge */
+typedef struct md_wide_line {
+	uint8_t flags, col_mask, shift, side;
+	uint16_t xs[2], ys[2];       /* horizontal scroll, and the vertical scroll of the first column, of plane A and B */
+	uint16_t ntab, ntbb, ntwb, row_mask;
+	uint16_t ysr[2];             /* the vertical scroll of the last column (differs from ys only with per 2-cell scrolling) */
+	uint16_t pad2[2];
+} md_wide_line;
+typedef struct md_wide_frame {
+	int h;                       /* lines in the picture */
+	int margin;                  /* the strip width in force (Mega Drive) */
+	const md_wide_line *line;    /* h entries */
+	const uint32_t *opq;         /* [256][2][3]: per line and side (0 left, 1 right) 96 bits, bit d = the strip pixel d pixels from the screen's edge is opaque */
+	const uint8_t *vram;         /* 64 KB as the frame ended (the renderer's copy) */
+	const uint8_t *vsram;        /* 128 bytes */
+	const uint8_t *cram;         /* 128 bytes */
+	const uint16_t *pal;         /* 8 bit consoles: the 32 colours (RGB565) line 0 of the frame was drawn with */
+	const uint16_t *dirty;       /* the 32 byte VRAM blocks (address / 32) written since the previous md_host_wide_run ... */
+	int ndirty;
+	int dirty_all;               /* ... or 1: anything may have changed (a load, a state, the first call) */
+	int reg[24];                 /* the VDP registers 0..23 */
+	int sms1;                    /* the first Master System VDP (registers 3 and 4 mask the tile index) */
+} md_wide_frame;
+/* The wide view's analysis of the frame just run. Call after md_host_run_frame() on the emulating thread: fn(user, &frame) runs on the VDP
+ * worker thread when that runs (md_host_set_threads; the call returns at once and the emulating thread goes on: nothing of the next frame
+ * is drawn before fn has returned, and the next md_host_run_frame's end, md_host_wide_run and md_host_wide_join wait for it), else here and
+ * now. Everything `frame` points to is valid inside fn only. What fn sees does not depend on which thread runs it. */
+typedef void (*md_wide_fn)(void *user, const md_wide_frame *f);
+void md_host_wide_run(md_wide_fn fn, void *user);
+void md_host_wide_join(void);
+/* Inside fn only. Learned rows: `words` (n cells, as md_wide_frame.vram holds them) is what the strips of the next frames show for row `row`
+ * (0..) of plane A (0) / B (1), whose VRAM row is at `addr`, for as long as the game leaves that VRAM row as it is now. A line drawn from one
+ * says so in md_wide_line.side. md_host_wide_rows_clear() forgets every row given. */
+void md_host_wide_rows_clear(void);
+void md_host_wide_row(int plane, int row, unsigned addr, const uint16_t *words, int n);
+/* The worker renderer keeps each line's strips and copies them while nothing they are drawn from has changed (on with the worker). check = 1:
+ * draw anyway and count copies that differ from the fresh draw (tests). stat: strips copied, drawn, copies that differed. */
+void md_host_wide_cache(int on, int check);
+void md_host_wide_cache_stat(unsigned long out[3]);
+
+/* ---- audio ----------------------------------------------------------------------------------------------- */
+
+/* The core synthesises (FM, PSG) at its native rates and resamples with a band limited buffer straight to the rate asked
+ * for: no second resampler. Default 48000. Call before the first frame (changing it re-initialises the sound and drops
+ * queued audio). Returns 0, else 1. About 800 frames per NTSC frame at 48000 Hz (960 at 50 Hz). */
+int md_host_set_audio_rate(unsigned hz);
+unsigned md_host_audio_rate(void);
+/* Pull up to max_frames stereo frames (L,R int16 pairs) made by the frames run so far. Returns the number written. */
+int md_host_audio_take(int16_t *dst, int max_frames);
+void md_host_set_audio_enabled(int on);    /* 0: silence (the frames still run) */
+
+/* ---- battery RAM (the caller saves it) ------------------------------------------------------------------- */
+
+/* The .srm of RetroArch's Genesis Plus GX core: the raw save RAM bytes (up to 64 KB), as the core holds them (cartridge RAM
+ * on the odd bytes for most Mega Drive games), cut after the last byte that is not 0xFF; 0 = nothing was written yet. EEPROM
+ * and flash cartridges use the same buffer. Master System / Game Gear: the cartridge RAM (up to 32 KB). */
+size_t md_host_sram_size(void);            /* what a save would write now (0 = nothing / no battery) */
+size_t md_host_sram_capacity(void);        /* 0x10000 when the cartridge has save RAM, else 0 */
+/* a number that changes whenever the save RAM may have changed (a disc: every write to its backup RAM or cartridge; 0 for a cartridge, whose RAM
+ * has to be compared): lets a player skip reading and hashing up to 520 KB. */
+unsigned md_host_sram_generation(void);
+size_t md_host_sram_read(uint8_t *out, size_t cap);    /* copies md_host_sram_size() bytes; returns the number */
+/* Copies a saved image in (min(n, capacity) bytes; call right after load) and counts it as saved. Returns the bytes used. */
+size_t md_host_sram_write(const uint8_t *data, size_t n);
+int md_host_sram_dirty(void);              /* 1 when the RAM differs from the last load / mark_saved (a CRC compare, ~0.1 ms) */
+void md_host_sram_mark_saved(void);
+void md_host_sram_mark_unsaved(void);
+
+/* ---- save states ----------------------------------------------------------------------------------------- */
+
+/* A container: 16 byte header ("MDST", version, system, payload length), the core's state zero padded to a constant size,
+ * and a CRC-32 trailer over everything before it. md_host_state_size() is the number of bytes every save returns for the loaded
+ * game (the Mega Drive state is about 145 KB), so a rewind ring can use equal slots. 0 when no game is loaded.
+ * A state is loaded only when its length is state_size, its header matches and its CRC is right. Video, game state, RAM
+ * and the sound chips' registers are restored exactly (the next frames' picture is identical); the resampler and
+ * filter memory of the audio output are not (a few samples after a load differ by less than one LSB of a sample
+ * click: both consoles load the same state, so lockstep holds; PROVENANCE.md has the details). */
+size_t md_host_state_size(void);
+size_t md_host_state_save_mem(uint8_t *buf, size_t cap);    /* needs cap >= state_size; returns the size, 0 on failure */
+unsigned long md_host_carry_refused(void);          /* state loads (since power on) whose extra block was refused as not a machine's own: 0 on every state the machine wrote itself */
+size_t md_host_state_save_quick(uint8_t *buf, size_t cap);  /* as save_mem without the CRC (rewind keeps its states in memory only) */
+int md_host_state_load_quick(const uint8_t *buf, size_t n);  /* as load_mem without the CRC: only for what save_quick wrote */
+int md_host_state_load_mem(const uint8_t *buf, size_t n);   /* 0 ok, 1 no game, 3 refused (length, header or CRC; machine untouched) */
+
+/* ---- memory for achievements and tools ------------------------------------------------------------------- */
+
+/* RetroAchievements (rc_consoles.h: MEGA_DRIVE, MASTER_SYSTEM, GAME_GEAR, SG1000): the address space rcheevos expects.
+ *   Mega Drive:   $000000-$00FFFF system RAM = the 68000's $FF0000-$FFFFFF AS THE CORE HOLDS IT (words in the host's byte
+ *                 order: on the Vita the byte at RA address X is the 68000's byte at X ^ 1). That is the layout the site's
+ *                 achievements are written against: its reference emulator is this core under libretro, which hands out
+ *                 work_ram as it is, and rcheevos does no swap. $010000-$01FFFF cartridge RAM (the save RAM buffer as held)
+ *   Master System / Game Gear: $0000-$1FFF system RAM (Z80 $C000-$DFFF), $2000-$9FFF cartridge RAM (the save RAM buffer)
+ *   Sega CD:      $000000-$00FFFF 68000 work RAM (same byte order as Mega Drive), $010000-$08FFFF PRG-RAM (512 KB),
+ *                 $090000-$0AFFFF word RAM (2M mode: the first 128 KB), the sub-CPU side being the one the site's lists use
+ *   SG-1000:      $0000-$03FF RAM ($C000), $0400-$1FFF extended RAM ($C400), $2000-$3FFF ($2000), $4000-$5FFF ($8000):
+ *                 only what the cartridge really has is readable
+ * Copies n bytes from addr into out; returns the number of bytes that were inside a window (a request is cut at the end of
+ * its window; 0 = unmapped). Reads have no side effects. */
+int md_host_ra_read(unsigned addr, uint8_t *out, unsigned n);
+int md_host_ra_console(void);   /* the rc_consoles.h id of the loaded game: 1 MEGA_DRIVE, 11 MASTER_SYSTEM, 15 GAME_GEAR, 33 SG1000; 0 = none */
+uint8_t md_host_peek(unsigned addr);   /* one byte of the CPU's own address space without side effects (68000 or Z80), ROM and RAM only */
+
+/* ---- cheats ---------------------------------------------------------------------------------------------- */
+
+/* The cheat database (gpsp/vita/tests/cheats/SEGA-CODES.md) stores decoded parts; these are applied as that file says:
+ *   Mega Drive "AAAAAA:VVVV" (hex): address $FF0000-$FFFFFF = work RAM, written every frame: a byte store at exactly that
+ *     address when the value's high byte is 0, otherwise a word store at address & ~1; address below $400000 = a ROM word patch
+ *     (the word at address & ~1 becomes the value, undone by md_host_cheat_reset); anything else is refused.
+ *   Master System / Game Gear / SG-1000 "AAAA:VV[:CC]": $C000-$FFFF = RAM at address & $1FFF, written every frame; below $C000 = a
+ *     ROM patch of the byte the Z80 sees there now, applied again after every bank switch, and with :CC only while that byte is CC
+ *     (a compare of 00 is no compare, as in GPGX).
+ * At most 150 patches (GPGX's MAX_CHEATS). Game Genie / Action Replay text is decoded by the database tool, never here. */
+/* One patch; compare -1 = none. Returns 0 when added, 1 refused (no game, bad address or value, table full). */
+int md_host_cheat_add_patch(unsigned address, unsigned value, int compare);
+/* Parts as text joined by + , ; or white space, e.g. "FFE4A2:0020+FFC843:0000" or "C123:05:FF". Returns how many were accepted. */
+int md_host_cheat_add(const char *codes);
+void md_host_cheat_reset(void);            /* undoes the ROM patches and forgets all */
+int md_host_cheat_count(void);
+
+/* ---- console state and options --------------------------------------------------------------------------- */
+
+int md_host_system(void);                  /* MD_SYS_MD / SMS / GG / SG of the loaded game, 0 none */
+const char *md_host_system_hw(void);       /* the exact hardware the core chose, e.g. "Master System II" */
+/* Region: the header's (Mega Drive: 0x1F0; Master System / Game Gear: the "TMR SEGA" region nibble) unless forced. PAL regions
+ * run the true 50 Hz timings (313 lines, 49.70 Hz), NTSC 59.92 Hz. A change takes effect at once for timings and the I/O
+ * region bits, and is part of the emulation settings two consoles must agree on. */
+int md_host_set_region(int region);        /* MD_REGION_*; returns 0 */
+int md_host_region(void);                  /* MD_REGION_USA / EUROPE / JAPAN_NTSC / JAPAN_PAL in force */
+int md_host_region_detected(void);         /* what the header said */
+int md_host_is_pal(void);
+double md_host_fps(void);
+const char *md_host_rom_title(void);       /* the international name from the header, "" for 8 bit ROMs */
+const char *md_host_rom_info(void);        /* one line: system, size, product, checksum, region, save RAM, mapper */
+uint32_t md_host_rom_crc(void);            /* CRC-32 of the ROM as dumped without copier header, de-interleaved (the No-Intro CRC) */
+
+/* Core options by name; returns 0 when the name is known (a value out of range is clamped):
+ *   fm 0..4            0 YM2612 discrete (default), 1 ASIC YM3438, 2 enhanced, 3 Nuked YM2612, 4 Nuked YM3438 (the Nuked ones are
+ *                      several times slower and are never a default)
+ *   fm_hq 0/1          high quality FM resampling (default 1)    psg_hq 0/1 (default 1)
+ *   ym2413 0..2        Master System FM unit: 0 off, 1 on, 2 automatic (default; on for games that use it)
+ *   opll_nuked 0/1     Nuked OPLL for the FM unit (default 0)
+ *   fm_preamp 0..400   (default 100)    psg_preamp 0..400 (default 150)
+ *   lowpass 0..100     0 = off (default); otherwise the low pass range in percent (60 is GPGX's own)
+ *   mono 0/1
+ *   interlace 0/1      Mega Drive interlace mode 2: 1 = draw both fields into a double height picture (default), 0 = one field
+ *   sprite_limit 0/1   1 = the hardware's sprite limits (default), 0 = draw all sprites of a line (no flicker; the overflow
+ *                      flag the game reads is unchanged)
+ *   sms_border 0..2    Master System: 0 = full 256 pixel picture (default), 1 = hide the 8 pixel masked column at the left (the
+ *                      game masks it when it scrolls), 2 = hide 8 pixels at both sides
+ *   gg_extra 0/1       Game Gear: 1 = the full 256x192 picture instead of the 160x144 window (next load)
+ *   gg_band 0/1        Game Gear wide view: 1 = the picture is the 256 columns of the VDP's rows that the LCD shows (256x144, the LCD window in the
+ *                      middle columns 48..207); the machine runs exactly as without it (unlike gg_extra, which also changes what the core
+ *                      does with sprites outside the window); effective at once
+ *   overscan 0..3      bit 0 = top / bottom borders, bit 1 = side borders (next load; default 0)
+ *   force_dtack 0/1, addr_error 0/1 (default 1)
+ *   lcd 0..100         Game Gear LCD ghosting in percent (default 0)
+ *   vdp_mode 0..2      0 = follow the region, 1 = force 60 Hz, 2 = force 50 Hz
+ * Options that change what a game can see (region, vdp_mode, pad type, ym2413, force_dtack, addr_error, sprite_limit) belong in the
+ * compat word of a two player session; the sound and picture options do not change the machine. */
+int md_host_set_option(const char *name, int value);
+int md_host_get_option(const char *name, int *value);
+
+/* ---- messages -------------------------------------------------------------------------------------------- */
+
+/* Optional sink for the core's text output; NULL for none. */
+void md_host_set_log(void (*fn)(const char *line));
+
+#ifdef __cplusplus
+}
+#endif
+#endif

@@ -1,6 +1,7 @@
 /* artfetch.c -- see artfetch.h. */
 #include "artfetch.h"
 
+#include <ctype.h>
 #include <stdint.h>
 #include <dirent.h>
 #include <errno.h>
@@ -12,14 +13,19 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#if !defined(__vita__)
+#include <netinet/tcp.h>
+#endif
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
 
+#include "artalt.h"
 #include "gamedb.h"
 #include "plat.h"
 #include "stb_image.h"
+#include "sz_rom.h"
 
 #define AF_NAME_CAP   256
 #define AF_PATH_CAP   600
@@ -57,6 +63,7 @@ static af_list *g_new;                /* atomic: the newest list, handed over */
 static af_focus *g_focus;
 static unsigned g_list_generation;
 static int g_paused, g_quit, g_running;
+static int g_nav_busy;                /* atomic: menu nav/local load active  */
 static int g_titles = 1;              /* title screens too (artfetch_titles) */
 static int g_retry;                   /* atomic: artfetch_retry asked        */
 static int g_rescan;                  /* atomic: artfetch_rescan asked       */
@@ -130,18 +137,27 @@ void artfetch_pause(int on)
    A_STORE(g_paused, on ? 1 : 0);
 }
 
+void artfetch_nav_busy(int busy)
+{
+   A_STORE(g_nav_busy, busy ? 1 : 0);
+}
+
 void artfetch_titles(int on)
 {
    A_STORE(g_titles, on ? 1 : 0);
 }
 
+void menu_files_art_changed(void);
+
 void artfetch_retry(void)
 {
+   menu_files_art_changed();
    A_STORE(g_retry, 1);
 }
 
 void artfetch_rescan(void)
 {
+   menu_files_art_changed();
    A_STORE(g_rescan, 1);
 }
 
@@ -219,19 +235,35 @@ void artfetch_focus(unsigned generation, const char *path, const char *name)
 
 /* ---- the thread's own --------------------------------------------------- */
 
-/* <kind dir>/.missing.txt, in memory */
-static char **g_missing[AK_KINDS];
-static int g_nmissing[AK_KINDS], g_capmissing[AK_KINDS];
-static int g_missing_current[AK_KINDS];
 /* v3: 1.3 names games by checksum and loose title on every console, so the
  * misses of older versions are looked for again */
 #define MISSING_HEADER "# VitAdhoc artwork misses v3\n"
+#define AF_MISS_BATCH  16
 static unsigned char *g_body;
 
 static int stop_now(void)
 {
    return A_LOAD(g_quit) || A_LOAD(g_paused) || A_LOAD(g_new) ||
           A_LOAD(g_retry) || A_LOAD(g_rescan) || A_LOAD(g_focus);
+}
+
+static uint64_t worker_now(void)
+{
+   struct timeval tv;
+   gettimeofday(&tv, NULL);
+   return (uint64_t)tv.tv_sec * 1000000u + (unsigned)tv.tv_usec;
+}
+
+static void nav_yield(void)
+{
+   while (A_LOAD(g_nav_busy) && !stop_now())
+      plat_thread_sleep_us(15000);
+}
+
+static int cart_crc_stop(void)
+{
+   nav_yield();
+   return stop_now();
 }
 
 /* A pause that ends early when the thread is told to stop. */
@@ -250,92 +282,6 @@ static void nap_us(uint32_t us)
    }
 }
 
-static void missing_add(int k, const char *stem, int write)
-{
-   if (g_nmissing[k] == g_capmissing[k])
-   {
-      int cap = g_capmissing[k] ? g_capmissing[k] * 2 : 64;
-      char **m = (char **)realloc(g_missing[k], (size_t)cap * sizeof(char *));
-      if (!m)
-         return;
-      g_missing[k] = m;
-      g_capmissing[k] = cap;
-   }
-   g_missing[k][g_nmissing[k]] = strdup(stem);
-   if (!g_missing[k][g_nmissing[k]])
-      return;
-   g_nmissing[k]++;
-   if (write)
-   {
-      char path[AF_PATH_CAP + 32];
-      FILE *f;
-      snprintf(path, sizeof(path), "%s/%s/.missing.txt", g_root,
-               KIND_DIR[k]);
-      f = fopen(path, g_missing_current[k] ? "a" : "w");
-      if (f)
-      {
-         if (!g_missing_current[k])
-            fputs(MISSING_HEADER, f);
-         fprintf(f, "%s\n", stem);
-         fclose(f);
-         g_missing_current[k] = 1;
-      }
-   }
-}
-
-static int missing_has(int k, const char *stem)
-{
-   int i;
-   for (i = 0; i < g_nmissing[k]; i++)
-      if (!strcmp(g_missing[k][i], stem))
-         return 1;
-   return 0;
-}
-
-static void missing_clear(int k, int unlink_file)
-{
-   int i;
-   for (i = 0; i < g_nmissing[k]; i++)
-      free(g_missing[k][i]);
-   free(g_missing[k]);
-   g_missing[k] = NULL;
-   g_nmissing[k] = g_capmissing[k] = 0;
-   g_missing_current[k] = 0;
-   if (unlink_file)
-   {
-      char path[AF_PATH_CAP + 32];
-      snprintf(path, sizeof(path), "%s/%s/.missing.txt", g_root,
-               KIND_DIR[k]);
-      remove(path);
-   }
-}
-
-static void missing_load(int k)
-{
-   char path[AF_PATH_CAP + 32], line[AF_NAME_CAP + 8];
-   FILE *f;
-   snprintf(path, sizeof(path), "%s/%s/.missing.txt", g_root, KIND_DIR[k]);
-   f = fopen(path, "r");
-   if (!f)
-      return;
-   /* Older files can contain false misses from case-sensitive routing. */
-   if (!fgets(line, sizeof(line), f) || strcmp(line, MISSING_HEADER))
-   {
-      fclose(f);
-      return;
-   }
-   g_missing_current[k] = 1;
-   while (fgets(line, sizeof(line), f))
-   {
-      size_t n = strlen(line);
-      while (n && (line[n - 1] == '\n' || line[n - 1] == '\r'))
-         line[--n] = '\0';
-      if (n)
-         missing_add(k, line, 0);
-   }
-   fclose(f);
-}
-
 /* The file name without its extension. */
 static void stem_of(const char *name, char *out, size_t cap)
 {
@@ -348,9 +294,11 @@ static void stem_of(const char *name, char *out, size_t cap)
 }
 
 typedef struct { char **keys; size_t cap, count; } af_set;
-enum { INV_THUMB = AK_KINDS, INV_COUNT };
+enum { INV_THUMB = AK_KINDS, INV_OWN, INV_BOX_PNG, INV_BOX_JPG, INV_COUNT };
 static af_set g_inventory[INV_COUNT];
 static int g_inventory_valid;
+static int g_dir_made[AK_KINDS];
+static int g_thumb_dir_made;
 
 static unsigned stem_hash(const char *s)
 {
@@ -426,22 +374,156 @@ static void set_free(af_set *set)
    memset(set, 0, sizeof(*set));
 }
 
+/* <kind dir>/.missing.txt, in memory as an O(1) hash set, with batched
+ * disk flushes so Vita FAT32 is not rewritten on every single miss. */
+static af_set g_missing[AK_KINDS];
+static int    g_missing_current[AK_KINDS];
+static char **g_miss_pend[AK_KINDS];
+static int    g_miss_npend[AK_KINDS], g_miss_cappend[AK_KINDS];
+
+static void missing_pend_clear(int k)
+{
+   int i;
+   for (i = 0; i < g_miss_npend[k]; i++)
+      free(g_miss_pend[k][i]);
+   free(g_miss_pend[k]);
+   g_miss_pend[k] = NULL;
+   g_miss_npend[k] = g_miss_cappend[k] = 0;
+}
+
+static void missing_flush(int k)
+{
+   char path[AF_PATH_CAP + 32];
+   FILE *f;
+   int i;
+   if (!g_miss_npend[k])
+      return;
+   if (!g_dir_made[k])
+   {
+      snprintf(path, sizeof(path), "%s/%s", g_root, KIND_DIR[k]);
+      mkdir(path, 0777);
+      g_dir_made[k] = 1;
+   }
+   snprintf(path, sizeof(path), "%s/%s/.missing.txt", g_root, KIND_DIR[k]);
+   f = fopen(path, g_missing_current[k] ? "a" : "w");
+   if (f)
+   {
+      if (!g_missing_current[k])
+         fputs(MISSING_HEADER, f);
+      for (i = 0; i < g_miss_npend[k]; i++)
+         fprintf(f, "%s\n", g_miss_pend[k][i]);
+      fclose(f);
+      g_missing_current[k] = 1;
+   }
+   missing_pend_clear(k);
+}
+
+static void missing_flush_all(void)
+{
+   int k;
+   for (k = 0; k < AK_KINDS; k++)
+      missing_flush(k);
+}
+
+static void missing_add(int k, const char *stem, int write)
+{
+   if (set_has(&g_missing[k], stem))
+      return;
+   if (set_add(&g_missing[k], stem) != 0)
+      return;
+   if (write)
+   {
+      if (g_miss_npend[k] == g_miss_cappend[k])
+      {
+         int cap = g_miss_cappend[k] ? g_miss_cappend[k] * 2 : AF_MISS_BATCH;
+         char **m = (char **)realloc(g_miss_pend[k], (size_t)cap * sizeof(char *));
+         if (!m)
+         {
+            missing_flush(k);
+            return;
+         }
+         g_miss_pend[k] = m;
+         g_miss_cappend[k] = cap;
+      }
+      g_miss_pend[k][g_miss_npend[k]] = strdup(stem);
+      if (g_miss_pend[k][g_miss_npend[k]])
+         g_miss_npend[k]++;
+      if (g_miss_npend[k] >= AF_MISS_BATCH)
+         missing_flush(k);
+   }
+}
+
+static int missing_has(int k, const char *stem)
+{
+   return set_has(&g_missing[k], stem);
+}
+
+static void missing_clear(int k, int unlink_file)
+{
+   missing_pend_clear(k);
+   set_free(&g_missing[k]);
+   g_missing_current[k] = 0;
+   if (unlink_file)
+   {
+      char path[AF_PATH_CAP + 32];
+      snprintf(path, sizeof(path), "%s/%s/.missing.txt", g_root,
+               KIND_DIR[k]);
+      remove(path);
+   }
+}
+
+static void missing_load(int k)
+{
+   char path[AF_PATH_CAP + 32], line[AF_NAME_CAP + 8];
+   FILE *f;
+   snprintf(path, sizeof(path), "%s/%s/.missing.txt", g_root, KIND_DIR[k]);
+   f = fopen(path, "r");
+   if (!f)
+      return;
+   /* Older files can contain false misses from case-sensitive routing. */
+   if (!fgets(line, sizeof(line), f) || strcmp(line, MISSING_HEADER))
+   {
+      fclose(f);
+      return;
+   }
+   g_missing_current[k] = 1;
+   while (fgets(line, sizeof(line), f))
+   {
+      size_t n = strlen(line);
+      while (n && (line[n - 1] == '\n' || line[n - 1] == '\r'))
+         line[--n] = '\0';
+      if (n)
+         missing_add(k, line, 0);
+   }
+   fclose(f);
+}
+
 static void inventory_clear(void)
 {
    unsigned k;
    for (k = 0; k < INV_COUNT; k++)
-   {
-      size_t i;
-      for (i = 0; i < g_inventory[k].cap; i++)
-         free(g_inventory[k].keys[i]);
-      free(g_inventory[k].keys);
-      memset(&g_inventory[k], 0, sizeof(g_inventory[k]));
-   }
+      set_free(&g_inventory[k]);
    g_inventory_valid = 0;
 }
 
+/* menu_files.c's picture-name index notification hooks; do-nothing defaults
+ * where artfetch is built alone (its unit tests). */
+__attribute__((weak)) void menu_files_art_changed(void) { }
+__attribute__((weak)) void menu_files_art_added(const char *path) { (void)path; }
+
 static void inventory_add(int kind, const char *stem)
 {
+   menu_files_art_changed();
+   if (set_add(&g_inventory[kind], stem) != 0)
+      g_inventory_valid = 0;
+}
+
+static void inventory_add_path(int kind, const char *stem, const char *path)
+{
+   if (path && path[0])
+      menu_files_art_added(path);
+   else
+      menu_files_art_changed();
    if (set_add(&g_inventory[kind], stem) != 0)
       g_inventory_valid = 0;
 }
@@ -451,21 +533,26 @@ static void inventory_add(int kind, const char *stem)
 static void thumb_dir_make(void)
 {
    char p[AF_PATH_CAP + 32];
+   if (g_thumb_dir_made)
+      return;
    snprintf(p, sizeof(p), "%s/cache", g_root);
    mkdir(p, 0777);
    snprintf(p, sizeof(p), "%s/" ART_THUMB_DIR, g_root);
    mkdir(p, 0777);
+   g_thumb_dir_made = 1;
 }
 
 static void inventory_load(void)
 {
    int kind, ok = 1;
    inventory_clear();
+   g_thumb_dir_made = 0;
    for (kind = 0; kind < AK_KINDS; kind++)
    {
       char path[AF_PATH_CAP + 32];
       DIR *dir;
       struct dirent *entry;
+      unsigned nseen = 0;
       snprintf(path, sizeof(path), "%s/%s", g_root, KIND_DIR[kind]);
       dir = opendir(path);
       if (!dir)
@@ -473,12 +560,15 @@ static void inventory_load(void)
          if (errno != ENOENT) ok = 0;
          continue;
       }
+      g_dir_made[kind] = 1;
       while (!A_LOAD(g_quit) && !A_LOAD(g_new))
       {
          const char *name, *ext;
          size_t len, stem_len;
          char stem[AF_NAME_CAP];
          int target = kind;
+         if ((++nseen & 63u) == 0 && A_LOAD(g_nav_busy))
+            nav_yield();
          errno = 0;
          entry = readdir(dir);
          if (!entry)
@@ -503,19 +593,36 @@ static void inventory_load(void)
                remove(from);           /* the new one is the copy that counts */
             continue;
          }
-         else
+         if (kind == AK_BOX && ext && !strcasecmp(ext, ".own"))
          {
-            if (!ext || (strcasecmp(ext, ".png") && strcasecmp(ext, ".jpg") &&
+            stem_len = (size_t)(ext - name);
+            if (stem_len && stem_len < sizeof(stem))
+            {
+               memcpy(stem, name, stem_len);
+               stem[stem_len] = '\0';
+               if (set_add(&g_inventory[INV_OWN], stem) != 0) ok = 0;
+            }
+            continue;
+         }
+         {
+            int is_png = ext && !strcasecmp(ext, ".png");
+            int is_jpg = ext && !strcasecmp(ext, ".jpg");
+            if (!ext || (!is_png && !is_jpg &&
                          strcasecmp(ext, ".jpeg") && strcasecmp(ext, ".bmp") &&
                          strcasecmp(ext, ".v565") && strcasecmp(ext, ".565")))
                continue;
             stem_len = (size_t)(ext - name);
+            if (!stem_len || stem_len >= sizeof(stem))
+               continue;
+            memcpy(stem, name, stem_len);
+            stem[stem_len] = '\0';
+            if (set_add(&g_inventory[target], stem) != 0) ok = 0;
+            if (kind == AK_BOX)
+            {
+               if (is_png && set_add(&g_inventory[INV_BOX_PNG], stem) != 0) ok = 0;
+               if (is_jpg && set_add(&g_inventory[INV_BOX_JPG], stem) != 0) ok = 0;
+            }
          }
-         if (!stem_len || stem_len >= sizeof(stem))
-            continue;
-         memcpy(stem, name, stem_len);
-         stem[stem_len] = '\0';
-         if (set_add(&g_inventory[target], stem) != 0) ok = 0;
       }
       if (A_LOAD(g_quit) || A_LOAD(g_new)) ok = 0;
       closedir(dir);
@@ -525,6 +632,7 @@ static void inventory_load(void)
       char path[AF_PATH_CAP + 32];
       DIR *dir;
       struct dirent *entry;
+      unsigned nseen = 0;
       snprintf(path, sizeof(path), "%s/" ART_THUMB_DIR, g_root);
       dir = opendir(path);
       if (!dir)
@@ -533,11 +641,14 @@ static void inventory_load(void)
       }
       else
       {
+         g_thumb_dir_made = 1;
          while (!A_LOAD(g_quit) && !A_LOAD(g_new))
          {
             const char *name;
             size_t len, sl = strlen(ART_THUMB_SUFFIX), stem_len;
             char stem[AF_NAME_CAP];
+            if ((++nseen & 63u) == 0 && A_LOAD(g_nav_busy))
+               nav_yield();
             errno = 0;
             entry = readdir(dir);
             if (!entry)
@@ -547,6 +658,17 @@ static void inventory_load(void)
             }
             name = entry->d_name;
             len = strlen(name);
+            if (len > 4 && !strcasecmp(name + len - 4, ".own"))
+            {
+               stem_len = len - 4;
+               if (stem_len && stem_len < sizeof(stem))
+               {
+                  memcpy(stem, name, stem_len);
+                  stem[stem_len] = '\0';
+                  if (set_add(&g_inventory[INV_OWN], stem) != 0) ok = 0;
+               }
+               continue;
+            }
             if (len <= sl || strcasecmp(name + len - sl, ART_THUMB_SUFFIX))
                continue;
             stem_len = len - sl;
@@ -569,18 +691,14 @@ static int have_art_disk(int k, const char *stem)
    static const char *const ext[] = { "png", "jpg", "jpeg", "bmp", "v565",
                                       "565" };
    char path[AF_PATH_CAP + AF_NAME_CAP + 32];
+   struct stat st;
    unsigned i;
    for (i = 0; i < sizeof(ext) / sizeof(ext[0]); i++)
    {
-      FILE *f;
       snprintf(path, sizeof(path), "%s/%s/%s.%s", g_root, KIND_DIR[k], stem,
                ext[i]);
-      f = fopen(path, "rb");
-      if (f)
-      {
-         fclose(f);
+      if (stat(path, &st) == 0)
          return 1;
-      }
    }
    return 0;
 }
@@ -616,7 +734,7 @@ static void url_name(const char *s, char *out, size_t cap)
    out[n] = '\0';
 }
 
-enum { GET_OK = 0, GET_MISSING = 1, GET_FAILED = -1 };
+enum { GET_OK = 0, GET_MISSING = 1, GET_FAILED = -1, GET_REDIRECT = 2 };
 
 /* The server's address, looked up once: a pass over a library asks it for
  * thousands of pictures, and each lookup was a DNS query on the console.
@@ -626,142 +744,646 @@ static struct sockaddr_storage g_addr;
 static socklen_t g_addr_len;
 static char g_addr_key[300];
 
-/* GET http://g_host:g_port/<path>.  GET_OK with the body in g_body
- * (*len bytes), GET_MISSING for 404/410, GET_FAILED otherwise (no network,
- * a timeout, anything else). */
-static int http_get(const char *path, size_t *len)
+static void extract_location(const char *hdr, char *loc, size_t cap)
 {
-   char req[1400], port[8], *hdr_end;
-   struct addrinfo hints, *ai = NULL;
-   struct timeval tv;
-   size_t got = 0, body_at = 0, want = (size_t)-1;
-   int s = -1, status = 0, chunked = 0, rc = GET_FAILED;
+   const char *p = hdr;
+   loc[0] = '\0';
+   while (p && *p)
+   {
+      const char *eol = strstr(p, "\r\n");
+      if (!strncasecmp(p, "location:", 9))
+      {
+         const char *v = p + 9;
+         size_t n;
+         while (*v == ' ' || *v == '\t')
+            v++;
+         n = eol ? (size_t)(eol - v) : strlen(v);
+         while (n > 0 && (v[n - 1] == ' ' || v[n - 1] == '\t'))
+            n--;
+         if (n >= cap)
+            n = cap - 1;
+         memcpy(loc, v, n);
+         loc[n] = '\0';
+         return;
+      }
+      if (!eol)
+         break;
+      p = eol + 2;
+   }
+}
 
-   char key[sizeof(g_addr_key)];
-   snprintf(port, sizeof(port), "%d", g_port);
-   snprintf(key, sizeof(key), "%s:%s", g_host, port);
-   if (!g_addr_len || strcmp(key, g_addr_key))
+static int apply_redirect(const char *loc, char *host, size_t hcap, int *port,
+                          char *path, size_t pcap)
+{
+   char next_path[1400];
+   if (!loc || !loc[0])
+      return -1;
+   if (!strncasecmp(loc, "https://", 8))
+      return -1;
+   if (!strncasecmp(loc, "http://", 7))
+   {
+      const char *hp = loc + 7;
+      const char *slash = strchr(hp, '/');
+      const char *colon = NULL, *p;
+      size_t hlen;
+      int next_port = 80;
+      const char *hend = slash ? slash : hp + strlen(hp);
+      for (p = hp; p < hend; p++)
+         if (*p == ':')
+            colon = p;
+      hlen = (size_t)((colon ? colon : hend) - hp);
+      if (hlen == 0 || hlen >= hcap)
+         return -1;
+      if (colon)
+      {
+         char *ep = NULL;
+         long pv = strtol(colon + 1, &ep, 10);
+         if (ep != hend || pv <= 0 || pv > 65535)
+            return -1;
+         next_port = (int)pv;
+      }
+      memcpy(host, hp, hlen);
+      host[hlen] = '\0';
+      *port = next_port;
+      snprintf(next_path, sizeof(next_path), "%s", slash ? slash : "/");
+   }
+   else if (loc[0] == '/')
+      snprintf(next_path, sizeof(next_path), "%s", loc);
+   else
+   {
+      const char *slash = strrchr(path, '/');
+      size_t prefix = slash ? (size_t)(slash - path + 1) : 0;
+      size_t llen = strlen(loc);
+      if (prefix)
+      {
+         if (prefix + llen >= sizeof(next_path))
+            return -1;
+         memcpy(next_path, path, prefix);
+         memcpy(next_path + prefix, loc, llen + 1);
+      }
+      else
+      {
+         if (1 + llen >= sizeof(next_path))
+            return -1;
+         next_path[0] = '/';
+         memcpy(next_path + 1, loc, llen + 1);
+      }
+   }
+   if (strlen(next_path) >= pcap)
+      return -1;
+   snprintf(path, pcap, "%s", next_path);
+   return 0;
+}
+
+/* Persistent HTTP/1.1 Keep-Alive socket (worker thread only). */
+static int  g_http_sock = -1;
+static char g_http_host[sizeof(g_host)];
+static int  g_http_port;
+
+#define AF_DRAIN_CAP   65536u
+#define AF_RECV_MAX_US 15000000u
+
+#ifdef MSG_NOSIGNAL
+#define AF_SEND_FLAGS MSG_NOSIGNAL
+#else
+#define AF_SEND_FLAGS 0
+#endif
+
+static void http_close(void)
+{
+   if (g_http_sock >= 0)
+   {
+      close(g_http_sock);
+      g_http_sock = -1;
+   }
+   g_http_host[0] = '\0';
+   g_http_port = 0;
+}
+
+/* Check whether lowercased header block `hdr` contains a header `name`
+ * (e.g. "connection:") with comma/whitespace-delimited token `tok`. */
+static int has_hdr_token(const char *hdr, const char *name, const char *tok)
+{
+   size_t nlen = strlen(name), tlen = strlen(tok);
+   const char *p = strstr(hdr, "\r\n");
+   while (p)
+   {
+      const char *line = p + 2;
+      const char *eol = strstr(line, "\r\n");
+      const char *end = eol ? eol : line + strlen(line);
+      if ((size_t)(end - line) >= nlen && !memcmp(line, name, nlen))
+      {
+         const char *q = line + nlen;
+         while (q < end)
+         {
+            const char *s;
+            while (q < end && (*q == ' ' || *q == '\t' || *q == ','))
+               q++;
+            s = q;
+            while (q < end && *q != ' ' && *q != '\t' && *q != ',' && *q != ';')
+               q++;
+            if ((size_t)(q - s) == tlen && !memcmp(s, tok, tlen))
+               return 1;
+            if (q < end && *q == ';')
+               while (q < end && *q != ',')
+                  q++;
+         }
+      }
+      p = eol;
+   }
+   return 0;
+}
+
+/* Find "\r\n" inside buf[pos..n). Returns offset of '\r', or (size_t)-1. */
+static size_t find_crlf(const unsigned char *buf, size_t pos, size_t n)
+{
+   while (pos + 1 < n)
+   {
+      const unsigned char *cr = (const unsigned char *)memchr(buf + pos, '\r', n - pos - 1);
+      if (!cr)
+         return (size_t)-1;
+      pos = (size_t)(cr - buf);
+      if (buf[pos + 1] == '\n')
+         return pos;
+      pos++;
+   }
+   return (size_t)-1;
+}
+
+/* Parse hex chunk size from buf[pos..eol). Returns 0 on success, -1 on error. */
+static int parse_chunk_hex(const unsigned char *buf, size_t pos, size_t eol,
+                           size_t *out)
+{
+   size_t val = 0;
+   int digits = 0;
+   while (pos < eol && (buf[pos] == ' ' || buf[pos] == '\t'))
+      pos++;
+   while (pos < eol)
+   {
+      unsigned char c = buf[pos];
+      unsigned d;
+      if (c >= '0' && c <= '9') d = (unsigned)(c - '0');
+      else if (c >= 'a' && c <= 'f') d = (unsigned)(c - 'a' + 10);
+      else if (c >= 'A' && c <= 'F') d = (unsigned)(c - 'A' + 10);
+      else break;
+      if (val > (AF_MAX_BYTES >> 4))
+         return -1;
+      val = (val << 4) | d;
+      digits = 1;
+      pos++;
+   }
+   if (!digits)
+      return -1;
+   while (pos < eol && (buf[pos] == ' ' || buf[pos] == '\t'))
+      pos++;
+   if (pos < eol && buf[pos] != ';')
+      return -1;
+   *out = val;
+   return 0;
+}
+
+/* 1 = complete chunked body ends at *end_out, 0 = need more data, -1 = bad. */
+static int chunked_complete(const unsigned char *buf, size_t n, size_t *end_out)
+{
+   size_t pos = 0;
+   for (;;)
+   {
+      size_t eol = find_crlf(buf, pos, n);
+      size_t csize = 0;
+      if (eol == (size_t)-1)
+         return 0;
+      if (parse_chunk_hex(buf, pos, eol, &csize) != 0)
+         return -1;
+      pos = eol + 2;
+      if (csize == 0)
+      {
+         for (;;)
+         {
+            if (pos + 2 > n)
+               return 0;
+            if (buf[pos] == '\r' && buf[pos + 1] == '\n')
+            {
+               if (end_out)
+                  *end_out = pos + 2;
+               return 1;
+            }
+            eol = find_crlf(buf, pos, n);
+            if (eol == (size_t)-1)
+               return 0;
+            pos = eol + 2;
+         }
+      }
+      if (csize > n - pos || n - pos - csize < 2)
+         return 0;
+      if (buf[pos + csize] != '\r' || buf[pos + csize + 1] != '\n')
+         return -1;
+      pos += csize + 2;
+   }
+}
+
+/* Decode a complete chunked body in place. Returns 0 on success, -1 on error. */
+static int chunked_decode(unsigned char *buf, size_t n, size_t *out_len)
+{
+   size_t rd = 0, wr = 0;
+   for (;;)
+   {
+      size_t eol = find_crlf(buf, rd, n);
+      size_t csize = 0;
+      if (eol == (size_t)-1 || parse_chunk_hex(buf, rd, eol, &csize) != 0)
+         return -1;
+      rd = eol + 2;
+      if (csize == 0)
+      {
+         *out_len = wr;
+         return 0;
+      }
+      if (csize > n - rd || n - rd - csize < 2)
+         return -1;
+      if (buf[rd + csize] != '\r' || buf[rd + csize + 1] != '\n')
+         return -1;
+      memmove(buf + wr, buf + rd, csize);
+      wr += csize;
+      rd += csize + 2;
+   }
+}
+
+static int http_open(const char *host, int portnum)
+{
+   char port[8], key[sizeof(g_addr_key)];
+   struct addrinfo hints, *ai = NULL;
+   struct sockaddr_storage sa;
+   socklen_t sa_len = 0;
+   struct timeval tv;
+   int s = -1;
+   int primary = !strcmp(host, g_host) && portnum == g_port;
+
+   snprintf(port, sizeof(port), "%d", portnum);
+   snprintf(key, sizeof(key), "%s:%s", host, port);
+   if (primary && g_addr_len && !strcmp(key, g_addr_key))
+   {
+      memcpy(&sa, &g_addr, g_addr_len);
+      sa_len = g_addr_len;
+   }
+   else
    {
       memset(&hints, 0, sizeof(hints));
       hints.ai_family = AF_INET;
       hints.ai_socktype = SOCK_STREAM;
-      g_addr_len = 0;
-      if (getaddrinfo(g_host, port, &hints, &ai) != 0 || !ai)
+      if (primary)
+         g_addr_len = 0;
+      if (getaddrinfo(host, port, &hints, &ai) != 0 || !ai)
       {
          if (ai)
             freeaddrinfo(ai);
-         return GET_FAILED;
+         return -1;
       }
-      if (ai->ai_addrlen <= sizeof(g_addr))
+      if (ai->ai_addrlen <= sizeof(sa))
       {
-         memcpy(&g_addr, ai->ai_addr, ai->ai_addrlen);
-         g_addr_len = (socklen_t)ai->ai_addrlen;
-         snprintf(g_addr_key, sizeof(g_addr_key), "%s", key);
+         memcpy(&sa, ai->ai_addr, ai->ai_addrlen);
+         sa_len = (socklen_t)ai->ai_addrlen;
+         if (primary)
+         {
+            memcpy(&g_addr, &sa, sa_len);
+            g_addr_len = sa_len;
+            snprintf(g_addr_key, sizeof(g_addr_key), "%s", key);
+         }
       }
       freeaddrinfo(ai);
-      ai = NULL;
-      if (!g_addr_len)
-         return GET_FAILED;
+      if (!sa_len)
+         return -1;
    }
    s = socket(AF_INET, SOCK_STREAM, 0);
    if (s < 0)
-      goto out;
-   tv.tv_sec = 15;
+      return -1;
+   /* 1 s recv slices let stop_now() abort promptly while keeping a 15 s
+    * overall transfer timeout below. */
+   tv.tv_sec = 1;
    tv.tv_usec = 0;
    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+   tv.tv_sec = 15;
+   tv.tv_usec = 0;
    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-   if (connect(s, (const struct sockaddr *)&g_addr, g_addr_len) != 0)
+#ifdef SO_NOSIGPIPE
    {
-      g_addr_len = 0;                  /* look it up again next time */
-      goto out;
+      int one = 1;
+      setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
    }
-   snprintf(req, sizeof(req),
-            "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: VitAdhoc\r\n"
-            "Accept: image/png\r\nConnection: close\r\n\r\n", path, g_host);
-   if (send(s, req, strlen(req), 0) != (ssize_t)strlen(req))
-      goto out;
-   for (;;)
+#endif
+#ifdef TCP_NODELAY
    {
-      ssize_t r;
-      if (stop_now())
-         goto out;
-      if (got >= AF_MAX_BYTES)
-         goto out;                     /* not a box art picture */
-      r = recv(s, g_body + got, AF_MAX_BYTES - got, 0);
-      if (r < 0)
-      {
-         g_addr_len = 0;
-         goto out;                     /* an error is not the end of it */
-      }
-      if (r == 0)
-         break;
-      got += (size_t)r;
-      if (!body_at)
-      {
-         g_body[got < AF_MAX_BYTES ? got : AF_MAX_BYTES - 1] = '\0';
-         hdr_end = strstr((char *)g_body, "\r\n\r\n");
-         if (hdr_end)
-         {
-            char *p;
-            *hdr_end = '\0';
-            body_at = (size_t)(hdr_end + 4 - (char *)g_body);
-            if (sscanf((char *)g_body, "HTTP/1.%*d %d", &status) != 1)
-               goto out;
-            for (p = (char *)g_body; *p; p++)
-               if (*p >= 'A' && *p <= 'Z')
-                  *p = (char)(*p - 'A' + 'a');
-            p = strstr((char *)g_body, "\r\ncontent-length:");
-            if (p)
-               want = (size_t)strtoul(p + 17, NULL, 10);
-            chunked = strstr((char *)g_body, "\r\ntransfer-encoding: chunked")
-                      != NULL;
-            if (status != 200)
-               break;                  /* the body says nothing we need */
-         }
-      }
-      if (body_at && want != (size_t)-1 && got - body_at >= want)
-         break;
+      int one = 1;
+      setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
    }
-   if (status == 404 || status == 410)
-      rc = GET_MISSING;
-   else if (status == 200 && body_at)
+#endif
+   if (connect(s, (const struct sockaddr *)&sa, sa_len) != 0)
    {
-      size_t n = got - body_at;
-      memmove(g_body, g_body + body_at, n);
-      g_body[n] = '\0';               /* (the chunk parser reads strings) */
-      if (chunked)
-      {
-         /* <hex size>\r\n<data>\r\n ... 0\r\n\r\n, put together in place */
-         size_t rd = 0, wr = 0;
-         for (;;)
-         {
-            char *e;
-            unsigned long c = strtoul((char *)g_body + rd, &e, 16);
-            char *crlf = strstr((char *)g_body + rd, "\r\n");
-            if (!crlf || e == (char *)g_body + rd)
-               goto out;
-            rd = (size_t)(crlf + 2 - (char *)g_body);
-            if (!c)
-               break;
-            if (rd + c > n)
-               goto out;
-            memmove(g_body + wr, g_body + rd, c);
-            wr += c;
-            rd += c + 2;
-         }
-         n = wr;
-      }
-      else if (want != (size_t)-1 && n < want)
-         goto out;                     /* cut short */
-      *len = n;
-      rc = GET_OK;
-   }
-out:
-   if (s >= 0)
+      if (primary)
+         g_addr_len = 0;                  /* look it up again next time */
       close(s);
-   if (ai)
-      freeaddrinfo(ai);
-   return rc;
+      return -1;
+   }
+   g_http_sock = s;
+   snprintf(g_http_host, sizeof(g_http_host), "%s", host);
+   g_http_port = portnum;
+   return s;
+}
+
+static int http_get_once(const char *host, int portnum, const char *path,
+                         size_t *len, char *loc, size_t loc_cap)
+{
+   char req[2048];
+   int req_len, attempt;
+   int primary = !strcmp(host, g_host) && portnum == g_port;
+
+   loc[0] = '\0';
+   req_len = snprintf(req, sizeof(req),
+                      "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: VitAdhoc\r\n"
+                      "Accept: image/png\r\nConnection: keep-alive\r\n\r\n",
+                      path, host);
+   if (req_len < 0 || req_len >= (int)sizeof(req))
+      return GET_FAILED;
+
+   for (attempt = 0; attempt < 2; attempt++)
+   {
+      size_t got = 0, body_at = 0, want = (size_t)-1, chunk_end = 0;
+      int status = 0, chunked = 0, keep = 0, reused = 0, rc = GET_FAILED;
+      int http_minor = 0;
+      uint64_t deadline;
+
+      if (stop_now())
+      {
+         http_close();
+         return GET_FAILED;
+      }
+      if (g_http_sock >= 0 &&
+          (strcmp(g_http_host, host) != 0 || g_http_port != portnum))
+         http_close();
+      reused = g_http_sock >= 0;
+      if (!reused && http_open(host, portnum) < 0)
+         return GET_FAILED;
+      if (send(g_http_sock, req, (size_t)req_len, AF_SEND_FLAGS) != (ssize_t)req_len)
+      {
+         http_close();
+         if (reused)
+            continue;
+         return GET_FAILED;
+      }
+      deadline = worker_now() + AF_RECV_MAX_US;
+      for (;;)
+      {
+         ssize_t r;
+         if (stop_now())
+         {
+            http_close();
+            return GET_FAILED;
+         }
+         if (got >= AF_MAX_BYTES)
+         {
+            http_close();
+            return GET_FAILED;            /* not a box art picture */
+         }
+         r = recv(g_http_sock, g_body + got, AF_MAX_BYTES - got, 0);
+         if (r < 0)
+         {
+            int e = errno;
+            if ((e == EAGAIN || e == EWOULDBLOCK || e == ETIMEDOUT || e == EINTR) &&
+                !stop_now() && worker_now() < deadline)
+               continue;
+            http_close();
+            if (reused && got == 0)
+               goto retry_fresh;
+            if (primary && !reused)
+               g_addr_len = 0;
+            return GET_FAILED;
+         }
+         if (r == 0)
+         {
+            http_close();
+            if (reused && got == 0)
+               goto retry_fresh;          /* server closed idle keep-alive socket */
+            keep = 0;
+            break;
+         }
+         got += (size_t)r;
+         if (!body_at)
+         {
+            char *hdr_end;
+            g_body[got] = '\0';
+            hdr_end = strstr((char *)g_body, "\r\n\r\n");
+            if (hdr_end)
+            {
+               char *p;
+               *hdr_end = '\0';
+               body_at = (size_t)(hdr_end + 4 - (char *)g_body);
+               if (sscanf((char *)g_body, "HTTP/1.%d %d", &http_minor, &status) != 2)
+               {
+                  http_close();
+                  return GET_FAILED;
+               }
+               if (status == 301 || status == 302 || status == 303 ||
+                   status == 307 || status == 308)
+                  extract_location((char *)g_body, loc, loc_cap);
+               for (p = (char *)g_body; *p; p++)
+                  if (*p >= 'A' && *p <= 'Z')
+                     *p = (char)(*p - 'A' + 'a');
+               p = strstr((char *)g_body, "\r\ncontent-length:");
+               if (p)
+               {
+                  char *ep = NULL;
+                  unsigned long long cl;
+                  p += 17;
+                  while (*p == ' ' || *p == '\t') p++;
+                  if (*p >= '0' && *p <= '9')
+                  {
+                     cl = strtoull(p, &ep, 10);
+                     if (cl <= AF_MAX_BYTES)
+                        want = (size_t)cl;
+                     else
+                        want = AF_MAX_BYTES + 1;
+                  }
+               }
+               chunked = has_hdr_token((char *)g_body, "transfer-encoding:", "chunked");
+               keep = (http_minor >= 1) &&
+                      !has_hdr_token((char *)g_body, "connection:", "close");
+               if (chunked && want != (size_t)-1)
+               {
+                  /* RFC 9112 s6.3: Transfer-Encoding overrides Content-Length;
+                   * do not reuse the connection on ambiguous framing. */
+                  want = (size_t)-1;
+                  keep = 0;
+               }
+               if (status == 200 && want != (size_t)-1 &&
+                   (want > AF_MAX_BYTES || body_at + want > AF_MAX_BYTES))
+               {
+                  http_close();
+                  return GET_FAILED;
+               }
+               if (status == 204 || status == 304)
+                  break;                  /* no body by RFC 9110 */
+               if (status != 200)
+               {
+                  /* Drain small framed error/redirect bodies so the TCP
+                   * connection stays alive across consecutive 404 misses. */
+                  if (!keep)
+                     break;
+                  if (want != (size_t)-1)
+                  {
+                     if (want > AF_DRAIN_CAP || body_at + want > AF_MAX_BYTES)
+                     {
+                        keep = 0;
+                        break;
+                     }
+                     if (got - body_at >= want)
+                     {
+                        if (got - body_at > want)
+                           keep = 0;
+                        break;
+                     }
+                  }
+                  else if (chunked)
+                  {
+                     int ck = chunked_complete(g_body + body_at, got - body_at, &chunk_end);
+                     if (ck < 0) { keep = 0; break; }
+                     if (ck > 0)
+                     {
+                        if (chunk_end != got - body_at)
+                           keep = 0;
+                        break;
+                     }
+                     if (got - body_at >= AF_DRAIN_CAP)
+                     {
+                        keep = 0;
+                        break;
+                     }
+                  }
+                  else
+                  {
+                     keep = 0;
+                     break;
+                  }
+                  continue;
+               }
+               if (want == (size_t)-1 && !chunked)
+                  keep = 0;               /* close-delimited body */
+            }
+            else if (got >= 16384u)
+            {
+               http_close();
+               return GET_FAILED;         /* absurdly large response headers */
+            }
+         }
+         if (body_at)
+         {
+            size_t body_n = got - body_at;
+            if (status != 200)
+            {
+               if (want != (size_t)-1)
+               {
+                  if (body_n >= want)
+                  {
+                     if (body_n > want) keep = 0;
+                     break;
+                  }
+               }
+               else if (chunked)
+               {
+                  int ck = chunked_complete(g_body + body_at, body_n, &chunk_end);
+                  if (ck < 0) { keep = 0; break; }
+                  if (ck > 0)
+                  {
+                     if (chunk_end != body_n) keep = 0;
+                     break;
+                  }
+                  if (body_n >= AF_DRAIN_CAP) { keep = 0; break; }
+               }
+            }
+            else
+            {
+               if (want != (size_t)-1 && body_n >= want)
+               {
+                  if (body_n > want) keep = 0;
+                  break;
+               }
+               if (chunked)
+               {
+                  int ck = chunked_complete(g_body + body_at, body_n, &chunk_end);
+                  if (ck < 0)
+                  {
+                     http_close();
+                     return GET_FAILED;
+                  }
+                  if (ck > 0)
+                  {
+                     if (chunk_end != body_n) keep = 0;
+                     break;
+                  }
+               }
+            }
+         }
+      }
+      if (!keep)
+         http_close();
+      if (status == 301 || status == 302 || status == 303 ||
+          status == 307 || status == 308)
+         rc = GET_REDIRECT;
+      else if (status == 404 || status == 410)
+         rc = GET_MISSING;
+      else if (status == 200 && body_at)
+      {
+         size_t n = got - body_at;
+         memmove(g_body, g_body + body_at, n);
+         if (chunked)
+         {
+            size_t dec_n = 0;
+            if (chunked_decode(g_body, n, &dec_n) != 0)
+            {
+               http_close();
+               return GET_FAILED;
+            }
+            n = dec_n;
+         }
+         else if (want != (size_t)-1)
+         {
+            if (n < want)
+            {
+               http_close();
+               return GET_FAILED;         /* cut short */
+            }
+            n = want;
+         }
+         g_body[n] = '\0';
+         *len = n;
+         rc = GET_OK;
+      }
+      else
+         http_close();
+      return rc;
+   retry_fresh:
+      ;
+   }
+   return GET_FAILED;
+}
+
+/* GET http://g_host:g_port/<path>, following up to 3 redirects.  GET_OK with
+ * the body in g_body (*len bytes), GET_MISSING for 404/410, GET_FAILED
+ * otherwise (no network, a timeout, anything else). */
+static int http_get(const char *path, size_t *len)
+{
+   char cur_host[sizeof(g_host)], cur_path[1400], loc[1400];
+   int cur_port = g_port, hop;
+   snprintf(cur_host, sizeof(cur_host), "%s", g_host);
+   snprintf(cur_path, sizeof(cur_path), "%s", path);
+   for (hop = 0; hop < 4; hop++)
+   {
+      int rc = http_get_once(cur_host, cur_port, cur_path, len, loc, sizeof(loc));
+      if (rc != GET_REDIRECT)
+         return rc;
+      if (hop == 3 ||
+          apply_redirect(loc, cur_host, sizeof(cur_host), &cur_port,
+                         cur_path, sizeof(cur_path)) != 0)
+         return GET_FAILED;
+   }
+   return GET_FAILED;
 }
 
 /* The thumbnail file for a cover: cache/boxart/<stem>.t2.565, the picture fitted into
@@ -942,13 +1564,18 @@ int artfetch_thumb_rgb(const unsigned char *rgb, int w, int h,
 }
 
 /* 1 when the player has set a cover of their own for this stem
- * (boxart/<stem>.own, written by cover_custom.c): its thumbnail is the
- * whole picture on a square. */
+ * (boxart/<stem>.own or cache/boxart/<stem>.own, written by cover_custom.c):
+ * its thumbnail is the whole picture on a square. */
 static int own_cover(const char *stem)
 {
    char path[AF_PATH_CAP + AF_NAME_CAP + 32];
    struct stat st;
+   if (g_inventory_valid)
+      return set_has(&g_inventory[INV_OWN], stem);
    snprintf(path, sizeof(path), "%s/boxart/%s.own", g_root, stem);
+   if (stat(path, &st) == 0)
+      return 1;
+   snprintf(path, sizeof(path), "%s/" ART_THUMB_DIR "/%s.own", g_root, stem);
    return stat(path, &st) == 0;
 }
 
@@ -963,21 +1590,26 @@ static int save(int k, const char *stem, size_t len)
       inventory_add(k, stem);
       return 0;
    }
-   snprintf(dst, sizeof(dst), "%s/%s", g_root, KIND_DIR[k]);
-   mkdir(dst, 0777);                   /* titles/ is made on the first one */
+   if (!g_dir_made[k])
+   {
+      snprintf(dst, sizeof(dst), "%s/%s", g_root, KIND_DIR[k]);
+      mkdir(dst, 0777);                /* titles/ is made on the first one */
+      g_dir_made[k] = 1;
+   }
    snprintf(dst, sizeof(dst), "%s/%s/%s.png", g_root, KIND_DIR[k], stem);
    snprintf(tmp, sizeof(tmp), "%s/%s/%s.png.tmp", g_root, KIND_DIR[k], stem);
    f = fopen(tmp, "wb");
+   if (!f && errno == ENOENT)
+   {
+      char dir[AF_PATH_CAP + 32];
+      snprintf(dir, sizeof(dir), "%s/%s", g_root, KIND_DIR[k]);
+      mkdir(dir, 0777);
+      f = fopen(tmp, "wb");
+   }
    if (!f)
       return -1;
    ok = fwrite(g_body, 1, len, f) == len;
    ok = fclose(f) == 0 && ok;
-   if (ok && have_art_disk(k, stem))
-   {
-      remove(tmp);
-      inventory_add(k, stem);
-      return 0;
-   }
    if (!ok || rename(tmp, dst) != 0)
    {
       remove(tmp);
@@ -992,7 +1624,7 @@ static int save(int k, const char *stem, size_t len)
                ART_THUMB_SUFFIX);
       rc = thumb_write((const unsigned char *)g_body, len, th, 0);
       if (rc == 0)
-         inventory_add(INV_THUMB, stem);
+         inventory_add_path(INV_THUMB, stem, th);
       else if (rc == -2)
       {
          /* It had a PNG's first bytes and is not a picture: a transfer cut
@@ -1001,8 +1633,10 @@ static int save(int k, const char *stem, size_t len)
          remove(dst);
          return -1;
       }
+      if (set_add(&g_inventory[INV_BOX_PNG], stem) != 0)
+         g_inventory_valid = 0;
    }
-   inventory_add(k, stem);
+   inventory_add_path(k, stem, dst);
    return 0;
 }
 
@@ -1018,27 +1652,50 @@ static int warm_one(const char *name)
    FILE *f;
    size_t n;
    int written = 0;
-   unsigned e;
+   unsigned e = 2;
 
    stem_of(name, stem, sizeof(stem));
-   if (g_inventory_valid &&
-       (set_has(&g_inventory[INV_THUMB], stem) ||
-        !set_has(&g_inventory[AK_BOX], stem)))
-      return 0;
-   if (set_has(&g_thumb_failed, stem))
-      return 0;
-   snprintf(th, sizeof(th), "%s/" ART_THUMB_DIR "/%s%s", g_root, stem,
-               ART_THUMB_SUFFIX);
-   if (stat(th, &st) == 0)
-      return 0;
-   for (e = 0; e < 2; e++)
+   if (g_inventory_valid)
    {
+      int has_png, has_jpg;
+      if (set_has(&g_inventory[INV_THUMB], stem))
+         return 0;
+      has_png = set_has(&g_inventory[INV_BOX_PNG], stem);
+      has_jpg = !has_png && set_has(&g_inventory[INV_BOX_JPG], stem);
+      if (!has_png && !has_jpg)
+         return 0;
+      if (set_has(&g_thumb_failed, stem))
+         return 0;
+      nav_yield();
+      if (stop_now())
+         return 0;
+      snprintf(th, sizeof(th), "%s/" ART_THUMB_DIR "/%s%s", g_root, stem,
+               ART_THUMB_SUFFIX);
+      e = has_png ? 0u : 1u;
       snprintf(src, sizeof(src), "%s/boxart/%s.%s", g_root, stem, ext[e]);
-      if (stat(src, &st) == 0)
-         break;
+      if (stat(src, &st) != 0)
+         return 0;
    }
-   if (e == 2)
-      return 0;
+   else
+   {
+      if (set_has(&g_thumb_failed, stem))
+         return 0;
+      nav_yield();
+      if (stop_now())
+         return 0;
+      snprintf(th, sizeof(th), "%s/" ART_THUMB_DIR "/%s%s", g_root, stem,
+               ART_THUMB_SUFFIX);
+      if (stat(th, &st) == 0)
+         return 0;
+      for (e = 0; e < 2; e++)
+      {
+         snprintf(src, sizeof(src), "%s/boxart/%s.%s", g_root, stem, ext[e]);
+         if (stat(src, &st) == 0)
+            break;
+      }
+      if (e == 2)
+         return 0;
+   }
    if (st.st_size <= 0 || st.st_size > (off_t)AF_MAX_BYTES)
    {
       set_add(&g_thumb_failed, stem);
@@ -1059,81 +1716,504 @@ static int warm_one(const char *name)
    }
    free(buf);
    if (written)
-      inventory_add(INV_THUMB, stem);
+      inventory_add_path(INV_THUMB, stem, th);
    return written;
 }
 
-static const char *const SYS[4] = {
+/* 0 GBA, 1 GB, 2 GBC, 3 SNES, 4 NES, 5 Famicom Disk System, 6 WonderSwan,
+ * 7 WonderSwan Color, 8 Genesis / Mega Drive, 9 Master System, 10 Game Gear,
+ * 11 SG-1000, 12 Sega CD (gamedb_sega.h has the same folder names; the game
+ * database's system letters are A..M in this order) */
+static const char *const SYS[13] = {
    "Nintendo%20-%20Game%20Boy%20Advance", "Nintendo%20-%20Game%20Boy",
    "Nintendo%20-%20Game%20Boy%20Color",
-   "Nintendo%20-%20Super%20Nintendo%20Entertainment%20System" };
+   "Nintendo%20-%20Super%20Nintendo%20Entertainment%20System",
+   "Nintendo%20-%20Nintendo%20Entertainment%20System",
+   "Nintendo%20-%20Family%20Computer%20Disk%20System",
+   "Bandai%20-%20WonderSwan", "Bandai%20-%20WonderSwan%20Color",
+   "Sega%20-%20Mega%20Drive%20-%20Genesis",
+   "Sega%20-%20Master%20System%20-%20Mark%20III",
+   "Sega%20-%20Game%20Gear", "Sega%20-%20SG-1000",
+   "Sega%20-%20Mega-CD%20-%20Sega%20CD" };
 
 typedef struct
 {
-   char stem[AF_NAME_CAP], cand[5][AF_NAME_CAP];
+   char stem[AF_NAME_CAP], cand[5 + AF_ALT_MAX][AF_NAME_CAP];
    int ncand, sys[2], nsys, ready, crc_allowed, crc_tried, crc_unavailable;
+   int no_crc;                  /* UNIF / disc: the checksum names nothing */
+   int is_archive;              /* .zip / .7z: inspect inner entry, never raw-hash container */
+   int alts_done;               /* the fallback names (artalt.h) are in cand[] */
 } af_candidates;
+
+/* The cartridge's checksum as the console's catalogue has it: SNES without
+ * its copier header, NES / Famicom Disk System without theirs. */
+static int cart_crc(const af_candidates *a, const char *path, uint32_t *crc)
+{
+   if (a->is_archive)
+      return -1;
+   return a->sys[0] == 3 ? gamedb_snes_crc_cancel(path, crc, cart_crc_stop)
+        : a->sys[0] == 4 || a->sys[0] == 5 ? gamedb_nes_crc_cancel(path, crc, cart_crc_stop)
+        : a->sys[0] == 8 ? gamedb_md_crc_cancel(path, crc, cart_crc_stop)
+        : a->sys[0] >= 9 ? gamedb_sms_crc_cancel(path, crc, cart_crc_stop)
+        : gamedb_file_crc_cancel(path, crc, cart_crc_stop);
+}
+
+/* Weak fallback when artfetch.c is compiled standalone without sz_rom.c. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak))
+int sz_rom_peek(const char *path, zip_rom_entry *out,
+                int (*name_console)(const char *, size_t))
+{
+   (void)path;
+   (void)out;
+   (void)name_console;
+   return -1;
+}
+#endif
+
+static uint16_t af_u16le(const unsigned char *p)
+{
+   return (uint16_t)(p[0] | ((unsigned)p[1] << 8));
+}
+
+static uint32_t af_u32le(const unsigned char *p)
+{
+   return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+          ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static int af_ext_sys(const char *ext, int sys[2], int *nsys, int *no_crc)
+{
+   *no_crc = 0;
+   if (!ext)
+      return 0;
+   if (!strcasecmp(ext, ".gba"))
+      { sys[0] = 0; *nsys = 1; return 1; }
+   if (!strcasecmp(ext, ".sfc") || !strcasecmp(ext, ".smc") ||
+       !strcasecmp(ext, ".swc") || !strcasecmp(ext, ".fig"))
+      { sys[0] = 3; *nsys = 1; return 1; }
+   if (!strcasecmp(ext, ".fds"))
+      { sys[0] = 5; *nsys = 1; return 1; }
+   if (!strcasecmp(ext, ".nes") || !strcasecmp(ext, ".unf") ||
+       !strcasecmp(ext, ".unif"))
+   {
+      sys[0] = 4; *nsys = 1;
+      *no_crc = strcasecmp(ext, ".nes") != 0;
+      return 1;
+   }
+   if (!strcasecmp(ext, ".ws") || !strcasecmp(ext, ".pc2"))
+      { sys[0] = 6; sys[1] = 7; *nsys = 2; return 1; }
+   if (!strcasecmp(ext, ".wsc"))
+      { sys[0] = 7; sys[1] = 6; *nsys = 2; return 1; }
+   if (!strcasecmp(ext, ".md") || !strcasecmp(ext, ".gen") ||
+       !strcasecmp(ext, ".smd") || !strcasecmp(ext, ".bin") ||
+       !strcasecmp(ext, ".68k"))
+      { sys[0] = 8; *nsys = 1; return 1; }
+   if (!strcasecmp(ext, ".sms"))
+      { sys[0] = 9; sys[1] = 10; *nsys = 2; return 1; }
+   if (!strcasecmp(ext, ".gg"))
+      { sys[0] = 10; *nsys = 1; return 1; }
+   if (!strcasecmp(ext, ".sg") || !strcasecmp(ext, ".sc"))
+      { sys[0] = 11; *nsys = 1; return 1; }
+   if (!strcasecmp(ext, ".cue") || !strcasecmp(ext, ".chd") ||
+       !strcasecmp(ext, ".iso") || !strcasecmp(ext, ".m3u"))
+      { sys[0] = 12; *nsys = 1; *no_crc = 1; return 1; }
+   if (!strcasecmp(ext, ".gbc"))
+      { sys[0] = 2; sys[1] = 1; *nsys = 2; return 1; }
+   if (!strcasecmp(ext, ".gb") || !strcasecmp(ext, ".sgb"))
+      { sys[0] = 1; sys[1] = 2; *nsys = 2; return 1; }
+   return 0;
+}
+
+static int af_is_disc_track_bin(const char *leaf, const char *ext)
+{
+   const char *tr;
+   if (!ext || strcasecmp(ext, ".bin"))
+      return 0;
+   tr = strstr(leaf, "(Track ");
+   if (tr && tr[7] >= '0' && tr[7] <= '9')
+   {
+      const char *d = tr + 7;
+      while (*d >= '0' && *d <= '9')
+         d++;
+      if (d[0] == ')' && !strcasecmp(d + 1, ".bin"))
+         return 1;
+   }
+   return 0;
+}
+
+static int af_sz_console(const char *name, size_t len)
+{
+   char buf[AF_NAME_CAP];
+   const char *leaf, *ext;
+   int sys[2], nsys = 0, no_crc = 0;
+   size_t i;
+   if (!name || len == 0 || len >= sizeof(buf))
+      return -1;
+   memcpy(buf, name, len);
+   buf[len] = '\0';
+   leaf = buf;
+   for (i = 0; i < len; i++)
+      if (buf[i] == '/' || buf[i] == '\\')
+         leaf = buf + i + 1;
+   if (!leaf[0] || leaf[0] == '.')
+      return -1;
+   ext = strrchr(leaf, '.');
+   if (af_is_disc_track_bin(leaf, ext))
+      return -1;
+   if (!af_ext_sys(ext, sys, &nsys, &no_crc))
+      return -1;
+   /* Avoid returning 6 (which sz_rom_peek treats as Genesis < 16 KiB size check)
+    * unless it actually is Genesis/MD, where a small file can't be a Genesis ROM anyway. */
+   return sys[0] == 8 ? 6 : sys[0] == 6 ? 16 : sys[0];
+}
+
+typedef struct
+{
+   char inner_stem[AF_NAME_CAP];
+   char inner_ext[16];
+   uint32_t crc;
+   int has_crc;
+} af_arc_info;
+
+static int af_peek_zip(FILE *f, af_arc_info *out)
+{
+   long fsz, tail_off, pos;
+   size_t tail_len, i, cd_read;
+   unsigned char *buf, *cd;
+   uint32_t cd_size = 0, cd_off = 0, best_sz = 0;
+   uint16_t entries = 0, e;
+   int eocd = -1, found = 0;
+
+   if (fseek(f, 0, SEEK_END) != 0)
+      return -1;
+   fsz = ftell(f);
+   if (fsz < 22)
+      return -1;
+   tail_len = (size_t)(fsz > 65557L ? 65557L : fsz);
+   tail_off = fsz - (long)tail_len;
+   buf = malloc(tail_len);
+   if (!buf)
+      return -1;
+   if (fseek(f, tail_off, SEEK_SET) != 0 || fread(buf, 1, tail_len, f) != tail_len)
+   {
+      free(buf);
+      return -1;
+   }
+   for (i = tail_len - 22 + 1; i > 0; i--)
+   {
+      size_t k = i - 1;
+      if (buf[k] == 0x50 && buf[k + 1] == 0x4B && buf[k + 2] == 0x05 && buf[k + 3] == 0x06)
+      {
+         uint16_t clen = af_u16le(buf + k + 20);
+         if ((size_t)(k + 22 + clen) == tail_len)
+         {
+            eocd = (int)k;
+            entries = af_u16le(buf + k + 10);
+            cd_size = af_u32le(buf + k + 12);
+            cd_off = af_u32le(buf + k + 16);
+            break;
+         }
+      }
+   }
+   free(buf);
+   if (eocd < 0 || cd_size == 0 || cd_size > (8u << 20) ||
+       (long)cd_off + (long)cd_size > fsz)
+      return -1;
+   cd = malloc(cd_size);
+   if (!cd)
+      return -1;
+   if (fseek(f, (long)cd_off, SEEK_SET) != 0 || fread(cd, 1, cd_size, f) != cd_size)
+   {
+      free(cd);
+      return -1;
+   }
+   pos = 0;
+   cd_read = 0;
+   for (e = 0; e < entries && cd_read + 46 <= cd_size; e++)
+   {
+      const unsigned char *hdr = cd + cd_read;
+      uint16_t nlen, xlen, clen;
+      uint32_t crc, usz;
+      char ename[AF_NAME_CAP];
+      const char *leaf, *ext;
+      int sys[2], nsys, no_crc;
+      size_t copy_n, j;
+
+      if (hdr[0] != 0x50 || hdr[1] != 0x4B || hdr[2] != 0x01 || hdr[3] != 0x02)
+         break;
+      crc = af_u32le(hdr + 16);
+      usz = af_u32le(hdr + 24);
+      nlen = af_u16le(hdr + 28);
+      xlen = af_u16le(hdr + 30);
+      clen = af_u16le(hdr + 32);
+      if (cd_read + 46 + nlen + xlen + clen > cd_size)
+         break;
+      copy_n = nlen < sizeof(ename) - 1 ? nlen : sizeof(ename) - 1;
+      memcpy(ename, hdr + 46, copy_n);
+      ename[copy_n] = '\0';
+      {
+         int is_dir = (nlen > 0 && hdr[46 + nlen - 1] == '/');
+         cd_read += 46 + nlen + xlen + clen;
+
+         if (nlen == 0 || is_dir ||
+             strncmp(ename, "__MACOSX/", 9) == 0)
+            continue;
+      }
+      leaf = ename;
+      for (j = 0; ename[j]; j++)
+         if (ename[j] == '/' || ename[j] == '\\')
+            leaf = ename + j + 1;
+      if (!leaf[0] || leaf[0] == '.')
+         continue;
+      ext = strrchr(leaf, '.');
+      if (af_is_disc_track_bin(leaf, ext) ||
+          !af_ext_sys(ext, sys, &nsys, &no_crc))
+         continue;
+      (void)pos;
+      if (!found || usz > best_sz)
+      {
+         stem_of(leaf, out->inner_stem, sizeof(out->inner_stem));
+         snprintf(out->inner_ext, sizeof(out->inner_ext), "%s", ext);
+         out->crc = crc;
+         out->has_crc = (usz > 0 || crc != 0);
+         best_sz = usz;
+         found = 1;
+      }
+   }
+   free(cd);
+   return found ? 0 : -1;
+}
+
+static int af_peek_archive(const char *path, const char *ext, af_arc_info *out)
+{
+   static const unsigned char SZ_SIG[6] = { '7', 'z', 0xBC, 0xAF, 0x27, 0x1C };
+   unsigned char sig[6];
+   FILE *f;
+   size_t n;
+   int is_sz;
+
+   memset(out, 0, sizeof(*out));
+   if (!path || !path[0])
+      return -1;
+   f = fopen(path, "rb");
+   if (!f)
+      return -1;
+   n = fread(sig, 1, sizeof(sig), f);
+   is_sz = (n == 6 && !memcmp(sig, SZ_SIG, 6)) || (ext && !strcasecmp(ext, ".7z"));
+   if (n == 6 && !memcmp(sig, SZ_SIG, 6))
+      is_sz = 1;
+   else if (n >= 2 && sig[0] == 'P' && sig[1] == 'K')
+      is_sz = 0;
+   if (!is_sz)
+   {
+      int r = af_peek_zip(f, out);
+      fclose(f);
+      return r;
+   }
+   fclose(f);
+   {
+      zip_rom_entry z;
+      const char *leaf, *zext;
+      size_t j;
+      memset(&z, 0, sizeof(z));
+      if (sz_rom_peek(path, &z, af_sz_console) != 0)
+         return -1;
+      leaf = z.name;
+      for (j = 0; z.name[j]; j++)
+         if (z.name[j] == '/' || z.name[j] == '\\')
+            leaf = z.name + j + 1;
+      zext = strrchr(leaf, '.');
+      if (!leaf[0] || !zext)
+         return -1;
+      stem_of(leaf, out->inner_stem, sizeof(out->inner_stem));
+      snprintf(out->inner_ext, sizeof(out->inner_ext), "%s", zext);
+      out->crc = z.crc;
+      out->has_crc = (z.crc != 0);
+      return 0;
+   }
+}
+
+static void cand_add(af_candidates *a, const char *s)
+{
+   int i;
+   if (!s || !s[0] || a->ncand >= 5 + AF_ALT_MAX)
+      return;
+   for (i = 0; i < a->ncand; i++)
+      if (!strcmp(a->cand[i], s))
+         return;
+   snprintf(a->cand[a->ncand++], AF_NAME_CAP, "%s", s);
+}
+
+static int ci_contains(const char *hay, const char *needle)
+{
+   size_t n = strlen(needle), i;
+   if (!n)
+      return 0;
+   for (; *hay; hay++)
+   {
+      for (i = 0; i < n; i++)
+      {
+         if (!hay[i] || tolower((unsigned char)hay[i]) != tolower((unsigned char)needle[i]))
+            break;
+      }
+      if (i == n)
+         return 1;
+   }
+   return 0;
+}
+
+static int af_is_hack_stem(const char *stem, const char *hdr_name)
+{
+   static const char *const MARKS[] = {
+      "[h", "[t+", "[t-", "[b", "[f", "[p", "[o", "hack", "unbound", "kaizo",
+      "redux", "randomiz", "remix", "deluxe", "gaiden", "radical red",
+      "rocket edition", "ash gray", "crystal clear", "dark violet", "glazed",
+      "flora sky", "light platinum", "blaze black", "volt white", "renegade",
+      "inclement", "translation", "english", "patched", "improved",
+      "rebalance", "restoration", "(eng", "(v1.", "(v2.", "(v3.", " v1.",
+      " v2.", " v3.", NULL
+   };
+   int i;
+   char w1[32], w2[32];
+   size_t k;
+
+   for (i = 0; MARKS[i]; i++)
+      if (ci_contains(stem, MARKS[i]))
+         return 1;
+
+   /* Same franchise prefix (e.g. "Pokemon Unbound" vs "Pokemon - FireRed Version")
+    * while gamedb_name_loose missed indicates a different title / hack sharing the base header. */
+   if (hdr_name && hdr_name[0])
+   {
+      for (k = 0; k + 1 < sizeof(w1) && isalpha((unsigned char)stem[k]); k++)
+         w1[k] = (char)tolower((unsigned char)stem[k]);
+      w1[k] = '\0';
+      for (k = 0; k + 1 < sizeof(w2) && isalpha((unsigned char)hdr_name[k]); k++)
+         w2[k] = (char)tolower((unsigned char)hdr_name[k]);
+      w2[k] = '\0';
+      if (strlen(w1) >= 4 && !strcmp(w1, w2))
+         return 1;
+   }
+   return 0;
+}
+
+/* Every name asked for has missed: the same game under the name of another
+ * release of it (artalt.h).  Appended once; returns how many. */
+static int add_alts(af_candidates *a)
+{
+   const char *have[5 + AF_ALT_MAX];
+   int b, i, added = 0;
+   if (a->alts_done)
+      return 0;
+   a->alts_done = 1;
+   for (i = 0; i < a->ncand; i++)
+      have[i] = a->cand[i];
+   for (b = 0; b < a->ncand && added < AF_ALT_MAX; b++)
+   {
+      af_alts alts;
+      alt_names(a->cand[b], have, a->ncand, &alts);
+      for (i = 0; i < alts.n && added < AF_ALT_MAX && a->ncand < 5 + AF_ALT_MAX; i++)
+      {
+         memmove(a->cand[a->ncand], alts.name[i], strlen(alts.name[i]) + 1);
+         have[a->ncand] = a->cand[a->ncand];
+         a->ncand++;
+         added++;
+      }
+   }
+   if (added)
+      { char n[16]; snprintf(n, sizeof(n), "%d", added); say("art_alt name=\"%s\" tries=%s", a->stem, n); }
+   return added;
+}
 
 static void candidates_init(af_candidates *a, const char *path, const char *name)
 {
+   static const char TAG[13] = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+                                 'I', 'J', 'K', 'L', 'M' };
    const char *ext = strrchr(name, '.');
+   char buf[AF_NAME_CAP];
+   int k;
+
    stem_of(name, a->stem, sizeof(a->stem));
-   if (ext && !strcasecmp(ext, ".gba"))
+   if (ext && (!strcasecmp(ext, ".zip") || !strcasecmp(ext, ".7z")))
    {
-      a->sys[0] = 0;
-      a->nsys = 1;
+      af_arc_info arc;
+      a->is_archive = 1;
+      a->crc_tried = 1;
+      a->crc_allowed = 0;
+      if (af_peek_archive(path, ext, &arc) != 0 ||
+          !af_ext_sys(arc.inner_ext, a->sys, &a->nsys, &a->no_crc))
+      {
+         /* Never fall through to Game Boy or permanently blacklist a .zip/.7z
+          * whose inner ROM could not be inspected right now. */
+         a->nsys = 0;
+         a->crc_unavailable = 1;
+         a->ready = 1;
+         return;
+      }
+      if (gamedb_known_name(a->stem))
+         cand_add(a, a->stem);
+      if (arc.inner_stem[0] && gamedb_known_name(arc.inner_stem))
+         cand_add(a, arc.inner_stem);
+      if (!a->no_crc && arc.has_crc &&
+          gamedb_name_by_crc(arc.crc, buf, AF_NAME_CAP))
+         cand_add(a, buf);
+      if (a->ncand < 2 && arc.inner_stem[0])
+      {
+         for (k = 0; k < a->nsys && a->ncand < 3; k++)
+            if (gamedb_name_loose(TAG[a->sys[k]], arc.inner_stem, buf, AF_NAME_CAP))
+               cand_add(a, buf);
+      }
+      if (a->ncand < 2)
+      {
+         for (k = 0; k < a->nsys && a->ncand < 3; k++)
+            if (gamedb_name_loose(TAG[a->sys[k]], a->stem, buf, AF_NAME_CAP))
+               cand_add(a, buf);
+      }
+      cand_add(a, arc.inner_stem);
+      cand_add(a, a->stem);
+      a->ready = 1;
+      return;
    }
-   else if (ext && (!strcasecmp(ext, ".sfc") || !strcasecmp(ext, ".smc")))
+
+   if (!af_ext_sys(ext, a->sys, &a->nsys, &a->no_crc))
    {
-      a->sys[0] = 3;               /* SNES: by the file's own No-Intro name */
-      a->nsys = 1;
-   }
-   else if (ext && !strcasecmp(ext, ".gbc"))
-   {
-      a->sys[0] = 2; a->sys[1] = 1;
-      a->nsys = 2;
-   }
-   else
-   {
-      a->sys[0] = 1; a->sys[1] = 2;
+      a->sys[0] = 1;
+      a->sys[1] = 2;
       a->nsys = 2;
    }
    if (gamedb_known_name(a->stem))
-      memmove(a->cand[a->ncand++], a->stem, strlen(a->stem) + 1);
-   if (a->sys[0] == 0 &&
-       gamedb_name_by_header(path, a->cand[a->ncand], AF_NAME_CAP))
-      a->ncand++;
+      cand_add(a, a->stem);
+   /* Loose No-Intro match before the GBA header so differently named hacks or
+    * shortened filenames resolve properly first. */
+   if (a->ncand < 2)
+   {
+      for (k = 0; k < a->nsys && a->ncand < 3; k++)
+         if (gamedb_name_loose(TAG[a->sys[k]], a->stem, buf, AF_NAME_CAP))
+            cand_add(a, buf);
+   }
+   if (a->sys[0] == 0 && !a->ncand &&
+       gamedb_name_by_header(path, buf, AF_NAME_CAP))
+   {
+      if (!af_is_hack_stem(a->stem, buf))
+         cand_add(a, buf);
+   }
    /* Not a No-Intro file name: the cartridge's checksum names it exactly
     * (any console; SNES without its copier header), read now so it is
     * asked for first */
-   if (!a->ncand && !stop_now())
+   if (!a->ncand && !a->no_crc && !stop_now())
    {
       uint32_t crc;
-      int r = a->sys[0] == 3 ? gamedb_snes_crc_cancel(path, &crc, stop_now)
-                             : gamedb_file_crc_cancel(path, &crc, stop_now);
+      int r = cart_crc(a, path, &crc);
       if (r == 0)
       {
          a->crc_tried = 1;
-         if (gamedb_name_by_crc(crc, a->cand[a->ncand], AF_NAME_CAP))
-            a->ncand++;
+         if (gamedb_name_by_crc(crc, buf, AF_NAME_CAP))
+            cand_add(a, buf);
       }
    }
-   /* A file named loosely ("Act Raiser", "7th Saga", "Pocket Dogs (U)"):
-    * the No-Intro name of the game with that title, for each console the
-    * file may be (gamedb N records) */
-   if (a->ncand < 2)
-   {
-      static const char TAG[4] = { 'A', 'B', 'C', 'D' };
-      int k;
-      for (k = 0; k < a->nsys && a->ncand < 3; k++)
-         if (gamedb_name_loose(TAG[a->sys[k]], a->stem, a->cand[a->ncand], AF_NAME_CAP))
-            a->ncand++;
-   }
-   /* the cartridge's checksum, if no name worked: any console now (SNES
-    * without its copier header) */
-   a->crc_allowed = !gamedb_known_name(a->stem);
-   if (!a->ncand || strcmp(a->cand[0], a->stem))
-      memmove(a->cand[a->ncand++], a->stem, strlen(a->stem) + 1);
+   a->crc_allowed = !gamedb_known_name(a->stem) && !a->no_crc;
+   cand_add(a, a->stem);
    a->ready = 1;
 }
 
@@ -1154,15 +2234,21 @@ static int fetch_one(int kind, const char *path, const char *name, af_candidates
          if (a->crc_unavailable)
             return 2;
          if (!a->crc_allowed || a->crc_tried)
+         {
+            if (add_alts(a))
+            {
+               c--;
+               continue;
+            }
             break;
+         }
          a->crc_tried = 1;
          if (stop_now())
          {
             a->crc_tried = 0;          /* not tried: asked to stop first */
             return -1;
          }
-         if ((a->sys[0] == 3 ? gamedb_snes_crc_cancel(path, &crc, stop_now)
-                             : gamedb_file_crc_cancel(path, &crc, stop_now)) != 0)
+         if (cart_crc(a, path, &crc) != 0)
          {
             if (stop_now())
             {
@@ -1179,7 +2265,14 @@ static int fetch_one(int kind, const char *path, const char *name, af_candidates
          }
          if (!gamedb_name_by_crc(crc, a->cand[a->ncand], AF_NAME_CAP) ||
              !strcmp(a->cand[a->ncand], a->stem))
+         {
+            if (add_alts(a))
+            {
+               c--;
+               continue;
+            }
             break;
+         }
          a->ncand++;
       }
       if (c && !strcmp(a->cand[c], a->cand[c - 1]))
@@ -1222,7 +2315,12 @@ static int fetch_one(int kind, const char *path, const char *name, af_candidates
    return 0;
 }
 
-typedef struct { af_candidates *candidates; unsigned checked; int counted; } af_item;
+typedef struct {
+   af_candidates *candidates;
+   unsigned checked;
+   unsigned stem_hash;
+   int next_same;
+} af_item;
 enum { AF_HAVE_BOX = 1u << AK_KINDS };
 typedef struct { char *path, *name; uint64_t at; } af_failure;
 #define AF_FAILURES 128
@@ -1237,13 +2335,6 @@ static void failures_clear(void)
       free(g_failures[k].path); free(g_failures[k].name);
       memset(&g_failures[k], 0, sizeof(g_failures[k]));
    }
-}
-
-static uint64_t worker_now(void)
-{
-   struct timeval tv;
-   gettimeofday(&tv, NULL);
-   return (uint64_t)tv.tv_sec * 1000000u + (unsigned)tv.tv_usec;
 }
 
 static uint64_t failure_time(const char *path, const char *name)
@@ -1285,49 +2376,103 @@ static void items_free(af_item *items, int n)
    free(items);
 }
 
-static void item_count(af_item *item, int *seen)
+static void progress_publish(int box_done, int title_done)
 {
-   unsigned wanted = A_LOAD(g_titles) ? 3u : 1u;
-   if (!item->counted && (item->checked & wanted) == wanted)
-   {
-      item->counted = 1;
-      A_STORE(g_prog_seen, ++*seen);
-   }
+   int seen = A_LOAD(g_titles) ? (box_done + title_done) / 2 : box_done;
+   A_STORE(g_prog_seen, seen);
 }
 
-static void box_available(af_list *list, af_item *items, int idx, const char *stem)
+static void item_mark(af_item *item, unsigned bits, int *box_done, int *title_done)
+{
+   unsigned added = bits & ~item->checked;
+   item->checked |= bits;
+   if (added & (1u << AK_BOX)) (*box_done)++;
+   if (added & (1u << AK_TITLE)) (*title_done)++;
+   progress_publish(*box_done, *title_done);
+}
+
+static int *stem_index_build(const af_list *list, af_item *items, unsigned *mask_out)
+{
+   unsigned cap = 16;
+   int *buckets, j;
+   *mask_out = 0;
+   if (!list || !list->n)
+      return NULL;
+   while (cap < (unsigned)list->n * 2u && cap < (1u << 20))
+      cap <<= 1;
+   buckets = (int *)malloc((size_t)cap * sizeof(*buckets));
+   if (!buckets)
+      return NULL;
+   for (j = 0; j < (int)cap; j++)
+      buckets[j] = -1;
+   *mask_out = cap - 1u;
+   for (j = 0; j < list->n; j++)
+   {
+      char stem[AF_NAME_CAP];
+      unsigned h, slot;
+      stem_of(list->name[j], stem, sizeof(stem));
+      h = stem_hash(stem);
+      slot = h & (cap - 1u);
+      items[j].stem_hash = h;
+      items[j].next_same = buckets[slot];
+      buckets[slot] = j;
+   }
+   return buckets;
+}
+
+static void box_available(const af_list *list, af_item *items,
+                          const int *buckets, unsigned bucket_mask,
+                          int idx, const char *stem)
 {
    int j, have = A_LOAD(g_prog_have);
+   unsigned h;
    if (items[idx].checked & AF_HAVE_BOX)
       return;
    /* Shared, case-folded stems gain one cover for every matching cartridge. */
-   for (j = 0; j < list->n; j++)
-      if (!(items[j].checked & AF_HAVE_BOX))
-      {
-         char other[AF_NAME_CAP];
-         stem_of(list->name[j], other, sizeof(other));
-         if (!strcasecmp(other, stem))
+   if (buckets)
+   {
+      h = items[idx].stem_hash;
+      for (j = buckets[h & bucket_mask]; j >= 0; j = items[j].next_same)
+         if (!(items[j].checked & AF_HAVE_BOX) && items[j].stem_hash == h)
          {
-            items[j].checked |= AF_HAVE_BOX;
-            have++;
+            char other[AF_NAME_CAP];
+            stem_of(list->name[j], other, sizeof(other));
+            if (!strcasecmp(other, stem))
+            {
+               items[j].checked |= AF_HAVE_BOX;
+               have++;
+            }
          }
-      }
+   }
+   else
+   {
+      for (j = 0; j < list->n; j++)
+         if (!(items[j].checked & AF_HAVE_BOX))
+         {
+            char other[AF_NAME_CAP];
+            stem_of(list->name[j], other, sizeof(other));
+            if (!strcasecmp(other, stem))
+            {
+               items[j].checked |= AF_HAVE_BOX;
+               have++;
+            }
+         }
+   }
    A_STORE(g_prog_have, have);
 }
 
 /* -2 is interrupted/allocation failure: never a permanent decision. */
-static int item_kind(af_list *list, af_item *items, int idx, int kind,
-                     int foreground, int *seen)
+static int item_kind(const af_list *list, af_item *items,
+                     const int *buckets, unsigned bucket_mask,
+                     int idx, int kind, int foreground,
+                     int *box_done, int *title_done)
 {
    af_item *item = &items[idx];
    char stem[AF_NAME_CAP];
    unsigned bit = 1u << kind;
    int r;
    if ((item->checked & bit) && !foreground)
-   {
-      item_count(item, seen);
       return 0;
-   }
    if (stop_now())
       return -2;
    stem_of(list->name[idx], stem, sizeof(stem));
@@ -1335,7 +2480,7 @@ static int item_kind(af_list *list, af_item *items, int idx, int kind,
    {
       if (kind == AK_BOX)
       {
-         box_available(list, items, idx, stem);
+         box_available(list, items, buckets, bucket_mask, idx, stem);
          if (warm_one(list->name[idx])) done(list->name[idx]);
       }
       if (stop_now()) return -2;
@@ -1348,8 +2493,7 @@ static int item_kind(af_list *list, af_item *items, int idx, int kind,
       uint64_t failed = failure_time(list->path[idx], list->name[idx]);
       if (failed && worker_now() < failed + AF_COOLDOWN)
       {
-         item->checked |= bit;
-         item_count(item, seen);
+         item_mark(item, bit, box_done, title_done);
          return 2;
       }
       if (!item->candidates)
@@ -1371,14 +2515,13 @@ static int item_kind(af_list *list, af_item *items, int idx, int kind,
          done(list->name[idx]);
          if (kind == AK_BOX)
          {
-            box_available(list, items, idx, stem);
+            box_available(list, items, buckets, bucket_mask, idx, stem);
             /* A promoted PNG can outlive an interrupted thumbnail write. */
             if (stop_now()) return -2;
          }
       }
    }
-   item->checked |= bit;
-   item_count(item, seen);
+   item_mark(item, bit, box_done, title_done);
    return r;
 }
 
@@ -1387,8 +2530,11 @@ static void thread_main(void *arg)
    af_list *l = NULL;
    af_list *waiting = NULL;
    af_item *items = NULL;
+   int *buckets = NULL;
+   unsigned bucket_mask = 0;
    af_focus *focus = NULL;
-   int i = 0, fails = 0, k, warm_i = 0, seen = 0;
+   int box_i = 0, title_i = 0, fails = 0, k, warm_i = 0;
+   int box_done = 0, title_done = 0;
    int focus_served = 0, focus_warmed = 0, inventory_dirty = 0;
    int titles_seen = -1;
    uint64_t backoff_until = 0;
@@ -1397,7 +2543,7 @@ static void thread_main(void *arg)
       missing_load(k);
    while (!A_LOAD(g_quit))
    {
-      int warmed = 0, focus_idx = -1, online_now, titles_now;
+      int warmed = 0, focus_idx = -1, online_now, titles_now, work_left;
       af_list *nl = __atomic_exchange_n(&g_new, NULL, __ATOMIC_SEQ_CST);
       af_focus *nf;
       if (nl) { list_free(waiting); waiting = nl; }
@@ -1410,11 +2556,14 @@ static void thread_main(void *arg)
             plat_thread_sleep_us(250000);
             continue;
          }
+         missing_flush_all();
          waiting = NULL;
+         free(buckets); buckets = NULL; bucket_mask = 0;
          items_free(items, l ? l->n : 0);
          list_free(l);
          l = nl; items = next;
-         i = warm_i = seen = fails = 0;
+         buckets = stem_index_build(l, items, &bucket_mask);
+         box_i = title_i = warm_i = box_done = title_done = fails = 0;
          titles_seen = -1;
          inventory_dirty = 1;
          backoff_until = 0;
@@ -1434,9 +2583,10 @@ static void thread_main(void *arg)
          for (k = 0; l && k < l->n; k++)
          {
             free(items[k].candidates);
-            memset(&items[k], 0, sizeof(items[k]));
+            items[k].candidates = NULL;
+            items[k].checked = 0;
          }
-         i = warm_i = seen = fails = focus_served = 0;
+         box_i = title_i = warm_i = box_done = title_done = fails = focus_served = 0;
          focus_warmed = 0;
          backoff_until = 0;
          inventory_dirty = 1;
@@ -1447,15 +2597,11 @@ static void thread_main(void *arg)
       {
          /* A picture was put in or taken out of boxart/ by hand or by
           * cover_custom.c: look at the folders again, forget no misses. */
+         missing_flush_all();
          for (k = 0; k < l->n; k++)
-         {
-            /* box art is looked at again (what was checked while a cover
-             * was there is no longer so); candidates and misses are kept */
             items[k].checked &= ~(1u << AK_BOX);
-            items[k].counted = 0;
-         }
-         warm_i = 0;
-         titles_seen = -1;          /* recount against what is there now */
+         box_i = warm_i = box_done = 0;
+         progress_publish(box_done, title_done);
          inventory_dirty = 1;
          backoff_until = 0;
          say("art_fetch rescan%s%s", "", "");
@@ -1474,18 +2620,14 @@ static void thread_main(void *arg)
       titles_now = A_LOAD(g_titles);
       if (l && titles_now != titles_seen)
       {
-         /* Keep checked work, but recount against the newly enabled kinds. */
          titles_seen = titles_now;
-         i = seen = 0;
-         for (k = 0; k < l->n; k++)
-         {
-            items[k].counted = 0;
-            item_count(&items[k], &seen);
-         }
-         A_STORE(g_prog_seen, seen);
+         if (titles_now) title_i = 0;
+         progress_publish(box_done, title_done);
       }
       if (!l || A_LOAD(g_paused))
       {
+         http_close();
+         missing_flush_all();
          A_STORE(g_prog_busy, 0);
          nap_us(250000);
          continue;
@@ -1519,9 +2661,13 @@ static void thread_main(void *arg)
       }
       else if (focus && focus->generation < l->generation)
       { free(focus); focus = NULL; }
+      while (box_i < l->n && (items[box_i].checked & (1u << AK_BOX))) box_i++;
+      while (titles_now && title_i < l->n &&
+             (items[title_i].checked & (1u << AK_TITLE))) title_i++;
       online_now = !g_online || g_online();
-      A_STORE(g_prog_busy, online_now &&
-         (i < l->n || warm_i < l->n || (focus_idx >= 0 && !focus_served)));
+      work_left = (box_i < l->n) || (titles_now && title_i < l->n) ||
+                  (warm_i < l->n) || (focus_idx >= 0 && !focus_served);
+      A_STORE(g_prog_busy, online_now && work_left);
       if (focus_idx >= 0 && !focus_served)
       {
          uint64_t failed = failure_time(focus->path, focus->name);
@@ -1537,8 +2683,14 @@ static void thread_main(void *arg)
             }
             if (online_now)
             {
-               int r = item_kind(l, items, focus_idx, AK_BOX, 1, &seen);
-               if (r == -2) { nap_us(250000); continue; }
+               int r = item_kind(l, items, buckets, bucket_mask, focus_idx,
+                                 AK_BOX, 1, &box_done, &title_done);
+               if (r == -2)
+               {
+                  http_close();
+                  if (!stop_now()) nap_us(250000);
+                  continue;
+               }
                if (r < 0) failure_record(focus->path, focus->name);
                focus_served = 1;
                continue;
@@ -1552,43 +2704,69 @@ static void thread_main(void *arg)
          warm_i++;
          warmed = 1;
       }
-      while (i < l->n && items[i].counted) i++;
-      if (i >= l->n || !online_now)
+      /* Pass 1: all box art (AK_BOX) across the library before Pass 2
+       * (AK_TITLE), so visible covers arrive twice as fast. */
       {
-         if (!warmed) nap_us(250000);
-         continue;
-      }
-      {
-         int failed = 0, interrupted = 0;
-         uint64_t now = worker_now();
-         if (now < backoff_until)
+         int pass_kind = -1, idx = -1;
+         if (box_i < l->n)
          {
-            nap_us((uint32_t)(backoff_until - now));
+            pass_kind = AK_BOX;
+            idx = box_i;
+         }
+         else if (titles_now && title_i < l->n)
+         {
+            pass_kind = AK_TITLE;
+            idx = title_i;
+         }
+         if (idx < 0 || !online_now)
+         {
+            if (!warmed)
+            {
+               http_close();
+               missing_flush_all();
+               nap_us(250000);
+            }
             continue;
          }
-         for (k = 0; k < AK_KINDS; k++)
          {
+            uint64_t now = worker_now();
             int r;
-            if (k == AK_TITLE && !A_LOAD(g_titles)) continue;
-            r = item_kind(l, items, i, k, 0, &seen);
-            if (r == -2) { interrupted = 1; break; }
-            if (r < 0) { failed = 1; break; }
-         }
-         if (interrupted) { nap_us(250000); continue; }
-         if (failed)
-         {
-            items[i].checked |= A_LOAD(g_titles) ? 3u : 1u;
-            item_count(&items[i], &seen);
-            if (++fails >= 3)
+            if (now < backoff_until)
             {
-               backoff_until = worker_now() + AF_COOLDOWN;
-               fails = 0;
+               http_close();
+               missing_flush_all();
+               nap_us((uint32_t)(backoff_until - now));
+               continue;
             }
+            r = item_kind(l, items, buckets, bucket_mask, idx, pass_kind,
+                          0, &box_done, &title_done);
+            if (r == -2)
+            {
+               http_close();
+               if (!stop_now()) nap_us(250000);
+               continue;
+            }
+            if (r < 0)
+            {
+               item_mark(&items[idx], 1u << pass_kind, &box_done, &title_done);
+               if (++fails >= 3)
+               {
+                  backoff_until = worker_now() + AF_COOLDOWN;
+                  fails = 0;
+               }
+            }
+            else
+               fails = 0;
+            if (pass_kind == AK_BOX && (items[idx].checked & (1u << AK_BOX)))
+               box_i++;
+            else if (pass_kind == AK_TITLE && (items[idx].checked & (1u << AK_TITLE)))
+               title_i++;
          }
-         else fails = 0;
-         if (items[i].counted) i++;
       }
    }
+   http_close();
+   missing_flush_all();
+   free(buckets);
    items_free(items, l ? l->n : 0);
    list_free(l);
    list_free(waiting);
@@ -1620,6 +2798,12 @@ int artfetch_start(const char *root, const char *base_url, int (*online)(void))
    }
    snprintf(g_root, sizeof(g_root), "%s", root);
    g_online = online;
+   g_http_sock = -1;
+   g_http_host[0] = '\0';
+   g_http_port = 0;
+   g_dir_made[0] = g_dir_made[1] = 0;
+   g_thumb_dir_made = 0;
+   A_STORE(g_nav_busy, 0);
    g_body = (unsigned char *)malloc(AF_MAX_BYTES + 1);
    if (!g_body)
       return -1;

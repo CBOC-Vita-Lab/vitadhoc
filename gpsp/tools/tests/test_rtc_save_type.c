@@ -31,6 +31,10 @@ u32 vram_dirty_marks;
 u8 ewram[1024 * 256 * 2];
 u8 iwram[1024 * 32 * 2];
 u8 *memory_map_read[8 * 1024];
+int serial_mode = SERIAL_MODE_AUTO;
+u32 idle_loop_target_pc;
+u32 translation_gate_targets;                 /* load_game_config_over() */
+u32 translation_gate_target_pc[MAX_TRANSLATION_GATES];
 
 
 static time_t fake_now;                 /* the tests' hook: the Vita's clock */
@@ -203,10 +207,48 @@ static void test_save_type(void)
   assert(eeprom_size_forced == 0);
 }
 
+/* A cartridge with no backup chip (gba_over.h FLAGS_NO_BACKUP: Top Gun -
+ * Combat Zones): the SRAM/flash region reads 0xFF whatever was written, an
+ * EEPROM write does not turn the cart into EEPROM, and nothing else is
+ * affected. */
+static void test_no_backup(void)
+{
+  u32 i;
+  fresh_cart(BACKUP_UNKN, FLASH_SIZE_64KB);
+  load_game_config_over("A2YE");
+  assert(backup_type_reset == BACKUP_NONE);
+  apply_save_type_choice();
+  assert(backup_type_reset == BACKUP_NONE);
+  assert(!strcmp(gpsp_backup_name(), "none"));
+
+  backup_type = backup_type_reset;
+  memset(gamepak_backup, 0x11, 32 * 1024);
+  /* Titus's copy check: a string into SRAM, read back; then a flash ID
+   * probe (AA to 5555, 55 to 2AAA, 90 to 5555, read 0 and 1). */
+  for (i = 0; i < 8; i++)
+    write_backup(i, "TiTus In"[i]);
+  for (i = 0; i < 8; i++)
+    assert(read_backup(i) == 0xFF);
+  write_backup(0x5555, 0xAA);
+  write_backup(0x2AAA, 0x55);
+  write_backup(0x5555, 0x90);
+  assert(read_backup(0) == 0xFF && read_backup(1) == 0xFF);
+  write_eeprom(0, 1);
+  write_eeprom(0, 1);
+  assert(backup_type == BACKUP_NONE);
+  assert(gamepak_backup[0] == 0x11);     /* the store never saw a write */
+
+  /* Any other game: a chip, found the usual way. */
+  fresh_cart(BACKUP_UNKN, FLASH_SIZE_64KB);
+  load_game_config_over("AXVE");
+  assert(backup_type_reset != BACKUP_NONE);
+}
+
 int main(void)
 {
   test_clock();
   test_save_type();
+  test_no_backup();
   puts("ok");
   return 0;
 }

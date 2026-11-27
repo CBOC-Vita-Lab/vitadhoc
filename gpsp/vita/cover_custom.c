@@ -1,4 +1,5 @@
 /* cover_custom.c -- see cover_custom.h. */
+#include "i18n.h"
 #include "cover_custom.h"
 
 #include <ctype.h>
@@ -101,8 +102,12 @@ static int put_file(const char *tmp, const char *dst)
 /* The decoded caches of the old picture: the next draw makes them again from
  * the new one.  Only the Vita's own cache names; a picture of anyone's
  * (.png .jpg .bmp .565) is never touched here. */
+/* menu_files.c's picture-name index is stale from here (lessons-audit 1c) */
+__attribute__((weak)) void menu_files_art_changed(void) { }
+
 static void purge_caches(const char *stem)
 {
+   menu_files_art_changed();
    static const char *const ext[] = { "v565", "vh565" };
    char p[CV_PATH];
    unsigned i;
@@ -250,7 +255,7 @@ static unsigned char *decode_file(const char *path, int *w, int *h, char *why,
    int nc = 0, x, y;
    if (!file)
    {
-      snprintf(why, cap, "That picture could not be read.");
+      snprintf(why, cap, tr("cover.that_picture_could_not_be_read"));
       return NULL;
    }
    rgb = decode_shot(file, len, w, h);
@@ -263,27 +268,27 @@ static unsigned char *decode_file(const char *path, int *w, int *h, char *why,
        *h <= 0)
    {
       free(file);
-      snprintf(why, cap, "That is not a PNG or JPG picture.");
+      snprintf(why, cap, tr("cover.that_is_not_a_png_or"));
       return NULL;
    }
    if ((uint64_t)*w * (uint64_t)*h > CV_MAX_PIX)
    {
       free(file);
-      snprintf(why, cap, "That picture is too big (8 megapixels at most).");
+      snprintf(why, cap, tr("cover.that_picture_is_too_big_8"));
       return NULL;
    }
    rgba = stbi_load_from_memory(file, (int)len, w, h, &nc, 4);
    free(file);
    if (!rgba)
    {
-      snprintf(why, cap, "That picture could not be opened.");
+      snprintf(why, cap, tr("cover.that_picture_could_not_be_opened"));
       return NULL;
    }
    rgb = (unsigned char *)malloc((size_t)*w * *h * 3);
    if (!rgb)
    {
       stbi_image_free(rgba);
-      snprintf(why, cap, "Not enough memory for that picture.");
+      snprintf(why, cap, tr("cover.not_enough_memory_for_that_picture"));
       return NULL;
    }
    /* a see-through picture is laid over the menu's dark, not over black */
@@ -365,7 +370,7 @@ static int set_from(const char *stem, const char *path, const char *src,
 
    if (!g_root[0] || !stem || !stem[0] || strlen(stem) >= CV_STEM)
    {
-      snprintf(why, cap, "That game has no name to keep a picture under.");
+      snprintf(why, cap, tr("cover.that_game_has_no_name_to"));
       return -1;
    }
    rgb = decode_file(path, &w, &h, reason, sizeof(reason));
@@ -380,14 +385,14 @@ static int set_from(const char *stem, const char *path, const char *src,
        snprintf(tmp, sizeof(tmp), "%s.tmp", png) >= (int)sizeof(tmp))
    {
       free(rgb);
-      snprintf(why, cap, "That game's name is too long.");
+      snprintf(why, cap, tr("cover.that_game_s_name_is_too"));
       return -1;
    }
    if (!stbi_write_png(tmp, w, h, 3, rgb, w * 3))
    {
       drop(tmp);
       free(rgb);
-      snprintf(why, cap, "The picture could not be saved. Is the card full?");
+      snprintf(why, cap, tr("cover.the_picture_could_not_be_saved"));
       return -1;
    }
    /* keep what was there: a download, or a picture put there by hand */
@@ -398,7 +403,7 @@ static int set_from(const char *stem, const char *path, const char *src,
       {
          drop(tmp);
          free(rgb);
-         snprintf(why, cap, "The old cover could not be put aside.");
+         snprintf(why, cap, tr("cover.the_old_cover_could_not_be"));
          return -1;
       }
       moved = 1;
@@ -409,7 +414,7 @@ static int set_from(const char *stem, const char *path, const char *src,
          rename(dl, png);
       drop(tmp);
       free(rgb);
-      snprintf(why, cap, "The picture could not be saved.");
+      snprintf(why, cap, tr("cover.the_picture_could_not_be_saved_2"));
       return -1;
    }
    /* the note before the thumbnail: the fetcher's own thumbnail pass reads
@@ -423,7 +428,7 @@ static int set_from(const char *stem, const char *path, const char *src,
       if (moved)
          rename(dl, png);
       purge_caches(stem);
-      snprintf(why, cap, "The picture could not be saved.");
+      snprintf(why, cap, tr("cover.the_picture_could_not_be_saved_2"));
       return -1;
    }
    purge_caches(stem);
@@ -636,8 +641,11 @@ static int image_ext(const char *name, size_t *stem_len, int *pref)
 static void rom_ext_off(char *key)
 {
    static const char *const rom[] = { ".gba", ".gbc", ".gb", ".sgb", ".sfc",
-                                      ".smc", ".swc", ".fig", ".nes", ".zip",
-                                      ".7z" };
+                                      ".smc", ".swc", ".fig", ".nes", ".fds",
+                                      ".unif", ".unf", ".ws", ".wsc", ".pc2",
+                                      ".md", ".gen", ".smd", ".bin", ".68k",
+                                      ".sms", ".gg", ".sg", ".sc", ".cue",
+                                      ".chd", ".iso", ".m3u", ".zip", ".7z" };
    size_t n = strlen(key), e;
    unsigned i;
    for (i = 0; i < sizeof(rom) / sizeof(rom[0]); i++)

@@ -19,9 +19,13 @@
 #include <psp2/net/net.h>
 #include <psp2/net/netctl.h>
 #include <psp2/sysmodule.h>
+#include <psp2/kernel/rng.h>
+#include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
 #endif
 
 #include "transport_vadhoc.h"
+#include "init_once.h"
 
 /* vitaQuake's size.  The pool holds the stack's socket buffers and control
  * blocks; our use is one or two UDP sockets with 256 KiB receive buffers. */
@@ -43,13 +47,19 @@ static struct
 uint32_t net_vita_last_sce_error(void) { return N.last_sce; }
 
 #ifndef NET_VITA_HOST
-int net_vita_init(void)
+/* The room client's worker and the main thread can both call net_vita_init:
+ * one brings the stack up, the other waits for it (init_once.h). */
+static init_once g_net_gate;
+static void net_gate_pause(void)
+{
+   sceKernelDelayThread(1000);
+}
+
+static int net_vita_init_locked(void)
 {
    SceNetInitParam p;
    int rc;
 
-   if (N.up)
-      return 0;
    N.module_ours = N.net_ours = N.netctl_ours = 0;
    if (sceSysmoduleIsLoaded(SCE_SYSMODULE_NET) != SCE_SYSMODULE_LOADED)
    {
@@ -99,6 +109,16 @@ int net_vita_init(void)
    return 0;
 }
 
+int net_vita_init(void)
+{
+   int rc;
+   if (!init_once_begin(&g_net_gate, net_gate_pause))
+      return 0;
+   rc = net_vita_init_locked();
+   init_once_done(&g_net_gate, rc >= 0);
+   return rc;
+}
+
 void net_vita_term(void)
 {
    if (N.netctl_ours)
@@ -111,6 +131,7 @@ void net_vita_term(void)
       sceSysmoduleUnloadModule(SCE_SYSMODULE_NET);
    N.module_ours = N.net_ours = N.netctl_ours = 0;
    N.up = 0;
+   init_once_reset(&g_net_gate);
 }
 
 /* ---- Wi-Fi ----------------------------------------------------------------- */
@@ -154,6 +175,23 @@ int net_vita_wifi_status(net_vita_wifi *out)
       out->rssi_pct = (int)info.rssi_percentage;
    out->connected = 1;
    return 1;
+}
+
+void net_vita_entropy(uint8_t out[16])
+{
+   if (sceKernelGetRandomNumber(out, 16) < 0)
+   {
+      /* The RNG refused: a clock-seeded mix is poor, but better than a
+       * constant (the room service's token is what matters, and a second
+       * source is added by the caller's own clock). */
+      uint64_t t = (uint64_t)sceKernelGetProcessTimeWide() * 6364136223846793005ull;
+      int i;
+      for (i = 0; i < 16; i++)
+      {
+         t = t * 6364136223846793005ull + 1442695040888963407ull;
+         out[i] = (uint8_t)(t >> 56);
+      }
+   }
 }
 #endif /* !NET_VITA_HOST */
 

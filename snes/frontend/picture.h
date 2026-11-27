@@ -10,18 +10,24 @@
 
 enum { PIC_ORIGINAL = 0, PIC_ZOOM, PIC_FULL, PIC_PIXEL, PIC_SHAPES };
 enum { PIC_SHARP = 0, PIC_SMOOTH };
+/* the pixel art scaler row (the same choices and words as the Sega player): Auto = the look governor picks the best that holds full speed */
+enum { SCALER_AUTO = 0, SCALER_OFF, SCALER_MMPX2, SCALER_XBR2, SCALER_XBR3, SCALER_CHOICES };
 
 typedef struct {
 	int shape;     /* PIC_ORIGINAL (default), PIC_ZOOM, PIC_FULL, PIC_PIXEL */
 	int pixel_sq;  /* pixel perfect: 0 = 8:7 pixels, 1 = square pixels */
 	int quality;   /* PIC_SHARP (default) or PIC_SMOOTH */
-	int glow;      /* side glow 0 (off) .. 10 */
+	int glow;      /* ambient glow 0 (off) .. 10 */
 	int scan;      /* CRT scanlines 0 (off) .. 10 */
 	int grid;      /* LCD grid 0 (off) .. 10 */
+	int crt;       /* CRT mask 0 (off) .. 10 (playerkit/src/pk_screen.h, pk_crt.h) */
 	int hires_blend;     /* 1: 512-wide pictures are averaged to 256 columns (transparency in pseudo-hi-res games) */
 	int interlace_blend; /* 1: interlaced (400+ row) pictures are averaged to half height */
 	int multitap;  /* Super Multitap in port 2: 0 automatic (known games), 1 on, 2 off */
 	int use_game;  /* 1: this game has its own file; 0: the console file is used */
+	int wide;      /* wide view (real picture beside the 4:3 frame): 0 auto, 1 on, 2 off */
+	int scaler;    /* SCALER_* (default Auto) */
+	int tier_steps;/* not stored: the tiers the look governor has taken off the scaler's ceiling (pic_scaler_effective) */
 } pic_settings;
 
 void pic_defaults(pic_settings *s);
@@ -40,6 +46,24 @@ typedef struct {
  * blank rows (in picture rows) the Zoom shape may remove. */
 void pic_geometry(const pic_settings *s, int src_w, int src_h, int crop_top, int crop_bottom,
                   int scr_w, int scr_h, pic_rect *r);
+
+/* Wide view. pic_wide_margin: pixels per side (0..max_m) of extra picture that fill the screen's width for the shape and the
+ * pixel shape in `s` (0: this shape has nothing to gain, the picture already fills the width: the stretched shape). The
+ * wide picture is (256 + 2 * M) columns; pic_geometry_wide places it with the same scale per column as the normal picture
+ * (rows as in pic_geometry; the width is the normal one times wide_w / 256, cropped symmetrically if it is wider than the
+ * screen). */
+int pic_wide_margin(const pic_settings *s, int scr_w, int scr_h, int max_m);
+void pic_geometry_wide(const pic_settings *s, int wide_w, int src_h, int crop_top, int crop_bottom,
+                       int scr_w, int scr_h, pic_rect *r);
+
+/* ---- the pixel art scaler ceiling (as the Sega player: pic_scaler_ceiling in md/frontend/picture.h) ----
+ * The tier Auto starts at for a picture of w x h pixels: 1 = xBR 2x, 2 = none (sharp bilinear). 3x is never used (224 rows x 3 = 672 for a 544 row
+ * screen: the extra pixels are computed to be averaged away); MMPX 2x is only ever chosen by hand. Hi-res (512 wide) and interlaced (400+ rows)
+ * pictures get none; the wide view's picture (256 + 2 margin columns, up to 448) is included. */
+int pic_scaler_ceiling(int w, int h);
+/* the scaler the settings and the governor give: `tier_steps` is how many tiers the governor has taken off the ceiling.
+ * Returns a SCALER_* value other than AUTO (SCALER_OFF = sharp bilinear). A hand-set scaler row is never eased. */
+int pic_scaler_effective(const pic_settings *s, int ceiling_tier, int tier_steps);
 
 /* Integer prescale factors for the sharp-bilinear pass (1 = none needed). */
 void pic_prescale(const pic_rect *r, int *kx, int *ky);

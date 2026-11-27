@@ -106,6 +106,30 @@ instead of the `$81D0` a level cartridge gives).  The adapter's
 `gbe_getSensor` returns what the frontend published with `gbcore_set_tilt`
 (level `$81D0` before that).  Test: `gbcore/tests/mbc7.c`.
 
+### The Game Boy Camera (2026-11-25)
+
+New `tgbdual/gbcam.h`, included by `mbc.c` only (no new object): cartridge
+type `$FC` banks like an MBC3 (64 ROM banks, bank 0 allowed; 16 RAM banks;
+RAM bank number with bit 4 set puts the camera registers at `$A000`, mirrored
+every `$80`).  `$A000` bit 0 starts a capture and reads 1 while it runs (32446
++ 512 if the N bit is clear + 16 x exposure machine cycles, counted in
+scanlines by `mbc_cam_tick`, called first in `gb_run`); on its last line the
+M64282FP model (`gbcam_render`: exposure x gain, invert, 2-D / horizontal /
+vertical edge enhancement, the 1-D filter, the 4x4 dither matrix) writes the
+14x16-tile picture to cartridge RAM bank 0 `$0100`.  The source picture is
+`gbe_getCameraImage()` (adapter, `gbcore_set_camera_image`), else a test
+pattern.  State: 64 bytes of the reserved block at offset 192 (`CAM1`, busy
+count, 54 registers), written and read only for a `$FC` cartridge, so every
+other cartridge's state is byte for byte what it was; `gb.c` gets one call in
+each of the four save / load sites and one in `gb_run`.  Not modelled: the
+sensor's analogue side, double-speed timing (the same number of scanlines).
+The gain table is an own smooth curve (steps of the fourth root of two, x0.5 to
+x6.7), not the datasheet's decibels.  Cartridge RAM is closed while a capture
+runs: `cpu.c` reads 0 and drops writes at `$A000..$BFFF` through
+`mbc_cam_ram_blocked()` (always 0 for any other cartridge), and `mbc_cam_starts()`
+counts started captures for the frontend (`gbcore_camera_requests`).  Test:
+`gbcore/tests/gbcam.c`.
+
 ## Two machines in one program (GB link sessions)
 
 A link session runs both players' Game Boys on each console
@@ -203,3 +227,52 @@ The vendored loop stored both bytes of the word at the even address
 (`get_sram()+i*2` twice): every word read back as its low byte twice.  The
 second store is now `+i*2+1`, as the single-word write (WRITE) already did.
 
+## Game Boy colours (2.0)
+
+`_cgb_dmg_pal.h` (new) is the Game Boy Color's per-game palette data (51
+combinations, title-sum table, 12 button palettes) and the 32 Super Game Boy
+system palettes; its sources and licences are in `notices/THIRD-PARTY.md`.
+`tgb_shared.c` holds the tables and the lookups (`tgbshared_cgbpal_auto`,
+`_manual`, `_colors`, `tgbshared_sgbpal_colors`). `tgb_port.h` declares
+`tgb_dmg_is_cgb`. `lcd.c`: a DMG game's palette entries go through the GBC LCD
+model (`cgb_lcd_color`) when that flag is set (a GBC palette is chosen), so
+they look as a Game Boy Color showed them; otherwise unchanged.
+
+## State loads that are not trusted (20 Nov 2026, 2.0)
+
+The GB / GBC loader (`gb_state_valid`, `state_validate.h`) already validated the state before applying it. `gpsp/gbcore/tests/statefuzz.cpp`
+(ASan + UBSan, random mutation of a real state, MBC and colour variants, frame watchdog) found nothing to change in the core: about 175 000
+damaged states (cartridge types MBC1, MBC3 with timer, MBC5 with rumble, MBC7 and an unknown type, made by changing the header byte of the test
+cartridges, plus the GBC test cartridges), 0 crashes, 0 hangs, 0 reports; and the load proof (frames 1, 97, 300, 655, then 60 frames) is equal on
+every test cartridge. The cartridges are small test programs, so a real game's ROM and RAM sizes were not exercised.
+
+## Accuracy against the public test ROMs (24 Nov 2026, 2.0)
+
+Measured with `gbcore/tests/run_suites.py` (blargg, dmg-acid2, cgb-acid2; the
+table is in `docs/COMPATIBILITY.md`, "Game Boy test suites"). In order of what
+a game can notice:
+
+| File | Change |
+|---|---|
+| `op_normal.h` | PUSH AF stored `F | 0x0E`: the low four bits of F are always 0 (the "unused bits are 1" comment came from a game hack). This alone failed nine of the eleven cpu_instrs tests, since the tests checksum AF through the stack. |
+| `op_normal.h` | DAA rewritten as the plain rule (several flag and value combinations were wrong). ADD SP,n and LD HL,SP+n set no flags; now H and C come from the low byte, Z and N are cleared. |
+| `lcd.c` | `lcd_sprite_select`: a line shows the first ten sprites (OAM order) whose rows cover it, whatever their X; on the DMG the lower X is drawn on top (ties: lower OAM index), on the Game Boy Color the lower OAM index. Before, all forty were drawn, so an eleventh sprite showed and a later sprite at a lower X was covered. The picture differs for games that put more than ten sprites on a line (as hardware does). dmg-acid2 and cgb-acid2 now match. The compiled-out ColorIt copy is unchanged. |
+| `cpu.c`, `op_normal.h` | HALT with IME off and an interrupt already requested does not halt, and the next byte is read twice. HALT runs that next instruction itself, in one piece, so nothing is left pending for a state, a rewind step or a Quick response frame to lose (`gbcore/tests/timer.c` loads a state taken right after such a HALT). |
+| `cpu.c` | Dispatching an interrupt takes 20 clocks (it took none). `gbcore/tests/timer.c` expects the 20 in its HALT test. blargg interrupt_time passes. |
+| `apu.c` | `apu_read` returns unused and write-only bits as 1 (NR10 0x80, NR11/NR21 0x3F, NR14/NR24/NR34/NR44 0xBF, NR30 0x7F, NR32 0x9F, unused 0xFF; NR12.. none). Reads only; the state is unchanged. |
+| `cpu_io.h` | A read of IF returns the top three bits as 1. |
+
+None of these touch the state layout; old states load. Not changed:
+mem_timing (the core advances the clock after each whole instruction),
+oam_bug.
+
+## Sound accuracy (2.0, blargg dmg_sound and cgb_sound 13/13)
+
+| File | Change |
+|---|---|
+| `apu_timing.h` | The sweep's frequency update also writes `sq1_init_freq`, the copy a later NR13/NR14 write builds on (on hardware the sweep rewrites NR13/NR14 themselves; a retrigger after a sweep used the old low byte). Fixes 05-sweep details (subtract mode, overflow on retrigger). |
+| `apu_timing.h`, `apu.c` | CPU-side channel 3 clock: `wave_cd` (clocks to the next fetch), `wave_pos`, `wave_since`, advanced in T-clocks by `apu_advance` on the CPU timeline only (the audio generator keeps its own sample-rate position and is untouched). A trigger loads `period + 6` (`WAVE_TRIG`) and restarts at sample 0. |
+| `apu.c` | Wave RAM access while channel 3 plays: a read returns the byte the channel is on (CGB: always; DMG: only within `WAVE_WINDOW` = 2 clocks after the fetch, else 0xFF); a write lands on that byte (DMG: same window, else dropped). The redirected address is what is queued for the audio generator. A DMG retrigger when the next fetch is within `WAVE_CORRUPT` = 2 clocks corrupts wave RAM as Pan Docs describes (byte 0-3: only byte 0; else the first four bytes become the aligned group); the corrupting writes are queued too. The three constants were fitted to the CRCs of 09/10/12 (which come from hardware). |
+| `cpu.c`, `cpu_io.h`, `gb.h` | The core advances the clock after a whole instruction, so an APU register access used to land on the instruction's first clock. For FF10-FF3F and DIV the APU is now brought to the access's M-cycle (`cpu_access_off` = instruction clocks - 4, from `tmp_clocks`; 0 outside an instruction). The queue stamps use the same time. No other component's timing changes. |
+| `apu_timing.h` | State: `WAV1` tag, three words, at byte 96 of the 256 reserved bytes (the APU block fills 0-79, the timer 80-87, the camera 192+). States without the tag load with the channel stopped at sample 0, as before this change. |
+| `apu_timing.h`, `gbcore_tgbdual.c` | The three words are part of `gbcore_sync_hash` (`apu_save_wave_timing`): they decide what a wave RAM read returns, so two linked machines that differ only there are told apart. |

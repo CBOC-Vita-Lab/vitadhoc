@@ -381,7 +381,9 @@ const u32 def_seq_cycles[16][2] =
 };
 
 
-u8 bios_rom[1024 * 16];
+/* 32 KiB: the memory map gives the BIOS a 32 KiB read page and an instruction fetch may land in its upper half
+ * (the BIOS is 16 KiB; the rest reads as zero instead of past the end of the array). */
+u8 bios_rom[1024 * 32];
 
 // Up to 128kb, store SRAM, flash ROM, or EEPROM here.
 u8 gamepak_backup[1024 * 128];
@@ -696,6 +698,10 @@ u8 read_backup(u32 address)
       return tilt;
   }
 
+  /* No chip answers in the SRAM/flash region: the bus reads 0xFF. */
+  if(backup_type == BACKUP_NONE)
+    return 0xff;
+
   if(backup_type == BACKUP_EEPROM)
   {
     if(!backup_type_eeprom_guessed || eeprom_really_used)
@@ -789,6 +795,8 @@ u32 eeprom_counter = 0;
 void function_cc write_eeprom(u32 unused_address, u32 value)
 {
   DRPH_SCOPE(DRPH_MEMC);
+  if (backup_type == BACKUP_NONE)
+    return;   /* no chip: the write must not turn the cart into EEPROM */
   cph_bkw++;   /* phase 5h */
   eeprom_really_used = 1;
 #ifdef GBA_LINK
@@ -1594,6 +1602,8 @@ void function_cc write_backup(u32 address, u32 value)
   backup_writes++;   /* gba_memory.h */
 #endif
 
+  if(backup_type == BACKUP_NONE)
+    return;
   if(backup_type == BACKUP_EEPROM)
   {
     if(!backup_type_eeprom_guessed || eeprom_really_used)
@@ -2365,7 +2375,7 @@ cpu_alert_type function_cc write_memory32(u32 address, u32 value)
 typedef struct
 {
    char gamepak_code[5];
-   u16 flags;
+   u32 flags;
    u32 idle_loop_target_pc;
    u32 translation_gate_target_1;
    u32 translation_gate_target_2;
@@ -2379,6 +2389,7 @@ typedef struct
 #define FLAGS_SOLAR          0x1000   // Boktai's light sensor (cart_sensor.h).
 #define FLAGS_GYRO           0x2000   // WarioWare: Twisted!'s rotation sensor.
 #define FLAGS_TILT           0x4000   // Yoshi Topsy-Turvy's tilt sensor.
+#define FLAGS_NO_BACKUP     0x10000   // The board has no backup chip (Top Gun: Combat Zones).
 
 #define FLAGS_SERIAL         0x8000   // Configure a serial mode by default.
 #define FLAGS_SERIAL_MASK    0x00FF
@@ -2428,6 +2439,9 @@ static void load_game_config_over(const char *gamecode)
 
      if (gbaover[i].flags & FLAGS_EEPROM)
        backup_type_reset = BACKUP_EEPROM;
+
+     if (gbaover[i].flags & FLAGS_NO_BACKUP)
+       backup_type_reset = BACKUP_NONE;
 
      if (serial_mode == SERIAL_MODE_AUTO && (gbaover[i].flags & FLAGS_SERIAL))
      {
@@ -3058,6 +3072,9 @@ static u32 evict_gamepak_page(void)
 {
   u32 ret;
   s16 phyrom;
+  /* If every resident page is sticky the walk went round the queue for ever (a program running through more pages in
+   * a frame than are resident, or a state whose pc is in a mirror of a tiny ROM): after one full lap the oldest goes. */
+  u32 lap = 1024;
   do {
     // Return the index to the last used entry
     u32 newhead = gamepak_blk_queue[gamepak_lru_head].next_lru;
@@ -3071,7 +3088,7 @@ static u32 evict_gamepak_page(void)
     gamepak_blk_queue[gamepak_lru_tail].next_lru = ret;
     gamepak_lru_tail = ret;
     // If this page is marked as sticky, we keep going through the list
-  } while (phyrom >= 0 && gamepak_sb_test(phyrom));
+  } while (phyrom >= 0 && gamepak_sb_test(phyrom) && --lap);
 
   // We unmap the ROM page if it was mapped, ensure we do not access it
   // without triggering a "page fault"
@@ -3615,7 +3632,7 @@ bool memory_check_savestate(const u8 *src)
   /* Serialized protocol state is normally bounded by hardware writes.  A
    * damaged/imported state must not turn those values into array indexes or
    * invalid shift counts on the next cartridge access. */
-  if (!bson_read_int32(bakdoc, "backup-type", &backup_kind) || backup_kind > BACKUP_UNKN ||
+  if (!bson_read_int32(bakdoc, "backup-type", &backup_kind) || backup_kind > BACKUP_NONE ||
       !bson_read_int32(bakdoc, "flash-mode", &flash_mode_val) || flash_mode_val > FLASH_BANKSWITCH_MODE ||
       !bson_read_int32(bakdoc, "flash-cmd-pos", &flash_cmd_pos) || flash_cmd_pos > 2 ||
       !bson_read_int32(bakdoc, "flash-bank-num", &flash_bank) || flash_bank > 1 ||
@@ -4322,6 +4339,7 @@ const char *gpsp_backup_name(void)
                                ? "flash128" : "flash64";
     case BACKUP_EEPROM: return eeprom_size_forced == EEPROM_8_KBYTE ? "eeprom8k"
                                : eeprom_size_forced ? "eeprom512" : "eeprom";
+    case BACKUP_NONE:   return "none";
     default:            return "sram-default";
   }
 }

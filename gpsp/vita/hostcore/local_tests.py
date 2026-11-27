@@ -44,7 +44,14 @@ from app_tests import menu_pick, worst_diff
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GP = os.path.normpath(os.path.join(HERE, "..", ".."))
-LINKTEST = os.path.join(GP, "tools", "linktest", "linktest.gba")
+def _linktest(name):
+    """the cartridge the gate built into its out dir (GATE_LINKTEST_DIR), else the committed one"""
+    d = os.environ.get("GATE_LINKTEST_DIR")
+    p = os.path.join(d, name) if d else ""
+    return p if p and os.path.exists(p) else os.path.join(GP, "tools", "linktest", name)
+
+
+LINKTEST = _linktest("linktest.gba")
 LT_DIR = os.path.join(GP, "tools", "linktest")
 GL_DIR = os.path.join(GP, "tools", "gbamirror")
 GBLINK = os.path.join(HERE, "testrom", "gblocal.gb")
@@ -621,6 +628,44 @@ def t_ports(S):
             "every setup in the table agrees")
 
 
+def t_zapper_map(S):
+    """The NES Zapper on the touch screen (../zapper_map.h): a touch of the
+    screen to a pixel of the NES picture, through the screen size, the wide
+    view and the overscan crop."""
+    exe = os.path.join(S.outdir, "zapper_map_test")
+    os.makedirs(S.outdir, exist_ok=True)
+    cc = subprocess.run(["cc", "-Wall", "-Wextra", "-o", exe,
+                         os.path.join(HERE, "zapper_map_test.c")],
+                        capture_output=True, text=True)
+    S.check(cc.returncode == 0, "the zapper map compiles: %s" % cc.stderr[-200:])
+    if cc.returncode:
+        return
+    p = subprocess.run([exe], capture_output=True, text=True)
+    S.check(p.returncode == 0 and p.stdout.strip() == "ok zapper_map",
+            "every case of the touch-to-pixel map agrees (%s)" % p.stdout[-200:])
+
+
+def t_i18n_loader(S):
+    """The interface-language catalogue loader (../i18n.c): BOM, CRLF,
+    malformed lines, missing keys, a huge file, formats, the pseudo-locale;
+    and lang_en.h agrees with lang/en.txt."""
+    exe = os.path.join(S.outdir, "i18n_test")
+    scratch = os.path.join(S.outdir, "i18n_scratch")
+    os.makedirs(scratch, exist_ok=True)
+    cc = subprocess.run(["cc", "-Wall", "-Wextra", "-fsanitize=address,undefined", "-o", exe,
+                         os.path.join(HERE, "i18n_test.c"), os.path.join(HERE, "..", "i18n.c")],
+                        capture_output=True, text=True)
+    S.check(cc.returncode == 0, "the loader test compiles: %s" % cc.stderr[-300:])
+    if cc.returncode == 0:
+        p = subprocess.run([exe, scratch], capture_output=True, text=True)
+        S.check(p.returncode == 0 and p.stdout.strip().endswith("ok i18n"),
+                "every loader case agrees (%s)" % (p.stdout + p.stderr)[-300:])
+    root = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+    g = subprocess.run(["python3", os.path.join(root, "tools", "i18n", "gen_lang_h.py"), "--check"],
+                       capture_output=True, text=True, cwd=root)
+    S.check(g.returncode == 0, "lang_en.h is current with lang/en.txt: %s" % (g.stdout + g.stderr)[-200:])
+
+
 def t_twopads(S):
     """Two controllers: two equal pictures side by side (even with the
     large + small layout chosen), each pad its own game, either player opens
@@ -802,7 +847,7 @@ def t_save(S):
 +20:a:10
 +20:a:10
 +90:shot=saved.png
-""" % (at + 120) + menu_pick(6)
+""" % (at + 120) + menu_pick(7)
     r = S.run("save1", script, autoboot=TEST,
               vita_ini={"local_auto": 2, "local_auto_frame": 100},
               config={"local_partner": 1})
@@ -851,7 +896,7 @@ def t_save(S):
 %d:shot=reload.png
 +2:p2.a:10
 +90:shot=third.png
-""" % (at + 160) + menu_pick(6)
+""" % (at + 160) + menu_pick(7)
     r = S.run("save1", script, prepared=True)
     S.clean(r)
     st = r.evt("local_start")
@@ -879,7 +924,7 @@ def t_save(S):
 +20:p2.a:10
 +20:p2.a:10
 +90:shot=copy.png
-""" % (at + 160) + menu_pick(6)
+""" % (at + 160) + menu_pick(7)
     with open(os.path.join(r.root, "vita.ini"), "w") as f:
         f.write("local_auto = 1\nlocal_auto_frame = 100\n")
     r = S.run("save1", script, prepared=True)
@@ -901,7 +946,7 @@ def t_save(S):
 +20:a:10
 +20:a:10
 +90:shot=w.png
-""" % (at + 140) + menu_pick(6)
+""" % (at + 140) + menu_pick(7)
     r = S.run("save_worker", script, autoboot=TEST, args=("--worker",),
               vita_ini={"local_auto": 2, "local_auto_frame": 100})
     S.clean(r)
@@ -1023,7 +1068,10 @@ def t_cheats(S):
 +0:shot=gold.png
 +30:quit
 """ % (at + 200)
+    # (Image quality Original: the probes read the game's own pixels, which
+    # 1.4's default xBRZ smoothing blends at the blocks' edges)
     r = S.run("cheats_own", script, autoboot="cheatrom.gba", extra=extra,
+              config={"quality_gba": 1},
               vita_ini={"local_auto": 2, "local_auto_frame": 60})
     S.clean(r)
     ld = r.evt("cheats_load")
@@ -1050,7 +1098,7 @@ def t_cheats(S):
     # a copy starts with what the codes had written, and from then on is
     # left alone: its lives count down
     r = S.run("cheats_copy", "%d:shot=copy.png\n+10:quit\n" % (at + 200),
-              autoboot="cheatrom.gba", extra=extra,
+              autoboot="cheatrom.gba", extra=extra, config={"quality_gba": 1},
               vita_ini={"local_auto": 1, "local_auto_frame": 60})
     S.clean(r)
     a, b = blocks("copy.png")
@@ -1229,7 +1277,7 @@ def t_states(S):
             int(sv[0]["size"]) > 800000,
             "the pair is saved beside the player's state (%s)" %
             (sv[0]["_"] if sv else "no local_state_save"))
-    st0 = os.path.join(r.root, "states", "gba", "linktest.st0")
+    st0 = os.path.join(r.root, "states", "gba", A.bkt("linktest"), "linktest.st0")
     S.check(os.path.exists(st0) and os.path.exists(st0 + ".p2") and
             os.path.getsize(st0) == 416 * 1024,
             "the player's own state file is still a plain 416 KiB state")
@@ -1285,7 +1333,7 @@ def t_states(S):
 +100:select+r:1
 +3:shot=loaded.png
 +60:shot=later.png
-""" % (at + 200) + menu_pick(6)
+""" % (at + 200) + menu_pick(7)
     r = S.run("states_own", script, autoboot=TEST,
               vita_ini={"local_auto": 2, "local_auto_frame": 100})
     S.clean(r)
@@ -1297,7 +1345,7 @@ def t_states(S):
             "saved, %d / %d when loaded 100 frames later" % (a0, b0, a1, b1))
     S.check(a2 - a1 == 60 and b2 - b1 == 60, "and both run on (%d / %d)" %
             (a2, b2))
-    st = os.path.join(r.root, "states", "gba", "gbadhoc-test.st0")
+    st = os.path.join(r.root, "states", "gba", A.bkt("gbadhoc-test"), "gbadhoc-test.st0")
 
     # the same card, no pair this time: the player's state file loads as a
     # state of one game, and a state saved alone orphans the old companion
@@ -1550,7 +1598,7 @@ def t_other(S):
     # ---- the partner's game keeps its OWN save file ---------------------------
     at = S.boot_refresh("cheatrom.gba", extra)
     script = "%d:p2.a:10\n+20:p2.a:10\n+90:shot=saved.png\n" % (at + 140) + \
-        menu_pick(6)
+        menu_pick(7)
     r = S.run("other_save", script, autoboot="cheatrom.gba",
               extra=dict(extra, **{"local.ini": partner_ini("cheatrom.gba",
                                                             TEST)}),
@@ -1641,8 +1689,11 @@ def t_gb(S):
         S.note("no testrom/gblocal.gb (make -C testrom RGBDS=... gb): skipped")
         return
     rom = open(GBLINK, "rb").read()
+    # (the copy named .gbc is a plain Game Boy image: the header decides what
+    # a game is now, so the per-game type says "Game Boy Color" for it)
     extra = {"roms/gblocal.gb": rom, "roms/gblocal.gbc": rom,
-             "roms/gblocal-blue.gb": rom}
+             "roms/gblocal-blue.gb": rom,
+             "gb_override.txt": "gbc  gblocal.gbc\n"}
     at = S.boot_refresh("gblocal.gb", extra)
     # ---- a copy; A on the player's pad makes his machine the master ----------
     script = """
@@ -1652,7 +1703,7 @@ def t_gb(S):
 +10:right:60
 +0:shot=partner.png
 +40:shot=late.png
-""" % (at + 90, at + 400) + menu_pick(6)
+""" % (at + 90, at + 400) + menu_pick(7)
     r = S.run("gb_copy", script, autoboot="gblocal.gb", extra=extra,
               vita_ini={"local_auto": 1, "local_auto_frame": 30,
                         "local_peek": "0xC000:16"})
@@ -1689,7 +1740,7 @@ def t_gb(S):
             b[:6].hex())
 
     # ---- its own save, twice on one card: the file is read back --------------
-    script = "%d:a:5\n%d:shot=own.png\n" % (at + 90, at + 300) + menu_pick(6)
+    script = "%d:a:5\n%d:shot=own.png\n" % (at + 90, at + 300) + menu_pick(7)
     r = S.run("gb_own", script, autoboot="gblocal.gb", extra=extra,
               vita_ini={"local_auto": 2, "local_auto_frame": 30,
                         "local_peek": "0xC000:16"},
@@ -1724,7 +1775,7 @@ def t_gb(S):
     gb_verdict(S, r, "GBC", 80)
     S.picture(r, "gbc.png")
     r = S.run("gb_other", "%d:a:5\n%d:shot=other.png\n" %
-              (at + 90, at + 300) + menu_pick(6), autoboot="gblocal.gb",
+              (at + 90, at + 300) + menu_pick(7), autoboot="gblocal.gb",
               extra=dict(extra, **{"local.ini": partner_ini(
                   "gblocal.gb", "gblocal-blue.gb")}),
               vita_ini={"local_auto": 2, "local_auto_frame": 30,
@@ -1842,7 +1893,10 @@ def t_gb_mixed(S):
     cgb = open(paths[1], "rb").read()
     fast = open(paths[2], "rb").read()
     extra = {"roms/gblocal.gb": plain, "roms/gblocal.gbc": plain,
-             "roms/gblocal-cgb.gbc": cgb, "roms/gblocal-cgbfast.gbc": fast}
+             "roms/gblocal-cgb.gbc": cgb, "roms/gblocal-cgbfast.gbc": fast,
+             # (a plain Game Boy image named .gbc: the header decides, so the
+             # per-game type makes it the Color game this case is about)
+             "gb_override.txt": "gbc  gblocal.gbc\n"}
     # (player's game, partner's game, hardware of each: 1 = GB, 2 = GBC)
     cases = [("gblocal.gb", "gblocal-cgb.gbc", "1/2", "Game Boy with a Color"),
              ("gblocal-cgb.gbc", "gblocal.gb", "2/1", "Color with a Game Boy"),
@@ -1858,7 +1912,7 @@ def t_gb_mixed(S):
         ex = dict(extra, **{"local.ini": partner_ini(game, partner)})
         r = S.run("gb_mixed%d" % i,
                   "%d:a:5\n%d:shot=mixed.png\n" % (at + 90, at + 400) +
-                  menu_pick(6), autoboot=game, extra=ex,
+                  menu_pick(7), autoboot=game, extra=ex,
                   vita_ini={"local_auto": 2, "local_auto_frame": 30,
                             "local_peek": "0xC000:16"})
         S.clean(r)
@@ -2013,6 +2067,8 @@ def t_handover(S):
     T = N.Tests("x86", getattr(S, "hz", 0))
     T.S = S
     T.begin("handover")
+    # (the session must outlast two hash periods of 240 frames: at the twin's
+    # pace 14 script seconds reached only frame 236 and no hash was sent)
     rom = os.path.join(HERE, "testrom", TEST)
     two = N.keys("down", "down", "cross", first=20) + \
         N.keys("cross", first=20) + N.close_menu(first=30)
@@ -2022,15 +2078,15 @@ def t_handover(S):
                N.open_play(7.5) + N.keys("down", "down", "cross", first=20) +
                N.keys("up", "up", "cross", first=20) + "+50:shot=host.png\n" +
                N.close_menu() +
-               N.shot(22, "session.png") + N.disconnect(26) +
+               N.shot(58, "session.png") + N.disconnect(62) +
                # the session over: two games again
-               N.open_play(33) + two + N.press(38, "a", 40) +
-               N.shot(38.4, "two_after.png") + N.quit_at(42))
+               N.open_play(69) + two + N.press(74, "a", 40) +
+               N.shot(74.4, "two_after.png") + N.quit_at(78))
     b = T.twin("b", "x86", rom, "Bob",
-               N.join_first(12, wait=2.5) + N.shot(22, "session.png") +
-               N.open_play(33) + two + N.press(38, "b", 40) +
-               N.shot(38.4, "two_after.png") + N.quit_at(42))
-    ra, rb = T.run([a, b], 42)
+               N.join_first(12, wait=2.5) + N.shot(58, "session.png") +
+               N.open_play(69) + two + N.press(74, "b", 40) +
+               N.shot(74.4, "two_after.png") + N.quit_at(78))
+    ra, rb = T.run([a, b], 78)
     T.clean(ra, "A")
     T.clean(rb, "B")
     i0 = ra.index(r"^EVT local_start ok")
@@ -2206,7 +2262,7 @@ def t_speed(S):
 
 
 TESTS = [("linktest", t_linktest), ("menu", t_menu), ("switch", t_switch),
-         ("ports", t_ports), ("twopads", t_twopads), ("touch2", t_touch2),
+         ("ports", t_ports), ("zapper_map", t_zapper_map), ("i18n_loader", t_i18n_loader), ("twopads", t_twopads), ("touch2", t_touch2),
          ("save", t_save), ("cycle", t_cycle), ("cheats", t_cheats),
          ("audio", t_audio), ("states", t_states), ("ff", t_ff),
          ("other", t_other), ("gb", t_gb), ("gb_mixed", t_gb_mixed), ("exclusive", t_exclusive),

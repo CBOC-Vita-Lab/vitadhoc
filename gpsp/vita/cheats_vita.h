@@ -87,6 +87,10 @@ enum
  * Vita).  A missing database is not an error: games then have only the
  * player's own files.  Returns the number of games in it, or 0. */
 int  cheats_db_open(const char *path);
+/* Record the database path without opening it until first queried. */
+void cheats_db_open_later(const char *path);
+/* Non-zero while the loaded game's database lookup is still deferred. */
+int  cheats_db_pending(void);
 /* The database's name for the running game ("Pokemon - Emerald Version
  * (USA, Europe)"), or "" when it is not in the database. */
 const char *cheats_db_game(void);
@@ -98,6 +102,10 @@ const char *cheats_db_game(void);
 int  cheats_load(const char *root, const char *rom_path, fe_console_t console);
 /* The game is going away. */
 void cheats_unload(void);
+
+/* 2.0: md.bin's cheats.  Writes the loaded game's usable database entries (all switched off) as a RetroArch .cht to `path`
+ * for the launch file's cheats_db= key.  Returns the number written (0: none, no file), -1 on a write failure. */
+int  cheats_export_database(const char *path);
 
 int                cheats_count(void);
 const cheat_entry *cheats_get(int i);          /* NULL out of range */

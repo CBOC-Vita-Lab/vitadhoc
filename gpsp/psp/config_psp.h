@@ -154,6 +154,15 @@ typedef struct
     * is expected to be small, but "expected" is not "measured". */
    int  ff_audio;
    int  theme;        /* UI palette: 0 = dark (default), 1 = light */
+   /* Screen colour profile, Text size and High contrast: one setting for
+    * every console, the app and both players (playerkit/src/pk_screen.h,
+    * pk_uiprefs.h); kept in <root>/display.ini beside config.ini, which the
+    * players read too.  screen: PK_SCREEN_* (0 Auto); text_large 0 Normal /
+    * 1 Large; contrast 0 Off / 1 On. */
+   int  screen, text_large, contrast;
+   /* Interface language: I18N_AUTO (the system's) .. I18N_ZHS, I18N_PSEUDO (vita/i18n.h);
+    * display.ini `language=`, read by the players too. */
+   int  language;
    /* Game-list shell: 0 = Shelf (default, list + art panel),
     * 1 = Marquee (art fills the screen).  The browser reads it once at
     * startup, so like me_mode it applies on the next launch. */
@@ -176,15 +185,62 @@ typedef struct
     * lib_sort): 0 by name, 1 most recently played first, 2 most played
     * first (psp/play_log.h). */
    int  lib_sort;
+   /* Names in the game list (Settings > LIBRARY > Game names, CONFIG.INI
+    * lib_names): 0 the game's title (default; region tags cut), 1 the file
+    * name as it is.  Display only.  Written once changed. */
+   int  lib_names;
    /* A AND B BUTTONS (Settings > Controls, CONFIG.INI ab_buttons): which
     * face button is the Game Boy's A, and so which one the menus confirm
     * with.  -1 (no key) = as the Vita's own Settings say (its Enter
     * button); 0 = Cross is A; 1 = Circle is A.  Written once chosen. */
    int  ab_buttons;
    /* Settings > Controls > Rewind with right stick (CONFIG.INI
-    * stick_rewind): 1 = the right stick held left rewinds; 0 = it does not
-    * (the default; the Rewind button still does). */
+    * stick_rewind): 1 = the right stick held left rewinds (the default);
+    * 0 = it does not (the Rewind button still does). */
    int  stick_rewind;
+   /* Settings > Controls > Tap screen for menu (CONFIG.INI tap_menu): 1 =
+    * a short tap on the game opens the menu (the default); 0 = only the
+    * buttons do (Start + Select, L + R + Start), so a ghost tap cannot.
+    * Passed to the Super NES and Sega players in the launch file. */
+   int  tap_menu;
+   /* Settings > Controls > Rear touch panel (CONFIG.INI rear_touch): 1 =
+    * the rear panel's four corners are inputs (ctl_map.h CTL_REAR_*) that
+    * Button mapping can give to any action; 0 (the default) = the panel is
+    * not read.  A game's own choice (pcfg_game.rear) comes first. */
+   int  rear_touch;
+   /* Settings > About > Check for updates (CONFIG.INI update_check): 1 =
+    * Daily, the default: at most one request a day to GitHub for the latest
+    * release, while the home screen idles (vita/update_check.h); 0 = Off. */
+   int  update_check;
+   /* Settings > Display > WonderSwan smoothing (CONFIG.INI ws_blend): 1 =
+    * the 75 Hz console's frames blended into each 60 Hz refresh (smooth
+    * scrolling, the default); 0 = the newest frame only. */
+   int  ws_blend;
+   /* Settings > Display > Wide view (NES profile; CONFIG.INI nes_wide):
+    * 0 Auto (default), 1 On, 2 Off (nescore.h NESCORE_WIDE_*) */
+   int  nes_wide;
+   /* Settings > Display > PAL games speed (NES profile; CONFIG.INI nes_pal_smooth): 1 = Smooth 50 Hz (default), 0 = True 50 Hz */
+   int  nes_pal_smooth;
+   /* Settings > Gameplay > Steady pacing (CONFIG.INI steady_pacing, 1 by
+    * default): pace_steady.h */
+   int  steady_pacing;
+   /* Settings > Game Boy Printer (CONFIG.INI gb_printer, 1 by default):
+    * the serial port has a printer on it while no link partner is there
+    * (frontend-common/fe_gbprinter.h) */
+   int  gb_printer;
+   /* Settings > Gameplay > Smooth hand-over (CONFIG.INI smooth_handoff, 1
+    * by default): vita/handoff_glue.h */
+   int  smooth_handoff;
+   /* Settings > Gameplay > Fourth core (CONFIG.INI core4 = auto | off, auto
+    * by default): 1 = off.  main_vita.c reads it where it probes the core
+    * (vita.ini core4 = off still wins); app_core4_options() says it changed. */
+   int  core4_off;
+   /* Settings > Gameplay > Quick response (CONFIG.INI quick_response): 0 Off, 1 Auto, 2 On; -1 = never chosen, the console's own
+    * default (vita/ahead_glue.h, main_vita.c app_quick_default).  A game's own choice (g_pgame.quick) wins. */
+   int  quick_response;
+   /* Settings > Gameplay > Game Boy core (CONFIG.INI gb_core): 0 Standard (TGB Dual), 1 Accurate (Gambatte).  A game's own
+    * choice (g_pgame.gb_core) wins; read when the game starts. */
+   int  gb_core;
 #endif
    /* Media Engine dirty-page VRAM copy: send only the 1 KiB pages the
     * frame actually touched instead of all 96 KiB.  Default 1.  Exposed
@@ -222,9 +278,11 @@ typedef struct
    /* 1 once the player has seen the Controls page's one-time note about
     * putting Quick save / Quick load on the stick alone (`stick_warned`). */
    int  stick_warned;
-   /* GB/GBC DMG palette, a GBCORE_PALETTE_* id (gbcore.h): 0 = Auto (Super
-    * Game Boy colours where the game has them, grey otherwise, default),
-    * 1 Grey, 2 DMG green, 3 Pocket.  Unknown ids fall back to Auto. */
+   /* GB/GBC colours for DMG games, a GBCORE_PALETTE_* id (gbcore.h): GBC
+    * auto (the Game Boy Color's own colours for the game, the default), the
+    * 12 GBC button palettes, the 32 Super Game Boy palettes, 0 = Super Game
+    * Boy colours where the game has them (grey otherwise), Grey, DMG green,
+    * Pocket.  Unknown ids fall back to GBC auto. */
    int  gb_palette;
    /* Ambient bars (PCFG_AMB_*): what fills the bars beside a picture that
     * does not cover the screen.  Like scale, filter and gb_palette this is
@@ -456,8 +514,11 @@ typedef struct
 #ifdef VITA
    /* THE PS VITA'S OWN KEYS (vita/ui_host_hooks.h section 8).  The Play
     * together pages write them; vita/link_vita.c reads them. */
-   int  net_conn;       /* UI_CONN_*: 0 Wi-Fi (default), 1 Internet, 2 ad hoc */
+   int  net_conn;       /* UI_CONN_*: 0 Wi-Fi (default), 1 Internet, 2 ad hoc, 3 Online */
    int  link_delay;     /* 0 = Auto (default), 1..8 frames of input delay  */
+   int  online_relay;   /* 2.0 online play: 1 = always use the relay, which
+                         * hides this console's internet address from the
+                         * other player (config.ini online_relay, default 0) */
    char net_addr[PCFG_NET_ADDRS][24];  /* the last host addresses typed,
                                         * newest first; "" = unused        */
    int  local_partner;  /* local link: 0 = the partner starts from a copy
@@ -487,9 +548,11 @@ typedef struct
     * the game (vita/main_vita.c chord_guard).  1 by default; 0 = straight
     * through, as on the PSP. */
    int  chord_guard;
-   /* The live console's `color`, `blend` and `wide` (pcfg_display),
-    * mirrored like scale and filter. */
-   int  color, blend, wide, wide_fill;
+   /* The live console's `color`, `ghost`, `wide`, and the looks scan / grid /
+    * glow (pcfg_display), mirrored like scale and filter. */
+   int  color, ghost, wide, wide_fill;
+   int  scan, grid, glow;
+   int  crt;            /* CRT mask 0..10 (pcfg_display), mirrored like scan */
    int  sgb_border;     /* the GB profile's Super Game Boy border (pcfg_display) */
    int  quality;      /* 0 legacy auto; 1 native; 2/3 enhancement factor */
 #endif
@@ -502,6 +565,9 @@ extern const int pcfg_rewind_steps[PCFG_REWIND_STEPS];
 #define PCFG_REWIND_DEFAULT 60
 #define PCFG_REWIND_MB_DEFAULT 24
 #define PCFG_LINK_DELAY_MAX 8
+/* Online play: the automatic input delay may reach this many frames (the
+ * session's own wire limit is CONFIG_DELAY_MAX 60, so no protocol change). */
+#define PCFG_LINK_DELAY_ONLINE_MAX 12
 /* Remember a host address the player typed (CONFIG.INI net_addr1..4):
  * newest first, no duplicates, the oldest falls off.  Marks nothing dirty:
  * the caller saves. */
@@ -574,6 +640,10 @@ int  pcfg_fps_x100(const char *ini, const char *key, int def);
  * falls back to the per-key file reads, which answer the same.  pcfg_load
  * loads its own. */
 void pcfg_load(const char *ini_path);
+#ifdef VITA
+/* Loads the catalogue of g_pcfg.language (vita/i18n.h); pcfg_load does it too. */
+void pcfg_language_apply(void);
+#endif
 void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc);
 /* Rewrites all keys to the load path: ONE atomic write (path.tmp, renames),
  * nothing at all when no value changed.  A file too big to hold is left
@@ -630,16 +700,35 @@ typedef struct
 {
    int scale, filter, ambient, gb_palette;
 #ifdef VITA
-   /* COLOURS and MOTION BLEND (vita/video_vita.h vid_set_look), CONFIG.INI
-    * color_gba / color_gbc and blend_gba / blend_gb / blend_gbc:
-    *   color  GBA: 0 as the game sends them, 1 as a GBA's screen showed
-    *               them, 2 the same and as dark as the unlit screen was;
-    *          GBC: 0 as sent, 1 as a Game Boy Color's screen showed them
+   /* THE LOOKS (docs/LOOKS.md), the same on every console, CONFIG.INI
+    * <key>_<console>; each strength is 0..10 and 0 is off:
+    *   color  LCD colours (vita/video_vita.h vid_set_look):
+    *          GBA: 0 as the game sends them (vivid), 1 as a GBA's screen
+    *               showed them (the default), 2 the same and as dark as
+    *               the unlit screen was;
+    *          GBC: 0 vivid, 1 as a Game Boy Color's screen showed them
     *               (the default; an absent key takes gbc_color_correction);
+    *          WS:  0 vivid, 1 as a WonderSwan's screen showed them
+    *          NES: 0 vivid, 1 "NTSC colours": a television's
     *          GB:  none -- an original Game Boy has its palette row.
-    *   blend  1 = each frame mixed with the one before, as the slow LCD
-    *          did (what games that flicker to fake transparency rely on). */
-   int color, blend, quality;
+    *   ghost  LCD ghosting, a slow screen's trail: each frame mixed with the
+    *          one before, 5 = half and half (1.x's "motion blend on", which
+    *          it replaces: an absent ghost_<c> takes blend_<c>).  GBA, GB,
+    *          GBC, WonderSwan.
+    *   scan   Scanlines, grid  LCD grid: dark lines under every row / around
+    *          every pixel (they were one exclusive Video filter and one
+    *          vita.ini grid_strength before: a filter value of 3 or 6
+    *          loads as sharp bilinear with the matching look at that
+    *          strength, once).
+    *   glow   Ambient glow: how bright the picture's own colours are beside
+    *          it (it was ambient_<c> 0 off / 1 art / 2 art, else game, and
+    *          that key stays the source: a file without glow_<c> takes 5
+    *          where the old mode was on, 0 where it was off). */
+   int color, ghost, quality;
+   int scan, grid, glow;
+   /* CRT mask 0..10 (crt_<c>, absent: 0): an aperture grille multiplied
+    * over the picture, one extra quad (playerkit/src/pk_screen.h). */
+   int crt;
    /* WIDE VIEW (gpsp/wide.c), CONFIG.INI wide_gba: more of the game beside
     * the console's 240 pixels instead of bars.
     *   0 off; 1 in the games it has a profile for (the default);
@@ -652,20 +741,37 @@ typedef struct
     * 2 the picture stretched. */
    int wide, wide_fill;
    /* SUPER GAME BOY BORDER (CONFIG.INI sgb_border_gb, the GB profile's):
-    * 1 = a game running as a Super Game Boy (GB palette Auto) is shown in
+    * 1 = a game running as a Super Game Boy (GB colours: Super Game Boy) is shown in
     * the border it sends (the default), 0 = the picture alone. */
    int sgb_border;
 #endif
 } pcfg_display;
 #ifdef VITA
+/* Defaults of the looks (docs/LOOKS.md): glow 5 of 10 (the 1.3 look), the
+ * rest off. */
+#define PCFG_GLOW_DEF   5
+#define PCFG_SCAN_DEF   0
+#define PCFG_GRID_DEF   0
+#define PCFG_CRT_DEF    0
+#define PCFG_GHOST_DEF  0
+/* The strength a file's pre-2.0 `filter` of LCD grid or scanlines becomes:
+ * vita.ini's grid_strength (main_vita.c sets it before pcfg_load; 5 else). */
+extern int g_pcfg_legacy_grid;
+/* Which consoles have a slow LCD for LCD ghosting (GBA, GB, GBC, WS). */
+int pcfg_ghost_modes(int console);
+/* The first four values are what old config files hold; 4X and MMPX are
+ * 1.4's hand-set choices (Auto never overrides them): xBRZ at four times,
+ * and MMPX at twice (vid_set_quality turns it into factor 2 + the MMPX flag). */
 enum { PCFG_QUALITY_AUTO, PCFG_QUALITY_ORIGINAL, PCFG_QUALITY_2X,
-       PCFG_QUALITY_3X, PCFG_QUALITY_MODES };
+       PCFG_QUALITY_3X, PCFG_QUALITY_4X, PCFG_QUALITY_MMPX,
+       PCFG_QUALITY_MODES };
 const char *pcfg_quality_name(int quality);
-/* How many `color` values a console has (GBA 3, GBC 2, GB 0). */
+/* How many `color` values a console has (GBA 3, GBC 2, WS 2, NES 2, GB 0). */
 int pcfg_color_modes(int console);
 /* `wide` values of a console (GBA 3, the others 0) and their names. */
-#define PCFG_WIDE_DEF 1
-#define PCFG_WIDE_FILL_DEF 0
+#define PCFG_WIDE_DEF 3
+/* 1.4: the margins continue the picture's own edges softly (no black bars) */
+#define PCFG_WIDE_FILL_DEF 1
 int pcfg_wide_modes(int console);
 const char *pcfg_wide_name(int wide);
 const char *pcfg_wide_fill_name(int fill);
@@ -715,7 +821,27 @@ typedef struct
    int level_right, level_down;   /* milli-g of the hold counted as level  */
    int save_type;             /* PCFG_SAVE_*: GBA battery type, read at load */
    int rtc_mode;              /* PCFG_RTC_*: GBA cartridge clock, at load    */
+   /* WonderSwan (the in-game menu; wscore.h): Rotation (PCFG_WS_ROT_*),
+    * Vertical play (0 Upright, 1 Turn the Vita), Palette (0 greyscale,
+    * 1 classic LCD tint) */
+   int ws_rotation, ws_vplay, ws_palette;
+   /* Quick response for this game (games/<ROM>.ini quick_response): -1 follows Settings, else 0 Off, 1 Auto, 2 On */
+   int quick;
+   /* Game Boy core for this game (games/<ROM>.ini gb_core): -1 follows Settings, else 0 Standard, 1 Accurate */
+   int gb_core;
+   /* Game Boy Camera (games/<ROM>.ini camera): what the sensor looks at,
+    * PCFG_CAM_* */
+   int camera;
+   /* Rear touch panel for this game (games/<ROM>.ini rear_touch): -1 follows Settings, else 0 Off, 1 On */
+   int rear;
+   /* NES: Port 2 (games/<ROM>.ini nes_port2): 0 Auto (the games the game database lists get the Zapper), 1 Zapper, 2 Controller */
+   int nes_port2;
 } pcfg_game;
+enum { PCFG_CAM_FRONT, PCFG_CAM_BACK, PCFG_CAM_FILE, PCFG_CAM_MODES };
+const char *pcfg_camera_name(int m);
+enum { PCFG_PORT2_AUTO, PCFG_PORT2_ZAPPER, PCFG_PORT2_PAD, PCFG_PORT2_MODES };
+enum { PCFG_WS_ROT_AUTO, PCFG_WS_ROT_HORIZONTAL, PCFG_WS_ROT_VERTICAL, PCFG_WS_ROT_MODES };
+const char *pcfg_ws_rotation_name(int m);
 extern pcfg_game g_pgame;
 /* Read `path` for the game about to run on `console` and, when it has its own
  * look, select it.  Call after pcfg_display_select(console). */
@@ -725,6 +851,12 @@ void pcfg_game_begin(const char *path, int console);
 void pcfg_game_end(void);
 /* Write the file now (0 = written or nothing to write). */
 int  pcfg_game_save(void);
+/* The crash-loop guard (vita/boot_guard.h): the running game's own look gets
+ * Wide view off and Image quality Original; and, after the app closed twice
+ * before the list, every risky setting (Smooth hand-over, Steady pacing,
+ * Fourth core, Wide view, Image quality) back to its safe value. */
+void pcfg_game_safe_look(void);
+void pcfg_revert_risky(void);
 /* Give the running game its own look (1, starting from the current one) or
  * hand it back to the console's profile (0).  Selects the result. */
 void pcfg_game_set_override(int on);

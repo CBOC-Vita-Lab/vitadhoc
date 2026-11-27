@@ -23,6 +23,7 @@ static void S9xSA1ReadVariableLengthData (bool8, bool8);
 
 void S9xSA1Init (void)
 {
+	S9xSA1RomPatched = FALSE;
 	S9xSA1ReplayDrop();
 	SA1.Cycles = 0;
 	SA1.PrevCycles = 0;
@@ -195,6 +196,9 @@ uint8 S9xGetSA1 (uint32 address)
 			return ((Memory.FillRAM[0x2200] & 0x0f) | (Memory.FillRAM[0x2301] & 0xf0));
 
 		case 0x2302: // H counter (L)
+		#if defined(SA1_FAST_RUN) && (SA1_FAST_RUN & 8)
+			S9xSA1ReplayAdvance();	// the counters of a lazily replayed SA-1
+		#endif
 			SA1.HTimerIRQPos = SA1.HCounter / ONE_DOT_CYCLE;
 			SA1.VTimerIRQPos = SA1.VCounter;
 			return ((uint8)  SA1.HTimerIRQPos);

@@ -16,7 +16,20 @@
 **/gba_bios.bin
 gpsp/vita/tests/gamedb/gamedb_test
 gpsp/vita/tests/gamedb/keys.txt
+gpsp/vita/tests/library/online_lib_test
 .DS_Store
 
 # the release package, kept beside its source
 !/VitAdhoc.vpk
+gpsp/vita/hostcore/shots/
+
+# agent build directories and objects
+**/build_*/
+**/build-*/
+*.o
+
+# generated test output
+gpsp/audit/
+host-test-results.json
+# tools/build holds the build helpers (ccache.mk, vpk_repack.py), not build output
+!/tools/build/

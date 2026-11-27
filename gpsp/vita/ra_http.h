@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Copyright (c) 2026 VitAdhoc contributors */
 /* ra_http.h -- one web request at a time, on a thread of its own.
  *
  * RetroAchievements' client (ra_vita.c) asks its server things: sign in,
@@ -47,6 +49,8 @@ int  ra_http_submit(const char *url, const char *post, const char *type);
  * frame's work).  Same slot, same contract; the answer's status is 0 and
  * `note` the 32 hex digits, or -1 when the file could not be read. */
 int  ra_http_hash_file(const char *path);
+/* The same for an NES game: an iNES file without its 16-byte header. */
+int  ra_http_hash_file_nes(const char *path);
 /* 1 = an answer, moved into *res; 0 = none (yet). */
 int  ra_http_take(ra_http_res *res);
 /* 1 = nothing in flight and nothing waiting to be taken. */

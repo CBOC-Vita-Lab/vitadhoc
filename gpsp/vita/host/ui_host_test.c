@@ -52,6 +52,7 @@
 #include "font_8x16.h"
 #include "cheats_vita.h"
 #include "room_label.h"
+#include "online_vita.h"        /* ON_*, ONLINE_Q_* (the numbers only) */
 
 static int g_fail;               /* expectations that did not hold */
 #define EXPECT(cond, ...) \
@@ -461,7 +462,8 @@ typedef struct
    short tx, ty;
    unsigned char ev;             /* a SIM_EV_* that happens on this frame   */
 } tl_frame;
-enum { SIM_EV_NONE = 0, SIM_EV_WIFI_OFF, SIM_EV_WIFI_ON, SIM_EV_SWAP_FAIL };
+enum { SIM_EV_NONE = 0, SIM_EV_WIFI_OFF, SIM_EV_WIFI_ON, SIM_EV_SWAP_FAIL,
+       SIM_EV_ON_PEER0, SIM_EV_ON_PEER1, SIM_EV_ON_PEER2 };   /* Online: a friend joined */
    /* (SIM_EV_SWAP_FAIL: a ROM file appears in the folder being browsed) */
 static void sim_event(int ev);
 static tl_frame g_tl[TL_MAX];
@@ -892,8 +894,11 @@ static int g_acts[32];
 static ui_join_info g_joined;
 
 static char g_new_rom[400];      /* SIM_EV_SWAP_FAIL: this file appears */
+static int g_on_t, g_sim_on_peer;     /* Online: frames since Host; 1 punching, 2 relay */
 static void sim_event(int ev)
 {
+   if (ev >= SIM_EV_ON_PEER0 && ev <= SIM_EV_ON_PEER2)
+      g_sim_on_peer = ev - SIM_EV_ON_PEER0;
    if (ev == SIM_EV_WIFI_OFF)
       sim_wifi(UI_WIFI_OFF);
    else if (ev == SIM_EV_WIFI_ON)
@@ -904,6 +909,134 @@ static void sim_event(int ev)
       if (fp) { fputs("x", fp); fclose(fp); }
    }
 }
+
+/* ---- Online play (ui_host_hooks.h section 4b) --------------------------------
+ * The room service, as a script: the code typed picks the scenario, the card
+ * arrives after a few frames.  The LIBRARY is the real one: online_lib.c walks
+ * the fixture's roms/ folder (the fixture's .gb files have no title, so they
+ * all carry the code GAME).  An identity of a file is a hash of its name. */
+#include "../online_lib.c"
+
+char g_app_rom_dir[APP_PATH_CAP];
+
+/* the bench has no zip files */
+int zip_rom_peek(const char *path, zip_rom_entry *out) { (void)path; (void)out; return -1; }
+
+static struct
+{
+   int  in;                      /* frames until the card is here: -1 never */
+   int  direct;                  /* vita.ini link_direct                    */
+   int  lookups, cancels;
+   char code[8];
+   ui_online_card card;
+} g_on;
+
+int ui_host_link_direct(void) { return g_on.direct; }
+
+int ui_host_online_available(void)
+{
+   return g_sim.net.wifi == UI_WIFI_CONNECTED && g_sim.net.radio != UI_RADIO_ADHOC;
+}
+
+/* The same file name always gives the same identity. */
+static void on_rom_id_of(const char *name, char out[9])
+{
+   unsigned h = 2166136261u;
+   for (; *name; name++)
+      h = (h ^ (unsigned char)*name) * 16777619u;
+   snprintf(out, 9, "%08x", h);
+}
+
+int ui_host_online_rom_id(const char *path, char out[9])
+{
+   const char *b = strrchr(path, '/');
+   on_rom_id_of(b ? b + 1 : path, out);
+   return 0;
+}
+
+int ui_host_online_lookup(const char *code)
+{
+   ui_online_card *c = &g_on.card;
+   if (g_sim.net.wifi != UI_WIFI_CONNECTED)
+      return UI_ROOMS_E_NO_WIFI;
+   g_on.lookups++;
+   snprintf(g_on.code, sizeof(g_on.code), "%s", code);
+   memset(c, 0, sizeof(*c));
+   g_on.in = 12;
+   c->state = 1;
+   snprintf(c->console, sizeof(c->console), "gba");
+   snprintf(c->nick, sizeof(c->nick), "Ana");
+   snprintf(c->ver, sizeof(c->ver), "2.0.0");
+   c->compatible = 1;
+   c->kind = ROOM_CABLE_GBA;
+   snprintf(c->game, sizeof(c->game), "BPEE");
+   snprintf(c->title, sizeof(c->title), "POKEMON EMER");
+   if (!strcmp(code, "K7M4Q"))
+      ;                                              /* the running game */
+   else if (!strcmp(code, "HFQ2N"))                  /* Ruby: not in the library */
+   {
+      c->kind = ROOM_ADAPTER;
+      snprintf(c->game, sizeof(c->game), "AXVE");
+      snprintf(c->title, sizeof(c->title), "POKEMON RUBY");
+   }
+   else if (!strcmp(code, "FR7MN"))                  /* FireRed, adapter: one file */
+   {
+      c->kind = ROOM_ADAPTER;
+      snprintf(c->game, sizeof(c->game), "BPRE");
+      snprintf(c->title, sizeof(c->title), "POKEMON FIRE");
+   }
+   else if (!strcmp(code, "T3TR5") || !strcmp(code, "T4TR5"))   /* a Game Boy cable room */
+   {
+      c->kind = ROOM_CABLE_GB;
+      snprintf(c->console, sizeof(c->console), "gb");
+      snprintf(c->game, sizeof(c->game), "GAME");
+      snprintf(c->title, sizeof(c->title), "Tetris");
+      /* T4: the host's file IS one of the library's */
+      if (!strcmp(code, "T4TR5"))
+         on_rom_id_of("Tetris (World) (Rev 1).gb", c->rom);
+      else
+         on_rom_id_of("Some other dump.gb", c->rom);
+   }
+   else if (!strcmp(code, "NEW2X"))
+   {
+      snprintf(c->ver, sizeof(c->ver), "2.1.0");
+      c->compatible = 0;
+      c->fail = UI_FAIL_ONLINE_VER_OLD_HERE;
+   }
+   else if (!strcmp(code, "OLD3X"))
+   {
+      snprintf(c->ver, sizeof(c->ver), "1.9.0");
+      c->compatible = 0;
+      c->fail = UI_FAIL_ONLINE_VER_OLD_THERE;
+   }
+   else if (!strcmp(code, "SETUP"))
+   {
+      c->compatible = 0;
+      c->fail = UI_FAIL_ONLINE_SETUP;
+   }
+   else if (!strcmp(code, "FULLX"))
+      c->full = 1;
+   else if (!strcmp(code, "BADCD"))
+   {
+      c->state = 2;
+      c->fail = UI_FAIL_ONLINE_CODE;
+   }
+   else if (!strcmp(code, "HOLD7"))
+      g_on.in = -1;                                  /* never answers */
+   return 0;
+}
+
+void ui_host_online_card(ui_online_card *out)
+{
+   if (g_on.in < 0 || (g_on.in > 0 && g_on.in--))
+   {
+      memset(out, 0, sizeof(*out));
+      return;
+   }
+   *out = g_on.card;
+}
+
+void ui_host_online_cancel(void) { g_on.cancels++; }
 
 /* One frame of the pretend link layer: a Host that was asked for answers
  * after a moment (the room opens, or it fails); with Connection: Internet
@@ -924,6 +1057,7 @@ static void sim_frame(void)
          g_sim.lv.room = room_label(ui_group(), room, sizeof(room));
          g_sim.lv.game = "Pokemon Emerald";
          g_sim.lv.conn = g_pcfg.net_conn;
+         g_on_t = 1;
          if (g_pcfg.net_conn != UI_CONN_ADHOC)
             snprintf(g_sim.net.host_addr, sizeof(g_sim.net.host_addr),
                      "%s:19019", g_sim.net.ip);
@@ -933,6 +1067,20 @@ static void sim_frame(void)
             g_sim_pub_in = 40;
          }
       }
+   }
+   if (g_on_t && g_sim.lv.state == UI_LINK_HOSTING &&
+       g_sim.lv.conn == UI_CONN_ONLINE)
+   {
+      /* the online connection's stages: the service is found, STUN asked, the
+       * room created (the code exists), the code waits; a friend may join
+       * (g_sim_on_peer: the punch, or the relay) */
+      int t = g_on_t++;
+      g_sim.lv.online_stage = g_sim_on_peer == 2 ? ON_RELAY_ALLOC
+                            : g_sim_on_peer == 1 ? ON_PUNCH
+                            : t < 10 ? ON_RESOLVE : t < 20 ? ON_STUN
+                            : t < 30 ? ON_CREATE : ON_WAITING;
+      g_sim.lv.online_code = t >= 30 ? "K7M4Q" : NULL;
+      g_sim.lv.online_ttl_s = t >= 30 ? 600 - (t - 30) / 30 : 0;
    }
    if (g_sim_pub_in && --g_sim_pub_in == 0)
    {
@@ -986,6 +1134,7 @@ static void run_menu(int session, const char *info)
          memset(&g_sim.lv, 0, sizeof(g_sim.lv));
          g_sim.lv.rtt_ms = g_sim.lv.signal_pct = -1;
          g_sim.host_in = 0;
+         g_on_t = g_sim_on_peer = 0;
          g_sim.net.host_addr[0] = g_sim.net.public_addr[0] = '\0';
          g_sim.net.public_state = UI_PUBLIC_UNKNOWN;
          session = 0;
@@ -1088,6 +1237,8 @@ static void game_begin(const char *rom, const char *code, int console,
                console == FE_CONSOLE_GBA ? NULL : code, rom, cable_ready);
    ui_set_link(NULL);
    sim_reset();
+   g_on_t = g_sim_on_peer = 0;
+   g_on.in = 0;
    /* Two machines of any of the three consoles run on one Vita. */
    g_sim.local.available = 1;
    g_sim_partners = console == FE_CONSOLE_GBA ? SIM_PARTNERS_GBA
@@ -1717,7 +1868,7 @@ static void test_play(void)
    tl_wait(2);
    tl_shot("36_connection_wifi");
    tl_press(PSP_CTRL_DOWN);
-   tl_shot("36_connection_internet_cursor");
+   tl_shot("36_connection_online_cursor");
    tl_down(2);                               /* Link delay */
    tl_press(PSP_CTRL_RIGHT); tl_press(PSP_CTRL_RIGHT);
    tl_press(PSP_CTRL_RIGHT);
@@ -2530,10 +2681,10 @@ static void test_touch(void)
    menu_open();
    tl_tap(70, 80 + 2 * 24 + 8);              /* Play together */
    tl_tap(100, 96 + 3 * 26 + 8);             /* Connection */
-   tl_tap(150, 78 + 38 + 10);                /* Internet */
+   tl_tap(150, 70 + 36 + 10);                /* Online */
    tl_wait(2);
    tl_shot("70_touch_connection");
-   tl_tap(150, 78 + 10);                     /* Wi-Fi again */
+   tl_tap(150, 70 + 10);                     /* Wi-Fi again */
    tl_tap_footer(F_CONN, VID_GLYPH_O " back");
    tl_tap(100, 96 + 1 * 26 + 8);             /* Join a game */
    tl_wait(160);
@@ -2905,6 +3056,278 @@ static void test_pictures(void)
    vid_ambient_mode(0);
 }
 
+/* ---- Online play: the code pad, the room card, the host's code ------------------
+ * (vita/ui_vita_online.h).  The service is g_on above; the library is real. */
+
+/* The pad's keys on the finger: the symbol's cell on the 8 x 4 grid at 16,78. */
+static void tl_oc_type(const char *t)
+{
+   static const char alpha[] = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+   for (; *t; t++)
+   {
+      const char *at = strchr(alpha, *t);
+      int i = at ? (int)(at - alpha) : 0;
+      tl_key(16, 78, i % 8, i / 8);
+   }
+}
+
+/* One lookup: Play together > Join, the code, the card after `wait` frames. */
+static void on_card(const char *code, int wait, const char *shot)
+{
+   menu_open();
+   tl_down(2);
+   tl_press(PSP_CTRL_CROSS);                 /* Play together */
+   tl_wait(4);
+   tl_press(PSP_CTRL_DOWN);
+   tl_press(PSP_CTRL_CROSS);                 /* Join a game: the pad */
+   tl_wait(2);
+   tl_oc_type(code);
+   tl_press(PSP_CTRL_TRIANGLE);              /* ask */
+   tl_wait(wait);
+   tl_shot(shot);
+}
+
+static void on_card_done(void)
+{
+   tl_press(PSP_CTRL_CIRCLE);                /* the card -> the pad */
+   tl_press(PSP_CTRL_CIRCLE);                /* the pad -> Play together */
+   tl_press(PSP_CTRL_CIRCLE);                /* -> the menu */
+   tl_wait(4);
+   run_menu(0, NULL);
+}
+
+static void test_online(void)
+{
+   g_pcfg.theme = 0;
+   g_pcfg.net_conn = UI_CONN_ONLINE;
+   g_pcfg.link_delay = 0;
+   g_pcfg.online_relay = 0;
+   g_on.direct = 0;
+
+   /* ---- the Play together page and the Connection page ------------------- */
+   game_begin("Pokemon - Emerald Version (USA, Europe).gba", "BPEE",
+              FE_CONSOLE_GBA, 1);
+   play_open();
+   tl_shot("30_play_online");
+   tl_down(3);                               /* Connection */
+   tl_press(PSP_CTRL_CROSS);
+   tl_wait(2);
+   tl_shot("36_connection_online");
+   tl_down(3);                               /* Online, Nearby, Link delay, relay */
+   tl_shot("36_connection_relay");
+   tl_press(PSP_CTRL_RIGHT);
+   tl_shot("36_connection_relay_on");
+   tl_press(PSP_CTRL_CIRCLE);
+   tl_press(PSP_CTRL_CIRCLE);
+   tl_wait(4);
+   run_menu(0, NULL);
+   EXPECT(g_pcfg.online_relay == 1, "Always use the relay: %d", g_pcfg.online_relay);
+   g_pcfg.online_relay = 0;
+   g_on.direct = 1;                          /* vita.ini link_direct = 1 */
+   play_open();
+   tl_down(3);
+   tl_press(PSP_CTRL_CROSS);
+   tl_wait(2);
+   tl_shot("36_connection_direct");
+   tl_press(PSP_CTRL_CIRCLE);
+   tl_press(PSP_CTRL_CIRCLE);
+   tl_wait(4);
+   run_menu(0, NULL);
+   g_on.direct = 0;
+
+   /* ---- the code pad ------------------------------------------------------ */
+   menu_open();
+   tl_down(2);
+   tl_press(PSP_CTRL_CROSS);
+   tl_wait(4);
+   tl_press(PSP_CTRL_DOWN);
+   tl_press(PSP_CTRL_CROSS);                 /* Join a game */
+   tl_wait(2);
+   tl_shot("40_online_pad_empty");
+   tl_oc_type("K7");
+   tl_press(PSP_CTRL_UP);                    /* the third box: A */
+   tl_press(PSP_CTRL_UP);                    /* B */
+   tl_shot("40_online_pad_half");
+   tl_press(PSP_CTRL_TRIANGLE);              /* not all five yet */
+   tl_shot("40_online_pad_not_yet");
+   tl_press(PSP_CTRL_SQUARE);                /* delete the B */
+   tl_oc_type("M4Q");
+   tl_shot("40_online_pad_full");
+   tl_press(PSP_CTRL_CROSS);                 /* off the boxes onto the pad */
+   tl_press(PSP_CTRL_DOWN);
+   tl_shot("40_online_pad_focus");
+   tl_wait(2);
+   tl_press(PSP_CTRL_CIRCLE);
+   tl_press(PSP_CTRL_CIRCLE);
+   tl_wait(4);
+   run_menu(0, NULL);
+
+   /* Wi-Fi off: the pad says so instead of asking. */
+   menu_open();
+   tl_down(2);
+   tl_press(PSP_CTRL_CROSS);
+   tl_wait(4);
+   tl_press(PSP_CTRL_DOWN);
+   tl_press(PSP_CTRL_CROSS);
+   tl_wait(2);
+   tl_oc_type("K7M4Q");
+   tl_event(SIM_EV_WIFI_OFF);
+   tl_wait(2);
+   tl_press(PSP_CTRL_TRIANGLE);
+   tl_shot("40_online_pad_no_wifi");
+   tl_press(PSP_CTRL_CIRCLE);
+   tl_press(PSP_CTRL_CIRCLE);
+   tl_wait(4);
+   run_menu(0, NULL);
+   sim_wifi(UI_WIFI_CONNECTED);
+
+   /* ---- the card: this game can enter -------------------------------------- */
+   on_card("K7M4Q", 4, "41_online_card_looking");
+   tl_wait(20);
+   tl_shot("41_online_card_join");
+   tl_press(PSP_CTRL_CROSS);
+   tl_wait(4);
+   run_menu(0, NULL);
+   EXPECT(g_acts[UI_ACT_NET_JOIN] == 1 && g_joined.conn == UI_CONN_ONLINE &&
+          !strcmp(g_joined.online_code, "K7M4Q") && g_joined.kind == ROOM_CABLE_GBA &&
+          !strcmp(g_joined.code, "BPEE") && !strcmp(g_joined.nick, "Ana"),
+          "online join: acts=%d conn=%d code=%s kind=%d game=%s nick=%s",
+          g_acts[UI_ACT_NET_JOIN], g_joined.conn, g_joined.online_code,
+          g_joined.kind, g_joined.code, g_joined.nick);
+
+   /* a card that never comes: the way back is O */
+   on_card("HOLD7", 30, "41_online_card_waiting");
+   on_card_done();
+
+   /* ---- the sentences ------------------------------------------------------ */
+   on_card("BADCD", 20, "41_online_card_wrong");
+   on_card_done();
+   on_card("NEW2X", 20, "41_online_card_newer");
+   on_card_done();
+   on_card("OLD3X", 20, "41_online_card_older");
+   on_card_done();
+   on_card("SETUP", 20, "41_online_card_setup");
+   on_card_done();
+   on_card("FULLX", 20, "41_online_card_full");
+   on_card_done();
+   on_card("HFQ2N", 40, "41_online_card_missing");   /* Ruby: nobody has it */
+   on_card_done();
+
+   /* ---- the library: open the game, then join ------------------------------ */
+   on_card("FR7MN", 40, "41_online_card_open");       /* FireRed, Wireless Adapter */
+   tl_press(PSP_CTRL_CROSS);
+   tl_wait(4);
+   run_menu(0, NULL);
+   EXPECT(g_acts[UI_ACT_ONLINE_OPEN_JOIN] == 1 && strstr(ui_online_open_path(), "FireRed") &&
+          !strcmp(g_joined.online_code, "") && !strcmp(ui_join_target()->online_code, "FR7MN") &&
+          ui_join_target()->kind == ROOM_ADAPTER,
+          "open and join: acts=%d path=%s code=%s kind=%d",
+          g_acts[UI_ACT_ONLINE_OPEN_JOIN], ui_online_open_path(),
+          ui_join_target()->online_code, ui_join_target()->kind);
+   EXPECT(ui_online_take_pending() == 1 && ui_online_take_pending() == 0,
+          "the pending join is taken once");
+
+   /* a cable game whose file is not known to be the host's: a list, never
+    * opened on its code */
+   on_card("T3TR5", 40, "41_online_card_ask");
+   tl_down(4);
+   tl_shot("41_online_card_ask_scrolled");
+   tl_press(PSP_CTRL_CROSS);
+   tl_wait(4);
+   run_menu(0, NULL);
+   EXPECT(g_acts[UI_ACT_ONLINE_OPEN_JOIN] == 1 && ui_online_open_path()[0] &&
+          ui_join_target()->kind == ROOM_CABLE_GB,
+          "pick a file: acts=%d path=%s", g_acts[UI_ACT_ONLINE_OPEN_JOIN],
+          ui_online_open_path());
+   ui_online_take_pending();
+
+   /* the host's file is among them: it is opened without a list */
+   on_card("T4TR5", 40, "41_online_card_open_exact");
+   on_card_done();
+
+   /* ---- the host's page ------------------------------------------------------ */
+   game_begin("Pokemon - Emerald Version (USA, Europe).gba", "BPEE",
+              FE_CONSOLE_GBA, 1);
+   play_open();
+   tl_press(PSP_CTRL_CROSS);                 /* Host: the one question */
+   tl_shot("34_host_online_ask");
+   tl_press(PSP_CTRL_CROSS);                 /* Link Cable */
+   tl_wait(34);
+   tl_shot("42_online_host_getting");
+   tl_wait(45);
+   tl_shot("42_online_host_code");
+   tl_wait(1);
+   run_menu(0, NULL);
+   play_open();
+   tl_wait(2);
+   tl_shot("42_online_host_code_again");
+   tl_wait(40);
+   tl_event(SIM_EV_ON_PEER1);                /* a friend joined: punching */
+   tl_wait(4);
+   tl_shot("42_online_host_joining");
+   tl_event(SIM_EV_ON_PEER2);                /* ...and the relay */
+   tl_wait(4);
+   tl_shot("42_online_host_relay");
+   tl_press(PSP_CTRL_DOWN);
+   tl_press(PSP_CTRL_CROSS);                 /* Stop hosting */
+   tl_wait(4);
+   run_menu(0, NULL);
+   EXPECT(g_acts[UI_ACT_NET_DISCONNECT] == 1, "stop hosting online: no action");
+
+   /* ---- linked: Great, Good, Slow, through the relay ------------------------ */
+   game_begin("Pokemon - Emerald Version (USA, Europe).gba", "BPEE",
+              FE_CONSOLE_GBA, 1);
+   g_sim.lv.state = UI_LINK_LINKED; g_sim.lv.cable = 1; g_sim.lv.player = 2;
+   g_sim.lv.room = "Online"; g_sim.lv.game = "Pokemon Emerald";
+   g_sim.lv.conn = UI_CONN_ONLINE; g_sim.lv.peer = "Ana";
+   g_sim.lv.rtt_ms = 48; g_sim.lv.signal_pct = 82;
+   g_sim.lv.quality = ONLINE_Q_GREAT;
+   play_open();
+   tl_shot("43_online_linked_great");
+   tl_press(PSP_CTRL_CIRCLE);
+   tl_wait(4);
+   run_menu(1, "linked");
+   g_sim.lv.quality = ONLINE_Q_SLOW; g_sim.lv.rtt_ms = 163; g_sim.lv.relay = 1;
+   play_open();
+   tl_shot("43_online_linked_slow_relay");
+   tl_press(PSP_CTRL_CIRCLE);
+   tl_wait(4);
+   run_menu(1, "linked");
+   g_sim.lv.state = UI_LINK_OFF;
+   ui_set_link(NULL);
+   osd_reset();
+   ui_online_connected_toast("Ana", ONLINE_Q_SLOW);
+   tl_wait(2);
+   osd_draw();
+   shot_now("43_online_toast_slow");
+   vid_swap();
+   osd_reset();
+
+   /* the sentences, all fifteen, as the LINKING screen draws a failure */
+   {
+      static const int why[] = { UI_FAIL_ONLINE_CODE, UI_FAIL_ONLINE_UPDATE,
+         UI_FAIL_ONLINE_VER_OLD_HERE, UI_FAIL_ONLINE_VER_OLD_THERE,
+         UI_FAIL_ONLINE_SETUP, UI_FAIL_ONLINE_CLOCK, UI_FAIL_ONLINE_GAME,
+         UI_FAIL_ONLINE_GAME_FILE, UI_FAIL_ONLINE_FULL,
+         UI_FAIL_ONLINE_UNREACHABLE, UI_FAIL_ONLINE_BUSY,
+         UI_FAIL_ONLINE_SERVICE, UI_FAIL_ONLINE_CLOSED, UI_FAIL_ONLINE_SLOW,
+         UI_FAIL_ONLINE_CONSOLE };
+      int i;
+      for (i = 0; i < 15; i++)
+      {
+         const char *a = NULL, *b = NULL;
+         ui_online_fail_text(why[i], "Pokemon Ruby", "2.0.0", &a, &b);
+         EXPECT(a && b && a[0] && b[0] && !strchr(a, '%') && !strchr(b, '%'),
+                "sentence %d: \"%s\" / \"%s\"", i, a ? a : "-", b ? b : "-");
+         ui_link_fail_text(why[i], &a, &b);
+         EXPECT(a && b && a[0] && b[0], "ui_link_fail_text(%d)", why[i]);
+         printf("  online fail %2d: %s | %s\n", why[i], a, b);
+      }
+   }
+   /* the share screens' pad: only a code comes back */
+   g_pcfg.net_conn = UI_CONN_WIFI;
+}
+
 int main(int argc, char **argv)
 {
    char cfg[400];
@@ -2916,6 +3339,7 @@ int main(int argc, char **argv)
    pspcompat_set_root(g_root);
    pspcompat_make_dirs();
    snprintf(g_roms, sizeof(g_roms), "%s/roms", pspcompat_root());
+   snprintf(g_app_rom_dir, sizeof(g_app_rom_dir), "%s", g_roms);
 
    fe_evt_init(NULL, 0);
    snprintf(cfg, sizeof(cfg), "%s/config.ini", pspcompat_root());
@@ -2953,6 +3377,7 @@ int main(int argc, char **argv)
    RUN("osd", test_game_osd)
    RUN("menu", test_menu)
    RUN("play", test_play)
+   RUN("online", test_online)
    RUN("cheats", test_cheats)
    RUN("touch", test_touch)
    RUN("light", test_light)

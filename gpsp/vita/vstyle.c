@@ -3,11 +3,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "i18n.h"
 #include "stb_truetype.h"
 
 #include "vstyle.h"
 #include "video_vita_priv.h"
 #include "vstyle_icons.h"
+#include "vglyph.h"     /* the characters outside printable ASCII, drawn on demand */
 
 extern const unsigned char vv_font_regular[], vv_font_semibold[];
 extern const unsigned char vv_font_display_md[], vv_font_display_sb[];
@@ -36,6 +38,7 @@ typedef struct
    int       line_h, ascent;
    stbtt_fontinfo font;
    float     scale;
+   vglyph_set *xs;             /* accents, Greek, kana, kanji ...: vglyph.h  */
    /* Kerning between two printable ASCII characters, in font units, as
     * stbtt answers it (each answer is a cmap lookup of both glyphs and a
     * walk of the GPOS tables, and text is measured every frame).  Filled
@@ -48,16 +51,28 @@ static const struct
 {
    const unsigned char *ttf;
    float px;
+   const unsigned char *latin;   /* Inter, for the letters Outfit lacks     */
+   int semibold;                 /* the heavier faces: CJK glyphs get weight */
 } FACE_SRC[VS_FACES] = {
-   { vv_font_regular,     20.0f },   /* VS_CAPTION */
-   { vv_font_regular,     24.0f },   /* VS_BODY    */
-   { vv_font_semibold,    24.0f },   /* VS_LABEL   */
-   { vv_font_display_md,  30.0f },   /* VS_SUB     */
-   { vv_font_display_sb,  40.0f },   /* VS_TITLE   */
-   { vv_font_display_sb,  54.0f },   /* VS_HERO    */
+   { vv_font_regular,     20.0f, NULL,             0 },   /* VS_CAPTION */
+   { vv_font_regular,     24.0f, NULL,             0 },   /* VS_BODY    */
+   { vv_font_semibold,    24.0f, NULL,             1 },   /* VS_LABEL   */
+   { vv_font_display_md,  30.0f, vv_font_semibold, 1 },   /* VS_SUB     */
+   { vv_font_display_sb,  40.0f, vv_font_semibold, 1 },   /* VS_TITLE   */
+   { vv_font_display_sb,  54.0f, vv_font_semibold, 1 },   /* VS_HERO    */
 };
 
 static vs_face g_vf[VS_FACES];
+
+/* The face's size: Text size Large (video_vita_priv.h) grows the small and
+ * middle faces 20 %, the page title 10 % and the focused game's name not at
+ * all (it is already the biggest thing on its screen, and its atlas is full). */
+static float face_px(int i)
+{
+   const int pct = i == VS_HERO ? 100
+                 : i == VS_TITLE ? (100 + (vv_text_pct - 100) / 2) : vv_text_pct;
+   return FACE_SRC[i].px * (float)pct / 100.0f;
+}
 
 static int face_bake(int i)
 {
@@ -75,7 +90,7 @@ static int face_bake(int i)
    f->tried = 1;
    if (!stbtt_InitFont(&f->font, ttf, stbtt_GetFontOffsetForIndex(ttf, 0)))
       return -1;
-   f->scale = stbtt_ScaleForMappingEmToPixels(&f->font, FACE_SRC[i].px);
+   f->scale = stbtt_ScaleForMappingEmToPixels(&f->font, face_px(i));
    stbtt_GetFontVMetrics(&f->font, &asc, &desc, &gap);
    f->ascent = (int)ceilf((float)asc * f->scale);
    f->line_h = (int)ceilf((float)(asc - desc) * f->scale);
@@ -119,6 +134,10 @@ static int face_bake(int i)
       vb_tex_update(f->tex, 0, 0, VS_ATLAS_W, used_h, px, VS_ATLAS_W);
    free(px);
    f->ok = f->tex != NULL;
+   /* (nothing is read or allocated for the characters beyond ASCII until
+    * one of them is drawn) */
+   f->xs = vglyph_new(FACE_SRC[i].ttf, FACE_SRC[i].latin, (int)face_px(i),
+                      f->ascent, FACE_SRC[i].semibold);
    return f->ok ? 0 : -1;
 }
 
@@ -155,6 +174,56 @@ static int glyph_index(unsigned char c)
    return c - VS_FIRST;
 }
 
+/* TEXT IS UTF-8.  A character is a printable ASCII one (the baked atlas), or
+ * a code point from 0x80 up that vglyph.c makes on demand, or it is drawn as
+ * '?' (a control, a stray byte, a character no font has).  Nothing below
+ * cuts, measures or wraps inside a character. */
+#define VS_X_INVISIBLE 0xFFFFFFFFu   /* a zero width joiner, a selector: no room, no ink */
+
+/* The character at *pp, as the ASCII code drawn for it or a code point
+ * >= 0x80; *pp moves past it. */
+static uint32_t next_char(const unsigned char **pp)
+{
+   int n;
+   uint32_t cp = pk_u8_next((const char *)*pp, &n);
+   if (cp >= PK_U8_RAW && pk_u8_cut_tail((const char *)*pp))
+   {
+      while (**pp)               /* a character cut off by the end: nothing */
+         (*pp)++;
+      return VS_X_INVISIBLE;
+   }
+   *pp += n;
+   if (cp >= VS_FIRST && cp <= VS_LAST)
+      return cp;
+   if (cp >= 0xA0 && cp < PK_U8_RAW)
+      return pk_glyph_invisible(cp) ? VS_X_INVISIBLE : cp;
+   if (cp >= 0x80 && cp < 0xA0)
+      return '?';
+   if (cp >= PK_U8_RAW || cp < VS_FIRST || cp == 0x7F)
+      return '?';
+   return '?';
+}
+
+/* The advance of a character from next_char(). */
+static float char_adv(vs_face *f, uint32_t c)
+{
+   float a;
+   if (c == VS_X_INVISIBLE)
+      return 0.0f;
+   if (c <= VS_LAST)
+      return f->g[c - VS_FIRST].adv;
+   if (vglyph_adv(f->xs, c, &a))
+      return a;
+   if (i18n_audit_on)
+      i18n_audit_glyph(c, 0);
+   return f->g['?' - VS_FIRST].adv;
+}
+
+static int is_ascii_char(unsigned char b)
+{
+   return b >= VS_FIRST && b <= VS_LAST;
+}
+
 float vs_text_w(int fi, const char *s)
 {
    vs_face *f = face(fi);
@@ -162,11 +231,13 @@ float vs_text_w(int fi, const char *s)
    const unsigned char *p = (const unsigned char *)s;
    if (!f || !s)
       return 0.0f;
-   for (; *p; p++)
+   while (*p)
    {
-      w += f->g[glyph_index(*p)].adv;
-      if (p[1])
-         w += kern(f, *p, p[1]);
+      const unsigned char *at = p;
+      uint32_t c = next_char(&p);
+      w += char_adv(f, c);
+      if (*p && p == at + 1 && is_ascii_char(*at) && is_ascii_char(*p))
+         w += kern(f, *at, *p);
    }
    return w;
 }
@@ -188,40 +259,109 @@ int vs_ascent(int fi)
 float vs_text(int fi, float x, float y, const char *s, uint32_t rgba)
 {
    vs_face *f = face(fi);
-   vb_tquad q[VS_BATCH];
+   vb_text_mark();
+   if (i18n_audit_on)
+      i18n_audit(s);
+   vb_tquad q[VS_BATCH], qx[VS_BATCH];
+   vb_tex *xtex = NULL;
    const unsigned char *p = (const unsigned char *)s;
    float pen = x;
-   int n = 0, iy = (int)lroundf(y);
+   int n = 0, nx = 0, iy = (int)lroundf(y);
 
    if (!f || !s)
       return x;
+   rgba = vv_text_tint(rgba);
    vv_frame_need();
-   for (; *p; p++)
+   while (*p)
    {
-      const vs_glyph *g = &f->g[glyph_index(*p)];
-      if (g->w)
+      const unsigned char *at = p;
+      uint32_t c = next_char(&p);
+      float adv;
+      if (c <= VS_LAST || c == VS_X_INVISIBLE)
       {
-         float gx = floorf(pen + 0.5f) + (float)g->ox;
-         q[n].x0 = gx;
-         q[n].y0 = (float)(iy + g->oy);
-         q[n].x1 = gx + (float)g->w;
-         q[n].y1 = q[n].y0 + (float)g->h;
-         q[n].u0 = (float)g->ax;
-         q[n].v0 = (float)g->ay;
-         q[n].u1 = (float)(g->ax + g->w);
-         q[n].v1 = (float)(g->ay + g->h);
-         if (++n == VS_BATCH)
+         const vs_glyph *g;
+         if (c == VS_X_INVISIBLE)
+            continue;
+         g = &f->g[c - VS_FIRST];
+         if (g->w)
          {
-            vb_tquads(f->tex, q, n, rgba, VB_NEAREST);
-            n = 0;
+            float gx = floorf(pen + 0.5f) + (float)g->ox;
+            q[n].x0 = gx;
+            q[n].y0 = (float)(iy + g->oy);
+            q[n].x1 = gx + (float)g->w;
+            q[n].y1 = q[n].y0 + (float)g->h;
+            q[n].u0 = (float)g->ax;
+            q[n].v0 = (float)g->ay;
+            q[n].u1 = (float)(g->ax + g->w);
+            q[n].v1 = (float)(g->ay + g->h);
+            if (++n == VS_BATCH)
+            {
+               vb_tquads(f->tex, q, n, rgba, VB_NEAREST);
+               n = 0;
+            }
+         }
+         adv = g->adv;
+      }
+      else
+      {
+         pk_gglyph xg;
+         vb_tex *t = NULL;
+         if (vglyph_get(f->xs, c, &xg, &t))
+         {
+            if (xg.w && xg.h)
+            {
+               float gx = floorf(pen + 0.5f) + (float)xg.ox;
+               xtex = t;
+               qx[nx].x0 = gx;
+               qx[nx].y0 = (float)(iy + xg.oy);
+               qx[nx].x1 = gx + (float)xg.w;
+               qx[nx].y1 = qx[nx].y0 + (float)xg.h;
+               qx[nx].u0 = (float)xg.x;
+               qx[nx].v0 = (float)xg.y;
+               qx[nx].u1 = (float)(xg.x + xg.w);
+               qx[nx].v1 = (float)(xg.y + xg.h);
+               if (++nx == VS_BATCH)
+               {
+                  vb_tquads(xtex, qx, nx, rgba, VB_NEAREST);
+                  nx = 0;
+               }
+            }
+            adv = xg.adv;
+         }
+         else
+         {
+            /* no font has it, or no cell is free this frame: a '?' */
+            if (i18n_audit_on && vglyph_adv(f->xs, c, &xg.adv))
+               i18n_audit_glyph(c, 1);
+            const vs_glyph *g = &f->g['?' - VS_FIRST];
+            if (g->w)
+            {
+               float gx = floorf(pen + 0.5f) + (float)g->ox;
+               q[n].x0 = gx;
+               q[n].y0 = (float)(iy + g->oy);
+               q[n].x1 = gx + (float)g->w;
+               q[n].y1 = q[n].y0 + (float)g->h;
+               q[n].u0 = (float)g->ax;
+               q[n].v0 = (float)g->ay;
+               q[n].u1 = (float)(g->ax + g->w);
+               q[n].v1 = (float)(g->ay + g->h);
+               if (++n == VS_BATCH)
+               {
+                  vb_tquads(f->tex, q, n, rgba, VB_NEAREST);
+                  n = 0;
+               }
+            }
+            adv = g->adv;
          }
       }
-      pen += g->adv;
-      if (p[1])
-         pen += kern(f, *p, p[1]);
+      pen += adv;
+      if (*p && p == at + 1 && is_ascii_char(*at) && is_ascii_char(*p))
+         pen += kern(f, *at, *p);
    }
    if (n)
       vb_tquads(f->tex, q, n, rgba, VB_NEAREST);
+   if (nx)
+      vb_tquads(xtex, qx, nx, rgba, VB_NEAREST);
    return pen;
 }
 
@@ -235,31 +375,45 @@ void vs_text_r(int fi, float xr, float y, const char *s, uint32_t rgba)
    vs_text(fi, floorf(xr - vs_text_w(fi, s) + 0.5f), y, s, rgba);
 }
 
-/* The widths of every prefix of s, in one pass: pw[k] is vs_text_w of the
- * first k characters, summed in the very order vs_text_w sums them (so the
- * same float, bit for bit).  0 when s is longer than `cap` - 1. */
+/* The widths of every prefix of s that ends on a character boundary, in one
+ * pass: pw[k] is vs_text_w of the first k bytes, summed in the very order
+ * vs_text_w sums them (so the same float, bit for bit); a k inside a
+ * character holds VS_NOT_BOUNDARY.  0 when s is longer than `cap` - 1. */
 #define VS_PREFIX_MAX 512
+#define VS_NOT_BOUNDARY 1.0e30f
 static int prefix_widths(vs_face *f, const char *s, size_t len, float *pw)
 {
    const unsigned char *p = (const unsigned char *)s;
    float w = 0.0f;
-   size_t i;
+   size_t i = 0, k;
    if (len >= VS_PREFIX_MAX)
       return 0;
    pw[0] = 0.0f;
-   for (i = 0; i < len; i++)
+   while (i < len)
    {
-      w += f->g[glyph_index(p[i])].adv;
-      pw[i + 1] = w;
-      if (i + 1 < len)
-         w += kern(f, p[i], p[i + 1]);
+      const unsigned char *at = p + i, *q = at;
+      uint32_t c = next_char(&q);
+      size_t l = (size_t)(q - at);
+      w += char_adv(f, c);
+      for (k = 1; k < l; k++)
+         pw[i + k] = VS_NOT_BOUNDARY;
+      pw[i + l] = w;
+      if (i + l < len && l == 1 && is_ascii_char(at[0]) && is_ascii_char(at[1]))
+         w += kern(f, at[0], at[1]);
+      i += l;
    }
    return 1;
 }
 
+/* where the character before byte n starts */
+static size_t prev_boundary(const char *s, size_t n)
+{
+   return (size_t)(pk_u8_prev(s, s + n) - s);
+}
+
 void vs_text_fit(int fi, char *s, float max_w)
 {
-   static float pw[VS_PREFIX_MAX];
+   static float pw[VS_PREFIX_MAX + 4];
    vs_face *f = face(fi);
    size_t n, len;
    float dots;
@@ -275,7 +429,7 @@ void vs_text_fit(int fi, char *s, float max_w)
       while (n > 0)
       {
          char keep;
-         n--;
+         n = prev_boundary(s, n);
          while (n > 0 && s[n - 1] == ' ')
             n--;
          keep = s[n];
@@ -296,7 +450,7 @@ void vs_text_fit(int fi, char *s, float max_w)
    n = len;
    while (n > 0)
    {
-      n--;
+      n = prev_boundary(s, n);
       while (n > 0 && s[n - 1] == ' ')
          n--;
       if (pw[n] + dots <= max_w)
@@ -309,6 +463,26 @@ void vs_text_fit(int fi, char *s, float max_w)
    s[0] = '\0';
 }
 
+/* The end of the "word" that starts at p[from]: up to the next space, or
+ * where pk_u8_can_break allows a break (between two characters one of which
+ * is written without spaces: never before a closing mark, never after an
+ * opening one, never inside a word of Latin letters). */
+static size_t word_end(const char *p, size_t from, size_t len)
+{
+   size_t next = from;
+   uint32_t prev = 0;
+   while (next < len && p[next] != ' ')
+   {
+      int n;
+      uint32_t cp = pk_u8_next(p + next, &n);
+      if (prev && pk_u8_can_break(prev, cp))
+         break;
+      next += (size_t)n;
+      prev = cp;
+   }
+   return next;
+}
+
 int vs_text_wrap(int fi, float x, float y, float max_w, int max_lines,
                  float line_gap, const char *s, uint32_t rgba)
 {
@@ -316,7 +490,7 @@ int vs_text_wrap(int fi, float x, float y, float max_w, int max_lines,
    int lines = 0;
    const char *p = s;
    float lh = (float)vs_line_h(fi) + line_gap;
-   static float pw[VS_PREFIX_MAX];
+   static float pw[VS_PREFIX_MAX + 4];
    vs_face *f = face(fi);
    while (p && *p && lines < max_lines)
    {
@@ -327,11 +501,9 @@ int vs_text_wrap(int fi, float x, float y, float max_w, int max_lines,
       int have = f && prefix_widths(f, p, span, pw);
       while (take < len && take < sizeof(line) - 4)
       {
-         size_t next = take;
+         size_t next = word_end(p, take, len);
          float w;
-         while (next < len && p[next] != ' ')
-            next++;
-         if (have && next <= span)
+         if (have && next <= span && pw[next] != VS_NOT_BOUNDARY)
             w = pw[next];
          else if (next >= sizeof(line))
             w = max_w + 1.0f;            /* a word longer than a line */
@@ -354,12 +526,16 @@ int vs_text_wrap(int fi, float x, float y, float max_w, int max_lines,
          best = len < sizeof(line) - 4 ? len : sizeof(line) - 4;
       if (best > sizeof(line) - 4)
          best = sizeof(line) - 4;
+      best = pk_u8_floor(p, best);       /* (never half a character) */
+      if (best == 0)
+         best = pk_u8_len(p);
       memcpy(line, p, best);
       line[best] = '\0';
       if (lines == max_lines - 1 && best < len)
       {
          /* the last line takes the rest, cut to fit */
          size_t rest = len < sizeof(line) - 4 ? len : sizeof(line) - 4;
+         rest = pk_u8_floor(p, rest);
          memcpy(line, p, rest);
          line[rest] = '\0';
          vs_text_fit(fi, line, max_w);
@@ -939,15 +1115,24 @@ void vs_clip_off(void)
    vb_scissor(0, 0, 0, 0, 0);
 }
 
-void vs_term(void)
+/* Forget the baked faces (Text size changed): each bakes again at the new
+ * size when it is next asked for. */
+void vs_text_reset(void)
 {
    int i;
    for (i = 0; i < VS_FACES; i++)
    {
       if (g_vf[i].tex)
          vb_tex_destroy(g_vf[i].tex);
+      vglyph_free(g_vf[i].xs);
       memset(&g_vf[i], 0, sizeof(g_vf[i]));
    }
+}
+
+void vs_term(void)
+{
+   int i;
+   vs_text_reset();
    for (i = 0; i < VS_DISCS; i++)
    {
       if (g_disc[i].tex)

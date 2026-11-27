@@ -370,6 +370,31 @@ void lcd_win_render(void *buf,int scanline)
 	}
 }
 
+/* GBAdhoc: the sprites a scanline shows.  Hardware takes the first ten in
+ * OAM order whose rows cover the line (whatever their X, even off screen),
+ * and where they overlap the DMG draws the lower X on top (ties: lower OAM
+ * index), the Game Boy Color the lower OAM index.  The result is in drawing
+ * order (lowest priority first) so the painter loops stay as they were.
+ * Before this every sprite was drawn, so an eleventh sprite on a line showed
+ * and a later sprite at a lower X was covered (dmg-acid2). */
+static int lcd_sprite_select(int scanline,int tall,int dmg,int *order)
+{
+	int i,n=0,j,k;
+	for (i=0;i<40&&n<10;i++){
+		int y=oam[i<<2]-(tall?1:9);
+		if (y<scanline||y>scanline+(tall?15:7)) continue;
+		if (dmg){
+			int key=(oam[(i<<2)+1]<<6)|i;
+			for (j=n;j>0&&((oam[(order[j-1]<<2)+1]<<6)|order[j-1])<key;j--) order[j]=order[j-1];
+			order[j]=i;
+			n++;
+		}else
+			order[n++]=i;
+	}
+	if (!dmg) for (j=0,k=n-1;j<k;j++,k--){ i=order[j];order[j]=order[k];order[k]=i; }
+	return n;
+}
+
 void lcd_sprite_render(void *buf,int scanline)
 {
 	if (!(g_regs.LCDC&0x80)||!(g_regs.LCDC&0x02))
@@ -393,7 +418,10 @@ void lcd_sprite_render(void *buf,int scanline)
 	pal[1][2]=m_pal16[n_mpal16][2][(g_regs.OBP2>>4)&0x3];
 	pal[1][3]=m_pal16[n_mpal16][2][(g_regs.OBP2>>6)&0x3];
 
-	for (i=39;i>=0;i--){
+	int order[10],nsel,sk;
+	nsel=lcd_sprite_select(scanline,sp_size,1,order);
+	for (sk=0;sk<nsel;sk++){
+		i=order[sk];
 		tile=oam[i*4+2];
 		atr=oam[i*4+3];
 		palnum=(atr>>4)&1;
@@ -587,7 +615,10 @@ void lcd_sprite_render_color(void *buf,int scanline)
 
 	word bank;
 
-	for (i=39;i>=0;i--){
+	int order[10],nsel,sk;
+	nsel=lcd_sprite_select(scanline,sp_size,0,order);
+	for (sk=0;sk<nsel;sk++){
+		i=order[sk];
 		if (sp_size){ // 8*16
 			y=oam[i<<2]-1;
 			if (((y-scanline)&-16)!=0) continue;			//c•ûŒü‚Ì”ÍˆÍ”»’è
@@ -793,7 +824,9 @@ static void gb_recreate_colors()		{
 		word *dmg = &m_pal16[0][0][0];	/* GBAdhoc: flat, see gbc_recreate_colors */
 		for (i=0;i<12;i++)		{
 			word col = tgb_dmg_palette[i];	/* GBAdhoc: BGR555 from the adapter */
-			dmg[i] = CONVERT_COLOR15(col);
+			/* VitAdhoc: GBC colours for a DMG game are shown as the GBC's
+			 * screen shows them; the four-shade palettes as before. */
+			dmg[i] = tgb_dmg_is_cgb ? cgb_lcd_color(col) : CONVERT_COLOR15(col);
 		}
 
 		gb_pal_is_invalidated = 0;

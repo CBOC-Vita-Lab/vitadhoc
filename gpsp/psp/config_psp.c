@@ -6,14 +6,170 @@
 #include "video_psp.h"
 #include "fe_util.h"
 #include "fe_evt.h"
+#include "../gbcore/gbcore.h"   /* GBCORE_PALETTE_* */
 #ifdef VITA
 #include <stdlib.h>
 #include "pspcompat.h"        /* pspcompat_user_name: the default nick */
+#include "i18n.h"
+#include "vglyph.h"            /* the Chinese forms of the Han characters */
+#include "plat.h"
+#include "ui_host_hooks.h"   /* ui_host_link_direct */
 #endif
 
 psp_config g_pcfg;
 
+/* 1 while the config file predates the Game Boy colours default (no
+ * `gb_colours` key): a stored 0 is then the old, never-chosen "Auto". */
+static int g_gbpal_legacy;
+static int gbpal_load(int v)
+{
+   if (v < 0 || v >= GBCORE_PALETTE_COUNT)
+      return GBCORE_PALETTE_GBC_AUTO;
+   return v == GBCORE_PALETTE_AUTO && g_gbpal_legacy ? GBCORE_PALETTE_GBC_AUTO
+                                                     : v;
+}
+
 static char cfg_path[256];
+
+#ifdef VITA
+/* SCREEN, TEXT SIZE, HIGH CONTRAST, LANGUAGE, THEME and TAP MENU: shared across
+ * every console, the app and both players, so they live in <root>/display.ini
+ * (the folder of config.ini) which snes.bin and md.bin read too (playerkit/src/
+ * pk_uiprefs.h is the same file from their side).  screen=auto|oled|lcd|pstv
+ * text_size=normal|large  contrast=off|on  language=auto|en|es|fr|de|it|
+ * pt-BR|ja|zh-Hans (i18n.h; xx-long is the pseudo-locale of the tests)
+ * theme=dark|light  tap_menu=on|off.  Written only when a value changed, with
+ * the safe write of fe_ini_set. */
+static const char *const ui_screen_tag[4] = { "auto", "oled", "lcd", "pstv" };
+static int g_ui_saved[6] = { -1, -1, -1, -1, -1, -1 }; /* what the file holds */
+
+static void ui_path(char *out, size_t n)
+{
+   const char *slash = strrchr(cfg_path, '/');
+   const char *c2 = strrchr(cfg_path, '\\');
+   size_t len;
+   if (c2 > slash)
+      slash = c2;
+   len = slash ? (size_t)(slash - cfg_path) + 1 : 0;
+   if (len + 12 >= n)
+      len = 0;
+   memcpy(out, cfg_path, len);
+   snprintf(out + len, n - len, "display.ini");
+}
+
+/* The value of `key` in lower case (the players read display.ini that way,
+ * playerkit/src/pk_uiprefs.h: "Large" and "ON" mean the same as "large" and
+ * "on"); 0 when it is not there. */
+static int ui_get_lower(const char *path, const char *key, char *v, size_t n)
+{
+   size_t i;
+   if (!fe_ini_get(path, key, v, n))
+      return 0;
+   for (i = 0; v[i]; i++)
+      if (v[i] >= 'A' && v[i] <= 'Z')
+         v[i] = (char)(v[i] + 'a' - 'A');
+   return 1;
+}
+
+/* The catalogue of display.ini's language, loaded: at start and when Settings
+ * changes the row.  English whenever the file is not there. */
+void pcfg_language_apply(void)
+{
+   i18n_dir(plat_app_dir());
+   i18n_use(g_pcfg.language, pspcompat_system_lang());
+   vglyph_region(i18n_current() == I18N_ZHS);      /* Chinese forms of the Han characters */
+}
+
+static void ui_prefs_load(void)
+{
+   char path[300], v[24];
+   int i, have_theme = 0, have_tap = 0;
+   ui_path(path, sizeof(path));
+   g_pcfg.screen = 0;
+   g_pcfg.text_large = 0;
+   g_pcfg.contrast = 0;
+   g_pcfg.language = I18N_AUTO;
+   if (ui_get_lower(path, "language", v, sizeof(v)))
+      g_pcfg.language = i18n_index(v);
+   if (ui_get_lower(path, "screen", v, sizeof(v)))
+      for (i = 0; i < 4; i++)
+         if (!strcmp(v, ui_screen_tag[i]))
+            g_pcfg.screen = i;
+   if (ui_get_lower(path, "text_size", v, sizeof(v)))
+      g_pcfg.text_large = !strcmp(v, "large") ? 1 : 0;
+   if (ui_get_lower(path, "contrast", v, sizeof(v)))
+      g_pcfg.contrast = !strcmp(v, "on") || !strcmp(v, "1") ? 1 : 0;
+   if (ui_get_lower(path, "theme", v, sizeof(v)))
+   {
+      if (!strcmp(v, "light") || !strcmp(v, "1"))
+      {
+         g_pcfg.theme = 1;
+         have_theme = 1;
+      }
+      else if (!strcmp(v, "dark") || !strcmp(v, "0"))
+      {
+         g_pcfg.theme = 0;
+         have_theme = 1;
+      }
+   }
+   if (ui_get_lower(path, "tap_menu", v, sizeof(v)))
+   {
+      if (!strcmp(v, "off") || !strcmp(v, "0"))
+      {
+         g_pcfg.tap_menu = 0;
+         have_tap = 1;
+      }
+      else if (!strcmp(v, "on") || !strcmp(v, "1"))
+      {
+         g_pcfg.tap_menu = 1;
+         have_tap = 1;
+      }
+   }
+   g_ui_saved[0] = g_pcfg.screen;
+   g_ui_saved[1] = g_pcfg.text_large;
+   g_ui_saved[2] = g_pcfg.contrast;
+   g_ui_saved[3] = g_pcfg.language;
+   g_ui_saved[4] = have_theme ? g_pcfg.theme : 0;
+   g_ui_saved[5] = have_tap ? g_pcfg.tap_menu : 1;
+   pcfg_language_apply();
+}
+
+static void ui_prefs_save(void)
+{
+   char path[300];
+   if (g_pcfg.screen < 0 || g_pcfg.screen > 3)
+      g_pcfg.screen = 0;
+   g_pcfg.text_large = g_pcfg.text_large ? 1 : 0;
+   g_pcfg.contrast = g_pcfg.contrast ? 1 : 0;
+   if (g_pcfg.language < 0 || g_pcfg.language >= I18N_LANGS)
+      g_pcfg.language = I18N_AUTO;
+   g_pcfg.theme = g_pcfg.theme ? 1 : 0;
+   g_pcfg.tap_menu = g_pcfg.tap_menu ? 1 : 0;
+   if (g_ui_saved[0] == g_pcfg.screen && g_ui_saved[1] == g_pcfg.text_large &&
+       g_ui_saved[2] == g_pcfg.contrast && g_ui_saved[3] == g_pcfg.language &&
+       g_ui_saved[4] == g_pcfg.theme && g_ui_saved[5] == g_pcfg.tap_menu)
+      return;
+   ui_path(path, sizeof(path));
+   fe_ini_set(path, "screen", ui_screen_tag[g_pcfg.screen]);
+   fe_ini_set(path, "text_size", g_pcfg.text_large ? "large" : "normal");
+   fe_ini_set(path, "contrast", g_pcfg.contrast ? "on" : "off");
+   fe_ini_set(path, "language", i18n_code[g_pcfg.language]);
+   fe_ini_set(path, "theme", g_pcfg.theme ? "light" : "dark");
+   fe_ini_set(path, "tap_menu", g_pcfg.tap_menu ? "on" : "off");
+   g_ui_saved[0] = g_pcfg.screen;
+   g_ui_saved[1] = g_pcfg.text_large;
+   g_ui_saved[2] = g_pcfg.contrast;
+   g_ui_saved[3] = g_pcfg.language;
+   g_ui_saved[4] = g_pcfg.theme;
+   g_ui_saved[5] = g_pcfg.tap_menu;
+}
+#endif
+
+#ifdef VITA
+/* vita.ini's old grid_strength, for a filter of LCD grid / scanlines that
+ * becomes a Scanlines or LCD grid strength (config_psp.h). */
+int g_pcfg_legacy_grid = 5;
+#endif
 
 /* PER-CONSOLE DISPLAY PROFILES, at the end of this file. */
 static void pdisp_load(void);
@@ -164,16 +320,29 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
                                             PCFG_PROFILE_SPEED);
    g_pcfg.me_mode     = (int)fe_ini_get_int(cfg_path, "me_mode",
                                             PCFG_ME_MODE_DEF);
+   /* 1.4 (docs/DEFAULTS-1.4.md): the Vita's base filter is sharp bilinear
+    * -- what Auto falls back to when it does not smooth: never nearest,
+    * whose uneven pixels at 960 x 544 are the look to avoid */
    g_pcfg.filter      = (int)fe_ini_get_int(cfg_path, "filter",
+#ifdef VITA
+                                            VID_FILTER_SHARP);
+#else
                                             VID_FILTER_NEAREST);
+#endif
    g_pcfg.ff_mult_x10 = (int)fe_ini_get_int(cfg_path, "ff_mult_x10", 30);
    g_pcfg.ff_hold     = (int)fe_ini_get_int(cfg_path, "ff_hold", 1);
    g_pcfg.frameskip_sparse = (int)fe_ini_get_int(cfg_path, "frameskip_sparse", 0);
    if (g_pcfg.frameskip_sparse < 0 || g_pcfg.frameskip_sparse > 15)
       g_pcfg.frameskip_sparse = 0;
    g_pcfg.ff_smooth   = (int)fe_ini_get_int(cfg_path, "ff_smooth", 0) ? 1 : 0;
-   g_pcfg.ff_audio    = (int)fe_ini_get_int(cfg_path, "ff_audio", 0) ? 1 : 0;
+   g_pcfg.ff_audio    = (int)fe_ini_get_int(cfg_path, "ff_audio", 0);
+   if (g_pcfg.ff_audio < 0 || g_pcfg.ff_audio > 2)
+      g_pcfg.ff_audio = g_pcfg.ff_audio ? 1 : 0;
    g_pcfg.theme       = (int)fe_ini_get_int(cfg_path, "theme", 0) ? 1 : 0;
+#ifdef VITA
+   g_pcfg.tap_menu    = (int)fe_ini_get_int(cfg_path, "tap_menu", 1) ? 1 : 0;
+   ui_prefs_load();
+#endif
    g_pcfg.ui_shell    = (int)fe_ini_get_int(cfg_path, "ui_shell", 0) ? 1 : 0;
 #ifdef VITA
    g_pcfg.ui_home     = (int)fe_ini_get_int(cfg_path, "ui_home", 1) ? 1 : 0;
@@ -182,10 +351,30 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.lib_sort    = (int)fe_ini_get_int(cfg_path, "lib_sort", 0);
    if (g_pcfg.lib_sort < 0 || g_pcfg.lib_sort > 2)
       g_pcfg.lib_sort = 0;
+   g_pcfg.lib_names   = (int)fe_ini_get_int(cfg_path, "lib_names", 0) ? 1 : 0;
    g_pcfg.ab_buttons  = (int)fe_ini_get_int(cfg_path, "ab_buttons", -1);
    if (g_pcfg.ab_buttons < -1 || g_pcfg.ab_buttons > 1)
       g_pcfg.ab_buttons = -1;
-   g_pcfg.stick_rewind = (int)fe_ini_get_int(cfg_path, "stick_rewind", 0) ? 1 : 0;
+   g_pcfg.stick_rewind = (int)fe_ini_get_int(cfg_path, "stick_rewind", 1) ? 1 : 0;
+   g_pcfg.rear_touch = (int)fe_ini_get_int(cfg_path, "rear_touch", 0) ? 1 : 0;
+   g_pcfg.update_check = (int)fe_ini_get_int(cfg_path, "update_check", 1) ? 1 : 0;
+   g_pcfg.ws_blend = (int)fe_ini_get_int(cfg_path, "ws_blend", 1) ? 1 : 0;
+   g_pcfg.nes_wide = (int)fe_ini_get_int(cfg_path, "nes_wide", 0);
+   g_pcfg.nes_pal_smooth = (int)fe_ini_get_int(cfg_path, "nes_pal_smooth", 1) ? 1 : 0;
+   g_pcfg.steady_pacing = (int)fe_ini_get_int(cfg_path, "steady_pacing", 1) ? 1 : 0;
+   g_pcfg.gb_printer = (int)fe_ini_get_int(cfg_path, "gb_printer", 1) ? 1 : 0;
+   g_pcfg.smooth_handoff = (int)fe_ini_get_int(cfg_path, "smooth_handoff", 1) ? 1 : 0;
+   {
+      char c4[16];
+      g_pcfg.core4_off = fe_ini_get(cfg_path, "core4", c4, sizeof(c4)) &&
+                         (c4[0] == 'o' || c4[0] == 'O' || c4[0] == '0') ? 1 : 0;
+   }
+   g_pcfg.quick_response = (int)fe_ini_get_int(cfg_path, "quick_response", -1);
+   if (g_pcfg.quick_response < -1 || g_pcfg.quick_response > 2)
+      g_pcfg.quick_response = -1;
+   g_pcfg.gb_core = (int)fe_ini_get_int(cfg_path, "gb_core", 0) == 1 ? 1 : 0;
+   if (g_pcfg.nes_wide < 0 || g_pcfg.nes_wide > 2)
+      g_pcfg.nes_wide = 0;
 #endif
    g_pcfg.me_dirty    = (int)fe_ini_get_int(cfg_path, "me_dirty", 1) ? 1 : 0;
    g_pcfg.rom_resident = (int)fe_ini_get_int(cfg_path, "rom_resident", 1) ? 1 : 0;
@@ -199,10 +388,14 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
 #endif
    g_pcfg.rtc_realtime = (int)fe_ini_get_int(cfg_path, "rtc_realtime", 1) ? 1 : 0;
    {
-      /* A value we do not know is OFF: the stick must never start doing
-       * something the player did not ask for. */
+      /* A value we do not know is OFF (or on Vita, d-pad move by default,
+       * off when chosen for a drifting stick). */
       char sv[24];
+#ifdef VITA
+      g_pcfg.stick = CTL_STICK_MOVE;
+#else
       g_pcfg.stick = CTL_STICK_OFF;
+#endif
       if (fe_ini_get(cfg_path, "stick", sv, sizeof(sv)) &&
           ctl_stick_parse(sv, &g_pcfg.stick) != 0)
       {
@@ -212,9 +405,16 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
       g_pcfg.stick_warned =
          (int)fe_ini_get_int(cfg_path, "stick_warned", 0) ? 1 : 0;
    }
-   g_pcfg.gb_palette  = (int)fe_ini_get_int(cfg_path, "gb_palette", 0);
-   if (g_pcfg.gb_palette < 0 || g_pcfg.gb_palette > 15)
-      g_pcfg.gb_palette = 0;
+   /* 2.0: Game Boy colours default to GBC auto (the Game Boy Color's own
+    * colours for each game).  A file written before it carries no
+    * `gb_colours` key, and its 0 meant "Auto" (Super Game Boy colours),
+    * which nobody chose on purpose: it becomes the new default. */
+   {
+      char gv[16];
+      g_gbpal_legacy = !fe_ini_get(cfg_path, "gb_colours", gv, sizeof(gv));
+   }
+   g_pcfg.gb_palette  = gbpal_load((int)fe_ini_get_int(cfg_path, "gb_palette",
+                                                         GBCORE_PALETTE_GBC_AUTO));
    g_pcfg.bench_mode  = (int)fe_ini_get_int(cfg_path, "bench_mode", 0) ? 1 : 0;
 #ifdef GPSP_PLAYABLE
    /* Bench mode is a HARNESS facility: it forces uncapped + every-frame
@@ -335,8 +535,15 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
     * here, once, instead of differently on every screen. */
    g_pcfg.nick[15] = '\0';
    g_pcfg.net_conn = (int)fe_ini_get_int(cfg_path, "net_conn", 0);
-   if (g_pcfg.net_conn < 0 || g_pcfg.net_conn > 2)
+   if (g_pcfg.net_conn < 0 || g_pcfg.net_conn > 3)
       g_pcfg.net_conn = 0;
+   /* 2.0: Connection "Internet" (the typed address) became Online (a room
+    * code).  The typed-address row is hidden unless vita.ini link_direct = 1,
+    * so a saved 1 would pick a connection the page does not show: it is
+    * Online now (the file is rewritten when anything is saved). */
+   if (g_pcfg.net_conn == 1 && !ui_host_link_direct())
+      g_pcfg.net_conn = 3;
+   g_pcfg.online_relay = (int)fe_ini_get_int(cfg_path, "online_relay", 0) ? 1 : 0;
    g_pcfg.link_delay = (int)fe_ini_get_int(cfg_path, "link_delay", 0);
    if (g_pcfg.link_delay < 0 || g_pcfg.link_delay > PCFG_LINK_DELAY_MAX)
       g_pcfg.link_delay = 0;
@@ -390,7 +597,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
       strcpy(g_pcfg.nick, "PSP");
 #endif
    g_pcfg.console = (int)fe_ini_get_int(cfg_path, "console", FE_CONSOLE_GBA);
-   if (g_pcfg.console < FE_CONSOLE_GBA || g_pcfg.console > FE_CONSOLE_SNES)
+   if (g_pcfg.console < FE_CONSOLE_GBA || g_pcfg.console >= FE_CONSOLE_COUNT)
       g_pcfg.console = FE_CONSOLE_GBA;
    fe_ini_get(cfg_path, "last_rom", g_pcfg.last_rom, sizeof(g_pcfg.last_rom));
    /* Every bind_* key is validated here; a bad one is reported
@@ -573,7 +780,7 @@ long pcfg_gb_rtc_utc_since(long now_local)
 
 int pcfg_remember_console(int console)
 {
-   if (console < FE_CONSOLE_GBA || console > FE_CONSOLE_SNES)
+   if (console < FE_CONSOLE_GBA || console >= FE_CONSOLE_COUNT)
       return -1;
    g_pcfg.console = console;
    /* The browser's console switch is the settings context: the next
@@ -602,6 +809,9 @@ void pcfg_save(void)
       return;
    pcfg_validate("save");
    pcfg_display_commit();
+#ifdef VITA
+   ui_prefs_save();
+#endif
 #ifdef VITA
    if (g_pgame.on)
       (void)pcfg_game_save();
@@ -648,10 +858,50 @@ void pcfg_save(void)
       if (g_pcfg.lib_sort || fe_ini_get(cfg_path, "lib_sort", was, sizeof(was)))
          fe_ini_set_int(cfg_path, "lib_sort", g_pcfg.lib_sort);
    }
+   {
+      char was[8];
+      if (g_pcfg.lib_names || fe_ini_get(cfg_path, "lib_names", was, sizeof(was)))
+         fe_ini_set_int(cfg_path, "lib_names", g_pcfg.lib_names);
+   }
    /* ab_buttons: only once chosen, so "as the Vita says" stays no key. */
    if (g_pcfg.ab_buttons >= 0)
       fe_ini_set_int(cfg_path, "ab_buttons", g_pcfg.ab_buttons);
    fe_ini_set_int(cfg_path, "stick_rewind", g_pcfg.stick_rewind);
+   if (!g_pcfg.tap_menu || fe_ini_get_int(cfg_path, "tap_menu", 1) == 0)
+      fe_ini_set_int(cfg_path, "tap_menu", g_pcfg.tap_menu);
+   if (!g_pcfg.gb_printer || fe_ini_get_int(cfg_path, "gb_printer", 1) == 0)
+      fe_ini_set_int(cfg_path, "gb_printer", g_pcfg.gb_printer);
+   /* only once chosen: a player who never turns it on keeps the same file */
+   if (g_pcfg.rear_touch || fe_ini_get_int(cfg_path, "rear_touch", 0))
+      fe_ini_set_int(cfg_path, "rear_touch", g_pcfg.rear_touch);
+   if (!g_pcfg.update_check || fe_ini_get_int(cfg_path, "update_check", 1) == 0)
+      fe_ini_set_int(cfg_path, "update_check", g_pcfg.update_check);
+   if (!g_pcfg.steady_pacing || fe_ini_get_int(cfg_path, "steady_pacing", 1) == 0)
+      fe_ini_set_int(cfg_path, "steady_pacing", g_pcfg.steady_pacing);
+   if (!g_pcfg.smooth_handoff || fe_ini_get_int(cfg_path, "smooth_handoff", 1) == 0)
+      fe_ini_set_int(cfg_path, "smooth_handoff", g_pcfg.smooth_handoff);
+   /* "off" once chosen; "auto" is written only to undo it (no new key in
+    * every config file) */
+   {
+      char c4[16];
+      if (g_pcfg.core4_off)
+         fe_ini_set(cfg_path, "core4", "off");
+      else if (fe_ini_get(cfg_path, "core4", c4, sizeof(c4)))
+         fe_ini_set(cfg_path, "core4", "auto");
+   }
+   /* only once chosen: "the console's default" stays no key */
+   if (g_pcfg.quick_response >= 0)
+      fe_ini_set_int(cfg_path, "quick_response", g_pcfg.quick_response);
+   if (g_pcfg.gb_core || fe_ini_get_int(cfg_path, "gb_core", 0))
+      fe_ini_set_int(cfg_path, "gb_core", g_pcfg.gb_core);
+   if (g_pcfg.nes_wide || fe_ini_get_int(cfg_path, "nes_wide", 0))
+      fe_ini_set_int(cfg_path, "nes_wide", g_pcfg.nes_wide);
+   if (!g_pcfg.nes_pal_smooth || fe_ini_get_int(cfg_path, "nes_pal_smooth", 1) == 0)
+      fe_ini_set_int(cfg_path, "nes_pal_smooth", g_pcfg.nes_pal_smooth);
+   if (!g_pcfg.ws_blend)
+      fe_ini_set_int(cfg_path, "ws_blend", 0);
+   else if (fe_ini_get_int(cfg_path, "ws_blend", -1) == 0)
+      fe_ini_set_int(cfg_path, "ws_blend", 1);
 #endif
    PCFG_PSP_KEY(fe_ini_set_int(cfg_path, "me_dirty", g_pcfg.me_dirty));
    fe_ini_set_int(cfg_path, "show_fps", g_pcfg.show_fps);
@@ -669,9 +919,15 @@ void pcfg_save(void)
       /* Written only once changed (or already in the file): a player who
        * never touches the stick keeps the config.ini 3.5.0 wrote. */
       char sv[24];
+#ifdef VITA
+      if (g_pcfg.stick != CTL_STICK_MOVE ||
+          fe_ini_get(cfg_path, "stick", sv, sizeof(sv)))
+         fe_ini_set(cfg_path, "stick", ctl_stick_name(g_pcfg.stick));
+#else
       if (g_pcfg.stick != CTL_STICK_OFF ||
           fe_ini_get(cfg_path, "stick", sv, sizeof(sv)))
          fe_ini_set(cfg_path, "stick", ctl_stick_name(g_pcfg.stick));
+#endif
       if (g_pcfg.stick_warned ||
           fe_ini_get(cfg_path, "stick_warned", sv, sizeof(sv)))
          fe_ini_set_int(cfg_path, "stick_warned", g_pcfg.stick_warned);
@@ -680,6 +936,7 @@ void pcfg_save(void)
                   g_pcfg.gbc_color_correction);
    fe_ini_set_int(cfg_path, "gb_palette",
                   g_pdisp[FE_CONSOLE_GB].gb_palette);
+   fe_ini_set_int(cfg_path, "gb_colours", 2);   /* see pcfg_load_doc */
    fe_ini_set_int(cfg_path, "bench_mode", g_pcfg.bench_mode);
    fe_ini_set_int(cfg_path, "net_frameskip", g_pcfg.net_frameskip);
    fe_ini_set_int(cfg_path, "net_tx_thread", g_pcfg.net_tx_thread);
@@ -714,6 +971,7 @@ void pcfg_save(void)
 #ifdef VITA
    fe_ini_set_int(cfg_path, "net_conn", g_pcfg.net_conn);
    fe_ini_set_int(cfg_path, "link_delay", g_pcfg.link_delay);
+   fe_ini_set_int(cfg_path, "online_relay", g_pcfg.online_relay);
    fe_ini_set_int(cfg_path, "local_partner", g_pcfg.local_partner);
    fe_ini_set_int(cfg_path, "local_layout", g_pcfg.local_layout);
    fe_ini_set_int(cfg_path, "local_touch2", g_pcfg.local_touch2);
@@ -784,11 +1042,11 @@ void pcfg_net_addr_push(const char *addr)
 pcfg_display g_pdisp[FE_CONSOLE_COUNT];
 static int g_pdisp_live = FE_CONSOLE_GBA;
 
-static const char *const pdisp_tag_lc[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes" };
+static const char *const pdisp_tag_lc[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes", "nes", "ws", "md", "sms", "gg", "sg", "scd" };
 
 const char *pcfg_console_tag(int console)
 {
-   static const char *const tag[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES" };
+   static const char *const tag[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES", "NES", "WS", "MD", "SMS", "GG", "SG", "SCD" };
    return (console >= 0 && console < FE_CONSOLE_COUNT) ? tag[console] : "GBA";
 }
 
@@ -810,9 +1068,13 @@ static void pdisp_clamp(pcfg_display *d)
    d->filter = pcfg_filter_clamp(d->filter);
    if (d->ambient < 0 || d->ambient >= PCFG_AMB_MODES)
       d->ambient = PCFG_AMBIENT_DEF;
-   if (d->gb_palette < 0 || d->gb_palette > 15)
-      d->gb_palette = 0;
+   if (d->gb_palette < 0 || d->gb_palette >= GBCORE_PALETTE_COUNT)
+      d->gb_palette = GBCORE_PALETTE_GBC_AUTO;
 #ifdef VITA
+   /* the LCD grid and scanlines are not filters any more (migrated before
+    * this: pdisp_migrate_filter) */
+   if (d->filter == VID_FILTER_LCD || d->filter == VID_FILTER_SCANLINES)
+      d->filter = VID_FILTER_SHARP;
    {
       /* a console's profile, or a game's own (pcfg_game: its console) */
       int c = d >= g_pdisp && d < g_pdisp + FE_CONSOLE_COUNT
@@ -825,7 +1087,16 @@ static void pdisp_clamp(pcfg_display *d)
          d->filter = VID_FILTER_XBRZ;
       if (d->color < 0 || d->color >= pcfg_color_modes(c))
          d->color = 0;
-      d->blend = d->blend ? 1 : 0;
+      if (d->ghost < 0 || d->ghost > 10 || !pcfg_ghost_modes(c))
+         d->ghost = PCFG_GHOST_DEF;
+      if (d->scan < 0 || d->scan > 10)
+         d->scan = PCFG_SCAN_DEF;
+      if (d->grid < 0 || d->grid > 10)
+         d->grid = PCFG_GRID_DEF;
+      if (d->crt < 0 || d->crt > 10)
+         d->crt = PCFG_CRT_DEF;
+      if (d->glow < 0 || d->glow > 10)
+         d->glow = PCFG_GLOW_DEF;
       if (d->wide < 0 || d->wide >= pcfg_wide_modes(c))
          d->wide = 0;
       if (d->wide_fill < 0 || d->wide_fill > 2)
@@ -839,7 +1110,9 @@ const char *pcfg_quality_name(int quality)
 {
    return quality == PCFG_QUALITY_ORIGINAL ? "Original"
         : quality == PCFG_QUALITY_2X ? "Enhanced 2x"
-        : quality == PCFG_QUALITY_3X ? "Enhanced 3x" : "Auto";
+        : quality == PCFG_QUALITY_3X ? "Enhanced 3x"
+        : quality == PCFG_QUALITY_4X ? "Enhanced 4x"
+        : quality == PCFG_QUALITY_MMPX ? "MMPX 2x" : "Auto";
 }
 
 int pcfg_wide_modes(int console)
@@ -849,18 +1122,26 @@ int pcfg_wide_modes(int console)
 
 const char *pcfg_wide_name(int wide)
 {
-   return wide == 3 ? "on + any game" : wide == 2 ? "on + 3D tracks"
-        : wide == 1 ? "on" : "off";
+   return wide == 3 ? "On + any game" : wide == 2 ? "On + 3D tracks"
+        : wide == 1 ? "On" : "Off";
 }
 
 const char *pcfg_wide_fill_name(int fill)
 {
-   return fill == 2 ? "stretch" : fill == 1 ? "soft edges" : "bars";
+   return fill == 2 ? "Stretch" : fill == 1 ? "Soft edges" : "Bars";
 }
 
 int pcfg_color_modes(int console)
 {
-   return console == FE_CONSOLE_GBA ? 3 : console == FE_CONSOLE_GBC ? 2 : 0;
+   return console == FE_CONSOLE_GBA ? 3
+        : console == FE_CONSOLE_GBC || console == FE_CONSOLE_WSWAN ||
+          console == FE_CONSOLE_NES ? 2 : 0;
+}
+
+int pcfg_ghost_modes(int console)
+{
+   return console == FE_CONSOLE_GBA || console == FE_CONSOLE_GB ||
+          console == FE_CONSOLE_GBC || console == FE_CONSOLE_WSWAN ? 1 : 0;
 }
 
 const char *pcfg_color_name(int console, int color)
@@ -870,7 +1151,11 @@ const char *pcfg_color_name(int console, int color)
            : color == 1 ? "GBA screen" : "vivid";
    if (console == FE_CONSOLE_GBC)
       return color ? "GBC screen" : "vivid";
-   return "GBA / GBC only";
+   if (console == FE_CONSOLE_WSWAN)
+      return color ? "WonderSwan screen" : "vivid";
+   if (console == FE_CONSOLE_NES)
+      return color ? "NTSC TV" : "vivid";
+   return "none";
 }
 #endif
 
@@ -905,6 +1190,47 @@ static int pdisp_seed(const char *what, int console, long value)
 }
 #endif
 
+#ifdef VITA
+/* The colour choice a console starts with.  GBA: the GBA screen (1).  The
+ * raw colours of a GBA game were made for a dim, washed-out reflective
+ * screen; on the Vita's saturated OLED, and on the LCD that is brighter
+ * than a GBA ever was, they are garish and glaring (docs/LOOKS.md for how
+ * the choice was made).  The others start vivid, as the core draws them:
+ * the GBC's own correction is a hidden key that already defaults on (it is
+ * the default of the GBC branch of pdisp_load, not this). */
+static int pcfg_color_default(int console)
+{
+   return console == FE_CONSOLE_GBA ? 1 : 0;
+}
+
+/* A `filter` of LCD grid (3) or scanlines (6) -- they were filters, with
+ * one global strength in vita.ini -- becomes sharp bilinear (what drew
+ * under them) plus that look at that strength; a scan_ / grid_ key that is
+ * present wins.  Absent keys read -1 here. */
+static void pdisp_migrate_filter(pcfg_display *d)
+{
+   const int lvl = g_pcfg_legacy_grid < 1 || g_pcfg_legacy_grid > 10
+                 ? 5 : g_pcfg_legacy_grid;
+   if (d->scan < 0)
+      d->scan = d->filter == VID_FILTER_SCANLINES ? lvl : PCFG_SCAN_DEF;
+   if (d->grid < 0)
+      d->grid = d->filter == VID_FILTER_LCD ? lvl : PCFG_GRID_DEF;
+   if (d->filter == VID_FILTER_LCD || d->filter == VID_FILTER_SCANLINES)
+      d->filter = VID_FILTER_SHARP;
+}
+
+/* Ambient glow strength from the 1.x three-way row: off stays off, art and
+ * "art, else game" become the default strength; `ambient` is from now on
+ * the source (a hidden preference) and never "off". */
+static void pdisp_migrate_glow(pcfg_display *d)
+{
+   if (d->glow < 0)
+      d->glow = d->ambient == PCFG_AMB_OFF ? 0 : PCFG_GLOW_DEF;
+   if (d->ambient == PCFG_AMB_OFF)
+      d->ambient = PCFG_AMB_ART_GAME;
+}
+#endif
+
 /* MIGRATION lives in the defaults: each absent key falls back to the legacy
  * value pcfg_load has already read and clamped, independently, so a
  * hand-edited file that names only `scale_gb` keeps everything else.
@@ -924,7 +1250,8 @@ static void pdisp_load(void)
       d->ambient = (int)pdisp_get("ambient", c, PCFG_AMBIENT_DEF);
       /* GBA has no DMG palette; its slot just carries the legacy value. */
       d->gb_palette = c == FE_CONSOLE_GBA ? g_pcfg.gb_palette
-                    : (int)pdisp_get("gb_palette", c, g_pcfg.gb_palette);
+                    : gbpal_load((int)pdisp_get("gb_palette", c,
+                                                g_pcfg.gb_palette));
 #ifdef VITA
       {
          char key[24], value[24];
@@ -934,14 +1261,27 @@ static void pdisp_load(void)
             legacy |= fe_ini_get(cfg_path, key, value, sizeof(value));
          if (pdisp_key(key, sizeof(key), "filter", c))
             legacy |= fe_ini_get(cfg_path, key, value, sizeof(value));
-         d->quality = (int)pdisp_get("quality", c, legacy
-                                      ? PCFG_QUALITY_AUTO : PCFG_QUALITY_ORIGINAL);
+         /* 1.4: Auto for every install (the governed xBRZ ladder,
+          * look_glue.h); it was Original on a fresh one and Auto on an
+          * upgraded one -- two looks for one version */
+         (void)legacy;
+         d->quality = (int)pdisp_get("quality", c, PCFG_QUALITY_AUTO);
       }
       /* The GBC's correction was a hidden key before it was a row. */
       d->color = c == FE_CONSOLE_GB ? 0
                : (int)pdisp_get("color", c, c == FE_CONSOLE_GBC
-                                            ? g_pcfg.gbc_color_correction : 0);
-      d->blend = (int)pdisp_get("blend", c, 0);
+                                            ? g_pcfg.gbc_color_correction
+                                            : pcfg_color_default(c));
+      /* LCD ghosting 0..10 (was blend 0/1: on is 5, half and half) */
+      d->ghost = (int)pdisp_get("ghost", c,
+                                pdisp_get("blend", c, 0) ? 5 : PCFG_GHOST_DEF);
+      /* Scanlines, LCD grid, Ambient glow 0..10; the 1.x forms migrate */
+      d->scan = (int)pdisp_get("scan", c, -1);
+      d->grid = (int)pdisp_get("grid", c, -1);
+      d->crt = (int)pdisp_get("crt", c, PCFG_CRT_DEF);
+      pdisp_migrate_filter(d);
+      d->glow = (int)pdisp_get("glow", c, -1);
+      pdisp_migrate_glow(d);
       d->wide = c == FE_CONSOLE_GBA
               ? (int)pdisp_get("wide", c, PCFG_WIDE_DEF) : 0;
       d->wide_fill = c == FE_CONSOLE_GBA
@@ -993,7 +1333,11 @@ void pcfg_display_select(int console)
 #ifdef VITA
    g_pcfg.color      = d->color;
    g_pcfg.quality    = d->quality;
-   g_pcfg.blend      = d->blend;
+   g_pcfg.ghost      = d->ghost;
+   g_pcfg.scan       = d->scan;
+   g_pcfg.grid       = d->grid;
+   g_pcfg.crt        = d->crt;
+   g_pcfg.glow       = d->glow;
    g_pcfg.wide       = d->wide;
    g_pcfg.wide_fill  = d->wide_fill;
    g_pcfg.sgb_border = d->sgb_border;
@@ -1010,7 +1354,11 @@ void pcfg_display_commit(void)
 #ifdef VITA
    d->color      = g_pcfg.color;
    d->quality    = g_pcfg.quality;
-   d->blend      = g_pcfg.blend;
+   d->ghost      = g_pcfg.ghost;
+   d->scan       = g_pcfg.scan;
+   d->grid       = g_pcfg.grid;
+   d->crt        = g_pcfg.crt;
+   d->glow       = g_pcfg.glow;
    d->wide       = g_pcfg.wide;
    d->wide_fill  = g_pcfg.wide_fill;
    d->sgb_border = g_pcfg.sgb_border;
@@ -1033,14 +1381,27 @@ static int pdisp_write(int c)
    int rc = 0;
    rc |= pdisp_set("scale", c, d->scale);
    rc |= pdisp_set("filter", c, d->filter);
+#ifdef VITA
+   /* ambient_<c> stays what a 1.x build reads: 0 = off, else the source */
+   rc |= pdisp_set("ambient", c, d->glow ? d->ambient : PCFG_AMB_OFF);
+   rc |= pdisp_set("glow", c, d->glow);
+   rc |= pdisp_set("scan", c, d->scan);
+   rc |= pdisp_set("grid", c, d->grid);
+   rc |= pdisp_set("crt", c, d->crt);
+#else
    rc |= pdisp_set("ambient", c, d->ambient);
+#endif
    if (c != FE_CONSOLE_GBA)
+   {
       rc |= pdisp_set("gb_palette", c, d->gb_palette);
+      rc |= fe_ini_set_int(cfg_path, "gb_colours", 2);   /* pcfg_load_doc */
+   }
 #ifdef VITA
    rc |= pdisp_set("quality", c, d->quality);
    if (c != FE_CONSOLE_GB)
       rc |= pdisp_set("color", c, d->color);
-   rc |= pdisp_set("blend", c, d->blend);
+   rc |= pdisp_set("ghost", c, d->ghost);
+   rc |= pdisp_set("blend", c, d->ghost ? 1 : 0);   /* what a 1.x build reads */
    if (c == FE_CONSOLE_GBA)
    {
       rc |= pdisp_set("wide", c, d->wide);
@@ -1103,10 +1464,10 @@ int pcfg_display_save(void)
 #ifdef VITA
 /* ---- PER-GAME SETTINGS (config_psp.h) ------------------------------------- */
 
-#define PGAME_DISP_KEYS 10
+#define PGAME_DISP_KEYS 14
 static const char *const pgame_disp_keys[PGAME_DISP_KEYS] = {
-   "scale", "filter", "ambient", "gb_palette", "quality", "color", "blend",
-   "wide", "wide_fill", "sgb_border" };
+   "scale", "filter", "ambient", "gb_palette", "quality", "color", "ghost",
+   "wide", "wide_fill", "sgb_border", "scan", "grid", "glow", "crt" };
 
 static int *pgame_disp_field(pcfg_display *d, int i)
 {
@@ -1118,10 +1479,14 @@ static int *pgame_disp_field(pcfg_display *d, int i)
       case 3: return &d->gb_palette;
       case 4: return &d->quality;
       case 5: return &d->color;
-      case 6: return &d->blend;
+      case 6: return &d->ghost;
       case 7: return &d->wide;
       case 8: return &d->wide_fill;
-      default: return &d->sgb_border;
+      case 9: return &d->sgb_border;
+      case 10: return &d->scan;
+      case 11: return &d->grid;
+      case 12: return &d->glow;
+      default: return &d->crt;
    }
 }
 
@@ -1148,8 +1513,27 @@ const char *pcfg_rtc_mode_name(int m)
    return m == PCFG_RTC_ON ? "On" : m == PCFG_RTC_OFF ? "Off" : "Auto";
 }
 
+const char *pcfg_ws_rotation_name(int m)
+{
+   return m == PCFG_WS_ROT_HORIZONTAL ? "Horizontal"
+        : m == PCFG_WS_ROT_VERTICAL ? "Vertical" : "Auto";
+}
+
+const char *pcfg_camera_name(int m)
+{
+   return m == PCFG_CAM_BACK ? "Back" : m == PCFG_CAM_FILE ? "Picture file" : "Front";
+}
+
 static void pgame_defaults(void)
 {
+   g_pgame.quick = -1;
+   g_pgame.gb_core = -1;
+   g_pgame.camera = PCFG_CAM_FRONT;
+   g_pgame.rear = -1;
+   g_pgame.nes_port2 = PCFG_PORT2_AUTO;
+   g_pgame.ws_rotation = PCFG_WS_ROT_AUTO;
+   g_pgame.ws_vplay = 0;
+   g_pgame.ws_palette = 0;
    g_pgame.save_type = PCFG_SAVE_AUTO;
    g_pgame.rtc_mode = PCFG_RTC_AUTO;
    g_pgame.override = 0;
@@ -1179,6 +1563,18 @@ static void pgame_render(char *out, size_t cap)
                 g_pgame.sensor_mode, g_pgame.sensor_sens, g_pgame.sensor_rev,
                 g_pgame.sunlight, g_pgame.level_set, g_pgame.level_right,
                 g_pgame.level_down);
+   if (n > 0 && (size_t)n < cap)
+      n += snprintf(out + n, cap - (size_t)n, " q%d", g_pgame.quick);
+   if (n > 0 && (size_t)n < cap)
+      n += snprintf(out + n, cap - (size_t)n, " g%d", g_pgame.gb_core);
+   if (n > 0 && (size_t)n < cap)
+      n += snprintf(out + n, cap - (size_t)n, " c%d", g_pgame.camera);
+   if (n > 0 && (size_t)n < cap)
+      n += snprintf(out + n, cap - (size_t)n, " r%d/p%d", g_pgame.rear,
+                    g_pgame.nes_port2);
+   if (n > 0 && (size_t)n < cap)
+      n += snprintf(out + n, cap - (size_t)n, " ws%d/%d/%d", g_pgame.ws_rotation,
+                    g_pgame.ws_vplay, g_pgame.ws_palette);
    for (i = 0; i < PGAME_DISP_KEYS && n > 0 && (size_t)n < cap; i++)
       n += snprintf(out + n, cap - (size_t)n, " %d",
                     g_pgame.override ? *pgame_disp_field(&g_pgame.disp, i) : 0);
@@ -1204,6 +1600,28 @@ void pcfg_game_begin(const char *path, int console)
       for (i = 0; i < PGAME_DISP_KEYS; i++)
          *pgame_disp_field(&g_pgame.disp, i) = (int)fe_ini_doc_get_int(
                &doc, pgame_disp_keys[i], *pgame_disp_field(&g_pgame.disp, i));
+      /* a file written before the looks were rows: blend, a filter of LCD
+       * grid / scanlines, the three-way ambient (pdisp_migrate_*) */
+      {
+         const long absent = -99;
+         pcfg_display *gd = &g_pgame.disp;
+         const long b = fe_ini_doc_get_int(&doc, "blend", absent);
+         const int lvl = g_pcfg_legacy_grid < 1 || g_pcfg_legacy_grid > 10
+                       ? 5 : g_pcfg_legacy_grid;
+         if (fe_ini_doc_get_int(&doc, "ghost", absent) == absent && b != absent)
+            gd->ghost = b ? 5 : 0;
+         if (fe_ini_doc_get_int(&doc, "scan", absent) == absent &&
+             gd->filter == VID_FILTER_SCANLINES)
+            gd->scan = lvl;
+         if (fe_ini_doc_get_int(&doc, "grid", absent) == absent &&
+             gd->filter == VID_FILTER_LCD)
+            gd->grid = lvl;
+         if (fe_ini_doc_get_int(&doc, "glow", absent) == absent &&
+             fe_ini_doc_get_int(&doc, "ambient", absent) != absent)
+            gd->glow = gd->ambient == PCFG_AMB_OFF ? 0 : PCFG_GLOW_DEF;
+         if (gd->ambient == PCFG_AMB_OFF)
+            gd->ambient = PCFG_AMB_ART_GAME;
+      }
       pdisp_clamp(&g_pgame.disp);
       g_pgame.sensor_mode = pgame_clampi(fe_ini_doc_get_int(&doc, "sensor_mode", 0),
                                          0, PCFG_SENSOR_MODES - 1, 0);
@@ -1225,6 +1643,19 @@ void pcfg_game_begin(const char *path, int console)
                                         -2000, 2000, 0);
       if (!g_pgame.level_set)
          g_pgame.level_right = g_pgame.level_down = 0;
+      g_pgame.ws_rotation = pgame_clampi(fe_ini_doc_get_int(&doc, "ws_rotation", 0),
+                                         0, PCFG_WS_ROT_MODES - 1, PCFG_WS_ROT_AUTO);
+      g_pgame.ws_vplay = fe_ini_doc_get_int(&doc, "ws_vertical_play", 0) == 1;
+      g_pgame.ws_palette = fe_ini_doc_get_int(&doc, "ws_palette", 0) == 1;
+      g_pgame.quick = pgame_clampi(fe_ini_doc_get_int(&doc, "quick_response", -1),
+                                   0, 2, -1);
+      g_pgame.gb_core = pgame_clampi(fe_ini_doc_get_int(&doc, "gb_core", -1), 0, 1, -1);
+      g_pgame.camera = pgame_clampi(fe_ini_doc_get_int(&doc, "camera", 0),
+                                    0, PCFG_CAM_MODES - 1, PCFG_CAM_FRONT);
+      g_pgame.rear = pgame_clampi(fe_ini_doc_get_int(&doc, "rear_touch", -1),
+                                  0, 1, -1);
+      g_pgame.nes_port2 = pgame_clampi(fe_ini_doc_get_int(&doc, "nes_port2", 0),
+                                       0, PCFG_PORT2_MODES - 1, PCFG_PORT2_AUTO);
    }
    g_pgame.on = 1;
    pgame_render(pgame_written, sizeof(pgame_written));
@@ -1278,6 +1709,23 @@ int pcfg_game_save(void)
    rc |= fe_ini_doc_set_int(&doc, "level_set", g_pgame.level_set);
    rc |= fe_ini_doc_set_int(&doc, "level_right", g_pgame.level_right);
    rc |= fe_ini_doc_set_int(&doc, "level_down", g_pgame.level_down);
+   if (g_pgame.camera != PCFG_CAM_FRONT || fe_ini_doc_get_int(&doc, "camera", 0) != 0)
+      rc |= fe_ini_doc_set_int(&doc, "camera", g_pgame.camera);
+   if (g_pgame.quick >= 0 || fe_ini_doc_get_int(&doc, "quick_response", -1) >= 0)
+      rc |= fe_ini_doc_set_int(&doc, "quick_response", g_pgame.quick);
+   if (g_pgame.gb_core >= 0 || fe_ini_doc_get_int(&doc, "gb_core", -1) >= 0)
+      rc |= fe_ini_doc_set_int(&doc, "gb_core", g_pgame.gb_core);
+   if (g_pgame.rear >= 0 || fe_ini_doc_get_int(&doc, "rear_touch", -1) >= 0)
+      rc |= fe_ini_doc_set_int(&doc, "rear_touch", g_pgame.rear);
+   if (g_pgame.nes_port2 != PCFG_PORT2_AUTO ||
+       fe_ini_doc_get_int(&doc, "nes_port2", 0) != 0)
+      rc |= fe_ini_doc_set_int(&doc, "nes_port2", g_pgame.nes_port2);
+   if (g_pgame.console == FE_CONSOLE_WSWAN)
+   {
+      rc |= fe_ini_doc_set_int(&doc, "ws_rotation", g_pgame.ws_rotation);
+      rc |= fe_ini_doc_set_int(&doc, "ws_vertical_play", g_pgame.ws_vplay);
+      rc |= fe_ini_doc_set_int(&doc, "ws_palette", g_pgame.ws_palette);
+   }
    rc |= fe_ini_doc_save(&doc, g_pgame.path);
    if (!rc)
       snprintf(pgame_written, sizeof(pgame_written), "%s", now);
@@ -1313,5 +1761,42 @@ void pcfg_game_end(void)
    (void)pcfg_game_save();
    g_pgame.on = 0;
    pcfg_display_select(g_pdisp_live);
+}
+
+/* The crash-loop guard (vita/boot_guard.h) ------------------------------- */
+
+/* The running game's own look gets the safe picture: Wide view off, Image
+ * quality Original.  Written to games/<ROM>.ini (the game's own look, so
+ * Settings > This game shows and changes it). */
+void pcfg_game_safe_look(void)
+{
+   if (!g_pgame.on)
+      return;
+   if (!g_pgame.override)
+      pcfg_game_set_override(1);
+   g_pgame.disp.wide = 0;
+   g_pgame.disp.quality = PCFG_QUALITY_ORIGINAL;
+   pcfg_display_select(g_pgame.console);
+   (void)pcfg_game_save();
+}
+
+/* The app closed twice before the game list: every risky setting back to
+ * its safe value, in every console's profile, and written. */
+void pcfg_revert_risky(void)
+{
+   int c;
+   g_pcfg.smooth_handoff = 0;
+   g_pcfg.steady_pacing = 0;
+   g_pcfg.core4_off = 1;
+   g_pcfg.quick_response = 0;
+   g_pcfg.gb_core = 0;
+   g_pcfg.nes_wide = 2;
+   for (c = 0; c < FE_CONSOLE_COUNT; c++)
+   {
+      g_pdisp[c].wide = 0;
+      g_pdisp[c].quality = PCFG_QUALITY_ORIGINAL;
+   }
+   pcfg_display_select(pcfg_display_console());
+   pcfg_save();
 }
 #endif

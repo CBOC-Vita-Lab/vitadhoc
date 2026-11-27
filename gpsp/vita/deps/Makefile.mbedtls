@@ -1,0 +1,83 @@
+# Mbed TLS for the HTTPS client of the vendored net/ stack (net/src/np_https.*; from Strikers Charged 1.3): built into a
+# PRIVATE prefix, never into the SDK. Use: python3 tools/online/build-mbedtls.py [--target vita|host32|host64|aarch64] [--work DIR]
+#
+#   tools/online/build-mbedtls.py supplies SRC=<immutable checkout>, OUT=<new prefix>, TARGET=vita|host32|host64|aarch64.
+#
+#   OUT/include/mbedtls, OUT/include/psa   the library's headers; mbedtls/mbedtls_config.h is the stock file plus one
+#                                           line that includes mbedtls/np_user_config.h (the client profile)
+#   OUT/lib/libmbedtls.a libmbedx509.a libmbedcrypto.a   (link in this order)
+#
+# The checkout stays unmodified and unpatched (3.6.8 carries the TLS 1.3 transform clean-up itself). vitasdk patches
+# net_sockets, timing and the platform entropy source for the Vita; this profile builds none of the three (see np_user_config.h). The ABI flags are those of the Strikers game objects (unsigned char, no short
+# enums, no strict aliasing). Galaxy compiles net/ with -fsigned-char: char signedness does not change any struct
+# layout, and -fno-short-enums (which does) matches Galaxy's Vita flags, so a struct shared with the game means the same thing on both sides.
+TARGET ?= vita
+SRC ?= $(error SRC= the mbedtls checkout)
+OUT ?= $(error OUT= the prefix)
+HERE := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+VITASDK ?= /opt/vitasdk
+
+ABI := -funsigned-char -fno-short-enums -fno-strict-aliasing -fwrapv -fno-common -ffunction-sections -fdata-sections
+ifeq ($(TARGET),vita)
+  CC := $(VITASDK)/bin/arm-vita-eabi-gcc
+  AR := $(VITASDK)/bin/arm-vita-eabi-gcc-ar
+  ARCH := -mcpu=cortex-a9 -mfpu=neon -mfloat-abi=hard -mthumb
+else ifeq ($(TARGET),host32)
+  CC := gcc
+  AR := ar
+  ARCH := -m32 -msse2 -mfpmath=sse -idirafter /usr/include/x86_64-linux-gnu
+else ifeq ($(TARGET),host64)
+  CC := gcc
+  AR := ar
+  ARCH := -m64 -fPIC
+else ifeq ($(TARGET),aarch64)
+  # the aarch64 Linux twin (hostcore ARCH=aarch64): native on an aarch64 machine, else the cross compiler
+  CROSS ?= $(if $(filter aarch64,$(shell uname -m)),,aarch64-linux-gnu-)
+  CC := $(CROSS)gcc
+  AR := $(CROSS)ar
+  ARCH := -fPIC
+else ifeq ($(TARGET),macos)
+  # the native macOS twin (hostcore ARCH=macos): Apple clang, make 3.81 is enough
+  MACOS_MIN ?= 12.0
+  CC := clang
+  AR := ar
+  ARCH := -mmacosx-version-min=$(MACOS_MIN)
+else
+  $(error TARGET must be vita, host32, host64, aarch64 or macos)
+endif
+CFLAGS := $(ARCH) $(ABI) -O2 -g0 -std=gnu99 -Wall -Wno-unused-function -I$(OUT)/include -I$(SRC)/library \
+          -ffile-prefix-map=$(SRC)=mbedtls -ffile-prefix-map=$(OUT)=prefix
+
+LIBSRC := $(wildcard $(SRC)/library/*.c)
+X509SRC := $(filter $(SRC)/library/x509% $(SRC)/library/pkcs7.c,$(LIBSRC))
+TLSSRC := $(filter $(SRC)/library/ssl_% $(SRC)/library/debug.c $(SRC)/library/mps_% $(SRC)/library/net_sockets.c,$(LIBSRC))
+CRYPTOSRC := $(filter-out $(X509SRC) $(TLSSRC),$(LIBSRC))
+OBJDIR := $(OUT)/obj
+obj = $(patsubst $(SRC)/library/%.c,$(OBJDIR)/%.o,$(1))
+
+all: $(OUT)/lib/libmbedtls.a $(OUT)/lib/libmbedx509.a $(OUT)/lib/libmbedcrypto.a
+
+print-build-config:
+	@printf '%s\0' '$(CC)' '$(AR)' '$(CFLAGS)'
+
+# Headers first: every object is compiled against the installed (client profile) configuration.
+$(OUT)/.headers: $(SRC)/include/mbedtls/mbedtls_config.h $(HERE)/mbedtls/np_user_config.h $(wildcard $(SRC)/include/*/*.h)
+	rm -rf $(OUT)/include && mkdir -p $(OUT)/include
+	cp -r $(SRC)/include/mbedtls $(SRC)/include/psa $(OUT)/include/
+	cp $(HERE)/mbedtls/np_user_config.h $(OUT)/include/mbedtls/np_user_config.h
+	printf '\n/* Galaxy net/ (Strikers recipe): the client profile. */\n#include "mbedtls/np_user_config.h"\n' >> $(OUT)/include/mbedtls/mbedtls_config.h
+	touch $@
+
+$(OBJDIR)/%.o: $(SRC)/library/%.c $(OUT)/.headers
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -MMD -c $< -o $@
+
+$(OUT)/lib/libmbedcrypto.a: $(call obj,$(CRYPTOSRC))
+	@mkdir -p $(dir $@); rm -f $@; $(AR) rcs $@ $^
+$(OUT)/lib/libmbedx509.a: $(call obj,$(X509SRC))
+	@mkdir -p $(dir $@); rm -f $@; $(AR) rcs $@ $^
+$(OUT)/lib/libmbedtls.a: $(call obj,$(TLSSRC))
+	@mkdir -p $(dir $@); rm -f $@; $(AR) rcs $@ $^
+
+-include $(wildcard $(OBJDIR)/*.d)
+.PHONY: all print-build-config

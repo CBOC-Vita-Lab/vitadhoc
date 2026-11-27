@@ -1,0 +1,91 @@
+# Test catalogue (machine translated, for the text engine tests only; NOT a shipped translation).
+app.a_newer_vitadhoc_is_out	有新版本的VitAdhoc
+app.end_the_network_game_first	请先结束网络游戏。
+app.was_not_found	找不到%.180s。
+cheats.most_counters_are_1_byte_money	多数计数器为1字节，金钱和分数通常为2字节。“任意地址”也会查看奇数位置。
+cover.a_cover_you_pick_always_wins	你选择的封面始终优先于下载的图片。在covers/中放入与游戏同名的PNG或JPG也可以使用。
+hint.dpad_change_o_back	DPAD 更改   {o} 返回
+hint.x_add_remove_sq_rename_tri	{x} 添加/移除   {sq} 重命名   {tri} 删除   {o} 返回
+hint.x_export_dpad_move_choose_o	{x} 导出   DPAD 移动/选择   {o} 返回
+hint.x_on_off_sq_all_off	{x} 开/关   {sq} 全部关闭   {o} 返回
+hint.x_select_dpad_change_o_resume	{x} 选择   DPAD 更改   {o} 继续
+hint.x_type_sq_delete_tri_join	{x} 输入   {sq} 删除   {tri} 合并   {o} 返回
+home.1_game_matches_in_all_games	在“所有游戏”中有1个游戏匹配
+home.clear	清除
+home.no_games_played_yet	还没有玩过%s游戏
+home.play	开始游戏
+home.save_states_of	即时存档   %d-%d / %d
+home.the_games_you_play_show_up	你玩过的游戏会按最近顺序显示在这里。
+link.connecting_through_the_relay	正在通过中继连接。
+link.link_ended_game_saved	连接已结束。游戏已保存。
+link.this_vita_went_to_sleep_so	这台Vita进入了睡眠，所以连接已结束。
+menu.back_to_the_game	返回游戏
+menu.leave_this_game_for_the_game	退出此游戏，返回游戏列表
+menu.resume	继续
+menu.this_ends_the_link_for_both	这会结束双方玩家的连接。
+notice.please_try_again_in_a_moment	请稍后再试。
+play.is_the_address_right_and_is	地址正确吗？对方是否已将“连接”设为“互联网”并正在主持？对方的路由器必须放行UDP端口19019。
+play.join_a_game	加入游戏
+play.nick_room	%s  -  房间 %d
+play.save_states_cheats_rewind_and_fast	连接期间即时存档、金手指、倒带和快进都不可用。玩家2玩玩家1的游戏；连接结束后，玩家2自己的游戏会恢复原样，玩家1的游戏继续。
+play.swap_controlled_game	切换操作的游戏
+play.the_four_steps	四个步骤
+play.waiting	等待中
+play.you_are_player_in	你是玩家%d%s（%s，%s）。
+play.your_router_did_not_open_the	路由器没有自动打开入口。请在路由器设置中将UDP端口%s转发到这台Vita（%s）。另一位玩家随后输入你的公网地址%s%s。
+settings.a_and_b_buttons	A和B按钮
+settings.about	关于
+settings.check_for_updates	检查更新
+settings.display	显示
+settings.export_save_for_other_emulators	为其他模拟器导出存档
+settings.game_boy_colours	Game Boy 配色
+settings.hardcore	硬核模式
+settings.help.a_faint_pixel_grid_like_a	像掌机屏幕一样的淡淡像素网格。1为淡，10为强。
+settings.help.a_tap_on_the_game_opens	点按游戏会打开菜单。Start + Select 始终可以打开。
+settings.help.also_widens_rotating_3d_tracks_sprites	也会加宽旋转的3D赛道。精灵可能会跑进来。
+settings.help.european_games_run_at_50_hz	欧洲游戏以50Hz运行。平滑50Hz保持其真实速度并使画面更均匀：每六次刷新有一次混合两帧。
+settings.help.rest_on_a_game_in_the	在主屏幕停在某个游戏上，你最后玩的十秒会在其后播放。
+settings.help.shows_what_you_press_one_frame	提前计算下一帧，让你按下的按键提前一帧显示。游戏运行不变。“自动”在有余裕时使用。
+settings.help.the_language_of_the_menus_automatic	菜单的语言。“自动”跟随Vita自己的设置。
+settings.high_contrast	高对比度
+settings.interface	界面
+settings.language	语言
+settings.lcd_colours	液晶屏颜色
+settings.motion_strength	动态强度
+settings.rewind	倒带
+settings.screen_overlay	屏幕叠加
+settings.steady_pacing	稳定节奏
+settings.text_size	文字大小
+settings.theme	主题
+settings.value.500_mhz_fast	500 MHz（快速）
+settings.value.classic_lcd_tint	经典液晶色调
+settings.value.frames	%d帧
+settings.value.just_this_game	仅此游戏
+settings.value.normal_pitch	，正常音调
+settings.value.on_2	开 - %.48s
+settings.value.smooth_50_hz	平滑50Hz
+share.l_r_page	L/R 翻页
+share.n_states_one	%u个存档
+share.nothing_of_yours_was_changed	你的数据没有改变。
+share.share_game_data	共享游戏数据
+share.their_build_yours	%s  -  对方版本 %.20s，你的版本 %.20s
+share.update_vitadhoc_on_both_vitas_theirs	请在两台Vita上更新VitAdhoc（对方：%.24s）。
+share.waiting_for_your_friend	正在等待你的朋友...  %d:%02d
+toast.could_not_load_state	无法读取存档%d
+toast.exported_as	已导出为%.48s
+toast.link_lost_the_other_vita_is_2	连接中断：另一台Vita已消失。你的游戏继续进行。
+toast.menu_hold_start_select	菜单：按住 START + SELECT
+toast.no_saved_state_in_this_slot	此栏位没有存档
+toast.slow_connection_the_game_may_feel	连接较慢：游戏可能会有延迟。
+toast.waiting_for_the_other_vita	正在等待另一台Vita...
+ui.a_clip_is_still_being_saved	仍在保存剪辑。
+ui.every_control_is_back_to_its	所有操作都已恢复默认
+ui.no_games_match	没有匹配的游戏
+ui.nothing_saved_here	这里没有保存任何内容
+ui.of_on	%u / %d 开启
+ui.pick_a_game	请选择游戏
+ui.press_sq_on_a_game_to	在游戏上按 {sq} 可加星标
+ui.quit	退出
+ui.resume	继续
+ui.settings	设置
+hint.x_type_sq_delete_l_keyboard	{x} 输入   {sq} 删除   L 键盘   SELECT 名称   {tri} 保存   {o} 返回

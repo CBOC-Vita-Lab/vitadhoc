@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 static char *g_text;               /* the whole file, NUL-terminated lines */
 static char **g_line;              /* each record's start, in file order   */
@@ -350,7 +351,9 @@ void gamedb_title_key(const char *title, char *out, size_t cap)
    }
 }
 
-int gamedb_blurb(const char *name, char *out, size_t cap)
+/* A description is filed per console (U<letter><title key>, make_gamedb.py): it
+ * is only the one of an article Wikidata lists for that console. */
+static int blurb_find(char sys, const char *name, char *out, size_t cap)
 {
    /* a file named the way people say it ("Pokemon - Emerald") misses the
     * word No-Intro adds: tried with each of them, and without */
@@ -362,9 +365,10 @@ int gamedb_blurb(const char *name, char *out, size_t cap)
    if (!name || !g_lines)
       return 0;
    gamedb_base_title(name, base, sizeof(base));
-   key[0] = 'T';
-   gamedb_title_key(base, key + 1, sizeof(key) - 16);
-   if (!key[1])
+   key[0] = 'U';
+   key[1] = sys;
+   gamedb_title_key(base, key + 2, sizeof(key) - 16);
+   if (!key[2])
       return 0;
    for (t = 0; more[t]; t++)
    {
@@ -377,6 +381,29 @@ int gamedb_blurb(const char *name, char *out, size_t cap)
       }
       key[n] = '\0';
    }
+   return 0;
+}
+
+int gamedb_blurb_sys(char sys, const char *name, char *out, size_t cap)
+{
+   /* the console's own games first, then the one it plays as well: a Game Boy
+    * game on the Color, a WonderSwan one on the Color, a Disk System game that
+    * is also on the NES, a Game Gear game in a .sms file */
+   const char *partner = sys == 'B' ? "C" : sys == 'C' ? "B" : sys == 'G' ? "H"
+                       : sys == 'H' ? "G" : sys == 'F' ? "E" : sys == 'J' ? "K" : "";
+   if (!sys)
+      return 0;
+   if (blurb_find(sys, name, out, cap))
+      return 1;
+   return *partner && blurb_find(*partner, name, out, cap);
+}
+
+int gamedb_blurb(const char *name, char *out, size_t cap)
+{
+   const char *c;
+   for (c = "ABCDEFGHIJKLM"; *c; c++)
+      if (blurb_find(*c, name, out, cap))
+         return 1;
    return 0;
 }
 
@@ -468,15 +495,47 @@ int gamedb_name_by_header(const char *path, char *out, size_t cap)
    return gamedb_name_by_code(code, out, cap);
 }
 
+/* What a Genesis / Mega Drive file is (see gamedb.h).  `size` is the file's
+ * length; `path` only gives the extension (.smd: the SMD rule without its
+ * AA BB marker). */
+static int md_kind_of(FILE *f, long size, const char *path)
+{
+   unsigned char h[0x104];
+   const char *ext = path ? strrchr(path, '.') : NULL;
+   int has_sega, smd_size, smd_mark;
+   if (size < 0x104 || fseek(f, 0, SEEK_SET) != 0 ||
+       fread(h, 1, sizeof(h), f) != sizeof(h))
+      return GAMEDB_MD_NONE;
+   /* a Sega CD disc's data track (a cooked .bin or .iso) has the Genesis "SEGA" at 0x100 too, after "SEGADISCSYSTEM": it is a Sega CD game */
+   if (!memcmp(h, "SEGADISCSYSTEM  ", 16))
+      return GAMEDB_MD_CD;
+   has_sega = !memcmp(h + 0x100, "SEGA", 4);
+   smd_size = size >= 512 + 16384 && size % 16384 == 512;
+   smd_mark = h[8] == 0xAA && h[9] == 0xBB;
+   if (has_sega)
+   {
+      unsigned char t[8];
+      if (fseek(f, 0x100, SEEK_SET) == 0 && fread(t, 1, 8, f) == 8 &&
+          !memcmp(t, "SEGA 32X", 8))
+         return GAMEDB_MD_32X;
+      return GAMEDB_MD_PLAIN;
+   }
+   if (smd_size && (smd_mark || (ext && !strcasecmp(ext, ".smd"))))
+      return GAMEDB_MD_SMD;
+   return GAMEDB_MD_NONE;
+}
+
 static uint32_t g_crc_tab[256];
 
 static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
-                     int (*cancel)(void), int snes)
+                     int (*cancel)(void), int mode)
 {
    static unsigned char buf[64 * 1024];
    uint32_t c = 0xFFFFFFFFu;
    FILE *f;
    size_t got;
+   unsigned long limit = 0;      /* mode 2: bytes of PRG + CHR to hash (0 = to the end) */
+   long md_skip = 0;             /* mode 4: a copier header to leave out */
 
    if (!g_crc_tab[1])
    {
@@ -492,7 +551,100 @@ static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
    f = path ? fopen(path, "rb") : NULL;
    if (!f)
       return -1;
-   if (snes)
+   if (mode == 2)
+   {
+      /* NES: the iNES header (16 bytes, "NES\x1a") and its 512-byte trainer
+       * (flag 6 bit 2) are no part of the cartridge the No-Intro CRCs are of;
+       * a Famicom Disk System file may carry the 16-byte "FDS\x1a" header of
+       * fwNES; UNIF and anything else is hashed whole. */
+      unsigned char h[16];
+      size_t skip = 0;
+      if (fread(h, 1, 16, f) == 16)
+      {
+         if (!memcmp(h, "NES\x1a", 4))
+         {
+            /* the declared sizes bound the hash: bytes after CHR are no part of the
+             * cartridge (iNES 1: 16 KiB and 8 KiB units; NES 2.0: 12-bit units, or the
+             * exponent form when the high nibble is 15) */
+            unsigned long prg, chr;
+            int v2 = (h[7] & 0x0C) == 0x08;
+            skip = 16 + ((h[6] & 4) ? 512 : 0);
+            prg = h[4] | (v2 ? (unsigned long)(h[9] & 0x0F) << 8 : 0);
+            chr = h[5] | (v2 ? (unsigned long)(h[9] >> 4) << 8 : 0);
+            if (v2 && (h[9] & 0x0F) == 0x0F)
+               prg = (1ul << (h[4] >> 2)) * ((h[4] & 3) * 2 + 1);
+            else
+               prg *= 16384ul;
+            if (v2 && (h[9] >> 4) == 0x0F)
+               chr = (1ul << (h[5] >> 2)) * ((h[5] & 3) * 2 + 1);
+            else
+               chr *= 8192ul;
+            if (prg + chr > 0 && prg + chr < (64ul << 20))
+               limit = prg + chr;
+         }
+         else if (!memcmp(h, "FDS\x1a", 4))
+            skip = 16;
+      }
+      if (fseek(f, (long)skip, SEEK_SET) != 0)
+      {
+         fclose(f);
+         return -1;
+      }
+   }
+   else if (mode == 3 || mode == 4)
+   {
+      long size;
+      int smd = 0;
+      if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) < 0)
+      {
+         fclose(f);
+         return -1;
+      }
+      if (mode == 3)
+         smd = md_kind_of(f, size, path) == GAMEDB_MD_SMD;
+      else if (size % 16384 == 512)
+         md_skip = 512;       /* a Master System family copier header */
+      if (smd)
+      {
+         /* SMD: a 512-byte header, then 16 KiB blocks with the odd bytes in
+          * the first half and the even bytes in the second (Genesis Plus GX
+          * loadrom.c deinterleave_block), hashed as the plain ROM */
+         static unsigned char blk[16384], out[16384];
+         long left = size - 512;
+         if (fseek(f, 512, SEEK_SET) != 0)
+         {
+            fclose(f);
+            return -1;
+         }
+         while (left >= 16384)
+         {
+            int i;
+            if ((abort && *abort) || (cancel && cancel()) ||
+                fread(blk, 1, 16384, f) != 16384)
+            {
+               fclose(f);
+               return -1;
+            }
+            for (i = 0; i < 8192; i++)
+            {
+               out[i * 2 + 0] = blk[8192 + i];
+               out[i * 2 + 1] = blk[i];
+            }
+            for (i = 0; i < 16384; i++)
+               c = g_crc_tab[(c ^ out[i]) & 0xFF] ^ (c >> 8);
+            left -= 16384;
+         }
+         fclose(f);
+         *crc = c ^ 0xFFFFFFFFu;
+         return 0;
+      }
+      if (fseek(f, md_skip, SEEK_SET) != 0)
+      {
+         fclose(f);
+         return -1;
+      }
+   }
+   else if (mode == 1)
    {
       long size;
       if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) < 0 ||
@@ -510,11 +662,20 @@ static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
          fclose(f);
          return -1;
       }
-      got = fread(buf, 1, sizeof(buf), f);
+      size_t want = sizeof(buf);
+      if (mode == 2 && limit && limit < want)
+         want = (size_t)limit;
+      got = fread(buf, 1, want, f);
       if (!got)
          break;
       for (i = 0; i < got; i++)
          c = g_crc_tab[(c ^ buf[i]) & 0xFF] ^ (c >> 8);
+      if (mode == 2 && limit)
+      {
+         limit -= got;
+         if (!limit)
+            break;
+      }
    }
    if (ferror(f))
    {
@@ -539,4 +700,76 @@ int gamedb_file_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void))
 int gamedb_snes_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void))
 {
    return file_crc(path, crc, NULL, abort, 1);
+}
+
+int gamedb_nes_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void))
+{
+   return file_crc(path, crc, NULL, abort, 2);
+}
+
+int gamedb_md_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void))
+{
+   return file_crc(path, crc, NULL, abort, 3);
+}
+
+int gamedb_sms_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void))
+{
+   return file_crc(path, crc, NULL, abort, 4);
+}
+
+int gamedb_md_rom_kind(const char *path)
+{
+   FILE *f = path ? fopen(path, "rb") : NULL;
+   long size;
+   int kind = GAMEDB_MD_NONE;
+   if (!f)
+      return GAMEDB_MD_NONE;
+   if (fseek(f, 0, SEEK_END) == 0 && (size = ftell(f)) >= 0)
+      kind = md_kind_of(f, size, path);
+   fclose(f);
+   return kind;
+}
+
+int gamedb_md_head_ok(const unsigned char *h, unsigned n, unsigned long size)
+{
+   /* as md_kind_of for a ".bin" (no ".smd" leniency): plain, not 32X, or SMD with its marker */
+   if (!h || n < 0x108 || size < 0x104)
+      return 0;
+   if (!memcmp(h, "SEGADISCSYSTEM  ", 16))
+      return 0;                            /* a Sega CD disc */
+   if (!memcmp(h + 0x100, "SEGA", 4))
+      return memcmp(h + 0x100, "SEGA 32X", 8) != 0;
+   return size >= 512 + 16384 && size % 16384 == 512 && h[8] == 0xAA && h[9] == 0xBB;
+}
+
+int gamedb_md_accept(const char *path)
+{
+   const char *ext = path ? strrchr(path, '.') : NULL;
+   if (!ext)
+      return 0;
+   if (!strcasecmp(ext, ".md") || !strcasecmp(ext, ".gen") ||
+       !strcasecmp(ext, ".smd") || !strcasecmp(ext, ".68k"))
+      return 1;
+   if (!strcasecmp(ext, ".bin"))
+   {
+      int k;
+      /* a track file of a disc ("Game (Track 02).bin", the way Redump and most rippers name them): never a Mega Drive ROM, and a Sega CD folder
+       * holds dozens of them: not opened. (A track file named another way is opened once and refused by its content below.) */
+      const char *base = path, *q, *tr;
+      for (q = path; *q; q++)
+         if (*q == '/' || *q == ':' || *q == '\\')
+            base = q + 1;
+      tr = strstr(base, "(Track ");
+      if (tr && tr[7] >= '0' && tr[7] <= '9')
+      {
+         const char *d = tr + 7;                  /* only "(Track NN).bin" at the very end of the name */
+         while (*d >= '0' && *d <= '9')
+            d++;
+         if (d[0] == ')' && !strcasecmp(d + 1, ".bin"))
+            return 0;
+      }
+      k = gamedb_md_rom_kind(path);
+      return k == GAMEDB_MD_PLAIN || k == GAMEDB_MD_SMD;
+   }
+   return 0;
 }

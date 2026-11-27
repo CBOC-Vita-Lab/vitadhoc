@@ -5,6 +5,7 @@
 \*****************************************************************************/
 
 #include <string>
+#include <vector>
 #include <iomanip>
 #include <sstream>
 #include <numeric>
@@ -1918,6 +1919,57 @@ bool8 CMemory::LoadSRAM (const char *filename)
 	return (TRUE);
 }
 
+// CBOC-Vita: SaveSRAM (not reached by the VitAdhoc player, which saves through frontend/host.cpp, but kept
+// safe in case a build ever calls it): the file is written beside the real one, read back, and only then
+// renamed over it, so a failed or short write never truncates the only copy.
+static bool S9xSafeWriteFile (const char *filename, const void *data, size_t size)
+{
+	std::string	tmp = std::string(filename) + ".tmp";
+	FILE		*f = fopen(tmp.c_str(), "wb");
+	if (!f)
+		return false;
+
+	bool	ok = fwrite(data, 1, size, f) == size;
+	ok = (fflush(f) == 0) && ok;
+	ok = (fclose(f) == 0) && ok;
+
+	if (ok)
+	{
+		FILE	*r = fopen(tmp.c_str(), "rb");
+		ok = false;
+		if (r)
+		{
+			std::vector<uint8>	back(size ? size : 1);
+			ok = fread(back.data(), 1, size, r) == size && fgetc(r) == EOF && memcmp(back.data(), data, size) == 0;
+			fclose(r);
+		}
+	}
+
+	if (ok && rename(tmp.c_str(), filename) != 0)
+	{
+		// platforms where rename does not replace: move the old file aside, never delete it first
+		std::string	old = std::string(filename) + ".old";
+		remove(old.c_str());
+		if (rename(filename, old.c_str()) == 0)
+		{
+			if (rename(tmp.c_str(), filename) == 0)
+				remove(old.c_str());
+			else
+			{
+				rename(old.c_str(), filename);
+				ok = false;
+			}
+		}
+		else
+			ok = false;
+	}
+
+	if (!ok)
+		remove(tmp.c_str());
+
+	return ok;
+}
+
 bool8 CMemory::SaveSRAM (const char *filename)
 {
 	if (Settings.SuperFX && ROMType < 0x15) // doesn't have SRAM
@@ -1934,13 +1986,8 @@ bool8 CMemory::SaveSRAM (const char *filename)
 		std::string name = S9xGetFilename(Multi.fileNameB, ".srm", SRAM_DIR);
 		size = (1 << (Multi.sramSizeB + 3)) * 128;
 
-		file = fopen(name.c_str(), "wb");
-		if (file)
-		{
-			if (!fwrite((char *) Multi.sramB, size, 1, file))
-				printf ("Couldn't write to subcart SRAM file.\n");
-			fclose(file);
-		}
+		if (!S9xSafeWriteFile(name.c_str(), Multi.sramB, size))
+			printf ("Couldn't write to subcart SRAM file.\n");
     }
 
     size = SRAMSize ? (1 << (SRAMSize + 3)) * 128 : 0;
@@ -1951,18 +1998,15 @@ bool8 CMemory::SaveSRAM (const char *filename)
 
 	if (size)
 	{
-		file = fopen(filename, "wb");
-		if (file)
+		if (S9xSafeWriteFile(filename, SRAM, size))
 		{
-			if (!fwrite((char *) SRAM, size, 1, file))
-				printf ("Couldn't write to SRAM file.\n");
-			fclose(file);
-
 			if (Settings.SRTC || Settings.SPC7110RTC)
 				SaveSRTC();
 
 			return (TRUE);
 		}
+
+		printf ("Couldn't write to SRAM file.\n");
 	}
 
 	return (FALSE);
@@ -2424,6 +2468,7 @@ void CMemory::InitROM (void)
 	Timings.NMIDMADelay  = 24;
 	Timings.IRQTriggerCycles = 14;
 	Timings.APUSpeedup = 0;
+    Timings.GSUCelDelay = 0;
 	S9xAPUTimingSetSpeedup(Timings.APUSpeedup);
 
 	IPPU.TotalEmulatedFrames = 0;
@@ -3013,7 +3058,7 @@ void CMemory::Map_SA1LoROMMap (void)
 
 	// SA-1 Banks 40->4f
 	for (int c = 0x400; c < 0x500; c++)
-		SA1.Map[c] = SA1.WriteMap[c] = (uint8*)MAP_HIROM_SRAM;
+		SA1.Map[c] = SA1.WriteMap[c] = (uint8*) MAP_SA1RAM;	// Snes9x 8a9b8cf
 
 	// SA-1 Banks 60->6f
 	for (int c = 0x600; c < 0x700; c++)
@@ -3540,6 +3585,9 @@ void CMemory::ApplyROMFixes (void)
 		Timings.RenderPos = 32;
 	else if (match_na("ADVENTURES OF FRANKEN") && Settings.PAL)
 		Timings.RenderPos = 32;
+
+    if (match_na("FX SKIING NINTENDO 96"))
+        Timings.GSUCelDelay = 312;
 }
 
 std::string CMemory::SafeString(std::string s, bool allow_jis /*=false*/)

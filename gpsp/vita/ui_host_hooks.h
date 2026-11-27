@@ -74,10 +74,13 @@ extern volatile int g_running;
  * session chip (osd_chip_session with the current text, or NULL to hide). */
 void osd_session_chip_refresh(void);
 
-/* Settings > Colours or Motion blend changed g_pcfg.color / g_pcfg.blend of
- * the console in context (pcfg_display_console()): show it.  The renderer
- * takes a GBA's colours and the blend (vid_set_look); a Game Boy Color's
- * colours are its core's.  Also what a main loop calls when a game boots.
+/* A look row of Settings > Display changed (LCD colours, LCD ghosting,
+ * Scanlines, LCD grid, CRT mask, Ambient glow, and the global Screen, Text size
+ * and High contrast: g_pcfg.color / ghost / scan / grid / crt / glow / screen /
+ * text_large / contrast) of the console in context (pcfg_display_console()): show it.  The
+ * renderer takes the colours, the ghosting, the scanlines and the grid and
+ * the glow (vid_set_look, vid_set_overlays, vid_ambient_strength); a Game
+ * Boy Color's colours are its core's.  Also what a main loop calls when a game boots.
  * Weak default: the renderer's part. */
 void ui_host_look_changed(void);
 
@@ -106,7 +109,43 @@ int ui_host_mgift_available(void);
  * that exist; never the roms/ folder itself, never one twice.  The folders
  * are device paths without a trailing slash; the strings are valid for the
  * life of the program.  The weak defaults have none. */
-#define UI_EXTRA_ROOTS_MAX 24
+#define UI_EXTRA_ROOTS_MAX 32
+/* WonderSwan options to the core (main_vita.c app_ws_options) */
+void        app_ws_options(void);
+void        app_nes_options(void);   /* the NES Wide view setting, to the core */
+void        app_steady_options(void); /* Steady pacing on/off (main_vita.c) */
+void        app_handoff_options(void); /* Smooth hand-over on/off (main_vita.c) */
+const char *ui_host_core4_status(void);   /* "in use" / "not available" / "off" (main_vita.c: core4_status(), handoff_glue.h) */
+void        app_core4_options(void);   /* Fourth core Auto/Off changed (main_vita.c; g_pcfg.core4_off) */
+/* Settings > About > Check for updates (update_check.h): the row changed
+ * (g_pcfg.update_check, 1 = Daily, 0 = Off); X on it checks now and the
+ * answer is a toast (main_vita.c). */
+void        app_update_options(void);
+void        ui_host_update_now(void);
+/* The home screen, once a frame, with the frames it has been idle for: the
+ * day's check starts here (main_vita.c). */
+void        ui_host_home_idle(int idle);
+/* The in-game menu's Save clip (clip_export.h): the last ten seconds of the
+ * game as an animated PNG.  Returns what clip_export_start does (0 started,
+ * 1 nothing recorded yet, 2 one is already being saved, -1 it could not);
+ * the end is a toast from main_vita.c. */
+int         ui_host_clip_save(void);
+void        app_quick_options(void);   /* Quick response changed (main_vita.c; g_pcfg.quick_response, g_pgame.quick) */
+int         app_quick_supported(int console);   /* the console runs ahead (GB, GBC, NES, WonderSwan) */
+/* "Auto (xBRZ 3x, eased)" while the look governor eased the game, else NULL */
+const char *ui_host_look_label(void);
+/* (ui_psp.c) a battery file the app just wrote: the game list's "save
+ * present" comes from the scan's names (lessons-audit 1b) */
+void        ui_savset_add(const char *path);
+/* Settings > This game > Export save for other emulators (main_vita.c):
+ * dest 0 = for RetroArch, 1 = plain .sav beside the game.  0 = done. */
+int         ui_host_export_save(int dest, char *where, size_t wcap, char *note,
+                                size_t cap);
+/* Settings > This game > Game Boy type (main_vita.c, gbkind.h): the running
+ * Game Boy game's own override in gb_override.txt.  get: 0 Auto, 1 Game Boy,
+ * 2 Game Boy Color.  set: the same values; 0 = written, -1 = not. */
+int         ui_host_gb_kind_get(void);
+int         ui_host_gb_kind_set(int kind);
 int         ui_host_extra_roots(void);
 const char *ui_host_extra_root(int i);
 /* Settings > Game folders: add a folder, or remove it when it is listed,
@@ -117,14 +156,20 @@ int         ui_host_extra_root_toggle(const char *folder);
  * 2 GBC), or -1 when it holds none this app can start (zip_rom.h).  `size`
  * is the file's, for the host's cache of answers. */
 int         ui_host_zip_console(const char *path, unsigned size);
+/* 2.0: a ".bin" file is a Genesis game only when its bytes say so (SEGA at 0x100, or an SMD header: gamedb_md_accept);
+ * the scan asks before it lists one.  1 = list it.  (The default lists every .bin.) */
+int         ui_host_md_bin_ok(const char *path);
+/* 2.0, collections: the No-Intro name the bundled game database holds for a
+ * whole-cartridge CRC32 (RetroArch playlists carry one per game, and the
+ * library matches them without reading any game file).  1 and the name in
+ * out, or 0.  (The default knows none.) */
+int         ui_host_name_by_crc(unsigned crc, char *out, size_t cap);
 
-/* Settings > Display: Grid strength 1..10 (the LCD grid and scanline looks;
- * 5 is the default), Screen overlay on/off and the overlay in use ("" when
+/* Settings > Display: Screen overlay on/off and the overlay in use ("" when
  * none is in overlays/); Settings > Interface: Screenshot folder ("" =
- * screenshots/).  Kept in vita.ini (grid_strength, overlays, screenshots).
+ * screenshots/).  Kept in vita.ini (overlays, screenshots).  (Scanlines and
+ * LCD grid are per-console rows, 0..10, in config.ini: config_psp.h.)
  * shot_dir_set: 0 = taken, -1 = not a usable folder. */
-int         ui_host_grid_level(void);
-void        ui_host_grid_set(int level);
 /* Settings > Library: Sync RetroArch saves (default on; sync_ra_saves in
  * vita.ini; save_sync.h). */
 int         ui_host_sync_ra_on(void);
@@ -141,6 +186,24 @@ const char *ui_host_overlay_name(void);
  * the app swaps the pad's Cross and Circle (and the hints' glyphs) to match. */
 int         ui_host_ab_circle(void);
 void        ui_host_buttons_changed(void);
+/* Settings > Controls > Button test: every Vita input as it is now, read
+ * straight from the hardware beside the app's own pad (the page shows what
+ * the player presses, not what the game would see).  buttons are PLAT_BTN_*
+ * (plat.h; the A/B swap applied as the app sees them); the sticks 0..255,
+ * 128 centred; front_n fingers on the front panel (the first at front_x,
+ * front_y, native 960x544); rear_n fingers on the rear panel, rear the
+ * CTL_REAR_* corners they touch.  front_use is what a touch of the screen
+ * does for this game ("Opens the menu", "Aims and fires (Zapper)", "Nothing"). */
+typedef struct ui_btn_state
+{
+   unsigned    buttons;
+   int         lx, ly, rx, ry;
+   int         front_n, front_x, front_y;
+   int         rear_n;
+   unsigned    rear;
+   const char *front_use;
+} ui_btn_state;
+void        ui_host_btn_read(ui_btn_state *s);
 const char *ui_host_shot_dir(void);
 /* Cover picture > Choose a picture: the console's own photos and screenshots
  * ("ux0:picture"; vita.ini pictures = <folder> for another). */
@@ -159,6 +222,7 @@ enum
                              * are found by themselves                    */
    UI_CONN_INTERNET,        /* the joiner types the host's address         */
    UI_CONN_ADHOC,           /* no router: the system's ad hoc connection   */
+   UI_CONN_ONLINE,          /* 2.0: over the internet with a room code     */
    UI_CONN_COUNT
 };
 
@@ -271,6 +335,36 @@ typedef struct ui_room
 int  ui_host_rooms_begin(const char *addr);
 int  ui_host_rooms_poll(ui_room *out, int max);
 void ui_host_rooms_end(void);
+
+/* ===========================================================================
+ * 4b ONLINE: a room code over the internet   (2.0; implemented by link_vita.c)
+ * ===========================================================================
+ * The code pad asks the room service what a code is (a "card": the game, the
+ * host, the build), the page shows it, the library finds the game.  The weak
+ * defaults (ui_hooks_default.c) say "not available". */
+typedef struct ui_online_card
+{
+   int  state;               /* 0 looking, 1 found, 2 failed */
+   int  fail;                /* failed: UI_FAIL_* */
+   int  kind;                /* LAN_KIND_* */
+   char console[5], game[9], rom[9], title[24], nick[16], ver[16];
+   int  compatible;          /* same VitAdhoc build for that kind; 0: `fail` already holds which sentence
+                              * (ONLINE_VER_OLD_HERE / _THERE / ONLINE_SETUP) */
+   int  full;
+} ui_online_card;
+/* The identity (1.1 `rom`) of a game file, as the host computes its own: 0 = ok. */
+int  ui_host_online_rom_id(const char *path, char out[9]);
+/* Two players (NES / WonderSwan): the running game's identity, the 8 hex
+ * digits of its file's CRC as Online names it (a room's first 4 are its
+ * code).  0 = this game cannot play Two players. */
+int  ui_host_pad_game(char out[9]);
+/* A SNES library file (a .zip is unpacked first) as a Two players room names it: 8 upper-case hex digits.  0 = unreadable. */
+int  ui_host_snes_game_id(const char *path, char out[9]);
+int  ui_host_online_available(void);          /* 1: Wi-Fi is up and the radio is free for it */
+int  ui_host_online_lookup(const char *code); /* 0 = asked; < 0 = UI_ROOMS_E_* */
+void ui_host_online_card(ui_online_card *out);/* every frame while the card page shows; a few loads */
+void ui_host_online_cancel(void);
+int  ui_host_link_direct(void);               /* vita.ini link_direct = 1: show "Direct address" */
 
 /* ===========================================================================
  * 5  THE LOCAL LINK: two players on this Vita  (implemented by local_vita.c)
@@ -474,7 +568,8 @@ int         ui_host_local_rom_pick(int i);
 /* A file that includes app_vita.h first gets the two enums compared. */
 typedef char ui_conn_matches_link_conn[
    (UI_CONN_WIFI == LINK_CONN_WIFI && UI_CONN_INTERNET == LINK_CONN_INTERNET &&
-    UI_CONN_ADHOC == LINK_CONN_ADHOC && UI_CONN_COUNT == LINK_CONN_COUNT)
+    UI_CONN_ADHOC == LINK_CONN_ADHOC && UI_CONN_ONLINE == LINK_CONN_ONLINE &&
+    UI_CONN_COUNT == LINK_CONN_COUNT)
    ? 1 : -1];
 #endif
 

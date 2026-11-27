@@ -1,0 +1,565 @@
+input.a_game_button_takes_one_button	ゲームボタンには1ボタンのみ割り当てられます
+input.a_shortcut_takes_at_most_four	ショートカットは最大4ボタンまで
+input.button_1	ボタン1
+input.button_2	ボタン2
+input.circle	○ボタン
+input.cross	×ボタン
+input.d_pad_down	方向キー下
+input.d_pad_left	方向キー左
+input.d_pad_right	方向キー右
+input.d_pad_up	方向キー上
+input.down	下
+input.fast_forward	早送り
+input.left	左
+input.left_stick_down	左スティック下
+input.left_stick_left	左スティック左
+input.left_stick_right	左スティック右
+input.left_stick_up	左スティック上
+input.mode	モード
+input.no_such_button	そのボタンはありません
+input.not_set	未設定
+input.only_player_1_has_shortcuts	ショートカットはプレイヤー1のみ
+input.pause	一時停止
+input.quick_load	クイックロード
+input.quick_save	クイックセーブ
+input.rear_touch_bottom_left	背面タッチ: 左下
+input.rear_touch_bottom_right	背面タッチ: 右下
+input.rear_touch_top_left	背面タッチ: 左上
+input.rear_touch_top_right	背面タッチ: 右上
+input.rewind	巻き戻し
+input.right	右
+input.right_stick_down	右スティック下
+input.right_stick_left	右スティック左
+input.right_stick_right	右スティック右
+input.right_stick_up	右スティック上
+input.screenshot	スクリーンショット
+input.select	SELECT
+input.square	□ボタン
+input.start	START
+input.start_select_opens_the_menu_pick	START + SELECTでメニューが開きます。他のボタンを選んでください
+input.triangle	△ボタン
+input.turbo_a	連射A
+input.turbo_b	連射B
+input.up	上
+lang.auto	自動
+link.connecting_over_the_internet	インターネットで接続中
+link.connecting_through_the_relay	中継経由で接続中
+link.ending_the_link_together	いっしょに通信を終了中
+link.link_ended	通信を終了しました
+link.link_lost_the_other_vita_is	通信が切れました: 相手のVitaがいません。
+link.nobody_answered	応答はありませんでした。
+link.opening_a_path_to_the_other	相手の本体への経路を開いています
+link.playing_together	いっしょにプレイ中
+link.reaching_player_1	プレイヤー1に接続中
+link.receiving_the_game_from_player_1	プレイヤー1からゲームを受信中
+link.sending_the_game_to_player_2	プレイヤー2へゲームを送信中
+link.starting_the_game_together	いっしょにゲームを開始中
+link.the_game_could_not_be_saved	ゲームをセーブできませんでした。
+link.the_game_could_not_be_started	いっしょにゲームを開始できませんでした。
+link.the_game_did_not_arrive_intact	ゲームが正しく届きませんでした。もう一度お試しください。
+link.the_link_failed	通信に失敗しました。
+link.the_link_failed_2	通信に失敗しました
+link.the_link_is_fine	通信は良好です。
+link.the_link_was_cancelled	通信をキャンセルしました。
+link.the_other_vita_ended_the_link	相手のVitaが通信を終了しました。
+link.the_other_vita_plays_a_different	相手のVitaは別のゲームを遊んでいます。
+link.the_other_vita_runs_a_different	相手のVitaは別のバージョンのVitAdhocです。
+link.the_other_vita_s_game_did	相手のVitaのゲームが一致しませんでした。
+link.the_two_games_fell_out_of	2つのゲームの同期がずれました。通信を終了し、何も保存されていません。
+link.there_was_not_enough_memory_to	通信を開始するメモリが足りませんでした。
+link.this_vita_went_to_sleep_so	このVitaがスリープしたため、通信を終了しました。
+link.waiting_for_player_2	プレイヤー2を待っています
+look.auto	自動 (%s)
+look.auto_eased	自動 (%s、ゆるめ)
+md.128_kb	128 KB
+md.16_kb	16 KB
+md.256_kb	256 KB
+md.32_kb	32 KB
+md.3_buttons	3ボタン
+md.512_kb	512 KB
+md.64_kb	64 KB
+md.6_buttons	6ボタン
+md.a_game_gear_game_has_one	ゲームギアのゲームではコントローラーは1つです。
+md.a_game_gear_game_has_one_2	ゲームギアのゲームではコントローラーは1つです
+md.asic	ASIC
+md.auto_follows_the_game_3_buttons	自動はゲームに従い、3ボタンか6ボタンになります。6ボタンパッドを誤認するゲームは3ボタンを選んでください。
+md.auto_follows_the_game_europe_runs	自動はゲームに従います。ヨーロッパは50 Hzの速度、アメリカと日本は60 Hzで動かします。自分の地域でしか動かないゲームもあります。
+md.both_edges	両端
+md.change_disc	ディスクを交換
+md.cheat_code_game_genie_pro_action	チートコード (Game Genie、Pro Action Replay、またはアドレス:値)
+md.cheat_list_not_saved	チート一覧を保存できませんでした: %s。元のファイルは残しました。
+md.console	本体
+md.disc	ディスク%d
+md.disc_could_not_be_read	ディスク%dを読み込めませんでした: %s
+md.disc_inserted	ディスク%dを入れました
+md.disc_is_in_the_drive_already	ディスク%dはすでにドライブに入っています
+md.disc_is_missing	ディスク%dがありません: %s
+md.disc_tray_open	ディスクトレイが開いています
+md.discrete	ディスクリート
+md.enhanced	強化
+md.europe_50_hz	ヨーロッパ (50 Hz)
+md.extra_save_memory_some_games_can	本体内蔵の8 KBとは別に、一部のゲームが使える追加のセーブメモリー。通常は512 KB、128 KBはSega発売品の容量、オフにするとスロットは空になります。別の容量で作ったセーブデータは残り、その容量に戻すと再び使えます。次回のゲーム起動から反映されます。2人プレイでは常に512 KBです。
+md.fm_sound	FM音源
+md.fm_sound_unit	FM音源ユニット
+md.for_a_game_on_several_discs	複数ディスクのゲーム用: ディスクトレイを開いてディスクを取り出し、選んだディスクを入れてトレイを閉じます。手でやるのと同じです。ゲームが別のディスクを求めたときに使ってください。セーブデータとステートはゲームに残ります。
+md.games_on_the_master_system_cover	マスターシステムのゲームは、スクロール時に左端8列を枠の色で隠します。これを隠すと、映像は幅248になります。
+md.hide_masked_edge	隠れた端を非表示
+md.how_far_back_rewind_reaches_short	巻き戻しで戻れる長さ: 短いは約30秒、中は約1分。ディスクゲームのステートは大きく (1つ約1 MB)、静かな場面では長さを保ちますが、画面全体を描き直す場面 (動画) では数秒しか保てません。使えるメモリーは固定です。
+md.japan	日本
+md.lcd_colours	LCDの色
+md.lcd_ghosting	LCDの残像
+md.left_edge	左端
+md.look_eased_to_keep_full_speed	フル速度を保つため見た目をゆるめる
+md.m3u_empty	.m3uの一覧にディスク (.cue、.chd、.iso) がありません。
+md.m3u_none_found	.m3uの一覧のディスクがどれも見つかりませんでした: %s
+md.m3u_unreadable	.m3uの一覧を読み込めませんでした。
+md.no_sprite_flicker	スプライトのちらつきなし
+md.pad_type	パッドの種類
+md.ram_cartridge	RAMカートリッジ
+md.region	地域
+md.sega_cd_bios_missing	メガCDのゲーム: お手持ちのメガCD BIOS (例: us_scd1_9210.bin、eu_mcd1_9210.bin、jp_mcd1_9112.bin) をux0:data/GBAdhoc/biosかゲームの隣に置いてください
+md.sega_cd_bios_missing_notice	メガCDのゲームにはBIOSが必要です: ux0:data/GBAdhoc/biosに置いてください
+md.sega_cd_load_failed	%s。メガCD: ディスクイメージ (.cueと.binファイル、.chd、.iso) を確認してください。見つかったBIOS: %s。
+md.start_sega_games_from_vitadhoc	SegaのゲームはVitAdhocから起動してください。
+md.that_code_is_already_in_the	そのコードはすでに一覧にあります
+md.that_code_points_at_an_address	そのコードはこのゲームにないアドレスを指しています
+md.that_is_not_a_cheat_code	チートコードではありません。XXXX-XXXX (Game Genie) かAAAAAA:VVVV (Pro Action Replay) を使ってください
+md.that_is_not_a_cheat_code_2	チートコードではありません。XXX-XXX (Game Genie)、00AA-AAVV (Pro Action Replay)、またはAAAA:VVを使ってください
+md.the_console_drew_only_4_sprites	本体は1ラインに4スプライトしか描けず、残りはゲームが点滅させていました。オンにすると全部描きます。ゲーム自体の動作は同じです。
+md.the_console_drew_only_8_sprites	本体は1ラインに8スプライトしか描けず、残りはゲームが点滅させていました。オンにすると全部描きます。ゲーム自体の動作は同じです。
+md.the_disc_is_being_changed_already	すでにディスクを交換中です
+md.the_game_gear_s_screen_showed	ゲームギアの画面は色がやわらかく、真っ黒にはなりませんでした。オンにするとそのように描きます。
+md.the_list_names_a_disc_that_is_missing	一覧にあるディスクが見つかりません: %s
+md.the_master_system_s_fm_add	マスターシステムのFM音源拡張で、一部のゲームが使います。自動は、必要とするゲームでオンにします。
+md.the_ram_cartridge_changes_when_the_game	RAMカートリッジはゲームを再開したときに変更されます
+md.the_sega_core_could_not_start	Segaコアを開始できませんでした。
+md.the_slow_game_gear_screen_left	反応の遅いゲームギアの画面は、動くものに残像が出ました。0でオフ、10で強め。
+md.the_sound_chip_discrete_is_the	サウンドチップ: ディスクリートは初代のYM2612、ASICは後期のYM3438、強化は足りない高音を補います。
+md.usa	アメリカ
+menu.10_a_second	毎秒10回
+menu.15_a_second	毎秒15回
+menu.30_a_second	毎秒30回
+menu.a_faint_pixel_grid_like_a	携帯機の画面のような薄い画素の格子。1が薄く、10が濃くなります。
+menu.a_number_you_type	入力した数値
+menu.a_shortcut_can_be_one_button	ショートカットは1ボタン、または同時押しにできます。
+menu.a_soft_glow_beside_the_picture	黒帯の代わりに映像の横にやわらかい光を表示します。
+menu.achievements	実績
+menu.add_a_cheat	チートを追加
+menu.all_games	すべてのゲーム
+menu.ambient_glow	アンビエントグロー
+menu.anything_the_game_has_not_saved	ゲームでセーブしていないものは失われます。
+menu.apply_to	適用先
+menu.auto	自動
+menu.auto_adapts_to_keep_60_fps	自動で60 fpsを保つよう調整。可能ならなめらかにします。
+menu.back	戻る
+menu.back_to_the_game	ゲームに戻る
+menu.back_to_the_game_list	ゲーム一覧に戻りますか?
+menu.bigger_text_in_the_menus_of	アプリとプレーヤーのメニューの文字を大きくします。
+menu.bilinear	バイリニア
+menu.brighter_text_and_clearer_edges_in	アプリとプレーヤーのメニューの文字を明るく、輪郭をはっきりさせます。
+menu.btntest.chord	%s (同時押し)
+menu.button_mapping	ボタン割り当て
+menu.button_mapping_for_every_player_the	全プレイヤーのボタン割り当て、スティック、連射ボタン。
+menu.button_test	ボタンテスト
+menu.buttons	ボタン
+menu.cancel	キャンセル
+menu.change	変更
+menu.cheat_deleted	チートを削除しました
+menu.cheat_deleted_name	削除しました: %s
+menu.cheats	チート
+menu.cheats_you_add_or_turn_on	追加またはオンにしたチートがここに出ます。
+menu.choose_which_vita_button_does_what	各プレイヤーについて、Vitaのどのボタンが何をするかを選びます。
+menu.clear	クリア
+menu.cleared	%sをクリアしました
+menu.coloured_stripes_like_a_crt_tube	CRTブラウン管のような色の縞。映像が少し暗くなります。1が薄く、10が濃くなります。
+menu.coming	近日対応
+menu.confirm	決定
+menu.controls	操作
+menu.controls_reset_to_the_defaults	操作を初期値に戻しました
+menu.controls_save_failed	操作を保存できませんでした: %s
+menu.could_not_change_slot_lock	スロットのロックを変更できませんでした
+menu.could_not_save_the_state_the	ステートをセーブできませんでした: ゲームの状態を取り込めませんでした
+menu.crt_mask	CRTマスク
+menu.customised	カスタム
+menu.d_pad	方向キー
+menu.dark	ダーク
+menu.dark_lines_between_the_rows_like	テレビのように、行の間に暗い線を入れます。1が薄く、10が濃くなります。
+menu.default	初期値
+menu.delete	削除
+menu.delete_slot	スロット%dを削除しますか?
+menu.delete_this_cheat	このチートを削除しますか?
+menu.empty_slot	空きスロット
+menu.enhanced_2x	強化 2倍
+menu.enhanced_3x	強化 3倍
+menu.enhanced_4x	強化 4倍
+menu.every_button_stick_and_turbo_setting	すべてのボタン、スティック、連射の設定が初期値に戻ります。
+menu.exit	終了
+menu.exit_help	VitAdhocを閉じる
+menu.fast_forward	早送り
+menu.fast_forward_and_sound_while_it	早送り中の動作と音声。
+menu.ff_button	早送りボタン
+menu.find_a_value_s_address	値のアドレスを探す
+menu.find_where_the_game_keeps_lives	ゲームが残機、お金、体力を置いている場所を探します。数値を控え、変化に合わせて絞り込み、結果をチートにできます。
+menu.game_list	ゲーム一覧
+menu.h_m_played	%lld時間%02lld分プレイ
+menu.high_contrast	ハイコントラスト
+menu.hold	長押し
+menu.hold_the_fast_forward_button_or	早送りボタンを押し続けると早送り、1回押すと早送りのオン/オフを切り替えます。
+menu.hold_the_rewind_button_to_run	巻き戻しボタンを押し続けるとゲームを逆再生します。
+menu.hold_turbo_runs_while_the_button	長押し: ボタンを押している間だけ連射します。切替: 1回押すと開始、もう1回押すと停止。
+menu.how_fast_it_runs_2x_and	動作の速さ。2倍と3倍は、音を速くするか通常の音程で再生できます。無制限と無制限なめらかは無音で、入るだけのフレームを処理し、2回のリフレッシュごと (無制限) か毎回 (無制限なめらか) に1枚表示します。
+menu.how_fast_turbo_a_presses_10	連射Aの速さ: 毎秒10、15、30回。
+menu.how_fast_turbo_b_presses_10	連射Bの速さ: 毎秒10、15、30回。
+menu.how_large_the_game_is_drawn	ゲームを描く大きさ。オリジナルは本体の形を保ち、ピクセルパーフェクトは整数倍で拡大します。
+menu.how_the_game_is_run_and	ゲームの動かし方と見せ方。
+menu.image_quality	画質
+menu.in_the_list	一覧に%d件
+menu.interface	インターフェース
+menu.is_now	%sは%sになりました
+menu.keep	残す
+menu.keep_sound	音声を保つ
+menu.keep_the_places_that_are_just	前回のステップと全く同じ場所だけを残します。
+menu.keep_the_places_that_are_not	前回のステップと違う場所だけを残します。
+menu.keep_the_places_that_do_not	入力した数値ではない場所だけを残します。
+menu.keep_the_places_that_hold_less	入力した数値より小さい場所だけを残します。
+menu.keep_the_places_that_hold_more	入力した数値より大きい場所だけを残します。
+menu.keep_the_places_that_hold_the	入力した数値の場所だけを残します。ゲーム画面で確認してください。
+menu.keep_the_places_that_went_down	前回のステップから減った場所だけを残します。
+menu.keep_the_places_that_went_up	前回のステップから増えた場所だけを残します。
+menu.keep_these_controls_for_every_game	この操作をすべてのゲームで使うか、このゲームだけにします。
+menu.keep_these_picture_settings_for_every	この映像設定をすべてのゲームで使うか、このゲームだけにします。
+menu.language	言語
+menu.large	大
+menu.lcd_grid	LCDの格子
+menu.lcd_pch_2000	LCD (PCH-2000)
+menu.leave_this_game_for_the_game	このゲームを終えてゲーム一覧へ
+menu.left_stick	左スティック
+menu.left_stick_2	左スティック  %d, %d
+menu.lets_the_rear_touch_panel_s	背面タッチパネルの四隅を、割り当て可能なボタンとして使えます。
+menu.light	ライト
+menu.load	ロード
+menu.load_undone	ロードを取り消しました
+menu.loading_states_is_not_available	ステートのロードは使えません
+menu.lock	ロック
+menu.look_at_the_game_s_memory	ゲームのメモリーを今すぐ調べる
+menu.make_this_a_cheat_that_keeps	今の値を保つチートにします。
+menu.map.press_ok_for	OKを押してから、%sにしたいVitaのボタンを押してください。
+menu.medium	中
+menu.min_played	%lld分プレイ
+menu.mmpx_2x	MMPX 2倍
+menu.mmpx_at_twice_its_size_crisp	MMPXで2倍に拡大。くっきりしたドット絵で、Vitaへの負荷は軽め。
+menu.modal.cheat_delete_body	チートを一覧から削除します。元に戻せません。
+menu.modal.cheat_delete_body_named	「%s」を一覧から削除します。元に戻せません。
+menu.modal.exit_title	VitAdhocを閉じますか?
+menu.modal.exit_title_named	%sを終了しますか?
+menu.most_counters_are_1_byte_try	カウンターの多くは1バイトです。お金やスコアは2バイトを試してください。「すべてのアドレス」は奇数アドレスも調べます。次の新しい検索から有効です。
+menu.most_counters_are_1_byte_try_2	カウンターの多くは1バイトです。お金やスコアは2バイト、大きな数は4バイトを試してください。次の新しい検索から有効です。
+menu.moved_here_from	%sを%sからここに移しました
+menu.moves_like_the_d_pad	方向キーと同じ動き
+menu.narrow_it_down_to_or_fewer	%d件以下に絞ると表示されます。
+menu.new_search	新しい検索
+menu.no_cheats_for_this_game	このゲームのチートはありません
+menu.no_cheats_yet	チートはまだありません
+menu.no_picture	画像なし
+menu.no_results_start_a_new_search	結果なし。新しい検索を始めてください
+menu.no_saved_state_in_this_slot	このスロットにステートはありません
+menu.normal	標準
+menu.normal_pitch	通常の音程
+menu.not_set	未設定
+menu.not_usable_here	ここでは使えません
+menu.not_used	使用しない
+menu.nothing_matched_start_a_new_search	一致なし。新しい検索を始めてください。
+menu.nothing_pressed_the_button_was_not	何も押されていません: ボタンは変更されていません
+menu.nothing_to_undo	元に戻すものがありません
+menu.off	オフ
+menu.oled_pch_1000	OLED (PCH-1000)
+menu.on	オン
+menu.original	オリジナル
+menu.overwrite	上書き
+menu.overwrite_slot	スロット%dを上書きしますか?
+menu.pick_a_result_to_make_it	結果を選ぶと、その値を保つチートにできます。
+menu.pick_the_player_whose_buttons_you	ボタンを変更するプレイヤーを選びます。
+menu.picture	映像
+menu.picture_controls_speed_and_text	映像、操作、速度、文字
+menu.play_together	一緒に遊ぶ
+menu.play_with_a_friend	フレンドと遊ぶ
+menu.player	プレイヤー
+menu.player_2	プレイヤー%d
+menu.player_buttons_reset	プレイヤー%dのボタンをリセットしました
+menu.press_a_button_for	%sに割り当てるボタンを押してください
+menu.press_ok_then_the_vita_button	OKを押してから、割り当てるVitaのボタンを押してください。
+menu.press_one_button_or_hold_several	ボタンを1つ押すか、複数を同時に押し続けて同時押しにします。
+menu.press_the_vita_button_stick_direction	使うVitaのボタン、スティックの方向、背面の隅を押してください。
+menu.ps_tv	PS TV
+menu.put_every_button_stick_and_turbo	すべてのボタン、スティック、連射の設定を初期値に戻します。
+menu.put_this_player_s_buttons_back	このプレイヤーのボタンを初期値に戻します。
+menu.quit	終了
+menu.ra.help	このゲームのRetroAchievementsと解除済みの実績。
+menu.ra.locked	未解除
+menu.ra.no_achievements	表示できる実績がありません
+menu.ra.pts	%u pts
+menu.ra.unlocked	解除済み
+menu.ra.unlocked_hc	解除済み (HC)
+menu.rear_touch_panel	背面タッチパネル
+menu.reason.no_link	この機種では使えません: プレーヤーに通信機能がありません
+menu.reason.unsupported	このプレーヤーでは使えません
+menu.remember_the_game_s_memory_as	今のゲームのメモリーを記憶します。プレイを続けてから、下のステップで一覧を絞り込みます。
+menu.reset	リセット
+menu.reset_game	ゲームをリセット
+menu.reset_the_controls	操作をリセットしますか?
+menu.reset_the_game	ゲームをリセットしますか?
+menu.reset_this_player_s_buttons	このプレイヤーのボタンをリセット
+menu.reset_to_defaults	初期値に戻す
+menu.results	結果
+menu.resume	再開
+menu.rewind	巻き戻し
+menu.rewind_length_help	巻き戻しで戻れる長さ: 短いは約30秒、中は約1分。負荷の高いゲームでは少し短くなります。使えるメモリーは固定です。
+menu.right_stick	右スティック
+menu.right_stick_2	右スティック  %d, %d
+menu.save	セーブ
+menu.save_here	ここにセーブ
+menu.save_or_load_the_game_of	ゲームのセーブ/ロード: %d / %dスロット使用中
+menu.save_states	ステート
+menu.saved	保存済み
+menu.saving_states_is_not_available	ステートのセーブは使えません
+menu.saving_to_slot	スロット%dにセーブ中...
+menu.scanlines	スキャンライン
+menu.screen	画面
+menu.screen_size	画面サイズ
+menu.screen_size_image_quality_scanlines_lcd	画面サイズ、画質、スキャンライン、LCDの格子、アンビエントグロー。
+menu.search.ask_number	%s (数値)
+menu.search.found_at	%sで見つかりました
+menu.search.n_result	%d件
+menu.search.n_results	%d件
+menu.search_memory	メモリー検索
+menu.search_started_places_play_on_then	検索開始: %d か所。プレイを続けてから絞り込みます
+menu.select	選ぶ
+menu.settings	設定
+menu.shape.fit	フィット
+menu.shape.pixel_perfect	ピクセルパーフェクト
+menu.shape.stretch	引き伸ばし
+menu.shape.zoom	ズーム
+menu.sharp_bilinear	シャープバイリニア
+menu.short	短い
+menu.shows_each_button_stick_and_touch	ボタン、スティック、タッチパネルの押された状態と役割を表示します。
+menu.shows_more_of_the_world_than	ワイドビュー設定のあるゲームで、本体より広い範囲を表示します。
+menu.since_the_last_step	前回のステップから
+menu.size_of_the_number	数値のサイズ
+menu.slot	スロット%d
+menu.slot_deleted	スロット%dを削除しました
+menu.slot_is_locked_press_l	スロットはロック中です - Lで解除
+menu.slot_locked	スロット%dをロックしました
+menu.slot_of	スロット%d / %d
+menu.slot_unlocked	スロット%dのロックを解除しました
+menu.smoothed_at_four_times_its_size	4倍に拡大してなめらかに。最も精細で負荷も最大です。
+menu.smoothed_at_three_times_its_size	3倍に拡大してなめらかに。より精細ですが負荷も増えます。
+menu.smoothed_at_twice_the_game_s	ゲームの2倍に拡大してなめらかにし、画面に合わせます。
+menu.sped_up	速くする
+menu.speed	速度
+menu.speed.value_ff	早送り %s
+menu.start_again	最初から
+menu.start_the_game_again_from_the	ゲームを最初からやり直します
+menu.state_loaded_from_slot	スロット%dからステートをロードしました
+menu.state_saved_to_slot	スロット%dにステートをセーブしました
+menu.states.empty	空
+menu.stay	残る
+menu.tap_screen_for_menu	タップでメニュー
+menu.text_size	文字サイズ
+menu.text_size_and_high_contrast_for	アプリとプレーヤーのメニューの文字サイズとハイコントラスト。
+menu.the_cheat_could_not_be_deleted	チートを削除できませんでした
+menu.the_game_s_own_pixels_evenly	ゲームの画素をそのまま、どの画面サイズでも均等な大きさで。
+menu.the_game_starts_again_from_the	ゲームを最初からやり直します。セーブしていないものは失われます。
+menu.the_saved_state_and_its_picture	保存したステートとその画像を削除します。元に戻せません。
+menu.the_search_could_not_start_not	検索を開始できませんでした: メモリ不足
+menu.the_sound_while_fast_forwarding_off	早送り中の音: なし、ゲームと一緒に速くする、通常の音程のまま。
+menu.the_state_could_not_be_deleted	ステートを削除できませんでした
+menu.the_state_could_not_be_loaded	ステートをロードできませんでした: このゲームまたはバージョンでは読めません
+menu.the_state_saved_there_will_be	そこに保存されたステートは、今のゲームの状態で置き換えられます。
+menu.the_undo_could_not_be_applied	元に戻せませんでした
+menu.theme	テーマ
+menu.there_is_no_memory_to_search	このゲームには検索できるメモリーがありません
+menu.there_is_no_search_to_narrow	絞り込む検索がありません
+menu.this_game	このゲーム
+menu.this_place_cannot_be_made_into	ここではこの場所をチートにできません
+menu.to_leave_hold_start_select_or	終了: START + SELECTを長押し、またはこの行に指を置く
+menu.toggle	切替
+menu.touch_screen	タッチスクリーン
+menu.touch_screen_2	タッチスクリーン  %d, %d
+menu.touching	タッチ中
+menu.turbo_a_speed	連射Aの速度
+menu.turbo_b_speed	連射Bの速度
+menu.turbo_mode	連射モード
+menu.turn_cheats_on_and_off	チートのオン/オフ
+menu.turn_this_cheat_on_or_off	このチートをオン/オフします。
+menu.turn_this_cheat_on_or_off_2	このチートをオン/オフします。△か削除で外せます。
+menu.type_a_game_genie_pro_action	Game Genie、Pro Action Replay、またはアドレス=値のコードをキーボードで入力します。
+menu.type_a_whole_number_from_0	0から%uまでの整数を入力 (0xで16進も可)
+menu.ui.language_help	アプリとプレーヤーのメニューの言語。自動はVita本体の言語に従い、翻訳のない言語では英語になります。
+menu.ui.large_text	大きい文字
+menu.ui.normal_text	標準の文字
+menu.ui.tap_menu_help	ゲーム画面のどこかをタップするとメニューを開きます。
+menu.ui.theme_help	メニューのダークテーマとライトテーマを切り替えます。
+menu.ui.value_contrast	%s、ハイコントラスト
+menu.undo	元に戻す
+menu.undo_last_load	最後のロードを取り消す
+menu.unlimited	無制限
+menu.unlimited_smooth	無制限なめらか
+menu.unlock	解除
+menu.video_filter_help	映像を画面に合わせる方法。シャープバイリニア: 正確な画素で輪郭をやわらげます (どの大きさでも)。バイリニア: ソフト、画素が隣の画素となじみます。
+menu.waiting	待機中...  %d
+menu.what_the_left_stick_does_nothing	左スティックの動作: なし、方向キー、または割り当て可能な専用ボタン。
+menu.what_the_right_stick_does_nothing	右スティックの動作: なし、方向キー、または割り当て可能な専用ボタン。
+menu.which_vita_screen_this_is_oled	Vitaの画面の種類。OLEDは色を少しやわらげます。全機種共通。
+menu.wide_view	ワイドビュー
+patch.patch_applied_checksums_match	パッチを適用しました (チェックサム一致)
+patch.patch_applied_this_kind_of_patch	パッチを適用しました (この種類のパッチではROMを確認できません)
+patch.the_patch_file_is_cut_short	パッチファイルが途中で切れています
+patch.the_patch_file_is_damaged	パッチファイルが破損しています
+patch.the_patch_file_is_not_valid	パッチファイルが正しくありません
+patch.the_patched_rom_does_not_match	パッチ後のROMがパッチのチェックサムと一致しません
+patch.the_patched_rom_would_be_too	パッチ後のROMが大きすぎます
+patch.this_patch_was_made_for_a	このパッチは別のROM用に作られています
+player.a_name_for_it_you_can	名前 (空欄でも構いません)
+player.brought_in_the_newer_retroarch_save	新しいRetroArchのセーブデータを取り込みました
+player.cancel_hint	%s: キャンセル
+player.cheat_added	チートを追加してオンにしました: %s
+player.cheat_added_not_saved	チートを追加してオンにしましたが、一覧を保存できませんでした: %s
+player.cheat_deleted_not_saved	チートを削除しましたが、一覧を保存できませんでした: %s
+player.cheat_off	チートをオフにしました: %s
+player.cheat_off_not_saved	チートをオフにしましたが、一覧を保存できませんでした: %s
+player.cheat_on	チートをオンにしました: %s
+player.cheat_on_not_saved	チートをオンにしましたが、一覧を保存できませんでした: %s
+player.cheats_are_off_while_linked_to	他の本体と接続中はチートは使えません。
+player.could_not_bring_in_the_retroarch	RetroArchのセーブデータを取り込めませんでした: 元のセーブデータを残しました
+player.could_not_continue	続けられません: %s
+player.could_not_continue_the_resume_point	続けられません: 再開地点がこのゲームに合いません
+player.could_not_save_the_screen_settings	画面設定を保存できませんでした
+player.draws_each_picture_on_its_own	映像を別のスレッドで描画するため、重い映像オプションでもゲームは遅くなりません。映像に不具合が出たときはオフにしてください。
+player.european_games_run_at_50_hz	欧州のゲームは50 Hzで動きます。なめらか50 Hzは本来の速度を保ち映像を整えます: 6回に1回、2フレームを混ぜて表示します。本来の50 Hzは6フレームに1回同じフレームを再表示します。高速60 Hzは60 Hz画面と同じく20％速く動かします。
+player.fast_60_hz	高速60 Hz
+player.game_not_started_err	このゲームを起動できませんでした: %s
+player.moved_old_states	古いステート%d件を新しいスロットに移しました
+player.moved_one_old_state	古いステート%d件を新しいスロットに移しました
+player.no_game_was_given	ゲームが指定されていません。
+player.no_point_to_continue_from_the	続きから始める地点がありません: ゲームを最初から始めます
+player.not_enough_memory	メモリ不足です。
+player.pal_games_speed	PALゲームの速度
+player.patch_failed_notice	パッチを適用できませんでした: %s
+player.quick_response	クイックレスポンス
+player.returning_to_vitadhoc	VitAdhocに戻っています...
+player.rewind_length	巻き戻しの長さ
+player.save_failed_retry	ゲームをセーブできませんでした: %s。元のセーブデータを残し、再試行します。
+player.shows_what_you_press_one_frame	次のフレームを先に計算して、押したものを1フレーム早く表示します。ゲームの動作は同じです。自動はゲームに余裕があるときに使います。
+player.slot	スロット%d: %s
+player.slot_1_is_empty	スロット1は空です
+player.slot_could_not_be_loaded_this	スロット%dをロードできませんでした: このゲームでは読めません
+player.smooth_50_hz	なめらか50 Hz
+player.smooth_hand_over	なめらか引き継ぎ
+player.start_it_from_the_game_list	ゲーム一覧から起動してください: 設定 > 2人プレイ
+player.state_loaded_from_slot_1	スロット1からステートをロードしました
+player.steady_pacing	安定ペース
+player.that_code_is_too_long_16	コードが長すぎます (最大16個)
+player.the_cheat_could_not_be_added	チートを追加できませんでした
+player.the_cheat_list_is_full	チート一覧がいっぱいです
+player.the_connection_could_not_be_opened	接続を開けませんでした。
+player.the_game_file_could_not_be	ゲームファイルを読み込めませんでした。
+player.the_game_file_could_not_be_2	ゲームファイルを再読み込みできませんでした。
+player.the_game_is_saved_again	ゲームをもう一度セーブしました
+player.the_game_was_reset	ゲームをリセットしました
+player.the_patch_could_not_be_applied	パッチを適用できなかったため、ゲームを起動しませんでした。
+player.the_resume_point_was_made_with	再開地点は別のパッチで作られました: ゲームを最初から始めます
+player.the_two_player_game_could_not	2人プレイを開始できませんでした。
+player.the_two_player_link_could_not	2人プレイの通信を開始できませんでした。
+player.this_cheat_cannot_be_switched_on	このチートはここではオンにできません
+player.this_game_could_not_be_started	このゲームを起動できませんでした。
+player.true_50_hz	本来の50 Hz
+player.two_player_game	2人プレイ
+player.unknown_error	不明なエラー
+player.video_filter	映像フィルター
+player.when_a_scene_is_too_heavy	全フレームには重すぎる場面では、1フレームおきに均等に表示します。ゲーム自体はフル速度を保ちます。
+ra.achievement	実績: %s (%u)
+ra.achievements_sent	実績を送信しました
+ra.achievements_will_be_sent_when_back	オンラインに戻ると実績を送信します
+ra.challenge	チャレンジ: %s
+ra.challenges_active	%u件のチャレンジ実行中
+ra.completed	達成: %s
+ra.error	RetroAchievements: %s
+ra.hardcore_no_cheats	ハードコアモード: チートは使えません
+ra.hardcore_no_rewind	ハードコアモード: 巻き戻しは使えません
+ra.hardcore_no_states	ハードコアモード: ステートはロードできません
+ra.leaderboard_attempt	リーダーボード挑戦: %s
+ra.leaderboard_failed	リーダーボード挑戦失敗: %s
+ra.leaderboard_submitted	送信しました: %s %s
+ra.mastered	マスター: %s
+ra.no_achievements_for_this_game_yet	このゲームの実績はまだありません
+ra.progress	実績 %u / %u
+ra.progress_hardcore	実績 %u / %u - ハードコア
+ra.rank	%u位 / %u人
+ra.retroachievements_does_not_know_this_version	RetroAchievementsはこのバージョンを認識しません
+ra.server_error	RetroAchievements: サーバーエラー
+ra.set_completed	セット達成: %s
+ra.sign_in_retry	RetroAchievements: サインインできません。再試行します
+ra.unavailable_error	実績を利用できません: %s
+ra.unavailable_no_answer	実績を利用できません: 応答なし
+rewind.chip	<< 巻き戻し %u秒
+rewind.chip_oldest	<< 巻き戻し %u秒 (最古)
+rewind.rewind_failed	巻き戻しに失敗しました
+rewind.rewind_is_off_while_games_are	ゲームの通信中は巻き戻しは使えません
+rewind.rewind_is_switched_off_settings	巻き戻しはオフです (設定)
+rewind.rewind_not_enough_memory_for_it	巻き戻し: メモリが足りません
+rewind.this_is_as_far_back_as	これ以上は巻き戻せません
+search.1_byte	1バイト
+search.2_bytes	2バイト
+search.2_bytes_any_address	2バイト、すべてのアドレス
+search.4_bytes	4バイト
+search.4_bytes_any_address	4バイト、すべてのアドレス
+search.changed	変化した
+search.decreased	減った
+search.equal_to	等しい
+search.greater_than	より大きい
+search.increased	増えた
+search.less_than	より小さい
+search.not_equal_to	等しくない
+search.unchanged	変化なし
+snes.8_7_console	8:7 (本体)
+snes.averages_pairs_of_columns_in_512	幅512の映像で隣り合う2列を平均し、ディザによる透過表現をなめらかにします。文字はやわらかくなります。
+snes.averages_pairs_of_lines_in_interlaced	インターレース映像で隣り合う2行を平均し、ちらつきを消します。
+snes.blend_hi_res_columns	ハイレゾ列をブレンド
+snes.blend_interlace_lines	インターレース行をブレンド
+snes.cheat_code_game_genie_pro_action	チートコード (Game Genie、Pro Action Replay、またはアドレス=値)
+snes.look_eased_to_keep_full_speed	フル速度を保つため見た目をゆるめる
+snes.multitap	マルチタップ
+snes.pixel_perfect_only_the_console_s	ピクセルパーフェクトのみ: 本体のやや横長の画素 (8:7)、または正方形の画素。
+snes.pixel_shape	画素の形
+snes.start_snes_games_from_vitadhoc	スーパーファミコンのゲームはVitAdhocから起動してください。
+snes.that_code_points_at_address_0	そのコードはアドレス0を指しており、変更できません
+snes.that_is_not_a_cheat_code	チートコードではありません。XXXX-XXXX (Game Genie)、AAAAAAVV (Pro Action Replay)、またはAAAAAA=VVを使ってください
+snes.the_snes_core_could_not_start	SNESコアを開始できませんでした。
+snes.the_super_multitap_for_players_3	プレイヤー3と4用のスーパーマルチタップ。自動は、使うと分かっているゲームでオンにします。
+speed.unlimited	>> 無制限
+speed.unlimited_smooth	>> 無制限なめらか
+states.apr	4月
+states.aug	8月
+states.could_not_save_the_state	ステートをセーブできませんでした: %s
+states.date_order	ymd
+states.dec	12月
+states.feb	2月
+states.jan	1月
+states.jul	7月
+states.jun	6月
+states.mar	3月
+states.may	5月
+states.no_saved_state_in_this_slot	このスロットにステートはありません
+states.no_such_slot	そのスロットはありません
+states.nov	11月
+states.oct	10月
+states.sep	9月
+states.the_state_could_not_be_read	メモリーカードからステートを読み込めませんでした
+states.the_state_could_not_be_written	ステートを書き込めませんでした
+states.the_state_file_is_damaged	ステートファイルが破損しています
+states.the_state_file_is_too_large	ステートファイルが大きすぎます
+states.this_slot_is_locked	このスロットはロックされています
+util.bad_request	不正なリクエスト
+util.could_not_replace_the_old_file	元のファイルを置き換えられませんでした (元のファイルは残しました)
+util.could_not_write_to_the_memory	メモリーカードに書き込めませんでした (空きがないか書き込み禁止)
+util.the_card_did_not_keep_what	書き込んだ内容がカードに保持されませんでした

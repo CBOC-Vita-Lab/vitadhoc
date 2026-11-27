@@ -1,0 +1,138 @@
+/*
+ * playerkit drawing interface. The menu, the notices and the thumbnails draw
+ * only through this; a player gives it a binding (vita2d on the console, a
+ * software framebuffer on Linux). Coordinates are native pixels, 960 x 544,
+ * origin top-left. Colours are 0xAABBGGRR (byte order R,G,B,A in memory on a
+ * little-endian machine), made with PK_RGBA().
+ *
+ * Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE).
+ */
+#ifndef PK_GFX_H
+#define PK_GFX_H
+
+#include <stddef.h>
+#include <stdint.h>
+#include <string>
+#include <vector>
+#include <utility>
+
+namespace pk {
+
+#define PK_RGBA(r, g, b, a) ((uint32_t) (((uint32_t) (a) << 24) | ((uint32_t) (b) << 16) | ((uint32_t) (g) << 8) | (uint32_t) (r)))
+/* 0xRRGGBB and an alpha, the way the main app writes colours */
+#define PK_HEX(rgb, a) PK_RGBA((((uint32_t) (rgb) >> 16) & 0xFF), (((uint32_t) (rgb) >> 8) & 0xFF), ((uint32_t) (rgb) & 0xFF), (a))
+#define PK_ALPHA(c, a) (((c) & 0x00FFFFFFu) | ((uint32_t) (a) << 24))
+
+enum { PK_SCREEN_W = 960, PK_SCREEN_H = 544 };
+
+/* Pixel formats of a texture. */
+enum TexFormat {
+	TEX_A8,        /* coverage only: text; drawn tinted by the colour */
+	TEX_RGB565,    /* libretro order: red in the high bits (a game's frame) */
+	TEX_BGR565,    /* the .thumb/.shot order: blue in the high bits */
+	TEX_RGBA8      /* bytes R,G,B,A */
+};
+
+struct Texture;    /* opaque; owned by the gfx that made it */
+
+class Gfx {
+public:
+	virtual ~Gfx() {}
+	virtual int width() const { return PK_SCREEN_W; }
+	virtual int height() const { return PK_SCREEN_H; }
+
+	/* shapes; alpha blends over what is there */
+	virtual void fill_rect(float x, float y, float w, float h, uint32_t rgba) = 0;
+	virtual void fill_rrect(float x, float y, float w, float h, float r, uint32_t rgba) = 0;
+	/* an outline t px thick, inside the rect */
+	virtual void stroke_rrect(float x, float y, float w, float h, float r, float t, uint32_t rgba) = 0;
+	virtual void fill_circle(float cx, float cy, float r, uint32_t rgba) = 0;
+	virtual void fill_tri(float x0, float y0, float x1, float y1, float x2, float y2, uint32_t rgba) = 0;
+	/* vertical gradient, top colour to bottom colour */
+	virtual void gradient_v(float x, float y, float w, float h, uint32_t top, uint32_t bottom) = 0;
+
+	/* textures; tex_update copies w x h pixels (stride in bytes) into the texture */
+	virtual Texture *tex_create(int w, int h, TexFormat fmt) = 0;
+	virtual void tex_update(Texture *t, const void *pixels, int stride_bytes) = 0;
+	/* the same for the w x h block at x,y only (the glyph atlas's cells) */
+	virtual void tex_update_rect(Texture *t, int x, int y, int w, int h, const void *pixels, int stride_bytes) = 0;
+	virtual void tex_free(Texture *t) = 0;
+	/* draws the part (sx,sy,sw,sh) of t into (dx,dy,dw,dh); tint multiplies (white = as is);
+	 * smooth = bilinear, else nearest */
+	virtual void tex_draw(Texture *t, float sx, float sy, float sw, float sh,
+	                      float dx, float dy, float dw, float dh, uint32_t tint, bool smooth) = 0;
+
+	/* The same draw, multiplying what is already there by the texel instead of laying it over:
+	 * out = dst * texel per colour channel (no tint, the texel's alpha ignored), nearest. One draw, no shader
+	 * (vita2d's multiply blend on the console). The CRT mask. The default draws nothing. */
+	virtual void tex_draw_mul(Texture *t, float sx, float sy, float sw, float sh,
+	                          float dx, float dy, float dw, float dh) { (void) t; (void) sx; (void) sy; (void) sw; (void) sh; (void) dx; (void) dy; (void) dw; (void) dh; }
+
+	/* clip to a rectangle (lists that scroll); clip_off() lifts it */
+	virtual void clip(float x, float y, float w, float h) = 0;
+	virtual void clip_off() = 0;
+};
+
+/* ---- type -------------------------------------------------------------- */
+enum Face { F_CAPTION = 0, F_BODY, F_LABEL, F_SUB, F_TITLE, F_COUNT };
+
+/* A font atlas: what a player can supply instead of the built-in one. Glyphs are
+ * printable ASCII (32..126); the atlas is A8, width x height. */
+struct Glyph {
+	uint16_t ax, ay;     /* position in the atlas */
+	uint8_t w, h;        /* size in the atlas */
+	int8_t ox, oy;       /* offset from the pen (x) and the line top (y) */
+	float adv;           /* advance */
+};
+struct FaceData {
+	const uint8_t *atlas;   /* A8, atlas_w x atlas_h */
+	int atlas_w, atlas_h;
+	int line_h, ascent;
+	Glyph g[95];
+};
+/* the built-in faces (Inter and Outfit rasterised at 20/24/24/30/40 px) */
+const FaceData *builtin_face(int face);
+
+/* Text drawing on top of any Gfx: makes one atlas texture per face on first use. Strings are UTF-8:
+ * printable ASCII is drawn from the baked atlases; any other character (accents, Greek, Cyrillic, kana,
+ * kanji, fullwidth forms, Hangul) from glyphs made on demand from the package's font files (pk_glyphs.h:
+ * call pk_glyphs_set_dir() once; "app0:" is the default on the console). A character no font has, a
+ * control character or a stray byte shows as '?'. Nothing cuts or wraps inside a character. */
+class Text {
+public:
+	explicit Text(Gfx *g);
+	~Text();
+	/* replace a face (the player's own atlas); the data must outlive the Text */
+	void set_face(int face, const FaceData *fd);
+	/* one frame has passed: the glyph atlases may reuse cells idle for a few frames (Menu::draw calls it) */
+	void frame();
+	/* TEXT SIZE and HIGH CONTRAST (pk_uilook.h): pct 100 = Normal, 120 = Large -- every glyph is drawn, measured and
+	 * spaced that much larger (line_h and ascent too, so layouts that ask see it); contrast pushes the colour of
+	 * every glyph toward white or black (pk_text_tint). Set once; applies to everything drawn after. */
+	void set_look(int pct, bool contrast);
+	int pct() const;
+	bool contrast() const;
+	/* draws with the line box's top-left at x,y; returns the pen x after it */
+	float draw(int face, float x, float y, const char *s, uint32_t rgba);
+	float width(int face, const char *s);
+	int line_h(int face) const;
+	int ascent(int face) const;
+	void draw_center(int face, float cx, float y, const char *s, uint32_t rgba);
+	void draw_right(int face, float xr, float y, const char *s, uint32_t rgba);
+	/* cut s so it fits max_w, ending in "..." when it was cut */
+	std::string fit(int face, const std::string &s, float max_w);
+	/* words wrapped to max_w, at most max_lines; returns the lines drawn */
+	int wrap(int face, float x, float y, float max_w, int max_lines, float line_gap, const std::string &s, uint32_t rgba);
+	/* where s breaks into lines of at most max_w (greedy): each line as a byte range of s, spaces at the ends left
+	 * out. A line breaks at a space, or between two characters written without spaces (pk_u8_can_break: never
+	 * before a closing mark such as the full stop of Japanese and Chinese, never after an opening bracket, never
+	 * inside a word of Latin letters), always between whole characters. A piece wider than max_w stays whole. */
+	std::vector<std::pair<size_t, size_t> > break_lines(int face, float max_w, const std::string &s);
+	struct Impl;
+private:
+	Impl *p_;
+};
+
+}  // namespace pk
+
+#endif

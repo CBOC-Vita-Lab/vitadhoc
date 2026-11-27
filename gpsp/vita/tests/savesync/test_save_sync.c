@@ -32,7 +32,7 @@ int main(void)
    char note[160];
    size_t i;
    snprintf(root, sizeof root, "/tmp/save_sync_test_%d", (int)getpid());
-   { char cmd[400]; snprintf(cmd, sizeof cmd, "rm -rf %s; mkdir -p %s/roms %s/ra", root, root, root); assert(system(cmd) == 0); }
+   { char cmd[1100]; snprintf(cmd, sizeof cmd, "rm -rf %s; mkdir -p %s/roms %s/ra", root, root, root); assert(system(cmd) == 0); }
    snprintf(save, sizeof save, "%s/roms/g.sav", root);
    snprintf(src, sizeof src, "%s/ra/g.srm", root);
    save_sync_init(root);
@@ -96,7 +96,7 @@ int main(void)
    assert(get(src, c, sizeof c) == 32768 && c[0] == 0x22);
    save_sync_set_enabled(1);
 
-   { char cmd[400]; snprintf(cmd, sizeof cmd, "rm -rf %s", root); (void)system(cmd); }
+   { char cmd[1100]; snprintf(cmd, sizeof cmd, "rm -rf %s", root); (void)system(cmd); }
    puts("save sync: ok");
    return 0;
 }

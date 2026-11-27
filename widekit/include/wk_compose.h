@@ -1,0 +1,193 @@
+/* widekit - MIT licence.  wk_compose: the margin compositor (RGB565).
+ *
+ * Inputs per frame: the centre picture, per-layer CANDIDATE margin strips
+ * (what the core drew from the ring / the learned map for that layer, at any
+ * distance - wk_compose only uses the first real[] pixels of each) and the
+ * wk_out decisions.  Output: the full wide picture.
+ *
+ *   base            flat backdrop colour per line when real backdrop layers
+ *                   continue there, else a SOFT EDGE (edge colours extended,
+ *                   vertically blurred, slightly darkened outwards)
+ *   backdrop layers drawn over the base for their real extent
+ *   level layers    drawn for their real extent; the outer fade_px pixels of
+ *                   that extent dissolve into what lies below (alpha ramp
+ *                   + ordered dither in RGB565), so unknown foreground reads
+ *                   as more of the same scene; optionally a flat SMEAR of the
+ *                   last real colours fades out for smear_px more pixels
+ *                   (never claimed as real: it is a blur, not a tile)
+ *   hysteresis      a region must be wanted for appear_frames in a row before
+ *                   it grows (grow_px per frame); it shrinks at once (never a
+ *                   wrong tile); a large shrink leaves a short ghost fade
+ *   HUD lines       centre untouched, margin = soft edge only
+ *
+ * PERIODIC CONTINUATION (cfg.period, needs wk_compose_in.inner): where the last
+ * three periods (8 or 16 px) of a level layer's own picture at a line, taken
+ * from the visible columns next to the edge plus the real margin run, repeat
+ * EXACTLY pixel for pixel and are opaque, and the same holds for every line
+ * below it down to the bottom of the view (terrain standing on the screen
+ * floor, e.g. a flat ground strip), the pattern is continued to the margin
+ * edge.  It is a prediction, never a certified tile: it is marked
+ * WK_PROV_PERIOD / WK_PROV_PFADE, appears only after being eligible for
+ * appear_frames, vanishes at once when not eligible, and is checked in
+ * hindsight: every predicted world column that later becomes real is compared
+ * with the real pixels; one mismatch switches the feature off for that layer
+ * for period_ban_frames.
+ *
+ * Strip layout: strip[layer][side] has `H` rows of `M` pixels, index d =
+ * distance from the view edge (d = 0 touches the centre).  Not thread safe
+ * per handle. */
+#ifndef WK_COMPOSE_H
+#define WK_COMPOSE_H
+
+#include "wk_types.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+enum { WK_FADE_ALPHA = 0, WK_FADE_STIPPLE = 1 };
+
+/* provenance byte written to wk_compose_in.prov: low nibble = what, high
+ * nibble = layer index for the layer kinds */
+enum { WK_PROV_CENTRE = 0, WK_PROV_BG = 1, WK_PROV_SOFT = 2, WK_PROV_BACKDROP = 3,
+       WK_PROV_LEVEL = 4, WK_PROV_FADE = 5, WK_PROV_GHOST = 6, WK_PROV_SMEAR = 7,
+       WK_PROV_PERIOD = 8,   /* provable-periodic continuation, full weight   */
+       WK_PROV_PFADE = 9,    /* ... partly faded                              */
+       WK_PROV_REVEAL = 11 };/* a lower layer's real pixel shown where a higher level layer is not known
+                                (cfg.reveal_prov; the pixel of the lower layer is real, the layer above it is
+                                missing: not a claim that the picture is complete here) */
+
+/* Widest inner strip (wk_compose_in.inner_n) the periodic detector uses. */
+#define WK_MAX_INNER 64
+
+typedef struct wk_compose_cfg {
+    int fade_px;        /* fade ramp length at the outer end of a real run (20) */
+    int fade_mode;      /* WK_FADE_*                                           */
+    int appear_frames;  /* frames a region must be stable before it grows (8)  */
+    int grow_px;        /* growth per frame once it may appear (2)             */
+    int ghost_frames;   /* length of the fade after a large shrink; 0 = off (3)*/
+    int ghost_min_px;   /* shrink that starts a ghost (12)                     */
+    int smear_px;       /* tail beyond a level layer's real run: its last real
+                           colours, flat and fading out; 0 = none (0, off:
+                           it reads as a smudge)                   */
+    int smear_alpha;    /* opacity (0..32) the fade settles at where the smear
+                           starts (14)                                        */
+    int soft_blur;      /* vertical blur radius in lines for the soft edge (16): a wide
+                           radius reads as an out-of-focus glow, a small one as
+                           horizontal streaks of whatever touches the edge   */
+    int soft_sample;    /* edge columns averaged for the soft edge (4)         */
+    int soft_darken;    /* % the soft edge darkens towards the screen edge (30)*/
+    uint16_t bg_default;/* flat backdrop colour when the caller gives none     */
+    int fg_fade_px;     /* >0: a level layer that is known for less than this many px on a line continues with its last known colour
+                           (in->tail_px) and fades out over this many px, alpha 32 -> 0, no dither: no hard edge where the
+                           foreground ends (0 = off)                                                  */
+    int reveal_prov;    /* 1: pixels of a layer lying beyond the extent of a higher level layer get WK_PROV_REVEAL (0) */
+    int period;         /* 1: continue provably periodic terrain beyond the
+                           trusted edge (see below); needs inner strips      */
+    int period_ban_frames; /* periodic continuation of a layer is switched off
+                           this long after hindsight showed a miss (300)     */
+    int soft_always;    /* 1: the base under the layers is always the soft edge (an
+                           adapter that feeds edge_px with a calm ambient colour
+                           wants no flat backdrop colour blocks) (0)         */
+} wk_compose_cfg;
+
+typedef struct wk_compose_in {
+    const wk_out *ana;
+    const uint16_t *centre;      /* view_w x view_h                            */
+    int centre_stride;           /* in pixels                                  */
+    const uint16_t *bg;          /* per line flat backdrop colour, or NULL     */
+    const uint16_t *cand[WK_MAX_LAYERS][2];  /* NULL = layer not provided      */
+    const uint8_t *opaque[WK_MAX_LAYERS][2]; /* 0 = transparent; NULL = opaque */
+    int norder;                  /* layers to draw, bottom to top              */
+    int order[WK_MAX_LAYERS];
+    uint16_t *out;               /* (view_w + 2M) x view_h                     */
+    int out_stride;
+    uint8_t *prov;               /* optional, same layout as out               */
+    /* optional, for periodic continuation: the layer's OWN visible pixels next
+     * to the view edge, `inner_n` (<= WK_MAX_INNER) per line, index e = 0 is the
+     * pixel just inside the edge, growing inwards; same row layout as cand */
+    const uint16_t *inner[WK_MAX_LAYERS][2];
+    const uint8_t *inner_opaque[WK_MAX_LAYERS][2];
+    int inner_n;
+    /* optional: the colours the soft edge samples, instead of the first / last soft_sample columns of `centre` (a core that
+     * knows its background apart from sprites passes background-only pixels: a sprite at the view edge must not smear into the
+     * soft edge).  edge_px[side][y * WK_EDGE_N + i], i = 0 the pixel at the view edge, growing inwards; NULL = from centre. */
+    const uint16_t *edge_px[2];
+    /* optional (cfg.fg_fade_px): per layer, side and line the layer's own colour at the view edge (the visible pixel next to the
+     * margin) and whether it is opaque there; used when the layer is not known at all beside the view on that line */
+    const uint16_t *tail_px[WK_MAX_LAYERS][2];   /* [y] */
+    const uint8_t *tail_op[WK_MAX_LAYERS][2];    /* [y] */
+    /* optional (0 = as before).  side_skip[s]: the caller will not show this side's margin of this frame (it shows
+     * something of its own there): nothing is written to out / prov for that side and its cand / opaque strips are not
+     * read; the hysteresis (pass A, the ghost timers) advances exactly as if it had been drawn.  The one thing that is
+     * not kept is the "previous row" a ghost fade blends from: a ghost in the first ghost_frames frames after a skipped
+     * frame blends from the last row that was drawn. */
+    uint8_t side_skip[2];
+    /* 1: the left margin is written by distance (out[y][d], d = 0 next to the picture) instead of in screen order; the
+     * caller turns it round (wk_rev16 / wk_rev8) when it has finished working on it */
+    int left_by_distance;
+} wk_compose_in;
+
+#define WK_EDGE_N 8     /* pixels per line and side of wk_compose_in.edge_px (>= soft_sample, which is at most 8) */
+
+typedef struct wk_compose wk_compose;
+
+void wk_compose_cfg_default(wk_compose_cfg *cfg);
+wk_compose *wk_compose_create(const wk_compose_cfg *cfg, int view_w, int view_h, int margin);
+void wk_compose_destroy(wk_compose *c);
+void wk_compose_reset(wk_compose *c);   /* forget hysteresis (new game/session) */
+void wk_compose_frame(wk_compose *c, const wk_compose_in *in);
+
+/* The same frame in three steps, so that the lines can be shared between threads:
+ *   wk_compose_begin   the per frame part (hysteresis of every line, periodic continuation); one thread
+ *   wk_compose_lines   lines y0 .. y1 - 1; calls for disjoint line ranges may run at the same time, each with its
+ *                      own scratch (NULL = the handle's own: one caller at a time)
+ *   wk_compose_end     one thread, after every line
+ * wk_compose_frame is begin + lines(0, H, NULL) + end.  Output does not depend on how the lines are split. */
+typedef struct wk_compose_scratch wk_compose_scratch;
+wk_compose_scratch *wk_compose_scratch_create(const wk_compose *c);
+void wk_compose_scratch_destroy(wk_compose_scratch *s);
+void wk_compose_begin(wk_compose *c, const wk_compose_in *in);
+void wk_compose_lines(wk_compose *c, const wk_compose_in *in, int y0, int y1, wk_compose_scratch *s);
+void wk_compose_end(wk_compose *c);
+
+/* The blend kernel, exposed for tests: for i < n,
+ *   dst = (src * w + dst * (32 - w) + dither) >> 5   per 565 channel,
+ * w in 0..32, dither in 0..31.  The _scalar version is the reference; the
+ * plain one uses NEON when compiled with __ARM_NEON.  Results are identical. */
+void wk_blend_row_scalar(uint16_t *dst, const uint16_t *src, const uint8_t *w,
+                         const uint8_t *dither, int n);
+void wk_blend_row(uint16_t *dst, const uint16_t *src, const uint8_t *w,
+                  const uint8_t *dither, int n);
+int wk_have_neon(void);
+
+/* Row kernels (8 pixels per step with NEON or SSE2, else plain C; the _scalar versions are the definitions and the
+ * results are identical; checked by the tests and, for NEON, under qemu-arm).
+ *   wk_soft_row      dst[d] = the soft edge / ambient colour of distance d: per channel min(255, ((e * f[d]) >> 8) + (th[d] >> 1))
+ *                    (green: th[d] >> 2), packed to 565; e 0..255, f 0..256, th 0..15
+ *   wk_copy_masked   dst[i] = src[i] where op[i] != 0
+ *   wk_fill_masked8  dst[i] = v where op[i] != 0 (op NULL: everywhere)
+ *   wk_or_nz8        dst[i] |= (src[i] != 0)
+ *   wk_nz8           dst[i] = (src[i] != 0)
+ *   wk_rev16 / 8     dst[i] = src[n - 1 - i] (dst and src do not overlap); wk_rev16_inplace / wk_rev8_inplace turn a row round
+ *   wk_mix565_row    dst[i] = a + (b - a) * w / 32 per 565 channel with a = dst[i], b = amb[i] (C division: towards zero), w 0..32 */
+void wk_soft_row(uint16_t *dst, int n, int e0, int e1, int e2, const uint16_t *f, const uint8_t *th);
+void wk_soft_row_scalar(uint16_t *dst, int n, int e0, int e1, int e2, const uint16_t *f, const uint8_t *th);
+void wk_copy_masked(uint16_t *dst, const uint16_t *src, const uint8_t *op, int n);
+void wk_fill_masked8(uint8_t *dst, const uint8_t *op, uint8_t v, int n);
+void wk_or_nz8(uint8_t *dst, const uint8_t *src, int n);
+void wk_nz8(uint8_t *dst, const uint8_t *src, int n);
+void wk_rev16(uint16_t *dst, const uint16_t *src, int n);
+void wk_rev8(uint8_t *dst, const uint8_t *src, int n);
+void wk_rev16_inplace(uint16_t *p, int n);
+void wk_rev8_inplace(uint8_t *p, int n);
+void wk_mix565_row(uint16_t *dst, const uint16_t *amb, int w, int n);
+void wk_mix565_row_scalar(uint16_t *dst, const uint16_t *amb, int w, int n);
+
+/* How often hindsight switched periodic continuation off (diagnostics). */
+int wk_compose_period_bans(const wk_compose *c);
+
+#ifdef __cplusplus
+}
+#endif
+#endif

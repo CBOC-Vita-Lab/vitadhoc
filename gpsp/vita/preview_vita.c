@@ -15,6 +15,8 @@
 #define PV_STORE(x, value) __atomic_store_n(&(x), (value), __ATOMIC_RELEASE)
 
 enum { PV_FREE = 0, PV_WRITING, PV_READY, PV_READING };
+enum { PR_FREE = 0, PR_BUSY = 1 };
+#define PV_REQ_POOL 4
 typedef struct pv_request
 {
    uint32_t token;
@@ -27,7 +29,10 @@ typedef struct pv_slot
    uint16_t pixels[CLIP_W_MAX * CLIP_H_MAX];
 } pv_slot;
 
-static pv_request *g_pending;
+/* Static request pool avoids malloc/free on the UI thread during navigation. */
+static pv_request g_reqs[PV_REQ_POOL];
+static int g_req_state[PV_REQ_POOL];
+static int g_pending_idx = -1;
 static pv_slot g_slots[PV_SLOTS];
 static uint32_t g_wanted;
 static uint32_t g_restart;
@@ -131,24 +136,27 @@ static int pv_claim(void)
 
 static void pv_run(void)
 {
-   pv_request *job = NULL;
+   int job_idx = -1;
    clip_player *player = NULL;
    unsigned sequence = 0;
    int terminal = 0;
    while (!PV_LOAD(g_quit))
    {
-      pv_request *next = __atomic_exchange_n(&g_pending, NULL, __ATOMIC_ACQ_REL);
+      int next_idx = __atomic_exchange_n(&g_pending_idx, -1, __ATOMIC_ACQ_REL);
+      pv_request *job = job_idx >= 0 ? &g_reqs[job_idx] : NULL;
       int slot, ended = 0, bad = 0;
       unsigned ticks = 0;
       const uint16_t *pixels = NULL;
       pv_slot *result;
-      if (next || (job && job->token != PV_LOAD(g_wanted)))
+      if (next_idx >= 0 || (job && job->token != PV_LOAD(g_wanted)))
       {
          pv_phase(CLIP_DIAG_CLOSE, job ? job->token : 0);
          clip_close(player);
          player = NULL;
-         free(job);
-         job = next;
+         if (job_idx >= 0)
+            PV_STORE(g_req_state[job_idx], PR_FREE);
+         job_idx = next_idx;
+         job = job_idx >= 0 ? &g_reqs[job_idx] : NULL;
          sequence = 0;
          terminal = 0;
          if (job && job->token == PV_LOAD(g_wanted))
@@ -237,8 +245,13 @@ static void pv_run(void)
          terminal = 1;
    }
    clip_close(player);
-   free(job);
-   free(__atomic_exchange_n(&g_pending, NULL, __ATOMIC_ACQ_REL));
+   if (job_idx >= 0)
+      PV_STORE(g_req_state[job_idx], PR_FREE);
+   {
+      int rem = __atomic_exchange_n(&g_pending_idx, -1, __ATOMIC_ACQ_REL);
+      if (rem >= 0)
+         PV_STORE(g_req_state[rem], PR_FREE);
+   }
    PV_STORE(g_done, 1);
 }
 
@@ -292,10 +305,12 @@ fail:
 
 void clip_preview_cancel(uint32_t token)
 {
-   int i;
+   int i, prev;
    PV_STORE(g_wanted, token);
    PV_STORE(g_restart, 0);
-   free(__atomic_exchange_n(&g_pending, NULL, __ATOMIC_ACQ_REL));
+   prev = __atomic_exchange_n(&g_pending_idx, -1, __ATOMIC_ACQ_REL);
+   if (prev >= 0)
+      PV_STORE(g_req_state[prev], PR_FREE);
    for (i = 0; i < PV_SLOTS; i++)
    {
       int ready = PV_READY;
@@ -317,17 +332,29 @@ int clip_preview_restart(uint32_t token)
 
 int clip_preview_request(uint32_t token, const char *path)
 {
-   pv_request *request;
+   int idx, prev;
    size_t n = path ? strlen(path) : 0;
    clip_preview_cancel(token);
    if (!token || !n || n >= PV_PATH_MAX || clip_preview_start() != 0)
       return -1;
-   request = (pv_request *)malloc(sizeof(*request));
-   if (!request)
-      return -1;
-   request->token = token;
-   memcpy(request->path, path, n + 1);
-   free(__atomic_exchange_n(&g_pending, request, __ATOMIC_ACQ_REL));
+   idx = __atomic_exchange_n(&g_pending_idx, -1, __ATOMIC_ACQ_REL);
+   if (idx < 0)
+   {
+      for (int i = 0; i < PV_REQ_POOL; i++)
+      {
+         int free_st = PR_FREE;
+         if (__atomic_compare_exchange_n(&g_req_state[i], &free_st, PR_BUSY, 0,
+                                         __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+         { idx = i; break; }
+      }
+      if (idx < 0)
+         return -1;
+   }
+   g_reqs[idx].token = token;
+   memcpy(g_reqs[idx].path, path, n + 1);
+   prev = __atomic_exchange_n(&g_pending_idx, idx, __ATOMIC_ACQ_REL);
+   if (prev >= 0)
+      PV_STORE(g_req_state[prev], PR_FREE);
    pv_wake();
    return 0;
 }

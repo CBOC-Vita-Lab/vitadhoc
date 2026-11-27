@@ -577,15 +577,21 @@ static const u8 gba_header_logo[156] = {
    (v_flag << 28) | (reg[REG_CPSR] & 0xFF)                                    \
 
 /* Palette RAM and OAM: 1 KiB each, mirrored, with no 32 KiB read page in
- * memory_map_read -- an instruction there is read with read_memory. */
-#define pc_unpaged(pc) ((((pc) >> 24) & 0xF) == 0x5 || (((pc) >> 24) & 0xF) == 0x7)
+ * memory_map_read -- an instruction there is read with read_memory.  The I/O
+ * registers (1 KiB too) are mapped as a page, but an instruction fetch read the
+ * whole 32 KiB past them: it is unpaged as well (found by the state fuzzer).  The
+ * SRAM region (0xE, 0xF) has no read page either: a fetch there paged in (and evicted)
+ * a ROM page for every instruction, so a frame took minutes. */
+#define pc_unpaged(pc) ((((pc) >> 24) & 0xF) == 0x4 || (((pc) >> 24) & 0xF) == 0x5 || (((pc) >> 24) & 0xF) == 0x7 || \
+                        (((pc) >> 24) & 0xF) >= 0xE)
 
 #define check_pc_region()                                                     \
   new_pc_region = (reg[REG_PC] >> 15) & 0x1FFF;      /* bits 28-31 unused */   \
   if(new_pc_region != pc_region)                                              \
   {                                                                           \
     pc_region = new_pc_region;                                                \
-    pc_address_block = memory_map_read[new_pc_region];                        \
+    pc_address_block = pc_unpaged(reg[REG_PC]) ? NULL                         \
+                       : memory_map_read[new_pc_region];                      \
     touch_gamepak_page(pc_region);                                            \
                                                                               \
     /* palette RAM / OAM have no read page: fetched with read_memory */      \
@@ -922,7 +928,7 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
 #define load_aligned32(address, dest)                                         \
 {                                                                             \
   u32 _address = address;                                                     \
-  u8 *map = memory_map_read[_address >> 15];                                  \
+  u8 *map = (_address < 0x10000000) ? memory_map_read[_address >> 15] : NULL; \
   bool _io_handler = ((_address >> 24) == 0x04) &&                            \
                      io_read_requires_handler(_address);                       \
   if(_address < 0x10000000)                                                   \
@@ -1067,7 +1073,10 @@ inline cpu_alert_type exec_arm_block_mem(u32 rn, u32 reglist, s32 &cycles_remain
       if (mode == AccLoad) {
         load_aligned32(address, reg[i]);
       } else {
-        store_aligned32(address, (i == REG_PC) ? reg[REG_PC] + 4 : reg[i]);
+        /* STM stores R15 as the STM's address + 12 (ARM7TDMI; reg[REG_PC]
+         * is the address + 4 here), the same as STR (arm_access_memory) and
+         * as the x86 and ARM dynarec back ends already do. */
+        store_aligned32(address, (i == REG_PC) ? reg[REG_PC] + 8 : reg[i]);
       }
       address += 4;
     }
@@ -1394,7 +1403,7 @@ inline cpu_alert_type exec_thumb_block_mem(u32 rn, u32 reglist, s32 &cycles_rema
   {                                                                           \
     thumb_pc_offset(2);                                                       \
   }                                                                           \
-  cycles_remaining -= ws_cyc_nseq[reg[REG_PC] >> 24][0];                      \
+  cycles_remaining -= ws_cyc_nseq[(reg[REG_PC] >> 24) & 0xF][0];                      \
 }                                                                             \
 
 // When a mode change occurs from non-FIQ to non-FIQ retire the current
@@ -1534,7 +1543,9 @@ cpu_alert_type flag_interrupt(irq_type irq_raised)
 // When switching modes set spsr[new_mode] to cpsr. Modifying PC as the
 // target of a data proc instruction will set cpsr to spsr[cpu_mode].
 u32 reg[64];
-u32 spsr[6];
+/* 16 entries, indexed by CPSR mode bits & 0xF: an invalid mode (6..15, which a program can write with MSR) used to index
+ * past the 6 real ones.  Only the first 6 are saved in a state. */
+u32 spsr[16];
 u32 reg_mode[7][7];
 
 u8 *memory_map_read [8 * 1024];
@@ -1553,7 +1564,7 @@ static u32 execute_arm_internal(u32 cycles, bool vram_only)
   u32 condition;
   u32 n_flag, z_flag, c_flag, v_flag;
   u32 pc_region = (reg[REG_PC] >> 15) & 0x1FFF;   /* the bus ignores bits 28-31 */
-  u8 *pc_address_block = memory_map_read[pc_region];
+  u8 *pc_address_block = pc_unpaged(reg[REG_PC]) ? NULL : memory_map_read[pc_region];
   u32 new_pc_region;
   s32 cycles_remaining;
   u32 update_ret;
@@ -2179,7 +2190,7 @@ arm_loop:
                    {
                       reg[REG_PC] = src;
                    }
-                   cycles_remaining -= ws_cyc_nseq[reg[REG_PC] >> 24][1];
+                   cycles_remaining -= ws_cyc_nseq[(reg[REG_PC] >> 24) & 0xF][1];
                 }
                 else
                 {
@@ -3098,7 +3109,7 @@ arm_loop:
                 /* B offset */
                 arm_decode_branch();
                 reg[REG_PC] += offset + 8;
-                cycles_remaining -= ws_cyc_nseq[reg[REG_PC] >> 24][1];
+                cycles_remaining -= ws_cyc_nseq[(reg[REG_PC] >> 24) & 0xF][1];
                 break;
              }
 
@@ -3108,7 +3119,7 @@ arm_loop:
                 arm_decode_branch();
                 reg[REG_LR] = reg[REG_PC] + 4;
                 reg[REG_PC] += offset + 8;
-                cycles_remaining -= ws_cyc_nseq[reg[REG_PC] >> 24][1];
+                cycles_remaining -= ws_cyc_nseq[(reg[REG_PC] >> 24) & 0xF][1];
                 break;
              }
 
@@ -3590,7 +3601,7 @@ thumb_loop:
                 thumb_decode_branch();
                 s32 br_offset = ((s32)(offset << 21) >> 20) + 4;
                 reg[REG_PC] += br_offset;
-                cycles_remaining -= ws_cyc_nseq[reg[REG_PC] >> 24][0];
+                cycles_remaining -= ws_cyc_nseq[(reg[REG_PC] >> 24) & 0xF][0];
                 break;
              }
 
@@ -3611,7 +3622,7 @@ thumb_loop:
                 u32 newpc = reg[REG_LR] + (offset * 2);
                 reg[REG_LR] = newlr;
                 reg[REG_PC] = newpc;
-                cycles_remaining -= ws_cyc_nseq[newpc >> 24][0];
+                cycles_remaining -= ws_cyc_nseq[(newpc >> 24) & 0xF][0];
                 break;
              }
        }
@@ -3690,6 +3701,16 @@ void init_cpu(void)
     reg[REG_PC] = 0x08000000;
     reg[REG_CPSR] = 0x0000001F;   // system mode
     reg[CPU_MODE] = MODE_SYSTEM;
+    /* Start on the scanline where the BIOS hands over to the cartridge, not
+     * on line 0: 0x7E, as mGBA's GBAVideoSkipBIOS (a real BIOS run reaches
+     * 0x08000000 on line 127).  From line 0 the first VBlank came ~126 lines
+     * early: Polarium Advance enables its VBlank IRQ and only then copies its
+     * sound driver into IWRAM, so the early VBlank ran the driver first, called
+     * zeroed IWRAM and the game derailed in its first frames.  init_memory has
+     * just cleared the I/O block: reset_gba runs it before init_cpu. */
+#ifndef GPSP_BOOT_LINE0   /* (test builds: -DGPSP_BOOT_LINE0 starts on line 0, as before) */
+    write_ioreg(REG_VCOUNT, 0x7E);
+#endif
   } else {
     reg[REG_SP] = 0x03007F00;
     reg[REG_PC] = 0x00000000;
@@ -3747,4 +3768,17 @@ unsigned cpu_write_savestate(u8 *dst)
 
   bson_finish_document(dst, wbptr);
   return (unsigned int)(dst - startp);
+}
+
+void gpsp_regblock_expect(const char *arch, const char *what, const void *hi,
+ const void *lo, long expect)
+{
+  long got = (long)((const char *)hi - (const char *)lo);
+  if (got != expect) {
+    fprintf(stderr, "FATAL: %s dynarec register block mismatch: %s = %ld, "
+            "the stub/emitter expects %ld (cpu.h array sizes changed without "
+            "the *_stub.S layout?)\n", arch, what, got, expect);
+    fflush(stderr);
+    abort();
+  }
 }

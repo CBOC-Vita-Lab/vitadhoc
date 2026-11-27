@@ -1,0 +1,67 @@
+VitAdhoc online service: deploy steps (the owner, or the owner's Codex, runs these; NO agent does)
+===============================================================================================
+
+What gets created: one Worker "vitadhoc-online" with the custom domain vitadhoc.psvita.dev and one Durable Object (SQLite). Nothing else on the
+account or the zone is changed: the other services on psvita.dev keep their Workers, their objects, their hostnames and their rules.
+
+0. Before the first deploy (once)
+   - The zone psvita.dev is active on the SAME Cloudflare account, and has no DNS record named "vitadhoc" (the deploy creates it).
+   - The shared rate-limiting rule of the zone exists (ref psvita-shared-ratelimit, 100 requests / 10 s per IP, covering /v1/*): the Galaxy zone
+     script creates it. Free plan: ONE rate-limiting rule for the whole zone; this service adds none.
+   - Bot Fight Mode is OFF on psvita.dev (it cannot be skipped by rules and may challenge the game's API calls).
+   - Node 22.5 or newer; `npx wrangler` (wrangler 4) works in this folder; `npx wrangler login` done (browser, the owner's account).
+   - A Cloudflare Realtime TURN key: dashboard > Realtime > TURN > Create. Keep the key id and the API token in two files, one line each, mode 600:
+         ~/.vad-turn-key-id          ~/.vad-turn-token
+     (Without them the service runs and answers 503 relay_unavailable on route 6: direct links still work.)
+   - The account id (32 hex characters; dashboard > any zone > Overview > right column).
+   - Cloudflare Realtime TURN is free to 1,000 GB of egress a month and billed after that ($0.05 a GB). The service counts every relay credential it mints
+     (100 a day, 500,000 MB a month at an estimated 50 MB each: README "Quota arithmetic: Cloudflare Realtime TURN"), but it cannot see bytes, and a
+     modified client can pull far more than the estimate through one credential. So, BEFORE the release, do ONE of these (cheapest first):
+       a. Keep the account without a payment method for Realtime (then the relay stops for everybody at 1,000 GB instead of costing money), or
+       b. Set a billing notification: dashboard > Manage Account > Billing > Notifications > Add > "Usage-based billing" (Cloudflare Realtime / Calls),
+          at about 600 GB and again at 900 GB (the exact menu names change; look for usage-based billing notifications). Look at dashboard > Realtime
+          > TURN > Analytics once a week for the first month.
+       c. (optional, can be added later) let the Worker read the real egress and stop at 700 GB: create an API token with ONLY "Account Analytics: Read"
+          (a different token from the TURN key's), then
+              npx wrangler secret put TURN_USAGE_API_TOKEN          (paste the token)
+          and in wrangler.toml set TURN_USAGE_ACCOUNT_ID = "<ACCOUNT_ID>" (and TURN_USAGE_BUDGET_GB if 700 is not right), redeploy. The query was written from
+          Cloudflare's documentation and has only run against a test stub: after the first deploy mint one credential (smoke test with --relay) and check
+          that GET .../v1/info still says relay true; if the read cannot work the service ignores it (the estimate guards stay), so a wrong token fails safe.
+
+1. Look at the plan (contacts nothing)
+       cd online/service
+       bash scripts/deploy-vitadhoc-online.sh --account-id <ACCOUNT_ID> --turn-key-id-file ~/.vad-turn-key-id --turn-token-file ~/.vad-turn-token --print-plan
+
+2. Deploy (runs the local test suite first, a dry run, refuses any address that is not vitadhoc.psvita.dev, deploys, sets the two secrets on stdin,
+   then checks the live service; the replies are kept in deploy-logs/<time>/; the secrets are never printed or written)
+       bash scripts/deploy-vitadhoc-online.sh --account-id <ACCOUNT_ID> --turn-key-id-file ~/.vad-turn-key-id --turn-token-file ~/.vad-turn-token
+   The first time, the custom domain needs DNS and a certificate: the script asks again every 10 s for up to 10 minutes while there is no answer at all.
+   Re-deploying after a change of src/ or wrangler.toml: the same command without the two secret options (the secrets stay).
+
+3. The zone's one WAF rule (blocks every path on vitadhoc.psvita.dev except /v1/* and the certificate-validation paths; touches no other host and no
+   rate-limiting rule; stops if the shared rate limit is missing)
+   The token: dashboard > My Profile > API Tokens > Create Custom Token: Zone > Zone > Read and Zone > Zone WAF > Edit, zone resources: psvita.dev ONLY.
+   Save it as one line in ~/.cf-psvita-token (mode 600).
+       bash scripts/setup-vitadhoc-zone.sh --account-id <ACCOUNT_ID> --token-file ~/.cf-psvita-token --print-plan
+       bash scripts/setup-vitadhoc-zone.sh --account-id <ACCOUNT_ID> --token-file ~/.cf-psvita-token
+       bash scripts/setup-vitadhoc-zone.sh --account-id <ACCOUNT_ID> --token-file ~/.cf-psvita-token --verify-only
+
+4. Smoke test the live service (a whole session with two fake members; with --relay it also mints ONE real relay credential: run it once after the
+   TURN secrets are set)
+       node scripts/smoke.mjs https://vitadhoc.psvita.dev --relay
+   Expected: "smoke OK". The deploy script's own live checks (step 2) also read /v1/info, one unknown room (404) and "/" (403 from the WAF rule).
+
+5. Operating it
+   - Switch it off without a deploy: dashboard > Workers > vitadhoc-online > Settings > Variables: KILL_SWITCH = all (or rooms, or relay), optional
+     MAINTENANCE_MESSAGE; clear it to switch back on. Route 8 (close) and /v1/info stay up.
+   - Raise MIN_APP_VERSION / LATEST_APP_VERSION (wrangler.toml, then step 2 again) when an app version must no longer be allowed online.
+   - Look at the day's numbers: GET https://vitadhoc.psvita.dev/v1/info says only busy true / false. The counters live in the object's `settings`
+     table (budget_day, turn_day, turn_month = credentials minted, turn_used, turn_usage, mint_day; the tables misses and mints hold salted fingerprints for the day); the dashboard's Workers and Durable Objects pages show requests and storage.
+   - Rollback of the zone rule: bash scripts/setup-vitadhoc-zone.sh --account-id <ACCOUNT_ID> --token-file ~/.cf-psvita-token --remove
+     (deletes only our rule and never the shared rate limit). Removing the Worker itself: dashboard > Workers > vitadhoc-online > Settings > Delete
+     (this deletes its object and every room with it); nothing else on the account is affected.
+
+6. Rules these steps keep
+   - Never against the other services' names (smg-online, msc-online, their hostnames): the deploy script refuses a config that mentions them.
+   - The Cloudflare account id is pinned (exported for every wrangler call and checked against `wrangler whoami`); secrets travel on stdin only.
+   - Nothing here touches the zone's rate-limiting rule.

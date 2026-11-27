@@ -101,6 +101,22 @@ int main(void)
                                 sizeof(sh), "/r/EMERALD.ST0", 5) == 0 &&
          !strcmp(st, "/r/EMERALD.ST4"));
 
+   /* 1b. the .meta beside it goes too */
+   {
+      char mt[PSP_FILE_PATH_CAP + 8];
+      CHECK(psp_state_delete_paths_m(st, sizeof(st), th, sizeof(th), sh,
+                                     sizeof(sh), mt, sizeof(mt),
+                                     "/r/Ruby.st0", 3) == 0 &&
+            !strcmp(mt, "/r/Ruby.st2.meta") && !strcmp(st, "/r/Ruby.st2"));
+      CHECK(psp_state_delete_paths_m(st, sizeof(st), th, sizeof(th), sh,
+                                     sizeof(sh), mt, sizeof(mt),
+                                     "/r/Ruby.gba", 1) == -1 &&
+            mt[0] == '\0' && st[0] == '\0');
+      CHECK(psp_state_delete_paths_m(st, sizeof(st), th, sizeof(th), sh,
+                                     sizeof(sh), mt, 14, "/r/Ruby.st0", 3) == -1 &&
+            mt[0] == '\0' && st[0] == '\0' && th[0] == '\0' && sh[0] == '\0');
+   }
+
    /* 2. refusals leave both outputs empty */
    {
       static const char *bad[] = {
@@ -117,7 +133,8 @@ int main(void)
                                       sizeof(sh), bad[i], 1) == -1);
          CHECK(st[0] == '\0' && th[0] == '\0' && sh[0] == '\0');
       }
-      for (slot = 0; slot < 12; slot += (slot == 0 ? 6 : 1))
+      /* (ten slots since 1.2: 0 and 11.. are out of range) */
+      for (slot = 0; slot < 14; slot += (slot == 0 ? 11 : 1))
       {
          strcpy(st, "junk");
          strcpy(sh, "junk");
@@ -164,7 +181,7 @@ int main(void)
          continue;
       }
       ln = strlen(in);
-      CHECK(slot >= 1 && slot <= 5 && strlen(st) == ln);
+      CHECK(slot >= 1 && slot <= PSP_STATE_SLOT_COUNT && strlen(st) == ln);
       CHECK(memcmp(st, in, ln - 1) == 0 && st[ln - 1] == (char)('0' + slot - 1));
       CHECK(st[ln - 4] == '.' && (st[ln - 3] | 0x20) == 's' &&
             (st[ln - 2] | 0x20) == 't');
@@ -236,9 +253,12 @@ int main(void)
          CHECK(hdr[k] == 0);
       psp_state_shot_header(hdr, 160, 144);
       CHECK(psp_state_shot_check(hdr, &w, &h) == 0 && w == 160 && h == 144);
-      psp_state_shot_header(hdr, 241, 160);
+      /* (1.4: up to 256 x 240, a NES picture) */
+      psp_state_shot_header(hdr, 256, 240);
+      CHECK(psp_state_shot_check(hdr, &w, &h) == 0 && w == 256 && h == 240);
+      psp_state_shot_header(hdr, 257, 160);
       CHECK(psp_state_shot_check(hdr, &w, &h) == -1);
-      psp_state_shot_header(hdr, 240, 161);
+      psp_state_shot_header(hdr, 240, 241);
       CHECK(psp_state_shot_check(hdr, &w, &h) == -1);
       psp_state_shot_header(hdr, 0, 160);
       CHECK(psp_state_shot_check(hdr, &w, &h) == -1);

@@ -1,0 +1,157 @@
+/* Copyright (c) 2026 CBOC-Vita contributors.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
+ * fe_host.c's Game Boy path, reused for the NES.  Included by fe_host.c only,
+ * after gbcore.h: every gbcore_* call it makes becomes a gbmux_* call, which
+ * goes to the NES core (nescore.h) when the machine is the NES one and to the
+ * real gbcore_* otherwise.  Nothing else sees the macros, and the GB link
+ * code (fe_gblink.c, gbcore_dual.c) keeps calling gbcore_* directly.
+ *
+ * With no NES game running every function is one pointer compare and the
+ * real call: the GBA and GB paths behave exactly as before. */
+#ifndef GBADHOC_GBCORE_MUX_H
+#define GBADHOC_GBCORE_MUX_H
+
+#include "../gbcore/gbcore.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+int gbmux_is_nes(const gbcore_t *core);
+const char *gbmux_nes_error(void);
+void gbmux_nes_system_dir(const char *dir);
+/* The NES core's own numbers (fps, region) for the machine, if it is one. */
+double gbmux_fps(const gbcore_t *core);
+/* The running NES game's frame rate (60.0988 NTSC, 50.007 PAL), 0 with none. */
+double gbmux_nes_fps(void);
+/* A cheat list for the NES core: codes joined by '+'. */
+int gbmux_nes_cheats(const char *codes);
+int gbmux_nes_save_dirty(const gbcore_t *core);
+
+/* The Accurate Game Boy core (Gambatte, gbcore/gambatte_host.h), through the same path.  Settings > Game Boy core
+ * chooses it for the next Game Boy / Game Boy Color game (gbmux_set_gb_accurate before gbmux_create); a cartridge it
+ * cannot run (Game Boy Camera, MBC6, MBC7, TAMA5, MMM01), and a Super Game Boy game under the Super Game Boy palette,
+ * run on TGB Dual instead (gbmux_gb_fallback_take says so once).  Link play, the Camera and the Super Game Boy border
+ * stay TGB Dual's: only gbcore_* calls reach it, never the machine of a session. */
+void gbmux_set_gb_accurate(int on);
+int gbmux_gb_accurate_chosen(void);
+int gbmux_is_gambatte(const gbcore_t *core);
+int gbmux_gambatte_running(void);
+/* 1, once, after a create that wanted Gambatte and got TGB Dual */
+int gbmux_gb_fallback_take(void);
+/* 1, once, after a state load that met the other core's image */
+int gbmux_state_other_take(void);
+/* gbcore_set_palette / _palette_preview / _set_color_correction / _set_wallclock, for both cores */
+void gbmux_set_palette(unsigned palette);
+int gbmux_palette_preview(unsigned palette, uint16_t rgb565[12]);
+void gbmux_set_color_correction(int on);
+void gbmux_set_wallclock(time_t (*wallclock)(void));
+
+/* The WonderSwan machine (wscore.h), through the same path. */
+int gbmux_is_ws(const gbcore_t *core);
+/* the console the machine is: FE_CONSOLE_NES / _WSWAN, else -1 (a GB one) */
+int gbmux_other_console(const gbcore_t *core);
+/* the error of the last NES or WonderSwan create */
+const char *gbmux_error(void);
+/* Cheat codes for the NES or WonderSwan machine (joined by '+'). */
+int gbmux_cheats_text(const char *codes);
+/* 1 when the machine's own battery data changed (NES and WonderSwan) */
+int gbmux_save_dirty(const gbcore_t *core);
+/* The rate fe_host runs the machine's frames at (one per display refresh):
+ * a 50 Hz NES game then runs 5 of 6 (default 59.94). */
+void gbmux_set_display_rate(double hz);
+/* A 50 Hz NES game: 1 = Smooth 50 Hz (the sixth refresh's frame runs one refresh early and shows mixed with the one before it;
+ * pk_palsmooth.h), 0 = True 50 Hz (that refresh shows the last picture again). */
+void gbmux_set_pal_smooth(int on);
+
+gbcore_t *gbmux_create(const char *rom_path, const void *rom_data,
+                       size_t rom_size, fe_console_t console,
+                       unsigned audio_rate, const gbcore_callbacks_t *cb);
+int gbmux_run_frame(gbcore_t *core, uint16_t buttons);
+void gbmux_set_skip_render(gbcore_t *core, int skip);
+void gbmux_shutdown(gbcore_t *core);
+unsigned gbmux_sample_rate(const gbcore_t *core);
+unsigned gbmux_frame_width(const gbcore_t *core);
+unsigned gbmux_frame_height(const gbcore_t *core);
+int gbmux_rom_title(gbcore_t *core, char *dst, size_t cap);
+size_t gbmux_save_ram_size(gbcore_t *core);
+size_t gbmux_cart_ram_size(gbcore_t *core);
+int gbmux_save_ram_read(gbcore_t *core, void *dst, size_t cap);
+int gbmux_save_ram_write(gbcore_t *core, const void *src, size_t size);
+size_t gbmux_state_size(gbcore_t *core);
+long gbmux_state_save(gbcore_t *core, void *dst, size_t cap);
+int gbmux_state_load(gbcore_t *core, const void *src, size_t size);
+/* Quick response (gbcore.h gbcore_ahead_*): the same three calls for the machine, whichever it is */
+size_t gbmux_ahead_size(gbcore_t *core);
+long gbmux_ahead_save(gbcore_t *core, void *dst, size_t cap);
+int gbmux_ahead_load(gbcore_t *core, const void *src, size_t size);
+void gbmux_set_quiet(gbcore_t *core, int quiet);
+int gbmux_has_tilt(gbcore_t *core);
+unsigned gbmux_sgb_border(gbcore_t *core, const uint16_t **pixels);
+size_t gbmux_sgb_border_save(gbcore_t *core, void *buf, size_t cap);
+int gbmux_sgb_border_load(gbcore_t *core, const void *buf, size_t n);
+void gbmux_set_tilt(gbcore_t *core, uint32_t x_y);
+int gbmux_has_camera(gbcore_t *core);
+void gbmux_set_camera_image(gbcore_t *core, const uint8_t *grey_128x112);
+unsigned gbmux_camera_requests(gbcore_t *core);
+uint32_t gbmux_ra_read(gbcore_t *core, uint32_t addr, uint8_t *out, uint32_t len);
+int gbmux_peek(gbcore_t *core, uint16_t addr, void *out, unsigned len);
+int gbmux_poke(gbcore_t *core, uint16_t addr, const void *data, unsigned len);
+int gbmux_cheats_set(gbcore_t *core, const gbcore_cheat_t *codes, unsigned count);
+
+/* The two-player link (frontend-common/fe_padpair.h): the NES and the
+ * WonderSwan machine, both players on it.  gbmux_pad_ok = this is such a
+ * machine and the build has the calls. */
+int gbmux_pad_ok(const gbcore_t *core);
+uint16_t gbmux_pad_local(gbcore_t *core, uint16_t gb_buttons);
+int gbmux_pad_run(gbcore_t *core, uint16_t pad1, uint16_t pad2);
+int gbmux_pad_due(gbcore_t *core);
+void gbmux_pad_present(gbcore_t *core, int ran);
+void gbmux_pad_pin(gbcore_t *core, int on);
+void gbmux_pad_clock(gbcore_t *core, int64_t seed);
+uint32_t gbmux_pad_save_crc(gbcore_t *core);
+int gbmux_pad_game_id(const gbcore_t *core, char out[9]);
+
+#ifdef GBADHOC_GBMUX
+#define gbcore_create gbmux_create
+#define gbcore_run_frame gbmux_run_frame
+#define gbcore_set_skip_render gbmux_set_skip_render
+#define gbcore_shutdown gbmux_shutdown
+#define gbcore_sample_rate gbmux_sample_rate
+#define gbcore_frame_width gbmux_frame_width
+#define gbcore_frame_height gbmux_frame_height
+#define gbcore_rom_title gbmux_rom_title
+#define gbcore_save_ram_size gbmux_save_ram_size
+#define gbcore_cart_ram_size gbmux_cart_ram_size
+#define gbcore_save_ram_read gbmux_save_ram_read
+#define gbcore_save_ram_write gbmux_save_ram_write
+#define gbcore_state_size gbmux_state_size
+#define gbcore_state_save gbmux_state_save
+#define gbcore_state_load gbmux_state_load
+#define gbcore_ahead_size gbmux_ahead_size
+#define gbcore_ahead_save gbmux_ahead_save
+#define gbcore_ahead_load gbmux_ahead_load
+#define gbcore_set_quiet gbmux_set_quiet
+#define gbcore_has_tilt gbmux_has_tilt
+#define gbcore_sgb_border gbmux_sgb_border
+#define gbcore_sgb_border_save gbmux_sgb_border_save
+#define gbcore_sgb_border_load gbmux_sgb_border_load
+#define gbcore_set_tilt gbmux_set_tilt
+#define gbcore_has_camera gbmux_has_camera
+#define gbcore_set_camera_image gbmux_set_camera_image
+#define gbcore_camera_requests gbmux_camera_requests
+#define gbcore_ra_read gbmux_ra_read
+#define gbcore_peek gbmux_peek
+#define gbcore_poke gbmux_poke
+#define gbcore_cheats_set gbmux_cheats_set
+#define gbcore_set_palette gbmux_set_palette
+#define gbcore_palette_preview gbmux_palette_preview
+#define gbcore_set_color_correction gbmux_set_color_correction
+#define gbcore_set_wallclock gbmux_set_wallclock
+#endif
+
+#ifdef __cplusplus
+}
+#endif
+#endif

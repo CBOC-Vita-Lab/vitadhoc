@@ -51,19 +51,44 @@ APP_SRCS      += local_vita.c
 APP_SRCS      += rewind_vita.c
 # the game list's previews: the last ten seconds played (clip_vita.h)
 APP_SRCS      += clip_vita.c
+# "Save clip": the last ten seconds as an animated PNG (clip_export.h)
+APP_SRCS      += clip_export.c apng_write.c
+# the update check (update_check.h): asks GitHub's releases API (the HTTPS client is link.mk's)
+APP_SRCS      += update_check.c update_ver.c
 APP_SRCS      += preview_vita.c
 APP_SRCS      += menu_diag.c
 APP_SRCS      += menu_load.c menu_files.c
+# names in other alphabets: kana, kanji, Hangul, accents, drawn from font files
+# on demand (vglyph.h; playerkit's glyph cache, MIT, in glyph_glue.cpp)
+APP_SRCS      += vglyph.c glyph_glue.cpp
+# the interface languages: the catalogue loader (i18n.h); the English text is
+# compiled in (lang_en.h, from lang/en.txt by tools/i18n/gen_lang_h.py)
+APP_SRCS      += i18n.c
+# steady pacing: playerkit's pacer (pace_steady.h)
+APP_SRCS      += pace_steady.cpp
+# smooth hand-over: playerkit's mailbox and the drawing thread (handoff_glue.h)
+APP_SRCS      += handoff_glue.cpp
+# the look governor: playerkit's pk_look (look_glue.h)
+APP_SRCS      += look_glue.cpp
+# Quick response (run-ahead by one frame): playerkit's pk_ahead governor (ahead_glue.h)
+APP_SRCS      += ahead_glue.cpp
 # what the game list knows about a cartridge (names, blurbs) and its box art
 # fetched by itself (gamedb.h, artfetch.h)
 APP_SRCS      += gamedb.c artfetch.c cover_custom.c
 # the GBA's picture drawn on another core (render_thread.h)
 APP_SRCS      += render_thread.c
 # the CPU speed setting (500 MHz, PSVshell profile)
-APP_SRCS      += cpuclock.c
+APP_SRCS      += cpuclock.c boot_guard.c
 # what has been played, when and for how long (play_log.h); patches applied
 # to a game as it starts (rom_patch.h)
 APP_SRCS      += play_log.c rom_patch.c zip_rom.c save_sync.c
+# games in a .7z (sz_rom.h): Igor Pavlov's LZMA SDK decoder (third_party/lzma,
+# public domain; PROVENANCE there)
+LZMA_DIR      := third_party/lzma
+APP_SRCS      += sz_rom.c $(addprefix $(LZMA_DIR)/,7zAlloc.c 7zArcIn.c 7zBuf.c \
+                    7zCrc.c 7zCrcOpt.c 7zDec.c 7zStream.c Bcj2.c \
+                    Bra.c Bra86.c BraIA64.c CpuArch.c Delta.c Lzma2Dec.c \
+                    LzmaDec.c)
 # RetroAchievements (ra_vita.h): the app's side, the web requests, and the
 # runtime every RetroAchievements emulator uses (third_party/rcheevos, MIT;
 # PROVENANCE there).  Built with RC_NO_THREADS: one thread calls it.
@@ -81,11 +106,19 @@ APP_SRCS      += $(RC_DIR)/rc_client.c $(RC_DIR)/rc_compat.c \
 APP_SRCS_VITA := plat_vita.c jit_vita.c heap_vita.c
 APP_SRCS_HOST := hostcore/plat_host.c
 APP_DEFS      := -DVITA -DRC_NO_THREADS
-APP_INCDIRS   := third_party/rcheevos/include third_party/rcheevos/src
+APP_INCDIRS   := third_party/rcheevos/include third_party/rcheevos/src third_party/lzma
 APP_LIBS_VITA := -lSceHttp_stub -lSceSsl_stub
 VPK_EXTRA     :=
 
 VPK_EXTRA     += assets/gamedb.txt=gamedb.txt
+# the UI's fonts beyond ASCII (tools/font/make_fonts.py; SIL OFL, licenses/):
+# the CJK file is read by the app and by both players the first time a name
+# needs it; the two Latin ones are the players' (the app has Inter inside it)
+# one catalogue per interface language (lang/<code>.txt; lang/TRANSLATING.md is
+# for the translators and stays out of the package)
+VPK_EXTRA     += $(foreach f,$(filter-out $(wildcard $(V)/../../lang/pk_*.txt),$(wildcard $(V)/../../lang/*.txt)),$(f)=lang/$(notdir $(f)))
+VPK_EXTRA     += assets/cjkfont.otf=cjkfont.otf assets/cjkfont-sc.otf=cjkfont-sc.otf assets/latinfont.ttf=latinfont.ttf \
+                 assets/latinfont-sb.ttf=latinfont-sb.ttf
 
 -include $(V)/cheats.mk
 -include $(V)/link.mk
@@ -115,8 +148,7 @@ ND_DEFS     := $(filter -D%,$(NET_VITA_CFLAGS))
 
 APP_ALL_VITA := $(addprefix $(V)/,$(APP_SRCS) $(APP_SRCS_VITA)) \
                 $(UI_SRCS) $(UI_GXM_SRCS) $(NET_SRCS)
-APP_ALL_HOST := $(addprefix $(V)/,$(APP_SRCS) $(APP_SRCS_HOST) vback_soft.c \
-                  vback_soft_prog.cpp) \
+APP_ALL_HOST := $(addprefix $(V)/,$(APP_SRCS) $(APP_SRCS_HOST) vback_soft.c) \
                 $(UI_SRCS)
 
 APP_INC_FLAGS := $(VITA_UI_CFLAGS) $(VITA_UI_ASFLAGS) -I$(V) \
@@ -128,13 +160,16 @@ app_obj = $(B)/app/$(subst ../,,$(patsubst ./%,%,$(basename $(1)))).o
 
 # Third-party code is not ours to lint; the PSP UI is compiled with the
 # warnings its own Makefile uses.
-APP_QUIET := %/stb_impl.c %/stb_impl_vita.c
+APP_QUIET := %/stb_impl.c %/stb_impl_vita.c %/xbrz.cpp
 UI_WARN   := -Wno-unused-parameter -Wno-missing-field-initializers \
              -Wno-format-truncation
-# xBRZ (third_party/xbrz) is C++: no exceptions, no RTTI, nothing of
-# libstdc++ at link time (it needs none), and not ours to lint either.
-APP_CXX_FLAGS := -x c++ -std=gnu++14 -O3 -fno-math-errno -fno-exceptions -fno-rtti -w
-app_file_flags = $(if $(filter %.cpp,$(1)),$(APP_CXX_FLAGS),$(if $(or $(filter $(APP_QUIET),$(1)),$(call in_vita2d,$(1)),$(call in_rcheevos,$(1))),-w,$(if $(filter $(UI_SRCS) $(UI_GXM_SRCS),$(1)),$(UI_WARN))))
+# C++ files (playerkit glue, online_http, nethttps, xbrz_c): no exceptions,
+# no RTTI, nothing of libstdc++ at link time.  Only third-party xbrz.cpp is
+# silenced (-w via APP_QUIET); targeted flags keep macOS Clang, GCC's
+# cert_detail format-truncation, and no-TLS nethttps stubs warning-free.
+APP_CXX_FLAGS := -x c++ -std=gnu++14 -O3 -fno-math-errno -fno-exceptions -fno-rtti
+app_cxx_extra = $(if $(filter $(APP_QUIET),$(1)), -w)$(if $(filter macos,$(HOST_OS)),$(if $(filter %/look_glue.cpp,$(1)), -Wno-unused-private-field))$(if $(filter %/np_https.cpp,$(1)), -Wno-format-truncation)$(if $(strip $(MBEDTLS)),,$(if $(filter %/np_https.cpp %/np_https_sys.cpp,$(1)), -Wno-unused-function -Wno-unused-variable))
+app_file_flags = $(if $(filter %.cpp,$(1)),$(APP_CXX_FLAGS)$(call app_cxx_extra,$(1)),$(if $(or $(filter $(APP_QUIET),$(1)),$(call in_vita2d,$(1)),$(call in_rcheevos,$(1))),-w,$(if $(filter $(UI_SRCS) $(UI_GXM_SRCS),$(1)),$(UI_WARN))))
 
 # The includer defines CC and APP_FLAGS, then:
 #     $(foreach s,$(APP_ALL_xxx),$(eval $(call APP_RULE,$(s))))
@@ -142,5 +177,5 @@ app_file_flags = $(if $(filter %.cpp,$(1)),$(APP_CXX_FLAGS),$(if $(or $(filter $
 define APP_RULE
 $(call app_obj,$(1)): $(1) $$(APP_STAMP)
 	@mkdir -p $$(dir $$@)
-	$$(CC) $$(APP_FLAGS) $(call app_file_flags,$(1)) $$(APP_FILE_FLAGS) -c -o $$@ $$<
+	$$(CC) $(if $(filter %.cpp,$(1)),$$(filter-out -std=gnu11,$$(APP_FLAGS)),$$(APP_FLAGS)) $(call app_file_flags,$(1)) $$(APP_FILE_FLAGS) -c -o $$@ $$<
 endef

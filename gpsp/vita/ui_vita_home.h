@@ -18,7 +18,8 @@
  * server over Wi-Fi; a picture that arrives replaces the tile's card or
  * scene (hm_art_arrived).
  *
- *   a top bar       Games / Starred (SELECT), the console (TRIANGLE), the
+ *   a top bar       Games / Starred (SELECT), the console in use (TRIANGLE
+ *                   drops a list of them all: hm_pick_draw), the
  *                   time and the battery
  *   the row         the focused game large with its name beside it, the
  *                   next ones small; a tile is the game's box art, else the
@@ -84,6 +85,7 @@ static int g_hm_batch_rom[1 + ML_NEIGHBORS];
 static unsigned g_hm_batch_n;
 static unsigned g_hm_load_left;
 static int g_hm_uploaded, g_hm_still_for = -1;
+#define HM_UPLOAD_BUDGET_US 4000   /* picture uploads a frame (hm_load_service) */
 
 static unsigned hm_epoch(int rom)
 {
@@ -376,9 +378,51 @@ typedef struct
 } hm_tile;
 
 static hm_tile g_hm_tile[HM_TILES];
+static vs_img *g_hm_tile_pool[HM_TILES];
+static int g_hm_tile_pool_n;
 static unsigned g_hm_frame;
 static uint32_t *g_hm_buf;          /* 240 x 160 RGBA scratch              */
 static uint32_t *g_hm_sq;           /* HM_TEX^2 RGBA scratch               */
+
+static void hm_tile_pool_put(vs_img *im)
+{
+   if (!im)
+      return;
+   if (g_hm_tile_pool_n < HM_TILES)
+      g_hm_tile_pool[g_hm_tile_pool_n++] = im;
+   else
+      vs_img_free(im);
+}
+
+static vs_img *hm_tile_pool_take(void)
+{
+   int i;
+   for (i = g_hm_tile_pool_n - 1; i >= 0; i--)
+      if (vs_img_writable(g_hm_tile_pool[i]))
+      {
+         vs_img *im = g_hm_tile_pool[i];
+         g_hm_tile_pool[i] = g_hm_tile_pool[--g_hm_tile_pool_n];
+         return im;
+      }
+   return NULL;
+}
+
+static void hm_tile_pool_clear(void)
+{
+   int i;
+   for (i = 0; i < g_hm_tile_pool_n; i++)
+      vs_img_free(g_hm_tile_pool[i]);
+   g_hm_tile_pool_n = 0;
+}
+
+static hm_tile *hm_tile_peek(int rom)
+{
+   int i;
+   for (i = 0; i < HM_TILES; i++)
+      if (g_hm_tile[i].rom == rom)
+         return &g_hm_tile[i];
+   return NULL;
+}
 
 static int hm_scratch(void)
 {
@@ -407,7 +451,7 @@ static hm_tile *hm_tile_find(int rom)
          oldest = i;
    }
    if (g_hm_tile[oldest].img)
-      vs_img_free(g_hm_tile[oldest].img);
+      hm_tile_pool_put(g_hm_tile[oldest].img);
    memset(&g_hm_tile[oldest], 0, sizeof(g_hm_tile[oldest]));
    g_hm_tile[oldest].rom = rom;
    g_hm_tile[oldest].x = -1.0f;
@@ -527,6 +571,44 @@ static struct
    uint64_t retry_us;
    unsigned art_epoch;
 } g_hm_pic = { -1, 0, NULL, 0, 0, 0.0f, NULL, 0, 0, 0.0f, -1 };
+
+/* 1-slot reusable still texture spare: avoids CDRAM sceKernelAllocMemBlock,
+ * sceGxmMapMemory, and 2.1 MiB uncached memset on steady-state game switches
+ * without raising peak CDRAM usage above two stills. */
+static vs_img *g_hm_still_spare;
+static int g_hm_still_spare_w, g_hm_still_spare_h;
+
+static void hm_still_spare_drop(void)
+{
+   if (g_hm_still_spare)
+      vs_img_free(g_hm_still_spare);
+   g_hm_still_spare = NULL;
+   g_hm_still_spare_w = g_hm_still_spare_h = 0;
+}
+
+static void hm_still_spare_put(vs_img *im, int w, int h)
+{
+   if (!im)
+      return;
+   if (g_hm_still_spare)
+      vs_img_free(g_hm_still_spare);
+   g_hm_still_spare = im;
+   g_hm_still_spare_w = w;
+   g_hm_still_spare_h = h;
+}
+
+static vs_img *hm_still_spare_take(int w, int h)
+{
+   if (g_hm_still_spare && g_hm_still_spare_w == w &&
+       g_hm_still_spare_h == h && vs_img_writable(g_hm_still_spare))
+   {
+      vs_img *im = g_hm_still_spare;
+      g_hm_still_spare = NULL;
+      g_hm_still_spare_w = g_hm_still_spare_h = 0;
+      return im;
+   }
+   return NULL;
+}
 
 static void hm_pic_load_decode(int rom)
 {
@@ -667,7 +749,7 @@ static void hm_selection_tick(int rom)
    hm_clip_cancel();
    g_hm_clip.none_for = -1;
    if (g_hm_pic.old)
-      vs_img_free(g_hm_pic.old);
+      hm_still_spare_put(g_hm_pic.old, g_hm_pic.old_w, g_hm_pic.old_h);
    g_hm_pic.old = NULL;
    g_hm_pic.old_a = 0.0f;
    g_hm_pic.old_rom = -1;
@@ -695,7 +777,7 @@ static void hm_clip_open(int rom)
 static int hm_clip_textures(unsigned w, unsigned h)
 {
    int i;
-   if (g_hm_clip.w == w && g_hm_clip.h == h && g_hm_clip.tex[0])
+   if (g_hm_clip.w == w && g_hm_clip.h == h)
       return 0;
    for (i = 0; i < HM_CLIP_TEX; i++)
    {
@@ -705,17 +787,7 @@ static int hm_clip_textures(unsigned w, unsigned h)
    }
    g_hm_clip.w = w;
    g_hm_clip.h = h;
-   for (i = 0; i < HM_CLIP_TEX; i++)
-      if (!(g_hm_clip.tex[i] = vs_img_new_565((int)w, (int)h)))
-      {
-         int j;
-         for (j = 0; j < i; j++)
-         {
-            vs_img_free(g_hm_clip.tex[j]);
-            g_hm_clip.tex[j] = NULL;
-         }
-         return -1;
-      }
+   g_hm_clip.shown = -1;
    return 0;
 }
 
@@ -789,8 +861,30 @@ static void hm_clip_tick(int rom, int idle)
          for (int step = 1; step <= HM_CLIP_TEX; step++)
          {
             int at = (g_hm_clip.shown + step) % HM_CLIP_TEX;
-            if (at != g_hm_clip.shown && vs_img_writable(g_hm_clip.tex[at]))
+            if (at != g_hm_clip.shown && g_hm_clip.tex[at] &&
+                vs_img_writable(g_hm_clip.tex[at]))
             { t = at; break; }
+         }
+         if (t < 0)
+         {
+            /* Lazily allocate one clip texture per frame instead of 3 at once. */
+            for (int step = 1; step <= HM_CLIP_TEX; step++)
+            {
+               int at = (g_hm_clip.shown + step) % HM_CLIP_TEX;
+               if (at != g_hm_clip.shown && !g_hm_clip.tex[at])
+               {
+                  g_hm_clip.tex[at] = vs_img_new_565((int)g_hm_clip.w,
+                                                     (int)g_hm_clip.h);
+                  if (!g_hm_clip.tex[at])
+                  {
+                     hm_clip_cancel();
+                     g_hm_clip.none_for = rom;
+                     return;
+                  }
+                  t = at;
+                  break;
+               }
+            }
          }
          if (t < 0) break; /* Keep the CPU pin and old frame; never wait. */
          vs_img_set_565(g_hm_clip.tex[t], g_hm_clip.next.pixels,
@@ -921,57 +1015,274 @@ static void hm_backdrop(int rom, float dy)
              VS_HEX(0x060914, 246));
 }
 
-/* where the detail's button row ends this frame (the hints keep clear) */
+/* where the detail's button row ends this frame */
 static float g_hm_btn_end;
+
+/* The home page's pad hints: real glyphs for the four face buttons, small
+ * key caps for START, SELECT and the shoulders (the icon set has no
+ * drawing of those).  Left-aligned with the page, y fixed. */
+#define HM_HINT_Y 514
+static float hm_cap(float x, float y, const char *t)
+{
+   float w = vs_text_w(VS_CAPTION, t) + 14;
+   vs_rrect(x, y - 1, w, 26, 8, HC_GLASS_HI);
+   vs_text(VS_CAPTION, x + 7, y, t, HC_TEXT2);
+   return x + w + 6;
+}
+/* the space after a hint's word: 26, less when the line would leave the screen (Text size Large) */
+static float g_hm_hint_gap = 26;
+static float hm_hint_word(float x, float y, const char *t)
+{
+   vs_text(VS_CAPTION, x, y, t, HC_TEXT2);
+   return x + vs_text_w(VS_CAPTION, t) + g_hm_hint_gap;
+}
+static void hm_home_hints(void)
+{
+   float x = HM_X, y = HM_HINT_Y;
+   if (g_pick_on)
+   {
+      /* the open list's own buttons (hm_pick_pad): the console moves live as the highlight does */
+      g_hm_hint_gap = 26;
+      x = hm_cap(x, y, "UP");
+      x = hm_cap(x, y, "DOWN");
+      x = hm_hint_word(x, y, tr("home.step"));
+      vs_icon(VS_I_BTN_TRI, x + 10, y + 12, 22, HC_TEXT2);
+      x = hm_hint_word(x + 26, y, tr("home.next"));
+      vs_icon(VS_I_BTN_X, x + 10, y + 12, 22, HC_TEXT2);
+      x = hm_hint_word(x + 26, y, tr("home.keep"));
+      vs_icon(VS_I_BTN_O, x + 10, y + 12, 22, HC_TEXT2);
+      hm_hint_word(x + 26, y, tr("home.cancel"));
+      return;
+   }
+   /* Text size Large: the line is wider than the screen at the usual spaces, so the five spaces after
+    * its words shrink to what fits (at Normal it fits and nothing moves).  A language whose words are
+    * longer still leaves out SELECT Views (the tabs at the top are the views, and a tap picks one),
+    * then SELECT + Square Lists, rather than run off the screen or shrink the words. */
+   int views = 1, lists = 1;
+   {
+      const char *find = g_find[0] ? tr("home.clear") : tr("home.find");
+      const float wv = vs_text_w(VS_CAPTION, "SELECT") + 14 + 6 + vs_text_w(VS_CAPTION, tr("home.views"));
+      const float wl = vs_text_w(VS_CAPTION, "SELECT +") + 14 + 6 + 26 + vs_text_w(VS_CAPTION, tr("home.lists"));
+      float w = 3 * 26 + 36 + vs_text_w(VS_CAPTION, tr("home.play")) + vs_text_w(VS_CAPTION, tr("home.star")) +
+                vs_text_w(VS_CAPTION, find) + vs_text_w(VS_CAPTION, tr("home.settings")) +
+                vs_text_w(VS_CAPTION, "START") + (14 + 6) + wv + wl;
+      float gap = (VS_W - 2 * HM_X - w) / 5;
+      if (gap < 8)
+      {
+         views = 0;
+         w -= wv;
+         gap = (VS_W - 2 * HM_X - w) / 4;
+      }
+      if (gap < 8)
+      {
+         lists = 0;
+         w -= wl;
+         gap = (VS_W - 2 * HM_X - w) / 3;
+      }
+      g_hm_hint_gap = gap >= 26 ? 26 : gap < 8 ? 8 : gap;
+      if (i18n_audit_on && (!views || !lists) && vid_text_pct() <= 100)
+         fprintf(stderr, "EVT i18n: home hint line too wide, %s left out\n", !lists ? "Views and Lists" : "Views");
+   }
+   vs_icon(VS_I_BTN_X, x + 10, y + 12, 22, HC_TEXT2);
+   x = hm_hint_word(x + 26, y, tr("home.play"));
+   vs_icon(VS_I_BTN_SQ, x + 10, y + 12, 22, HC_TEXT2);
+   x = hm_hint_word(x + 26, y, tr("home.star"));
+   vs_icon(VS_I_BTN_O, x + 10, y + 12, 22, HC_TEXT2);
+   x = hm_hint_word(x + 26, y, g_find[0] ? tr("home.clear") : tr("home.find"));
+   if (views)
+   {
+      x = hm_cap(x, y, "SELECT");
+      x = hm_hint_word(x, y, tr("home.views"));
+   }
+   if (lists)
+   {
+      x = hm_cap(x, y, "SELECT +");
+      vs_icon(VS_I_BTN_SQ, x + 10, y + 12, 22, HC_TEXT2);
+      x = hm_hint_word(x + 26, y, tr("home.lists"));
+   }
+   vs_icon(VS_I_BTN_TRI, x + 10, y + 12, 22, HC_TEXT2);
+   x += 36;              /* the console's button: its pill carries the name (a word does not fit before START Settings) */
+   x = hm_cap(x, y, "START");
+   hm_hint_word(x, y, tr("home.settings"));
+}
+
+/* ---- the console picker's table ----------------------------------------
+ *
+ * The consoles the picker lists: the ONE place to say which consoles the
+ * Home offers (the order is alphabetical by name: hm_con_at).  A console joins the
+ * library with one line here (plus its skin in ui_psp.c); one that is not
+ * compiled into a build is left out of the line with its #if.  Names come
+ * from the skins (full name; the short id when the pill cannot hold it). */
+static const signed char HM_CON_ORDER[] = {
+   FE_CONSOLE_GBA, FE_CONSOLE_GB, FE_CONSOLE_GBC, FE_CONSOLE_SNES,
+   FE_CONSOLE_NES, FE_CONSOLE_WSWAN,
+   FE_CONSOLE_MD, FE_CONSOLE_SMS, FE_CONSOLE_GG, FE_CONSOLE_SG, FE_CONSOLE_SCD,
+};
+#define HM_CON_COUNT ((int)(sizeof(HM_CON_ORDER) / sizeof(HM_CON_ORDER[0])))
+
+/* The rows the picker shows.  (The host twin can add rows that repeat the
+ * table, GBADHOC_PICKER_ROWS=n, to test the list scrolling with more consoles
+ * than the build has yet; a Vita build always shows the table.) */
+static int hm_con_n(void)
+{
+#ifndef __vita__
+   static int extra = -1;
+   if (extra < 0)
+   {
+      const char *e = getenv("GBADHOC_PICKER_ROWS");
+      extra = e ? atoi(e) : 0;
+      if (extra < 0 || extra > 20)
+         extra = 0;
+   }
+   return HM_CON_COUNT + extra;
+#else
+   return HM_CON_COUNT;
+#endif
+}
+/* The list is ALPHABETICAL by the full name the rows show, without regard to
+ * case ("Game Boy", "Game Boy Advance", "Game Boy Color", "Game Gear", ...):
+ * HM_CON_ORDER above is only the set of consoles; the order is made once from
+ * the skins' names, so a console added to the table lands in its place and a
+ * renamed one moves with its name. */
+static int hm_con_at(int row)
+{
+   static signed char sorted[HM_CON_COUNT];
+   static int done;
+   if (!done)
+   {
+      int i, j;
+      for (i = 0; i < HM_CON_COUNT; i++)
+      {
+         int c = HM_CON_ORDER[i];
+         for (j = i; j > 0 && strcasecmp(skin_of(sorted[j - 1])->full,
+                                         skin_of(c)->full) > 0; j--)
+            sorted[j] = sorted[j - 1];
+         sorted[j] = (signed char)c;
+      }
+      done = 1;
+   }
+   return sorted[row % HM_CON_COUNT];
+}
+
+static int hm_con_row(int console)       /* its row in the picker, or 0 */
+{
+   int i;
+   for (i = 0; i < hm_con_n(); i++)
+      if (hm_con_at(i) == console)
+         return i;
+   return 0;
+}
+
+/* Games found for a console: the one on screen from the scan in hand, the
+ * others from what the last walk of the folders put in their caches (one
+ * walk lists every console).  -1 = not known. */
+static int hm_con_games(int console, int n_scan)
+{
+   if (console == g_pcfg.console)
+      return n_scan;
+   return g_rom_cache[console].valid ? g_rom_cache[console].n : -1;
+}
+
+/* where the pill is (native px), for the list that drops from it */
+static float g_pick_px, g_pick_pw, g_pick_py;
+
+/* A small filled caret, pointing down (or up). */
+static void hm_caret(float cx, float cy, float w, int up, uint32_t c)
+{
+   int k, rows = (int)(w / 4);        /* 2 px rows, 2 px less each side */
+   for (k = 0; k < rows; k++)
+      vs_rect(cx - (w - 4.0f * k) * 0.5f,
+              up ? cy + rows - 2 - 2.0f * k : cy - rows + 2.0f * k,
+              w - 4.0f * k, 2, c);
+}
 
 /* ---- the top bar -------------------------------------------------------- */
 
 static float hm_topbar(float dy, int n_scan)
 {
-   static const char *const CON[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES" };
-   float x = HM_X, y = 18 + dy, cx;
-   int c;
+   float x = HM_X, y = 18 + dy, right;
 
    /* Games | Starred | Recent: SELECT steps through them (Recent once a
     * game has been played), a tap goes straight to one. */
    {
-      static const char *const TAB[3] = { "Games", "Starred", "Recent" };
+      const char *const TAB[3] = { tr("home.games"), tr("home.starred"), tr("home.recent") };
       int t, on = browser_tab();
       for (t = 0; t < 3; t++)
       {
          vs_text(VS_SUB, x, y, TAB[t], t == on ? HC_TEXT : HC_TEXT3);
+         /* touch: 96 px tall from the screen's top edge, the art unchanged */
          UI_TCH_BTN(t == on ? 0 : BROWSER_TAB_BUTTON(t), (int)(x / 2) - 4,
-                    (int)(y / 2), (int)(vs_text_w(VS_SUB, TAB[t]) / 2) + 8, 22);
-         x += vs_text_w(VS_SUB, TAB[t]) + (t < 2 ? 20 : 20);
+                    0, (int)(vs_text_w(VS_SUB, TAB[t]) / 2) + 8, 48);
+         x += vs_text_w(VS_SUB, TAB[t]) + 14;
       }
-   }
-
-   /* the consoles: TRIANGLE steps through them */
-   cx = x;
-   for (c = 0; c < FE_CONSOLE_COUNT; c++)
-   {
-      /* four consoles and the search beside them: tight chips */
-      float w = vs_text_w(VS_LABEL, CON[c]) + 20;
-      if (c == g_pcfg.console)
+      /* Most played, Not played yet, a collection or a playlist: its name
+       * follows the three (SELECT steps through them all) */
+      if (on == 3)
       {
-         vs_rrect(x, y + 2, w, 34, 17, HC_GLASS_HI);
-         vs_text(VS_LABEL, x + 10, y + 7, CON[c], HC_TEXT);
+         char nm[64];
+         snprintf(nm, sizeof(nm), "%s", lib_view_name(g_view_kind, g_view_which));
+         vs_text_fit(VS_SUB, nm, 230);
+         vs_text(VS_SUB, x, y, nm, HC_TEXT);
+         x += vs_text_w(VS_SUB, nm) + 14;
       }
-      else
-         vs_text(VS_LABEL, x + 10, y + 7, CON[c], HC_TEXT3);
-      x += w + 2;
    }
-   /* (no TRIANGLE glyph here since SNES joined: the hints say it, and
-    * the search icon needs the room) */
-   UI_TCH_BTN(PSP_CTRL_TRIANGLE, (int)(cx / 2) - 2, (int)(y / 2),
-              (int)((x - cx) / 2) + 2, 22);
 
-   /* the right: settings, the time, the battery */
-   x = hm_status(VS_W - HM_X, y);
+   /* the right first: settings, the time, the battery, and the search,
+    * whose icon starts at right - 102: the pill ends before it */
+   right = hm_status(VS_W - HM_X, y);
+
+   /* THE CONSOLE: one pill, the console in use.  TRIANGLE (or a tap on it)
+    * drops the list of them from under it (hm_pick_draw).  The full name
+    * where it fits, the short one where it does not. */
+   {
+      const ui_skin *sk = skin_of(g_pcfg.console);
+      char name[48];
+      float px = x, avail = right - 106 - 8 - px, pw, tw;
+      snprintf(name, sizeof(name), "%s", sk->full);
+      tw = vs_text_w(VS_LABEL, name);
+      pw = 10 + 22 + 6 + tw + 8 + 12 + 12;
+      if (pw > avail)
+      {
+         snprintf(name, sizeof(name), "%s", sk->id);
+         tw = vs_text_w(VS_LABEL, name);
+         pw = 10 + 22 + 6 + tw + 8 + 12 + 12;
+      }
+      if (pw > avail)
+      {
+         vs_text_fit(VS_LABEL, name, avail - 80);
+         tw = vs_text_w(VS_LABEL, name);
+         pw = 10 + 22 + 6 + tw + 8 + 12 + 12;
+      }
+      vs_rrect(px, y + 2, pw, 34, 17, HC_GLASS_HI);
+      if (g_pick_on)
+         vs_rrect_line(px, y + 2, pw, 34, 17, 2, hm_tint(g_pcfg.console, 200));
+      vs_icon(VS_I_BTN_TRI, px + 21, y + 19, 22, HC_TEXT2);
+      vs_text(VS_LABEL, px + 10 + 22 + 6, y + 7, name, HC_TEXT);
+      hm_caret(px + pw - 18, y + 19, 12, g_pick_on, HC_TEXT2);
+      UI_TCH_BTN(BROWSER_CON_BUTTON, (int)(px / 2), 0,
+                 (int)((pw + 2) / 2), 48);
+      g_pick_px = px;
+      g_pick_pw = pw;
+      g_pick_py = y + 36;
+      {
+         /* (the harness: where the pill is, logged when it moves) */
+         static int lx = -1, lw = -1, lr = -1;
+         if (lx != (int)(px / 2) || lw != (int)(pw / 2) ||
+             lr != (int)((right - 102) / 2))
+         {
+            lx = (int)(px / 2);
+            lw = (int)(pw / 2);
+            lr = (int)((right - 102) / 2);
+            fe_evt("hm_pill x=%d w=%d search=%d name=\"%s\" avail=%d", lx, lw, lr, name, (int)avail);
+         }
+      }
+   }
+
+   x = right;
    vs_icon(VS_I_GEAR, x - 30, y + 19, 26, HC_TEXT2);
-   VS_TCH_BTN(PSP_CTRL_START, x - 50, y, 44, 44);
+   VS_TCH_BTN(PSP_CTRL_START, x - 54, 0, 52, 96);
    vs_icon(VS_I_SEARCH, x - 80, y + 19, 26, HC_TEXT2);
-   VS_TCH_BTN(BROWSER_FIND_BUTTON, x - 102, y, 44, 44);
+   VS_TCH_BTN(BROWSER_FIND_BUTTON, x - 106, 0, 52, 96);
    if (g_find[0])
    {
       /* The search in force, as a chip under the tabs: what was looked
@@ -979,7 +1290,7 @@ static float hm_topbar(float dy, int n_scan)
        * on the words edits the search, on the X clears it. */
       char find[96], count[32];
       float count_x, qx = HM_X + 20;
-      snprintf(count, sizeof(count), "%d of %d", view_count(n_scan), scope_count(n_scan));
+      snprintf(count, sizeof(count), tr("home.of"), view_count(n_scan), scope_count(n_scan));
       count_x = 414 - vs_text_w(VS_CAPTION, count);
       vs_rrect(HM_X - 12, y + 38, 478 - HM_X, 24, 12, HC_GLASS);
       vs_icon(VS_I_SEARCH, HM_X + 6, y + 50, 16, HC_TEXT2);
@@ -996,12 +1307,179 @@ static float hm_topbar(float dy, int n_scan)
       if (ui_cover_progress(&seen, &total, &have))
       {
          char status[64];
-         snprintf(status, sizeof(status), "Checking covers: %d of %d", seen, total);
+         snprintf(status, sizeof(status), tr("home.checking_covers_of"), seen, total);
          vs_text(VS_CAPTION, VS_W - HM_X - vs_text_w(VS_CAPTION, status),
                  y + 44, status, HC_TEXT2);
       }
    }
    return y;
+}
+
+/* ---- the console picker: the list that drops from the pill -------------
+ *
+ * Every console in HM_CON_ORDER, one row each: its colour, its name, and how
+ * many games it has (dimmed at 0, still a row you can land on).  The
+ * highlighted row IS the console on screen: each move switches the library
+ * behind it at once (the same switch as ever, rescanning and writing
+ * config.ini only once the list has rested).  It opens on TRIANGLE with the
+ * active console highlighted, moves on TRIANGLE / DOWN, back on UP, and
+ * closes by itself 1.2 s after the last move (opened by a finger it waits
+ * for the tap instead: a row, or beside it to close; a drag scrolls it).
+ * Unfolds from the pill's lower edge, so the pill is never covered. */
+#define HM_PICK_ROW   52
+#define HM_PICK_PAD   10
+#define HM_PICK_HOLD  72          /* frames: 1.2 s at 60 Hz */
+
+static float g_pick_scr;          /* the first visible row (fractional)   */
+static float g_pick_hy;           /* the highlight's offset in the panel  */
+static int   g_pick_snap;         /* put the highlight in place at once    */
+static float g_pick_drag;         /* rows a finger has dragged the list by  */
+static int   g_pick_open_con;     /* the console in use when the list opened (CIRCLE goes back to it) */
+static int   g_pick_touch;        /* opened by a finger: it stays open until
+                                   * a tap (no 1.2 s close under a finger
+                                   * that is still looking for its row)     */
+
+/* How many rows fit between the pill and the hint line. */
+static int hm_pick_vis(void)
+{
+   int fit = (int)((VS_H - 44 - (g_pick_py + 8) - 2 * HM_PICK_PAD) /
+                   HM_PICK_ROW);
+   return fit < hm_con_n() ? (fit < 2 ? 2 : fit) : hm_con_n();
+}
+
+static void hm_pick_draw(int n_scan)
+{
+   int i, vis = hm_pick_vis();
+   float a, w, h, x, y, aa, cw = 0, target;
+   char cnt[16];
+
+   hm_ease(&g_pick_a, g_pick_on ? 1.0f : 0.0f, 0.34f);
+   if (g_pick_a <= 0.0f)
+      return;
+   a = g_pick_a;
+   aa = a * 1.5f > 1.0f ? 1.0f : a * 1.5f;          /* text and fill: fade */
+   for (i = 0; i < hm_con_n(); i++)
+   {
+      float t = vs_text_w(VS_LABEL, skin_of(hm_con_at(i))->full);
+      if (t > cw)
+         cw = t;
+   }
+   w = 24 + 14 + 14 + cw + 36 + 56 + 26;     /* edge, dot, gap, name, gap,
+                                               * count, edge             */
+   if (w < g_pick_pw)
+      w = g_pick_pw;
+   h = vis * HM_PICK_ROW + 2 * HM_PICK_PAD;
+   x = g_pick_px;
+   if (x + w > VS_W - HM_X + 12)
+      x = VS_W - HM_X + 12 - w;
+   y = g_pick_py + 8;
+
+   /* the rows that show: the highlighted one stays in view */
+   target = (float)g_pick_sel - (vis - 1) * 0.5f;
+   if (target > hm_con_n() - vis)
+      target = (float)(hm_con_n() - vis);
+   if (target < 0)
+      target = 0;
+   {
+      /* a finger's drag moves the rows from there, within the list */
+      float base = target;
+      target += g_pick_drag;
+      if (target > hm_con_n() - vis)
+         target = (float)(hm_con_n() - vis);
+      if (target < 0)
+         target = 0;
+      g_pick_drag = target - base;
+   }
+   if (g_pick_snap)
+      g_pick_scr = target;
+   else
+      hm_ease(&g_pick_scr, target, 0.4f);
+   {
+      float hy = ((float)g_pick_sel - g_pick_scr) * HM_PICK_ROW;
+      if (g_pick_snap)
+         g_pick_hy = hy;
+      else
+         hm_ease(&g_pick_hy, hy, 0.45f);
+      g_pick_snap = 0;
+   }
+
+   /* unfolding: the panel is cut to what has come down so far */
+   vs_clip(0, y - 2, VS_W, h * a + 30);
+   vs_shadow(x, y, w, h, 18, 28, VS_HEX(0x000000, (int)(150 * aa)));
+   vs_rrect(x, y, w, h, 18, VS_HEX(0x0D1428, (int)(246 * aa)));
+   vs_rrect_line(x, y, w, h, 18, 2, VS_HEX(0xFFFFFF, (int)(40 * aa)));
+   vs_clip(x, y, w, h * a);
+   {
+      /* the highlight, in the console's colour at its edge */
+      float hy = y + HM_PICK_PAD + g_pick_hy;
+      const ui_skin *ss = &SKIN_DARK[hm_con_at(g_pick_sel)];
+      vs_rrect(x + 8, hy, w - 16, HM_PICK_ROW - 4, 14,
+               VS_ALPHA(HC_GLASS_HI, (int)(70 * aa)));
+      vs_rrect(x + 8, hy + 8, 5, HM_PICK_ROW - 20, 2,
+               VS_HEX(((ss->accent >> 11) << 19) | (((ss->accent >> 5) & 63) << 10) |
+                      ((ss->accent & 31) << 3), (int)(255 * aa)));
+   }
+   for (i = 0; i < hm_con_n(); i++)
+   {
+      int c = hm_con_at(i), games = hm_con_games(c, n_scan);
+      int on = i == g_pick_sel, none = games == 0;
+      float ry = y + HM_PICK_PAD + ((float)i - g_pick_scr) * HM_PICK_ROW;
+      float ty, cy = ry + (HM_PICK_ROW - 4) * 0.5f;
+      const ui_skin *ss = &SKIN_DARK[c];
+      uint32_t ink = on ? (none ? HC_TEXT2 : HC_TEXT)
+                        : (none ? HC_TEXT3 : HC_TEXT2);
+      uint32_t dot = VS_HEX(((ss->accent >> 11) << 19) |
+                            (((ss->accent >> 5) & 63) << 10) |
+                            ((ss->accent & 31) << 3), 255);
+      int face = on ? VS_LABEL : VS_BODY;
+      if (ry + HM_PICK_ROW < y || ry > y + h)
+         continue;
+      if (none)
+      {
+         ink = VS_ALPHA(ink, on ? 190 : 150);
+         dot = VS_ALPHA(dot, 110);
+      }
+      ink = VS_ALPHA(ink, (int)(((ink >> 24) & 0xFF) * aa));
+      dot = VS_ALPHA(dot, (int)(((dot >> 24) & 0xFF) * aa));
+      ty = cy - vs_line_h(face) * 0.5f;
+      vs_circle(x + 36, cy, 6, dot);
+      vs_text(face, x + 56, ty, ss->full, ink);
+      if (games >= 0)
+      {
+         snprintf(cnt, sizeof(cnt), "%d", games);
+         vs_text_r(VS_BODY, x + w - 26, cy - vs_line_h(VS_BODY) * 0.5f, cnt,
+                   VS_ALPHA(none ? HC_TEXT3 : HC_TEXT2,
+                            (int)((none ? 150 : 255) * aa)));
+      }
+   }
+   if (g_pick_scr > 0.05f)
+      hm_caret(x + w * 0.5f, y + 8, 12, 1, VS_ALPHA(HC_TEXT3, (int)(200 * aa)));
+   if (g_pick_scr < hm_con_n() - vis - 0.05f)
+      hm_caret(x + w * 0.5f, y + h - 8, 12, 0, VS_ALPHA(HC_TEXT3, (int)(200 * aa)));
+   vs_clip_off();
+
+   /* the finger: a tap beside the list closes it (the whole screen, first
+    * so that everything after answers before it), a row is that console */
+   if (g_pick_on)
+   {
+      UI_TCH_BTN(BROWSER_CON_BUTTON, 0, 0, VID_SCR_W, VID_SCR_H);
+      for (i = 0; i < hm_con_n(); i++)
+      {
+         float r0 = y + HM_PICK_PAD + ((float)i - g_pick_scr) * HM_PICK_ROW;
+         float r1 = r0 + HM_PICK_ROW;
+         if (i == 0)
+            r0 -= HM_PICK_PAD;
+         if (i == hm_con_n() - 1)
+            r1 += HM_PICK_PAD;
+         if (r0 < y)
+            r0 = y;
+         if (r1 > y + h)
+            r1 = y + h;
+         if (r1 - r0 >= 8)
+            tch_add(TCH_K_BTN, i + 1, BROWSER_CON_BUTTON, (int)(x / 2),
+                    (int)(r0 / 2), (int)(w / 2), (int)((r1 - r0) / 2));
+      }
+   }
 }
 
 /* ---- the row ------------------------------------------------------------ */
@@ -1133,7 +1611,8 @@ static const char *hm_blurb(const char *rom_dir, int rom)
 
 static void hm_focus(const char *rom_dir, int rom, float dy, int idle)
 {
-   char title[80], buf[48];
+   char title[80], buf[48], sub[64];
+   int has_sub;
    const char *blurb = idle >= IDLE_SELECTED ? hm_blurb(rom_dir, rom)
       : g_hm_blurb_for == rom ? g_hm_blurb : "";
    float x, y = HM_TITLE_Y + dy - (blurb[0] ? HM_BLURB_LIFT : 0);
@@ -1155,26 +1634,49 @@ static void hm_focus(const char *rom_dir, int rom, float dy, int idle)
 
    rom_display_name(&g_roms[rom], title, sizeof(title), 1);
    vs_text_fit(VS_HERO, title, VS_W - 2 * HM_X);
+   /* Games of the list that share this name show their file name under it
+    * (names_subtitle, GitHub #16); the title moves up so the chips below
+    * stay where they were. */
+   has_sub = names_subtitle(rom, sub, sizeof(sub));
+   if (has_sub)
+      y -= 14;
    vs_text(VS_HERO, HM_X, y, title, VS_HEX(0xF5F7FC, la));
    UI_TCH_BTN(PSP_CTRL_CROSS, HM_X / 2, (int)(y / 2), 300, 34);
+   if (has_sub)
+   {
+      vs_text_fit(VS_CAPTION, sub, VS_W - 2 * HM_X);
+      vs_text(VS_CAPTION, HM_X, y + 64, sub, VS_HEX(0xA7B0C6, la));
+   }
+   {
+      static int last_rom = -1, last_mode = -1, last_sub = -1;
+      if (rom != last_rom || g_pcfg.lib_names != last_mode ||
+          has_sub != last_sub)
+      {
+         last_rom = rom;
+         last_mode = g_pcfg.lib_names;
+         last_sub = has_sub;
+         fe_evt("ui_game_name rom=\"%s\" mode=%d title=\"%s\" sub=\"%s\"",
+                g_roms[rom].base, g_pcfg.lib_names, title, sub);
+      }
+   }
 
    /* what is known about it */
    x = HM_X;
-   y += 76;
+   y += has_sub ? 90 : 76;
    meta_line(&g_roms[rom], buf, sizeof(buf));
    x = hm_chip(x, y, buf, HC_GLASS, HC_TEXT2);
    if (m && m->value.battery != ML_UNKNOWN)
-      x = hm_chip(x, y, m->value.battery == ML_PRESENT ? "Battery save" : "No save yet",
+      x = hm_chip(x, y, m->value.battery == ML_PRESENT ? tr("home.battery_save") : tr("home.no_save_yet"),
                   HC_GLASS, HC_TEXT2);
    if (g_hm_states_for == rom && g_hm_states_n)
    {
-      snprintf(buf, sizeof(buf), g_hm_states_n == 1 ? "%d save state"
-                                                    : "%d save states",
+      snprintf(buf, sizeof(buf), g_hm_states_n == 1 ? tr("home.save_state")
+                                                    : tr("home.save_states"),
                g_hm_states_n);
       x = hm_chip(x, y, buf, HC_GLASS, HC_TEXT2);
    }
    if (g_roms[rom].is_fav)
-      x = hm_chip(x, y, "Starred", VS_ALPHA(hm_tint(g_pcfg.console, 255), 70),
+      x = hm_chip(x, y, tr("home.starred"), VS_ALPHA(hm_tint(g_pcfg.console, 255), 70),
                   HC_TEXT);
    if (g_roms[rom].play_last)
    {
@@ -1185,22 +1687,22 @@ static void hm_focus(const char *rom_dir, int rom, float dy, int idle)
       if (g_roms[rom].play_secs >= 60)
       {
          play_log_duration(g_roms[rom].play_secs, dur, sizeof(dur));
-         snprintf(buf, sizeof(buf), "Played %s, %s", when, dur);
+         snprintf(buf, sizeof(buf), tr("home.played"), when, dur);
       }
       else
-         snprintf(buf, sizeof(buf), "Played %s", when);
+         snprintf(buf, sizeof(buf), tr("home.played_2"), when);
       x = hm_chip(x, y, buf, HC_GLASS, HC_TEXT2);
    }
    if (m && m->value.patch)
-      x = hm_chip(x, y, m->value.patch == 1 ? "Patched (IPS)" :
-                        m->value.patch == 2 ? "Patched (BPS)" : "Patched (UPS)",
+      x = hm_chip(x, y, m->value.patch == 1 ? tr("home.patched_ips") :
+                        m->value.patch == 2 ? tr("home.patched_bps") : tr("home.patched_ups"),
                   HC_GLASS, HC_TEXT2);
 
    /* what the game is, in a few lines -- Wikipedia's (CC BY-SA), said so
     * in a chip of its own, readable over any picture */
    if (blurb[0])
    {
-      x = hm_chip(x, y, "From Wikipedia", HC_GLASS, HC_TEXT2);
+      x = hm_chip(x, y, tr("home.from_wikipedia"), HC_GLASS, HC_TEXT2);
       vs_text_wrap(VS_CAPTION, HM_X, y + 42, HM_BLURB_W, 3, 2, blurb,
                    VS_HEX(0xC9CFE0, la));
    }
@@ -1211,17 +1713,19 @@ static void hm_focus(const char *rom_dir, int rom, float dy, int idle)
    {
       /* Where the game was left: CROSS goes back to it; Start over (UP,
        * or a tap) plays from the battery save as before. */
-      x = hm_button(HM_X, y, VS_I_PLAY, "Continue", 1, PSP_CTRL_CROSS);
-      x = hm_button(x, y, VS_I_REFRESH, "Start over", 0, BROWSER_FRESH_BUTTON);
+      x = hm_button(HM_X, y, VS_I_PLAY, tr("home.continue"), 1, PSP_CTRL_CROSS);
+      x = hm_button(x, y, VS_I_REFRESH, tr("home.start_over"), 0, BROWSER_FRESH_BUTTON);
    }
    else
-      x = hm_button(HM_X, y, VS_I_PLAY, "Play", 1, PSP_CTRL_CROSS);
+      x = hm_button(HM_X, y, VS_I_PLAY, tr("home.play"), 1, PSP_CTRL_CROSS);
    if (g_hm_states_for == rom && g_hm_states_n)
-      x = hm_button(x, y, VS_I_LAYERS, "Save states", 0, PSP_CTRL_DOWN);
+      x = hm_button(x, y, VS_I_LAYERS, tr("home.save_states_2"), 0, PSP_CTRL_DOWN);
    x = hm_button(x, y, g_roms[rom].is_fav ? VS_I_STAR : VS_I_STAR_O, NULL, 0,
                  PSP_CTRL_SQUARE);
    /* a picture of your own for the cover (ui_vita_cover.h) */
-   x = hm_button(x, y, VS_I_CAMERA, "Cover", 0, BROWSER_COVER_BUTTON);
+   x = hm_button(x, y, VS_I_CAMERA, tr("home.cover"), 0, BROWSER_COVER_BUTTON);
+   /* the game's collections (ui_vita_lists.h) */
+   x = hm_button(x, y, VS_I_FOLDER, tr("home.lists"), 0, BROWSER_LISTS_BUTTON);
    g_hm_btn_end = x;
 }
 
@@ -1301,10 +1805,10 @@ static void hm_cards(const char *rom_dir, int rom, float dy, float lift)
    char head[48];
    psp_state_slot_top(g_browser_state_slot - 1, &top);
    if (PSP_STATE_SLOT_COUNT > PSP_STATE_SLOTS_SHOWN)
-      snprintf(head, sizeof(head), "Save states   %d-%d of %d", top + 1,
+      snprintf(head, sizeof(head), tr("home.save_states_of"), top + 1,
                top + PSP_STATE_SLOTS_SHOWN, PSP_STATE_SLOT_COUNT);
    else
-      snprintf(head, sizeof(head), "Save states");
+      snprintf(head, sizeof(head), tr("home.save_states_2"));
    vs_text(VS_SUB, HM_X, y - 54, head, HC_TEXT);
    for (i = top; i < PSP_STATE_SLOT_COUNT && i < top + PSP_STATE_SLOTS_SHOWN;
         i++)
@@ -1333,13 +1837,25 @@ static void hm_cards(const char *rom_dir, int rom, float dy, float lift)
       }
       if (on)
          vs_rrect_line(x - 6, y - 6, cw + 12, ch + 12, 18, 3, HC_TEXT);
-      snprintf(slot, sizeof(slot), "Slot %d", i + 1);
+      snprintf(slot, sizeof(slot), tr("home.slot"), i + 1);
       vs_text(VS_LABEL, x, y + ch + 12, slot, on ? HC_TEXT : HC_TEXT2);
-      vs_text(VS_CAPTION, x, y + ch + 42,
-              have ? (g_hm_cards.rom == rom && g_hm_cards.when[i][0]
-                         ? g_hm_cards.when[i] : "Saved")
-                   : (!hm_metadata(rom) || hm_metadata(rom)->value.state[i] == ML_UNKNOWN
-                      ? "Checking..." : "Empty"), HC_TEXT3);
+      {
+         /* (UX review H6: "12 Nov 2026, 16:06" ran into the next card)
+          * the stamp without its year, cut to the card */
+         char cap[32];
+         const char *t = have ? (g_hm_cards.rom == rom && g_hm_cards.when[i][0]
+                                    ? g_hm_cards.when[i] : tr("home.saved"))
+                         : (!hm_metadata(rom) || hm_metadata(rom)->value.state[i] == ML_UNKNOWN
+                            ? tr("home.checking") : tr("home.empty"));
+         char *yr;
+         snprintf(cap, sizeof(cap), "%s", t);
+         yr = strstr(cap, " 20");
+         if (yr && yr[3] >= '0' && yr[3] <= '9' && yr[4] >= '0' && yr[4] <= '9' &&
+             yr[5] == ',')
+            memmove(yr, yr + 5, strlen(yr + 5) + 1);
+         vs_text_fit(VS_CAPTION, cap, (float)cw);
+         vs_text(VS_CAPTION, x, y + ch + 42, cap, HC_TEXT3);
+      }
       if (g_browser_state_open && !g_shelf_del)
          UI_TCH_ROW(i, (int)(x / 2), (int)(y / 2), (int)(cw / 2),
                     (int)((ch + 60) / 2));
@@ -1474,6 +1990,7 @@ static void hm_art_arrived(const char *base, int n)
 static void hm_art_poll(const char *rom_dir, int n, int idle)
 {
    char name[256], line[200];
+   ui_host_home_idle(idle);          /* the update check (update_check.h) */
    hm_art_hand_over(rom_dir, n);
    /* Keep visible textures until navigation settles. The worker's bounded
     * completion queue coalesces overflow and never waits for the UI. */
@@ -1553,27 +2070,62 @@ static void hm_adopt_image(int rom, menu_load_result *r)
 {
    vs_img *im = NULL;
    int status = r->status;
-   if (status == ML_OK)
-   {
-      im = vs_img_new((int)r->w, (int)r->h);
-      if (im) { vs_img_set(im, r->pixels, (int)r->w); g_hm_uploaded = 1; }
-      else status = ML_ERROR;
-   }
    if (r->kind == ML_TILE)
    {
       hm_tile *t = hm_tile_find(rom);
-      if (im)
+      if (status == ML_OK)
       {
-         if (t->img) vs_img_free(t->img);
-         t->img = im; t->state = 1;
+         int standard = (int)r->w == HM_TEX && (int)r->h == HM_TEX;
+         if (standard && t->img && vs_img_writable(t->img))
+         {
+            im = t->img;
+            vs_img_set(im, r->pixels, (int)r->w);
+            g_hm_uploaded = 1;
+         }
+         else
+         {
+            im = standard ? hm_tile_pool_take() : NULL;
+            if (!im) im = vs_img_new((int)r->w, (int)r->h);
+            if (im)
+            {
+               vs_img_set(im, r->pixels, (int)r->w);
+               g_hm_uploaded = 1;
+               if (t->img)
+               {
+                  if (standard) hm_tile_pool_put(t->img);
+                  else vs_img_free(t->img);
+               }
+               t->img = im;
+            }
+            else status = ML_ERROR;
+         }
+         if (im) t->state = 1;
       }
-      else if (!t->img) t->state = -1;
+      if (!im && !t->img) t->state = -1;
       t->epoch = r->job.epoch;
       t->art_epoch = r->job.art_epoch;
       t->retry_us = hm_retry(status, &t->attempts);
+      return;
    }
    else if (r->kind == ML_STILL)
    {
+      if (status == ML_OK)
+      {
+         if (g_hm_pic.old && g_hm_pic.old_a <= 0.5f)
+         {
+            hm_still_spare_put(g_hm_pic.old, g_hm_pic.old_w, g_hm_pic.old_h);
+            g_hm_pic.old = NULL;
+         }
+         im = hm_still_spare_take((int)r->w, (int)r->h);
+         if (!im)
+         {
+            /* Drop mismatched spare first so peak CDRAM stays <= 2 stills. */
+            hm_still_spare_drop();
+            im = vs_img_new((int)r->w, (int)r->h);
+         }
+         if (im) { vs_img_set(im, r->pixels, (int)r->w); g_hm_uploaded = 1; }
+         else status = ML_ERROR;
+      }
       g_hm_still_for = rom;
       g_hm_pic.epoch = r->job.epoch;
       g_hm_pic.art_epoch = r->job.art_epoch;
@@ -1591,13 +2143,20 @@ static void hm_adopt_image(int rom, menu_load_result *r)
          g_hm_pic.state = r->source == ML_SOURCE_HERO ? 3 : 1;
          g_hm_pic.a = 0;
       }
+      return;
    }
    else
    {
       unsigned i = 0;
       while (i < PSP_STATE_SLOT_COUNT && r->kind != ((unsigned)ML_STATE0 << i)) i++;
       if (i >= PSP_STATE_SLOT_COUNT || g_hm_cards.rom != rom)
-      { if (im) vs_img_free(im); return; }
+         return;
+      if (status == ML_OK)
+      {
+         im = vs_img_new((int)r->w, (int)r->h);
+         if (im) { vs_img_set(im, r->pixels, (int)r->w); g_hm_uploaded = 1; }
+         else status = ML_ERROR;
+      }
       if (im)
       {
          if (g_hm_cards.img[i]) vs_img_free(g_hm_cards.img[i]);
@@ -1650,7 +2209,11 @@ static void hm_load_pump(const char *rom_dir, int cur, int n, int n_scan, int id
       g_hm_load_active = 0; g_hm_load_left = 0;
       g_hm_load_rom = rom; g_hm_load_open = g_browser_state_open;
       g_hm_load_dirty = 0;
-      if (idle < IDLE_SELECTED) return;
+      if (idle < IDLE_SELECTED)
+      {
+         artfetch_nav_busy(1);
+         return;
+      }
    }
    menu_load_resume();
    for (unsigned i = 0; i < 4 && menu_load_take(0, &r); i++)
@@ -1662,20 +2225,37 @@ static void hm_load_pump(const char *rom_dir, int cur, int n, int n_scan, int id
       menu_load_release(r.slot);
       md_end(MD_PUBLISH, began);
    }
-   if (menu_load_take(1, &r))
    {
-      unsigned long long began = md_begin();
-      int at = hm_result_rom(rom_dir, n_scan, &r);
-      if (at >= 0) hm_adopt_image(at, &r);
-      if (hm_result_current(&r) && g_hm_load_left) g_hm_load_left--;
-      menu_load_release(r.slot);
-      md_end(MD_PUBLISH, began);
+      /* At most one actual GPU texture upload per frame so a 160x160 tile
+       * never stacks with a 960x544 hero upload inside the same 16.6 ms frame;
+       * absent/error results still drain within the 4 ms budget. */
+      static unsigned up_max;
+      const uint64_t t0 = plat_time_us();
+      unsigned ups = 0;
+      while (menu_load_take(1, &r))
+      {
+         unsigned long long began = md_begin();
+         int at = hm_result_rom(rom_dir, n_scan, &r);
+         if (at >= 0) hm_adopt_image(at, &r);
+         if (hm_result_current(&r) && g_hm_load_left) g_hm_load_left--;
+         menu_load_release(r.slot);
+         md_end(MD_PUBLISH, began);
+         ups++;
+         if (g_hm_uploaded || plat_time_us() - t0 >= HM_UPLOAD_BUDGET_US)
+            break;
+      }
+      if (ups > up_max)
+      {
+         up_max = ups;
+         fe_evt("home_upload_budget max=%u us=%u budget_us=%u", ups,
+                (unsigned)(plat_time_us() - t0), (unsigned)HM_UPLOAD_BUDGET_US);
+      }
    }
    if (!g_hm_load_left) g_hm_load_active = 0;
-   if (g_hm_load_active) return;
+   if (g_hm_load_active) { artfetch_nav_busy(1); return; }
    /* The batch boundary: artwork that arrived meanwhile becomes due now. */
    hm_art_apply();
-   if (!hm_job(rom_dir, rom, &jobs[0])) return;
+   if (!hm_job(rom_dir, rom, &jobs[0])) { artfetch_nav_busy(0); return; }
    g_hm_batch_rom[0] = rom;
    const hm_meta *m = hm_metadata(rom);
    if (!m || (m->retry_us && now >= m->retry_us)) jobs[0].tasks |= ML_META;
@@ -1709,8 +2289,8 @@ static void hm_load_pump(const char *rom_dir, int cur, int n, int n_scan, int id
             else if (vi < 0 || vi >= n) continue;
             at = view_rom(vi);
             if (at == rom) continue;
-            t = hm_tile_find(at);
-            if (t->x >= VS_W || !hm_image_due(t, at, now)) continue;
+            t = hm_tile_peek(at);
+            if (!t || t->x >= VS_W || !hm_image_due(t, at, now)) continue;
             if (hm_job(rom_dir, at, &jobs[count]))
             {
                g_hm_batch_rom[count] = at;
@@ -1719,13 +2299,14 @@ static void hm_load_pump(const char *rom_dir, int cur, int n, int n_scan, int id
          }
    }
    for (unsigned i = 0; i < count; i++) total += hm_task_count(jobs[i].tasks);
-   if (!total) return;
+   if (!total) { artfetch_nav_busy(0); return; }
    if (++g_hm_load_serial == 0) ++g_hm_load_serial;
    for (unsigned i = 0; i < count; i++) jobs[i].focus = g_hm_load_serial;
    if (menu_load_submit(jobs, count))
    { g_hm_load_active = 1; g_hm_load_left = total; g_hm_batch_n = count; }
    else
       g_hm_batch_n = 0;
+   artfetch_nav_busy(g_hm_load_active);
 }
 
 /* Settings and cheats cover Home.  Entering parks the loader without
@@ -1738,6 +2319,9 @@ static void hm_load_pump(const char *rom_dir, int cur, int n, int n_scan, int id
 static void home_modal_enter(void)
 {
    menu_load_pause();
+   artfetch_nav_busy(0);
+   hm_still_spare_drop();
+   hm_tile_pool_clear();
    g_hm_load_active = 0;
    g_hm_load_left = 0;
    g_hm_load_dirty = 1;
@@ -1780,7 +2364,7 @@ static void shell_home(const char *rom_dir, int cur, int n, int n_scan,
       hm_ease(&g_hm_pic.old_a, 0.0f, 0.2f);
       if (g_hm_pic.old_a <= 0.5f)
       {
-         vs_img_free(g_hm_pic.old);
+         hm_still_spare_put(g_hm_pic.old, g_hm_pic.old_w, g_hm_pic.old_h);
          g_hm_pic.old = NULL;
       }
    }
@@ -1797,8 +2381,8 @@ static void shell_home(const char *rom_dir, int cur, int n, int n_scan,
    {
       char q[40];
       static const int ic[2] = { VS_I_BTN_X, VS_I_BTN_O };
-      static const char *const w[2] = { "Delete", "Keep" };
-      snprintf(q, sizeof(q), "Delete the state in slot %d?", g_shelf_del);
+      const char *const w[2] = { tr("home.delete"), tr("home.keep") };
+      snprintf(q, sizeof(q), tr("home.delete_the_state_in_slot"), g_shelf_del);
       vs_rrect(HM_X - 14, VS_H - 74, VS_W - 2 * HM_X + 28, 56, 28,
                VS_HEX(0x1A2340, 245));
       vs_text(VS_LABEL, HM_X + 8, VS_H - 61, q, HC_TEXT);
@@ -1810,9 +2394,9 @@ static void shell_home(const char *rom_dir, int cur, int n, int n_scan,
    else if (g_browser_state_open)
    {
       static const int ic_all[3] = { VS_I_BTN_X, VS_I_BTN_SQ, VS_I_BTN_O };
-      static const char *const w_all[3] = { "Load", "Delete", "Back" };
+      const char *const w_all[3] = { tr("home.load"), tr("home.delete"), tr("home.back") };
       static const int ic_back[1] = { VS_I_BTN_O };
-      static const char *const w_back[1] = { "Back" };
+      const char *const w_back[1] = { tr("home.back") };
       int have = g_browser_state_exists[g_browser_state_slot - 1];
       const int *ic = have ? ic_all : ic_back;
       const char *const *w = have ? w_all : w_back;
@@ -1822,17 +2406,10 @@ static void shell_home(const char *rom_dir, int cur, int n, int n_scan,
    }
    else
    {
-      static const int ic[3] = { VS_I_BTN_O, VS_I_BTN_TRI, -1 };
-      const char *w[3] = { g_find[0] ? "Clear" : "Find", "Console", "START  Settings" };
-      /* Beside the buttons, never under them: the leftmost hints give way
-       * first (the top bar has a search, a console and a settings button
-       * of its own). */
-      int s = 0;
-      while (s < 3 && VS_W - HM_X - hm_hints_w(ic + s, w + s, 3 - s) <
-                      g_hm_btn_end + 8)
-         s++;
-      if (s < 3)
-         hm_hints(VS_W - HM_X, HM_BTN_Y + dy + 16, ic + s, w + s, 3 - s);
+      /* ONE hint line, the same on every console, at its own y under the
+       * buttons (it used to share the buttons' row and vanish whenever a
+       * returning player's five buttons filled it). */
+      hm_home_hints();
    }
    (void)n_scan;
 }
@@ -1855,7 +2432,7 @@ static void home_empty(const char *rom_dir, int n_scan)
    {
       char query[96];
       vs_icon(VS_I_SEARCH, VS_W * 0.5f, y + 36, 56, HC_TEXT3);
-      vs_text_c(VS_SUB, VS_W * 0.5f, y + 94, "No games match", HC_TEXT);
+      vs_text_c(VS_SUB, VS_W * 0.5f, y + 94, tr("home.no_games_match"), HC_TEXT);
       int elsewhere = g_browser_favs || g_browser_recent
                     ? browser_find_count_all(n_scan) : 0;
       snprintf(query, sizeof(query), "\"%s\"", g_find);
@@ -1865,22 +2442,23 @@ static void home_empty(const char *rom_dir, int n_scan)
       {
          /* Nothing starred matches, but games do: one press shows them
           * (SELECT keeps the search). */
-         float w1 = vs_text_w(VS_LABEL, "Clear") + 76;
-         float w2 = vs_text_w(VS_LABEL, "All games") + 76, x;
+         float w1 = vs_text_w(VS_LABEL, tr("home.clear")) + 76;
+         float w2 = vs_text_w(VS_LABEL, tr("home.all_games")) + 76, x;
          snprintf(msg, sizeof(msg), elsewhere == 1
-                  ? "1 game matches in All games"
-                  : "%d games match in All games", elsewhere);
+                  ? tr("home.1_game_matches_in_all_games")
+                  : tr("home.games_match_in_all_games"), elsewhere);
          vs_text_c(VS_CAPTION, VS_W * 0.5f, y + 174, msg, HC_TEXT2);
          x = VS_W * 0.5f - (w1 + 14 + w2) * 0.5f;
-         x = hm_button(x, y + 216, VS_I_BACK, "Clear", 0, PSP_CTRL_CIRCLE);
-         hm_button(x, y + 216, VS_I_GRID, "All games", 1,
-                   g_browser_recent ? BROWSER_TAB_BUTTON(0) : PSP_CTRL_SELECT);
+         x = hm_button(x, y + 216, VS_I_BACK, tr("home.clear"), 0, PSP_CTRL_CIRCLE);
+         /* (not SELECT: with more views than two, it is not the way back) */
+         hm_button(x, y + 216, VS_I_GRID, tr("home.all_games"), 1,
+                   BROWSER_TAB_BUTTON(0));
       }
       else
       {
          vs_text_c(VS_CAPTION, VS_W * 0.5f, y + 174,
-                   "Try fewer words, or part of a word.", HC_TEXT3);
-         hm_button(VS_W * 0.5f - 90, y + 216, VS_I_BACK, "Clear", 1,
+                   tr("home.try_fewer_words_or_part_of"), HC_TEXT3);
+         hm_button(VS_W * 0.5f - 90, y + 216, VS_I_BACK, tr("home.clear"), 1,
                    PSP_CTRL_CIRCLE);
       }
       return;
@@ -1888,32 +2466,55 @@ static void home_empty(const char *rom_dir, int n_scan)
    else if (g_browser_recent)
    {
       vs_icon(VS_I_REWIND, VS_W * 0.5f, y + 20, 56, hm_tint(con, 255));
-      snprintf(msg, sizeof(msg), "No %s games played yet", sk->id);
+      snprintf(msg, sizeof(msg), tr("home.no_games_played_yet"), sk->id);
       vs_text_c(VS_TITLE, VS_W * 0.5f, y + 96, msg, HC_TEXT);
       vs_text_c(VS_BODY, VS_W * 0.5f, y + 156,
-                "The games you play show up here, the latest first.", HC_TEXT2);
-      hm_button(VS_W * 0.5f - 110, y + 216, VS_I_GRID, "All games", 1,
+                tr("home.the_games_you_play_show_up"), HC_TEXT2);
+      hm_button(VS_W * 0.5f - 110, y + 216, VS_I_GRID, tr("home.all_games"), 1,
+                BROWSER_TAB_BUTTON(0));
+      return;
+   }
+   else if (g_browser_favs && g_view_kind > VK_STAR)
+   {
+      /* Most played, Not played yet, a collection, a playlist: nothing of it
+       * on this console */
+      vs_icon(g_view_kind == VK_MOST ? VS_I_REWIND : VS_I_FOLDER, VS_W * 0.5f,
+              y + 20, 56, hm_tint(con, 255));
+      if (g_view_kind == VK_COLL || g_view_kind == VK_LPL)
+         snprintf(msg, sizeof(msg), tr("home.nothing_of_on"), lib_view_name(g_view_kind, g_view_which), sk->id);
+      else
+         snprintf(msg, sizeof(msg), g_view_kind == VK_MOST
+                  ? tr("home.no_games_played_yet") : tr("home.every_game_has_been_played"),
+                  sk->id);
+      vs_text_fit(VS_TITLE, msg, 800);
+      vs_text_c(VS_TITLE, VS_W * 0.5f, y + 96, msg, HC_TEXT);
+      vs_text_c(VS_BODY, VS_W * 0.5f, y + 156,
+                g_view_kind == VK_COLL ? tr("home.press_select_and_square_on_a")
+                : g_view_kind == VK_LPL ? tr("home.a_retroarch_playlist_it_lists_games")
+                : g_view_kind == VK_MOST ? tr("home.the_games_you_play_show_up_2")
+                : tr("home.the_games_you_have_not_started"), HC_TEXT2);
+      hm_button(VS_W * 0.5f - 110, y + 216, VS_I_GRID, tr("home.all_games"), 1,
                 BROWSER_TAB_BUTTON(0));
       return;
    }
    else if (g_browser_favs)
    {
       vs_icon(VS_I_STAR_O, VS_W * 0.5f, y + 20, 56, hm_tint(con, 255));
-      snprintf(msg, sizeof(msg), "No starred %s games yet", sk->id);
+      snprintf(msg, sizeof(msg), tr("home.no_starred_games_yet"), sk->id);
       vs_text_c(VS_TITLE, VS_W * 0.5f, y + 96, msg, HC_TEXT);
       vs_text_c(VS_BODY, VS_W * 0.5f, y + 156,
-                "Press square on a game to star it.", HC_TEXT2);
-      hm_button(VS_W * 0.5f - 110, y + 216, VS_I_GRID, "All games", 1,
-                PSP_CTRL_SELECT);
+                tr("home.press_square_on_a_game_to"), HC_TEXT2);
+      hm_button(VS_W * 0.5f - 110, y + 216, VS_I_GRID, tr("home.all_games"), 1,
+                BROWSER_TAB_BUTTON(0));
       return;
    }
    {
       int others = vita_browser_others(rom_dir);
       vs_icon(VS_I_CART, VS_W * 0.5f, y + 20, 60, hm_tint(con, 255));
-      snprintf(msg, sizeof(msg), "No %s games yet", sk->full);
+      snprintf(msg, sizeof(msg), tr("home.no_games_yet"), sk->full);
       vs_text_c(VS_TITLE, VS_W * 0.5f, y + 96, msg, HC_TEXT);
-      snprintf(msg, sizeof(msg), "Copy your .%s files into this folder on "
-               "the memory card:", sk->ext);
+      snprintf(msg, sizeof(msg), tr("home.copy_your_files_into_this_folder")
+, sk->ext);
       vs_text_c(VS_BODY, VS_W * 0.5f, y + 154, msg, HC_TEXT2);
       snprintf(dir, sizeof(dir), "%s", rom_dir);
       vs_text_fit(VS_LABEL, dir, 760);
@@ -1924,9 +2525,8 @@ static void home_empty(const char *rom_dir, int n_scan)
       }
       if (others > 0)
       {
-         snprintf(msg, sizeof(msg), others == 1 ? "Show my other game"
-                                                : "Show my %d other games",
-                  others);
+         /* the button opens the console picker, which lists the counts */
+         snprintf(msg, sizeof(msg), tr("home.choose_another_console"));
          {
             float w = vs_text_w(VS_LABEL, msg) + 76;
             hm_button(VS_W * 0.5f - w * 0.5f, y + 262, VS_I_BTN_TRI, msg, 1,
@@ -1935,9 +2535,9 @@ static void home_empty(const char *rom_dir, int n_scan)
       }
       else
       {
-         float w = vs_text_w(VS_LABEL, "Look again") + 76;
+         float w = vs_text_w(VS_LABEL, tr("home.look_again")) + 76;
          hm_button(VS_W * 0.5f - w * 0.5f, y + 262, VS_I_REFRESH,
-                   "Look again", 1, PSP_CTRL_CROSS);
+                   tr("home.look_again"), 1, PSP_CTRL_CROSS);
       }
       if (vita_extra_note(dir, sizeof(dir))[0])
       {
@@ -1945,6 +2545,123 @@ static void home_empty(const char *rom_dir, int n_scan)
          vs_text_c(VS_CAPTION, VS_W * 0.5f, y + 330, dir, HC_TEXT2);
       }
    }
+}
+
+/* The picker's share of the pad and the finger, before home_remap turns the
+ * directions sideways.  Closed: TRIANGLE (or a tap on the pill) opens it on
+ * the console in use -- that press moves nothing.  Open: TRIANGLE / DOWN
+ * step on, UP steps back (wrapping), a tap on a row picks it and closes,
+ * CIRCLE cancels (closes and shows the console that was in use when the list
+ * opened again), and any other button, or a tap beside the list, closes it,
+ * keeps the console the highlight is on and is spent on that.  Every step
+ * shows its console at once; the list closing by itself 1.2 s after the last
+ * step keeps it.  A move asks the browser for the console (g_con_pick); the
+ * switch itself is done where the browser keeps its list. */
+static void hm_pick_pad(unsigned *e)
+{
+   unsigned in = *e;
+   int want_open = 0, step = 0, close = 0, row = -1;
+   int can = !g_browser_state_open && !g_shelf_del && !g_ret_on &&
+             !g_swap.active && !g_pop.active && g_hm_lift <= 0.02f &&
+             hm_con_n() > 1;
+
+   if (!g_pick_on)
+   {
+      if (!can)
+         return;
+      if (in & PSP_CTRL_TRIANGLE)
+         want_open = 1;
+      if (in & BROWSER_CON_BUTTON)
+      {
+         /* only the pill is a region of this button while closed */
+         want_open = 1;
+         tch_reset();
+      }
+      *e = in & ~(PSP_CTRL_TRIANGLE | BROWSER_CON_BUTTON);
+      if (want_open)
+      {
+         g_pick_on = 1;
+         g_pick_sel = hm_con_row(g_pcfg.console);
+         g_pick_open_con = g_pcfg.console;
+         g_pick_idle = 0;
+         g_pick_snap = 1;
+         g_pick_drag = 0.0f;
+         g_pick_touch = (in & BROWSER_CON_BUTTON) != 0;
+         fe_evt("ui_picker open console=%d", g_pcfg.console);
+      }
+      return;
+   }
+
+   /* open */
+   g_pick_idle++;
+   /* the finger: a drag that began on a row scrolls the list (a list longer
+    * than the panel has rows no tap could reach otherwise), and the list
+    * does not close under a finger that is down */
+   if (g_tch.down && !g_tch.dead)
+   {
+      g_pick_idle = 0;
+      if (g_tch.moved && g_tch.axis == 2 && g_tch.land >= 0 &&
+          g_tch.land_r.btn == BROWSER_CON_BUTTON && g_tch.land_r.id >= 1)
+         g_pick_drag -= g_tch.dy * 2.0f / HM_PICK_ROW;
+   }
+   if (in & BROWSER_CON_BUTTON)
+   {
+      if (g_tch.land_r.id >= 1 && g_tch.land_r.id <= hm_con_n())
+         row = g_tch.land_r.id - 1;
+      else
+         close = 1;
+      in &= ~BROWSER_CON_BUTTON;
+   }
+   if (row >= 0)
+   {
+      g_pick_sel = row;
+      step = 2;
+      close = 1;
+      in = 0;
+   }
+   else if (in & (PSP_CTRL_TRIANGLE | PSP_CTRL_DOWN))
+   {
+      g_pick_sel = (g_pick_sel + 1) % hm_con_n();
+      step = 1;
+      in = 0;
+   }
+   else if (in & PSP_CTRL_UP)
+   {
+      g_pick_sel = (g_pick_sel + hm_con_n() - 1) % hm_con_n();
+      step = 1;
+      in = 0;
+   }
+   else if (in & PSP_CTRL_CIRCLE)
+   {
+      /* cancel: back to the console that was in use when the list opened */
+      g_pick_sel = hm_con_row(g_pick_open_con);
+      g_con_pick = g_pick_open_con;
+      fe_evt("ui_picker cancel console=%d", g_pick_open_con);
+      close = 1;
+   }
+   else if (in)
+      close = 1;
+   if (step)
+   {
+      g_pick_idle = 0;
+      g_pick_drag = 0.0f;
+      if (step == 1)
+         g_pick_touch = 0;          /* the pad has it: its 1.2 s rule again */
+      if (hm_con_at(g_pick_sel) != g_pcfg.console)
+         g_con_pick = hm_con_at(g_pick_sel);
+      fe_evt("ui_picker move row=%d console=%d", g_pick_sel,
+             hm_con_at(g_pick_sel));
+   }
+   if (g_pick_idle >= HM_PICK_HOLD && !g_pick_touch)
+      close = 1;
+   if (close)
+   {
+      g_pick_on = 0;
+      fe_evt("ui_picker close console=%d idle=%d", hm_con_at(g_pick_sel),
+             g_pick_idle);
+      tch_reset();
+   }
+   *e = 0;
 }
 
 /* The browser's directions, for a row that runs sideways (see the top). */
@@ -1972,6 +2689,7 @@ static void home_free(void)
 {
    int i;
    menu_load_pause();
+   artfetch_nav_busy(0);
    if (++g_hm_generation == 0) ++g_hm_generation;
    memset(g_hm_meta, 0, sizeof(g_hm_meta));
    memset(g_hm_epoch, 0, sizeof(g_hm_epoch));
@@ -1987,6 +2705,8 @@ static void home_free(void)
       memset(&g_hm_tile[i], 0, sizeof(g_hm_tile[i]));
       g_hm_tile[i].rom = -1;
    }
+   hm_tile_pool_clear();
+   hm_still_spare_drop();
    if (g_hm_pic.img)
       vs_img_free(g_hm_pic.img);
    if (g_hm_pic.old)

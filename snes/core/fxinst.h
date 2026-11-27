@@ -200,9 +200,28 @@ struct FxRegs_s
 	uint32	vSCBRDirty;					// If SCBR is written, our cached screen pointers need updating
 	
 	uint8	*avRegAddr;					// To reference avReg in snapshot.cpp
+
+    // Cycle-accurate GSU timing (costs in SNES master-clock cycles, derived from
+    // Mesen2's GSU model). When GSU.bCycleMode is set (default), fx_run() consumes
+    // a master-cycle budget instead of a flat instruction count: cached fetches
+    // cost 1 (2 at 10MHz), uncached fetches and RAM/ROM data accesses 5 (6),
+    // 16-byte cache-line fills 16x that, multiplies per CFGR MS0. This makes the
+    // GSU's throughput distribution match hardware: cache-hot loops run at full
+    // clock while plot/RAM/ROM-heavy work is paced by real access latency.
+    uint32	vCycles;		    // cycles consumed in the current fx_run
+    uint32	vCacheMask;		// cache lines treated as loaded (timing only)
+    uint32	vCostCache;		// fetch, cache hit:      CLSR ? 1 : 2
+    uint32	vCostMem;		// fetch/data, uncached:  CLSR ? 5 : 6
+    uint32	vCostFmult;		// fmult/lmult: (MS0 ? 3 : 7) * (CLSR ? 1 : 2)
+    uint32	vCostMult;		// mult/umult:   MS0 ? 1 : 2
+    uint8	bCycleMode;		// 1 = cycle budget (default), 0 = legacy
 };
 
 extern struct FxRegs_s	GSU;
+
+
+
+#define FX_CYC(n)	{ GSU.vCycles += (uint32) (n); }
 
 // GSU registers
 #define GSU_R0			0x000
@@ -289,12 +308,55 @@ extern struct FxRegs_s	GSU;
 // Access data in the current program bank
 #define PRGBANK(idx)	GSU.pvPrgBank[USEX16(idx)]
 
-// Update pipe from ROM
-#if 0
-#define FETCHPIPE		{ PIPE = PRGBANK(R15); GSU.vPipeAdr = (GSU.vPrgBankReg << 16) + R15; }
-#else
-#define FETCHPIPE		{ PIPE = PRGBANK(R15); }
+#ifdef FX_LIMIT
+extern uint32 fx_limit;
 #endif
+
+#ifdef FX_FAST
+// bCacheActive folded into the range test: fx_cacheLimit is 512 while the cache is
+// active and 0 otherwise. It is set when fx_run starts and where fx_cache() makes
+// the cache active (the only places that change it while the GSU runs).
+extern uint32 fx_cacheLimit;
+#define FX_CACHE_HIT(fca)	((fca) < fx_cacheLimit)
+#else
+#define FX_CACHE_HIT(fca)	(GSU.bCacheActive && (fca) < 512)
+#endif
+
+#ifdef FX_LINEFLAGS
+// One byte per 16-byte cache line instead of the bit mask (needs FX_FAST: see fx_run).
+extern uint8 fx_lineOk[32];
+#define FX_LINE_FILL(fca) \
+	if (!fx_lineOk[(fca) >> 4]) \
+	{ \
+		fx_lineOk[(fca) >> 4] = 1; \
+		FX_CYC(GSU.vCostMem << 4); \
+	}
+#else
+#define FX_LINE_FILL(fca) \
+	{ \
+		uint32 _flb = 1U << ((fca) >> 4); \
+		if (!(GSU.vCacheMask & _flb)) \
+		{ \
+			GSU.vCacheMask |= _flb; \
+			FX_CYC(GSU.vCostMem << 4); \
+		} \
+	}
+#endif
+
+// Update pipe from ROM, charging the per-byte fetch cost: 1 cycle from the
+// GSU cache (with a one-time 16-byte line-fill charge), 5-6 from ROM/RAM.
+#define FETCHPIPE \
+{ \
+	PIPE = PRGBANK(R15); \
+	uint32 _fca = USEX16(R15 - GSU.vCacheBaseReg); \
+	if (FX_CACHE_HIT(_fca)) \
+	{ \
+		FX_LINE_FILL(_fca) \
+		FX_CYC(GSU.vCostCache); \
+	} \
+	else \
+		FX_CYC(GSU.vCostMem); \
+}
 
 // ABS
 #define ABS(x)			((x) < 0 ? -(x) : (x))
@@ -354,11 +416,29 @@ extern struct FxRegs_s	GSU;
 #define CFGR			USEX8(GSU.pvRegisters[GSU_CFGR])
 #define CLSR			USEX8(GSU.pvRegisters[GSU_CLSR])
 
+/* Plot Option Register (POR) bits. GSU.vPlotOptionReg. */
+#define PLOT_TRANSPARENT (1U << 0) /* 0x01. If clear, transparent pixels will not be drawn. */
+#define PLOT_DITHER      (1U << 1) /* 0x02. If set, pixels are drawn with a dither pattern, alternating between the top and bottom nibbles of COLR. */
+#define PLOT_HIGHNIBBLE  (1U << 2) /* 0x04. If set, COLR and GETC instructions will replace the color's low nibble with its high nibble. */
+#define PLOT_FREEZEHIGH  (1U << 3) /* 0x08. If set, COLR and GETC instructions will only modify the low nibble, and 8-bit plotting will only test the low nibble for transparency. */
+#define PLOT_OBJECT      (1U << 4) /* 0x10. If set, CMODE will treat the screen height as if it were 256. Used to draw to sprites. */
+
+#ifdef FX_PROF
+// Profiling build only (twin, -DFX_PROF): opcode histogram over (ALT bits << 8 | opcode),
+// dumped at exit to the file named by $FX_PROF_OUT. Not part of any shipped build.
+extern uint64 fx_prof_hist[1024];
+extern uint64 fx_prof_runs, fx_prof_cycles;
+#define FX_PROF_HIT(i)	(fx_prof_hist[(i)]++)
+#else
+#define FX_PROF_HIT(i)
+#endif
+
 // Execute instruction from the pipe, and fetch next byte to the pipe
 #define FX_STEP \
 { \
 	uint32	vOpcode = (uint32) PIPE; \
 	FETCHPIPE; \
+	FX_PROF_HIT((GSU.vStatusReg & 0x300) | vOpcode); \
 	(*fx_OpcodeTable[(GSU.vStatusReg & 0x300) | vOpcode])(); \
 }
 

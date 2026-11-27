@@ -2,10 +2,11 @@
 
 | Item | Value |
 | --- | --- |
-| Version | 2.0 (in preparation; the hashes below are still those of 1.3.1 until the release VPK is pinned at the release step) |
-| Package | `VitAdhoc.vpk`, SHA-256 `a86cc208ce376361229772fdfce73b7b0a6a9f929b2f739bc1c55d34631824a8` |
-| Runtime (`eboot.bin`) | SHA-256 `43f037b19c37ef0647ab637289c0e065ab2d60cd3aa60a9103af2a4896b3df8b` |
-| SNES player (`snes.bin`) | SHA-256 `19f4adb8c0d99c0793757cba92632dbf7f406bfc27f73eab0d61a15d339f92b4` |
+| Version | 2.0 |
+| Package | `VitAdhoc.vpk`, SHA-256 `ded2cfc021d7391bae6036d23423650ce07b0297970fccfb19957dd0fd25a7dc` |
+| Runtime (`eboot.bin`) | SHA-256 `fa5dc3d21dbeaf3c63fbd794f197e763591e7b3090e6a7dcb250dd773e47f84c` |
+| SNES player (`snes.bin`) | SHA-256 `fe842ad18938f50f89386e4d3f7e33c960c2ccb7bdd63f1ea1314f54e217a72f` |
+| Sega player (`md.bin`) | SHA-256 `2798f87460a29f56c9df9d77d2380e0df2e4b6c1ec012a9afed3dab8721b3755` |
 | Title ID | `GBAD00001` (existing data layout: `ux0:data/GBAdhoc/`) |
 | Source | The `v2.0` tag |
 | Build command | `make -C gpsp/vita -j2 vpk BIOS= VITASDK=/opt/vitasdk GIT_VERSION=2.0` (also builds `snes/vita` and `md/vita`, single job; it also needs `MBEDTLS=<prefix>`, see Version 2.0 below) |
@@ -13,16 +14,16 @@
 
 `GIT_VERSION` supplies the version label written in the app log.
 
-The VPK's 28 entries include the runtime, the SNES player, original app
-artwork, databases and readable license/attribution notices. `snes.bin` is a
-separate program built only from `snes/` (Snes9x 1.63 and our MIT frontend);
-it contains no code from `gpsp/`, and its licence travels as
-`licenses/Snes9x-LICENSE.txt`. Package checks verify both program hashes,
-the title ID, safe archive paths and matching notices. No commercial game,
-save file or proprietary BIOS is included; the open-source BIOS is built in.
+The VPK's 66 entries include the main runtime (`eboot.bin`), the SNES player (`snes.bin`), the Sega player (`md.bin`), original app
+artwork, fonts, 8 interface language catalogues, databases and readable license/attribution notices. `snes.bin` is a
+separate program built only from `snes/` (Snes9x 1.63 and our MIT frontend), and `md.bin` is a separate program built only from `md/` (Genesis Plus GX and our MIT frontend);
+neither contains code from `gpsp/`, and their licences travel as
+`licenses/Snes9x-LICENSE.txt` and `licenses/GenesisPlusGX-LICENSE.txt`. Package checks verify all three program hashes,
+the title ID (`GBAD00001`), `APP_VER` (`02.00`), safe archive paths and matching notices. No commercial game,
+save file or proprietary BIOS is included; the open-source GBA BIOS is built in.
 The install ZIP includes the same VPK and the corresponding source.
 
-## Version 2.0 (in preparation)
+## Version 2.0
 
 Version 2.0 adds Online play. It is built as above with one more input, an Mbed
 TLS 3.6.8 prefix built from the pinned source by `tools/online/build-mbedtls.py`

@@ -1,6 +1,6 @@
 # What's New
 
-## Version 2.0 — <date TBD at release>
+## Version 2.0 — 2026-11-27
 
 The biggest VitAdhoc update yet: eleven consoles in one native app, true 16:9
 Wide View at 60 fps, room-code online play on `vitadhoc.psvita.dev`, and major

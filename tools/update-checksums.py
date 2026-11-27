@@ -15,7 +15,12 @@ def main():
                            capture_output=True).stdout.decode().split("\0")
     lines = []
     for name in sorted(n for n in names if n and n != "SHA256SUMS"):
-        digest = hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
+        path = ROOT / name
+        if path.is_symlink() or not path.is_file():
+            # Tracked symlinks (e.g. gpsp/vita/assets/lang -> ../../../lang) have
+            # their target files listed individually; check-files.py rejects links.
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
         lines.append("%s  %s\n" % (digest, name))
     (ROOT / "SHA256SUMS").write_text("".join(lines))
     print("SHA256SUMS: %d files" % len(lines))

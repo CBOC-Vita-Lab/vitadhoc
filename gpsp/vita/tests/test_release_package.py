@@ -23,9 +23,9 @@ if os.environ.get("RELEASE_VPK"):
 else:
     VPK = VITA / "VitAdhoc.vpk"
     PINNED = False
-RUNTIME_SHA256 = "43f037b19c37ef0647ab637289c0e065ab2d60cd3aa60a9103af2a4896b3df8b"  # version 1.3.1
-SNES_SHA256 = "19f4adb8c0d99c0793757cba92632dbf7f406bfc27f73eab0d61a15d339f92b4"  # version 1.3.1
-MD_SHA256 = None  # version 1.3.1 (pinned by tools/pin-release.py at 2.0 release)
+RUNTIME_SHA256 = "fa5dc3d21dbeaf3c63fbd794f197e763591e7b3090e6a7dcb250dd773e47f84c"  # version 2.0
+SNES_SHA256 = "fe842ad18938f50f89386e4d3f7e33c960c2ccb7bdd63f1ea1314f54e217a72f"  # version 2.0
+MD_SHA256 = "2798f87460a29f56c9df9d77d2380e0df2e4b6c1ec012a9afed3dab8721b3755"  # version 2.0
 NOTICES = {"licenses/GPL-2.0.txt", "licenses/MPL-2.0.txt", "licenses/Inter-OFL.txt",
            "licenses/Outfit-OFL.txt", "licenses/NotoSansCJK-OFL.txt",
            "licenses/CC-BY-SA-4.0.txt", "notices/THIRD-PARTY.md",

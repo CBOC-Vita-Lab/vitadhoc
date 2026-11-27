@@ -14,7 +14,19 @@
 #define PK_SCALE_NEON 1
 #endif
 
+#ifdef __vita__
+#include <psp2/kernel/clib.h>
+#endif
+
 namespace pk {
+
+#ifdef __vita__
+static inline void pk_memcpy(void *dst, const void *src, size_t n) { sceClibMemcpy(dst, src, n); }
+static inline void pk_memmove(void *dst, const void *src, size_t n) { sceClibMemmove(dst, src, n); }
+#else
+static inline void pk_memcpy(void *dst, const void *src, size_t n) { memcpy(dst, src, n); }
+static inline void pk_memmove(void *dst, const void *src, size_t n) { memmove(dst, src, n); }
+#endif
 
 static void xbr_tables_init();
 #ifdef PK_SCALE_NEON
@@ -75,6 +87,7 @@ static inline float lum565(unsigned v) { return (g_wr[(v >> 11) & 31] + g_wg[(v 
 #define MM_PAD 3
 #define MM_BAND 8
 #define MM_SPAN 320
+#define MM_BSTRIDE ((MM_SPAN + 2 * MM_PAD + 7) & ~7)
 
 #define MM_EQ3(B, A0, A1, A2) ((((B) ^ (A0)) | ((B) ^ (A1)) | ((B) ^ (A2))) == 0)
 #define MM_EQ2(B, A0, A1) ((((B) ^ (A0)) | ((B) ^ (A1))) == 0)
@@ -166,14 +179,31 @@ static inline uint16x8_t mm_luma8(uint16x8_t v)
 	return vaddq_u16(vaddq_u16(vaddq_u16(r8, g8), b8), vdupq_n_u16(1));
 }
 
-static void mmpx_pixel8(const uint16_t *const r[7], int x, uint16x8_t out[4])
+static void mmpx_pixel8(const uint16_t *const r[7],
+                        const uint16_t *l2, const uint16_t *l3, const uint16_t *l4,
+                        int x, uint16x8_t out[4])
 {
-	const uint16x8_t A = MV(r[2] + x - 1), B = MV(r[2] + x), C = MV(r[2] + x + 1);
-	const uint16x8_t D = MV(r[3] + x - 1), E = MV(r[3] + x), F = MV(r[3] + x + 1);
-	const uint16x8_t G = MV(r[4] + x - 1), H = MV(r[4] + x), I = MV(r[4] + x + 1);
-	const uint16x8_t Q = MV(r[3] + x - 2), R = MV(r[3] + x + 2);
+	uint16x8_t A, B, C, D, E, F, G, H, I, Q, R;
+	{
+		const uint16x8_t r2_lo = MV(r[2] + x - 3), r2_hi = MV(r[2] + x + 5);
+		A = vextq_u16(r2_lo, r2_hi, 2); B = vextq_u16(r2_lo, r2_hi, 3); C = vextq_u16(r2_lo, r2_hi, 4);
+	}
+	{
+		const uint16x8_t r3_lo = MV(r[3] + x - 3), r3_hi = MV(r[3] + x + 5);
+		Q = vextq_u16(r3_lo, r3_hi, 1); D = vextq_u16(r3_lo, r3_hi, 2);
+		E = vextq_u16(r3_lo, r3_hi, 3); F = vextq_u16(r3_lo, r3_hi, 4); R = vextq_u16(r3_lo, r3_hi, 5);
+	}
+	{
+		const uint16x8_t r4_lo = MV(r[4] + x - 3), r4_hi = MV(r[4] + x + 5);
+		G = vextq_u16(r4_lo, r4_hi, 2); H = vextq_u16(r4_lo, r4_hi, 3); I = vextq_u16(r4_lo, r4_hi, 4);
+	}
 	const uint16x8_t P = MV(r[1] + x), S = MV(r[5] + x);
-	const uint16x8_t Bl = mm_luma8(B), Dl = mm_luma8(D), El = mm_luma8(E), Fl = mm_luma8(F), Hl = mm_luma8(H);
+	uint16x8_t Dl, El, Fl;
+	{
+		const uint16x8_t l3_lo = MV(l3 + x - 3), l3_hi = MV(l3 + x + 5);
+		Dl = vextq_u16(l3_lo, l3_hi, 2); El = vextq_u16(l3_lo, l3_hi, 3); Fl = vextq_u16(l3_lo, l3_hi, 4);
+	}
+	const uint16x8_t Bl = MV(l2 + x), Hl = MV(l4 + x);
 	uint16x8_t J = E, K = E, L = E, M = E, c;
 
 	/* 1:1 slope rules */
@@ -248,28 +278,36 @@ static void mmpx_pixel8(const uint16_t *const r[7], int x, uint16x8_t out[4])
 #undef MNONE2
 #undef MNONE4
 
-/* how many of the eight lanes of a mask (0xFFFF or 0) are set */
-static inline unsigned mask_count(uint16x8_t m)
+/* 8-bit bitmask of which of the eight lanes of a mask (0xFFFF or 0) are set (pure ARMv7 NEON, single NEON->GPR move) */
+static inline unsigned mask_bits(uint16x8_t m)
 {
-	const uint32x4_t a = vpaddlq_u16(vshrq_n_u16(m, 15));
-	const uint64x2_t b = vpaddlq_u32(a);
-	return (unsigned) (vgetq_lane_u64(b, 0) + vgetq_lane_u64(b, 1));
+	static const uint16_t kBits[8] = { 1, 2, 4, 8, 16, 32, 64, 128 };
+	const uint16x8_t b = vandq_u16(m, vld1q_u16(kBits));
+	const uint16x4_t p4 = vorr_u16(vget_low_u16(b), vget_high_u16(b));
+	const uint16x4_t p2 = vpadd_u16(p4, p4);
+	const uint16x4_t p1 = vpadd_u16(p2, p2);
+	return (unsigned) vget_lane_u16(p1, 0);
 }
 #endif
 
 static unsigned mmpx_rows(const uint16_t *src, int w, int h, int spitch, uint16_t *dst, int dpitch, int y0, int y1, int cx0, int cx1)
 {
-	uint16_t buf[(MM_BAND + 2 * MM_PAD) * (MM_SPAN + 2 * MM_PAD)];
+	uint16_t buf[(MM_BAND + 2 * MM_PAD) * MM_BSTRIDE];
 	const uint16_t *rows[MM_BAND + 2 * MM_PAD];
+#ifdef PK_SCALE_NEON
+	uint16_t lbuf[3 * MM_BSTRIDE];
+	int lrow_id[3];
+#endif
 	unsigned busy = 0;
 	for (int ya = y0; ya < y1; ya += MM_BAND) {
 		const int yb = ya + MM_BAND < y1 ? ya + MM_BAND : y1;
 		for (int xa = cx0; xa < cx1; xa += MM_SPAN) {
 			const int xb = xa + MM_SPAN < cx1 ? xa + MM_SPAN : cx1;
 			const int bw = xb - xa + 2 * MM_PAD, nrows = yb - ya + 2 * MM_PAD;
+			const int bstride = (bw + 7) & ~7;
 			for (int i = 0; i < nrows; i++) {
 				int sy = ya - MM_PAD + i;
-				uint16_t *d = buf + (size_t) bw * i;
+				uint16_t *d = buf + (size_t) bstride * i;
 				sy = sy < 0 ? 0 : sy > h - 1 ? h - 1 : sy;
 				const uint16_t *s = src + (size_t) spitch * sy;
 				const int lo = xa - MM_PAD, hi = xb + MM_PAD;
@@ -278,40 +316,70 @@ static unsigned mmpx_rows(const uint16_t *src, int w, int h, int spitch, uint16_
 				const int in0 = lo < 0 ? 0 : lo, in1 = hi > w ? w : hi;
 				if (in1 > in0) memcpy(d + (in0 - lo), s + in0, (size_t) (in1 - in0) * 2u);
 				for (int k = w; k < hi; k++) d[k - lo] = s[w - 1];
+				for (int k = bw; k < bstride; k++) d[k] = 0;
 			}
+#ifdef PK_SCALE_NEON
+			lrow_id[0] = lrow_id[1] = lrow_id[2] = -1;
+#endif
 			for (int y = ya; y < yb; y++) {
-				const uint16_t *const *r = rows + (y - ya);
+				const int ry = y - ya;
+				const uint16_t *const *r = rows + ry;
 				uint16_t *o = dst + (size_t) dpitch * 2u * (size_t) y + 2u * (size_t) xa;
 				const int xend = MM_PAD + (xb - xa);
 				int x = MM_PAD;
 #ifdef PK_SCALE_NEON
-				if (use_neon()) {
-					/* eight pixels at a time: the flat test (all eight neighbours equal the pixel) for the eight at once; eight flat
-					 * pixels are two rows of stores, otherwise all eight go through the rules together */
+				if (use_neon() && x + 8 <= xend) {
+					/* eight pixels at a time: carry 3 aligned row windows across x += 8, derive 3x3 neighbours via vextq_u16,
+					 * and compute each band row's luma lazily at most once per band in a 3-row rolling buffer. */
+					uint16x8_t r2_lo = vld1q_u16(r[2]);
+					uint16x8_t r3_lo = vld1q_u16(r[3]);
+					uint16x8_t r4_lo = vld1q_u16(r[4]);
+					const uint16_t *l2 = 0, *l3 = 0, *l4 = 0;
 					for (; x + 8 <= xend; x += 8, o += 16) {
-						const uint16x8_t e = vld1q_u16(&r[3][x]);
-						uint16x8_t f = vceqq_u16(e, vld1q_u16(&r[2][x - 1]));
-						f = vandq_u16(f, vceqq_u16(e, vld1q_u16(&r[2][x])));
-						f = vandq_u16(f, vceqq_u16(e, vld1q_u16(&r[2][x + 1])));
-						f = vandq_u16(f, vceqq_u16(e, vld1q_u16(&r[3][x - 1])));
-						f = vandq_u16(f, vceqq_u16(e, vld1q_u16(&r[3][x + 1])));
-						f = vandq_u16(f, vceqq_u16(e, vld1q_u16(&r[4][x - 1])));
-						f = vandq_u16(f, vceqq_u16(e, vld1q_u16(&r[4][x])));
-						f = vandq_u16(f, vceqq_u16(e, vld1q_u16(&r[4][x + 1])));
+						const uint16x8_t r2_hi = vld1q_u16(r[2] + x + 5);
+						const uint16x8_t r3_hi = vld1q_u16(r[3] + x + 5);
+						const uint16x8_t r4_hi = vld1q_u16(r[4] + x + 5);
+						const uint16x8_t E = vextq_u16(r3_lo, r3_hi, 3);
+						uint16x8_t f = vceqq_u16(E, vextq_u16(r2_lo, r2_hi, 2));
+						f = vandq_u16(f, vceqq_u16(E, vextq_u16(r2_lo, r2_hi, 3)));
+						f = vandq_u16(f, vceqq_u16(E, vextq_u16(r2_lo, r2_hi, 4)));
+						f = vandq_u16(f, vceqq_u16(E, vextq_u16(r3_lo, r3_hi, 2)));
+						f = vandq_u16(f, vceqq_u16(E, vextq_u16(r3_lo, r3_hi, 4)));
+						f = vandq_u16(f, vceqq_u16(E, vextq_u16(r4_lo, r4_hi, 2)));
+						f = vandq_u16(f, vceqq_u16(E, vextq_u16(r4_lo, r4_hi, 3)));
+						f = vandq_u16(f, vceqq_u16(E, vextq_u16(r4_lo, r4_hi, 4)));
+						r2_lo = r2_hi; r3_lo = r3_hi; r4_lo = r4_hi;
 						const uint64x2_t f64 = vreinterpretq_u64_u16(f);
 						if ((vgetq_lane_u64(f64, 0) & vgetq_lane_u64(f64, 1)) == ~(uint64_t) 0) {
-							uint16x8x2_t two; two.val[0] = e; two.val[1] = e;
+							uint16x8x2_t two; two.val[0] = E; two.val[1] = E;
 							vst2q_u16(o, two);
 							vst2q_u16(o + dpitch, two);
 							continue;
 						}
+						if (!l3) {
+							const int ris[3] = { ry + 2, ry + 3, ry + 4 };
+							const uint16_t *ls[3];
+							for (int t = 0; t < 3; t++) {
+								const int ri = ris[t];
+								const int slot = ri % 3;
+								uint16_t *dst_l = lbuf + (size_t) slot * bstride;
+								if (lrow_id[slot] != ri) {
+									const uint16_t *src_r = rows[ri];
+									for (int c = 0; c < bstride; c += 8)
+										vst1q_u16(dst_l + c, mm_luma8(vld1q_u16(src_r + c)));
+									lrow_id[slot] = ri;
+								}
+								ls[t] = dst_l;
+							}
+							l2 = ls[0]; l3 = ls[1]; l4 = ls[2];
+						}
 						uint16x8_t v[4];
-						mmpx_pixel8(r, x, v);
+						mmpx_pixel8(r, l2, l3, l4, x, v);
 						uint16x8x2_t top, bot;
 						top.val[0] = v[0]; top.val[1] = v[1]; bot.val[0] = v[2]; bot.val[1] = v[3];
 						vst2q_u16(o, top);
 						vst2q_u16(o + dpitch, bot);
-						busy += 8 - mask_count(f);
+						busy += (unsigned) (8 - __builtin_popcount(mask_bits(f)));
 					}
 				}
 #endif
@@ -662,32 +730,36 @@ static inline uint16x8_t lum8(uint16x8_t v)
 
 struct XM { uint16x8_t edr, edl, edu, edi, px, any; };
 
-static inline XM xdec8(uint16x8_t b, uint16x8_t c, uint16x8_t d, uint16x8_t e, uint16x8_t f, uint16x8_t g, uint16x8_t h, uint16x8_t i,
-                       uint16x8_t i4, uint16x8_t i5, uint16x8_t h5, uint16x8_t f4)
+static inline XM xdec8_rot(
+	uint16x8_t irlv0, uint16x8_t K, uint16x8_t BIAS,
+	uint16x8_t nq_fb, uint16x8_t nq_fc, uint16x8_t nq_hd, uint16x8_t nq_hg,
+	uint16x8_t d_ei, uint16x8_t eq_ei,
+	uint16x8_t nq_ff4, uint16x8_t nq_hh5,
+	uint16x8_t d_fi4, uint16x8_t d_hi5,
+	uint16x8_t eq_ec_eg, uint16x8_t s_ec_eg, uint16x8_t s_fb_hd,
+	uint16x8_t ne_eg, uint16x8_t ne_dg, uint16x8_t ne_ec, uint16x8_t ne_bc,
+	uint16x8_t d_ih5, uint16x8_t d_if4, uint16x8_t d_hf,
+	uint16x8_t dhc, uint16x8_t dfg, uint16x8_t px)
 {
-	const uint16x8_t K = vdupq_n_u16(XQ_EQ), BIAS = vdupq_n_u16(XQ_BIAS);
-#define NQ(a, b_) vcgtq_u16(vabdq_u16(a, b_), K)
-#define EQM(a, b_) vcleq_u16(vabdq_u16(a, b_), K)
-#define NE(a, b_) vmvnq_u16(vceqq_u16(a, b_))
-	const uint16x8_t irlv0 = vandq_u16(NE(e, f), NE(e, h));
-	const uint16x8_t irlv1 = vandq_u16(irlv0, vorrq_u16(vorrq_u16(vorrq_u16(vandq_u16(NQ(f, b), NQ(f, c)), vandq_u16(NQ(h, d), NQ(h, g))),
-	                                                               vandq_u16(EQM(e, i), vorrq_u16(vandq_u16(NQ(f, f4), NQ(f, i4)), vandq_u16(NQ(h, h5), NQ(h, i5))))),
-	                                                     vorrq_u16(EQM(e, g), EQM(e, c))));
-	const uint16x8_t irlv2l = vandq_u16(NE(e, g), NE(d, g)), irlv2u = vandq_u16(NE(e, c), NE(b, c));
-	const uint16x8_t wd1 = vaddq_u16(vaddq_u16(vaddq_u16(vabdq_u16(e, c), vabdq_u16(e, g)), vaddq_u16(vabdq_u16(i, h5), vabdq_u16(i, f4))), vshlq_n_u16(vabdq_u16(h, f), 2));
-	const uint16x8_t wd2 = vaddq_u16(vaddq_u16(vaddq_u16(vabdq_u16(h, d), vabdq_u16(h, i5)), vaddq_u16(vabdq_u16(f, i4), vabdq_u16(f, b))), vshlq_n_u16(vabdq_u16(e, i), 2));
+	const uint16x8_t nq_fi4 = vcgtq_u16(d_fi4, K);
+	const uint16x8_t nq_hi5 = vcgtq_u16(d_hi5, K);
+	const uint16x8_t irlv1 = vandq_u16(irlv0, vorrq_u16(
+		vorrq_u16(
+			vorrq_u16(vandq_u16(nq_fb, nq_fc), vandq_u16(nq_hd, nq_hg)),
+			vandq_u16(eq_ei, vorrq_u16(vandq_u16(nq_ff4, nq_fi4), vandq_u16(nq_hh5, nq_hi5)))),
+		eq_ec_eg));
+	const uint16x8_t irlv2l = vandq_u16(ne_eg, ne_dg);
+	const uint16x8_t irlv2u = vandq_u16(ne_ec, ne_bc);
+	const uint16x8_t wd1 = vaddq_u16(vaddq_u16(s_ec_eg, vaddq_u16(d_ih5, d_if4)), vshlq_n_u16(d_hf, 2));
+	const uint16x8_t wd2 = vaddq_u16(vaddq_u16(s_fb_hd, vaddq_u16(d_hi5, d_fi4)), vshlq_n_u16(d_ei, 2));
 	XM m;
 	m.edi = vandq_u16(vcgeq_u16(wd2, wd1), irlv0);
 	m.edr = vandq_u16(vcgeq_u16(wd2, vaddq_u16(wd1, BIAS)), irlv1);
-	const uint16x8_t dhc = vabdq_u16(h, c), dfg = vabdq_u16(f, g);
 	m.edl = vandq_u16(vandq_u16(vcgeq_u16(dhc, vshlq_n_u16(dfg, 1)), irlv2l), m.edr);
 	m.edu = vandq_u16(vandq_u16(vcgeq_u16(dfg, vshlq_n_u16(dhc, 1)), irlv2u), m.edr);
-	m.px = vcgeq_u16(vabdq_u16(e, h), vabdq_u16(e, f));
+	m.px = px;
 	m.any = vorrq_u16(vorrq_u16(m.edr, m.edl), vorrq_u16(m.edu, m.edi));
 	return m;
-#undef NQ
-#undef EQM
-#undef NE
 }
 
 struct C12 { int16x8_t r, g, b; };
@@ -831,18 +903,31 @@ static unsigned xbr_rows_neon(const uint16_t *src, int w, int h, int spitch, uin
 		for (c = 0; c < lp; c += 8) vst1q_u16(ld + c, lum8(vld1q_u16(pd + c)));
 	}
 	const uint16x8_t lane_id = { 0, 1, 2, 3, 4, 5, 6, 7 };
+	const uint16x8_t K = vdupq_n_u16(XQ_EQ), BIAS = vdupq_n_u16(XQ_BIAS);
 	unsigned busy = 0;
 	for (int y = y0; y < y1; y++) {
 		const size_t off = (size_t) lp * (y - y0 + 2) + 2;
 		const uint16_t *lc = L + off, *pc = P + off;
 		uint16_t *o = dst + (size_t) dpitch * (size_t) (y * s);
+		uint16x8_t rm1_lo = vld1q_u16(lc - lp - 2);
+		uint16x8_t r0_lo  = vld1q_u16(lc - 2);
+		uint16x8_t rp1_lo = vld1q_u16(lc + lp - 2);
 		for (int xg = 0; xg < nx; xg += 8) {
-#define LD(dy, dx) vld1q_u16(lc + (dy) * lp + xg + (dx))
 			const int left = nx - xg < 8 ? nx - xg : 8;
-			const uint16x8_t E = LD(0, 0), F = LD(0, 1), H = LD(1, 0), D = LD(0, -1), B = LD(-1, 0);
+			const uint16x8_t rm1_hi = vld1q_u16(lc - lp + xg + 6);
+			const uint16x8_t r0_hi  = vld1q_u16(lc + xg + 6);
+			const uint16x8_t rp1_hi = vld1q_u16(lc + lp + xg + 6);
+			const uint16x8_t B = vextq_u16(rm1_lo, rm1_hi, 2);
+			const uint16x8_t D = vextq_u16(r0_lo,  r0_hi,  1);
+			const uint16x8_t E = vextq_u16(r0_lo,  r0_hi,  2);
+			const uint16x8_t F = vextq_u16(r0_lo,  r0_hi,  3);
+			const uint16x8_t H = vextq_u16(rp1_lo, rp1_hi, 2);
 			/* flat: no lane has e != f and e != h, which is the same for all four rotations of the neighbours */
-			const uint16x8_t ne_f = vmvnq_u16(vceqq_u16(E, F)), ne_h = vmvnq_u16(vceqq_u16(E, H)), ne_d = vmvnq_u16(vceqq_u16(E, D)), ne_b = vmvnq_u16(vceqq_u16(E, B));
-			const uint16x8_t act = vorrq_u16(vorrq_u16(vandq_u16(ne_f, ne_h), vandq_u16(ne_d, ne_b)), vorrq_u16(vandq_u16(ne_b, ne_f), vandq_u16(ne_h, ne_d)));
+			const uint16x8_t ne_f = vmvnq_u16(vceqq_u16(E, F)), ne_h = vmvnq_u16(vceqq_u16(E, H));
+			const uint16x8_t ne_d = vmvnq_u16(vceqq_u16(E, D)), ne_b = vmvnq_u16(vceqq_u16(E, B));
+			const uint16x8_t irlv0_0 = vandq_u16(ne_f, ne_h), irlv0_1 = vandq_u16(ne_b, ne_f);
+			const uint16x8_t irlv0_2 = vandq_u16(ne_d, ne_b), irlv0_3 = vandq_u16(ne_h, ne_d);
+			const uint16x8_t act = vorrq_u16(vorrq_u16(irlv0_0, irlv0_2), vorrq_u16(irlv0_1, irlv0_3));
 			const uint16x4_t a4 = vorr_u16(vget_low_u16(act), vget_high_u16(act));
 			uint16_t *q = o + (size_t) s * (cx0 + xg);
 			const uint16x8_t E16 = vld1q_u16(pc + xg);
@@ -850,27 +935,106 @@ static unsigned xbr_rows_neon(const uint16_t *src, int w, int h, int spitch, uin
 			if (!vget_lane_u64(vreinterpret_u64_u16(a4), 0)) {
 				for (int k = 0; k < s * s; k++) res[k] = E16;
 				store_rows<s>(q, (size_t) dpitch, res, left);
+				rm1_lo = rm1_hi; r0_lo = r0_hi; rp1_lo = rp1_hi;
 				continue;
 			}
-			const uint16x8_t A = LD(-1, -1), C = LD(-1, 1), G = LD(1, -1), I = LD(1, 1);
-			const uint16x8_t A1 = LD(-2, -1), B1 = LD(-2, 0), G5 = LD(2, -1), H5 = LD(2, 0), I5 = LD(2, 1);
-			const uint16x8_t A0 = LD(-1, -2), D0 = LD(0, -2), G0 = LD(1, -2), C4 = LD(-1, 2), F4 = LD(0, 2), I4 = LD(1, 2);
-			const uint16x8_t C1 = LD(-2, 1);
-#undef LD
-			const XM m0 = xdec8(B, C, D, E, F, G, H, I, I4, I5, H5, F4);
-			const XM m1 = xdec8(D, A, H, E, B, I, F, C, C1, C4, F4, B1);
-			const XM m2 = xdec8(H, G, F, E, D, C, B, A, A0, A1, B1, D0);
-			const XM m3 = xdec8(F, I, B, E, H, A, D, G, G5, G0, D0, H5);
+			const uint16x8_t A0 = rm1_lo;
+			const uint16x8_t A  = vextq_u16(rm1_lo, rm1_hi, 1);
+			const uint16x8_t C  = vextq_u16(rm1_lo, rm1_hi, 3);
+			const uint16x8_t D0 = r0_lo;
+			const uint16x8_t F4 = vextq_u16(r0_lo,  r0_hi,  4);
+			const uint16x8_t G  = vextq_u16(rp1_lo, rp1_hi, 1);
+			const uint16x8_t I  = vextq_u16(rp1_lo, rp1_hi, 3);
+			const uint16x8_t I4 = vextq_u16(rp1_lo, rp1_hi, 4);
+			rm1_lo = rm1_hi; r0_lo = r0_hi; rp1_lo = rp1_hi;
+
+			/* Deduplicate shared diffs with tight live ranges (pair m0/m2 then m1/m3 to fit 16 Q-regs on Cortex-A9). */
+			uint16x8_t px0, px1, px2, px3;
+			{
+				const uint16x8_t dEF = vabdq_u16(E, F), dEH = vabdq_u16(E, H);
+				const uint16x8_t dEB = vabdq_u16(E, B), dED = vabdq_u16(E, D);
+				px0 = vcgeq_u16(dEH, dEF); px1 = vcgeq_u16(dEF, dEB);
+				px2 = vcgeq_u16(dEB, dED); px3 = vcgeq_u16(dED, dEH);
+			}
+			const uint16x8_t dEA = vabdq_u16(E, A), dEC = vabdq_u16(E, C);
+			const uint16x8_t dEG = vabdq_u16(E, G), dEI = vabdq_u16(E, I);
+			const uint16x8_t dBF = vabdq_u16(B, F), dBD = vabdq_u16(B, D);
+			const uint16x8_t dDH = vabdq_u16(D, H), dFH = vabdq_u16(F, H);
+			const uint16x8_t B1 = vld1q_u16(lc - 2 * lp + xg), H5 = vld1q_u16(lc + 2 * lp + xg);
+			const uint16x8_t nqFF4 = vcgtq_u16(vabdq_u16(F, F4), K), nqHH5 = vcgtq_u16(vabdq_u16(H, H5), K);
+			const uint16x8_t nqBB1 = vcgtq_u16(vabdq_u16(B, B1), K), nqDD0 = vcgtq_u16(vabdq_u16(D, D0), K);
+
+			XM m0, m2;
+			{
+				const uint16x8_t eqEC_EG = vorrq_u16(vcleq_u16(dEC, K), vcleq_u16(dEG, K));
+				const uint16x8_t sEC_EG = vaddq_u16(dEC, dEG), sBF_DH = vaddq_u16(dBF, dDH);
+				const uint16x8_t nqBF = vcgtq_u16(dBF, K), nqDH = vcgtq_u16(dDH, K);
+				const uint16x8_t neEC = vtstq_u16(dEC, dEC), neEG = vtstq_u16(dEG, dEG);
+				const uint16x8_t dFC = vabdq_u16(F, C), dHG = vabdq_u16(H, G);
+				const uint16x8_t dDG = vabdq_u16(D, G), dBC = vabdq_u16(B, C);
+				const uint16x8_t I5 = vld1q_u16(lc + 2 * lp + xg + 1);
+				m0 = xdec8_rot(
+					irlv0_0, K, BIAS,
+					nqBF, vcgtq_u16(dFC, K), nqDH, vcgtq_u16(dHG, K),
+					dEI, vcleq_u16(dEI, K), nqFF4, nqHH5,
+					vabdq_u16(F, I4), vabdq_u16(H, I5),
+					eqEC_EG, sEC_EG, sBF_DH,
+					neEG, vtstq_u16(dDG, dDG), neEC, vtstq_u16(dBC, dBC),
+					vabdq_u16(I, H5), vabdq_u16(I, F4), dFH,
+					vabdq_u16(H, C), vabdq_u16(F, G), px0);
+				const uint16x8_t A1 = vld1q_u16(lc - 2 * lp + xg - 1);
+				m2 = xdec8_rot(
+					irlv0_2, K, BIAS,
+					nqDH, vcgtq_u16(dDG, K), nqBF, vcgtq_u16(dBC, K),
+					dEA, vcleq_u16(dEA, K), nqDD0, nqBB1,
+					vabdq_u16(D, A0), vabdq_u16(B, A1),
+					eqEC_EG, sEC_EG, sBF_DH,
+					neEC, vtstq_u16(dFC, dFC), neEG, vtstq_u16(dHG, dHG),
+					vabdq_u16(A, B1), vabdq_u16(A, D0), dBD,
+					vabdq_u16(B, G), vabdq_u16(D, C), px2);
+			}
+			XM m1, m3;
+			{
+				const uint16x8_t eqEA_EI = vorrq_u16(vcleq_u16(dEA, K), vcleq_u16(dEI, K));
+				const uint16x8_t sEA_EI = vaddq_u16(dEA, dEI), sBD_FH = vaddq_u16(dBD, dFH);
+				const uint16x8_t nqBD = vcgtq_u16(dBD, K), nqFH = vcgtq_u16(dFH, K);
+				const uint16x8_t neEA = vtstq_u16(dEA, dEA), neEI = vtstq_u16(dEI, dEI);
+				const uint16x8_t dBA = vabdq_u16(B, A), dFI = vabdq_u16(F, I);
+				const uint16x8_t dHI = vabdq_u16(H, I), dDA = vabdq_u16(D, A);
+				const uint16x8_t C1 = vld1q_u16(lc - 2 * lp + xg + 1);
+				const uint16x8_t C4 = vld1q_u16(lc - lp + xg + 2);
+				m1 = xdec8_rot(
+					irlv0_1, K, BIAS,
+					nqBD, vcgtq_u16(dBA, K), nqFH, vcgtq_u16(dFI, K),
+					dEC, vcleq_u16(dEC, K), nqBB1, nqFF4,
+					vabdq_u16(B, C1), vabdq_u16(F, C4),
+					eqEA_EI, sEA_EI, sBD_FH,
+					neEI, vtstq_u16(dHI, dHI), neEA, vtstq_u16(dDA, dDA),
+					vabdq_u16(C, F4), vabdq_u16(C, B1), dBF,
+					vabdq_u16(F, A), vabdq_u16(B, I), px1);
+				const uint16x8_t G5 = vld1q_u16(lc + 2 * lp + xg - 1);
+				const uint16x8_t G0 = vld1q_u16(lc + lp + xg - 2);
+				m3 = xdec8_rot(
+					irlv0_3, K, BIAS,
+					nqFH, vcgtq_u16(dHI, K), nqBD, vcgtq_u16(dDA, K),
+					dEG, vcleq_u16(dEG, K), nqHH5, nqDD0,
+					vabdq_u16(H, G5), vabdq_u16(D, G0),
+					eqEA_EI, sEA_EI, sBD_FH,
+					neEA, vtstq_u16(dBA, dBA), neEI, vtstq_u16(dFI, dFI),
+					vabdq_u16(G, D0), vabdq_u16(G, H5), dDH,
+					vabdq_u16(D, I), vabdq_u16(H, A), px3);
+			}
+
 			const uint16x8_t anyd = vandq_u16(vorrq_u16(vorrq_u16(m0.any, m1.any), vorrq_u16(m2.any, m3.any)), vcltq_u16(lane_id, vdupq_n_u16((uint16_t) left)));
-			const unsigned cnt = mask_count(anyd);
-			busy += cnt;
-			if (!cnt) {
+			const unsigned amask = mask_bits(anyd);
+			if (!amask) {
 				for (int k = 0; k < s * s; k++) res[k] = E16;
 				store_rows<s>(q, (size_t) dpitch, res, left);
 				continue;
 			}
-			if (cnt >= XBR_VEC_MIN) {
-				/* the whole group at once */
+			if ((amask & (amask - 1u)) != 0u) {
+				/* >= XBR_VEC_MIN (2) busy pixels: resolve the whole group of eight in NEON */
+				busy += (unsigned) __builtin_popcount(amask);
 				const uint16x8_t pB = vld1q_u16(pc + xg - lp), pD = vld1q_u16(pc + xg - 1), pF = vld1q_u16(pc + xg + 1), pH = vld1q_u16(pc + xg + lp);
 				const C12 cE = c12v(E16);
 				const C12 cd0 = c12v(vbslq_u16(m0.px, pF, pH)), cd1 = c12v(vbslq_u16(m1.px, pB, pF)), cd2 = c12v(vbslq_u16(m2.px, pD, pB)), cd3 = c12v(vbslq_u16(m3.px, pH, pD));
@@ -879,35 +1043,35 @@ static unsigned xbr_rows_neon(const uint16_t *src, int w, int h, int spitch, uin
 				store_rows<s>(q, (size_t) dpitch, res, left);
 				continue;
 			}
-			/* one busy pixel: the scalar resolve of the C loop (cheaper than the group of eight for one pixel) */
-			uint16_t ed[4][5][8], anyv[8], e16[8];
-			vst1q_u16(ed[0][0], m0.edr); vst1q_u16(ed[0][1], m0.edl); vst1q_u16(ed[0][2], m0.edu); vst1q_u16(ed[0][3], m0.edi); vst1q_u16(ed[0][4], m0.px);
-			vst1q_u16(ed[1][0], m1.edr); vst1q_u16(ed[1][1], m1.edl); vst1q_u16(ed[1][2], m1.edu); vst1q_u16(ed[1][3], m1.edi); vst1q_u16(ed[1][4], m1.px);
-			vst1q_u16(ed[2][0], m2.edr); vst1q_u16(ed[2][1], m2.edl); vst1q_u16(ed[2][2], m2.edu); vst1q_u16(ed[2][3], m2.edi); vst1q_u16(ed[2][4], m2.px);
-			vst1q_u16(ed[3][0], m3.edr); vst1q_u16(ed[3][1], m3.edl); vst1q_u16(ed[3][2], m3.edu); vst1q_u16(ed[3][3], m3.edi); vst1q_u16(ed[3][4], m3.px);
-			vst1q_u16(anyv, anyd);
-			vst1q_u16(e16, E16);
-			for (int k = 0; k < left; k++) {
-				uint16_t *qk = q + (size_t) s * k;
-				const uint16_t E16k = e16[k];
-				if (!anyv[k]) {
-					for (int sy = 0; sy < s; sy++) for (int sx = 0; sx < s; sx++) qk[(size_t) dpitch * sy + sx] = E16k;
-					continue;
-				}
-				unsigned lane[4];
-				for (int l = 0; l < 4; l++)
-					lane[l] = (unsigned) (ed[l][0][k] & 1) | (unsigned) (ed[l][1][k] & 1) << 1 | (unsigned) (ed[l][2][k] & 1) << 2 | (unsigned) (ed[l][3][k] & 1) << 3 | (unsigned) (ed[l][4][k] & 1) << 4;
-				const unsigned dec = xdec_word(lane);
-				const uint16_t *pk = pc + xg + k;
-				const Q12 cE = q12(E16k), cB = q12(pk[-lp]), cD = q12(pk[-1]), cF = q12(pk[1]), cH = q12(pk[lp]);
-				Q12 cand[4];
-				cand[0] = (dec >> 16 & 1) ? cF : cH;
-				cand[1] = (dec >> 17 & 1) ? cB : cF;
-				cand[2] = (dec >> 18 & 1) ? cD : cB;
-				cand[3] = (dec >> 19 & 1) ? cH : cD;
-				for (int sy = 0; sy < s; sy++)
-					for (int sx = 0; sx < s; sx++) qk[(size_t) dpitch * sy + sx] = (uint16_t) xbr_resolve_q(E16k, cE, cand, ramps[sy * s + sx], dec);
-			}
+			/* Exactly 1 busy pixel (lane k): store all flat pixels via NEON, pack the 20 decision bits
+			 * into 2 Q-regs (32 B instead of 22 Q-regs / 352 B), and overwrite only lane k. */
+			busy++;
+			for (int k = 0; k < s * s; k++) res[k] = E16;
+			store_rows<s>(q, (size_t) dpitch, res, left);
+			const int k = __builtin_ctz(amask);
+			uint16x8_t v = m0.edr;
+			v = vsriq_n_u16(m1.edr, v, 1); v = vsriq_n_u16(m2.edr, v, 1); v = vsriq_n_u16(m3.edr, v, 1);
+			v = vsriq_n_u16(m0.edl, v, 1); v = vsriq_n_u16(m1.edl, v, 1); v = vsriq_n_u16(m2.edl, v, 1); v = vsriq_n_u16(m3.edl, v, 1);
+			v = vsriq_n_u16(m0.edu, v, 1); v = vsriq_n_u16(m1.edu, v, 1); v = vsriq_n_u16(m2.edu, v, 1); v = vsriq_n_u16(m3.edu, v, 1);
+			v = vsriq_n_u16(m0.edi, v, 1); v = vsriq_n_u16(m1.edi, v, 1); v = vsriq_n_u16(m2.edi, v, 1); v = vsriq_n_u16(m3.edi, v, 1);
+			uint16x8_t p = m0.px;
+			p = vsriq_n_u16(m1.px, p, 1); p = vsriq_n_u16(m2.px, p, 1); p = vsriq_n_u16(m3.px, p, 1);
+			p = vshrq_n_u16(p, 12);
+			uint16_t dlo[8], dhi[8];
+			vst1q_u16(dlo, v);
+			vst1q_u16(dhi, p);
+			const unsigned dec = (unsigned) dlo[k] | ((unsigned) dhi[k] << 16);
+			uint16_t *qk = q + (size_t) s * k;
+			const uint16_t *pk = pc + xg + k;
+			const uint16_t E16k = pk[0];
+			const Q12 cE = q12(E16k), cB = q12(pk[-lp]), cD = q12(pk[-1]), cF = q12(pk[1]), cH = q12(pk[lp]);
+			Q12 cand[4];
+			cand[0] = (dec >> 16 & 1) ? cF : cH;
+			cand[1] = (dec >> 17 & 1) ? cB : cF;
+			cand[2] = (dec >> 18 & 1) ? cD : cB;
+			cand[3] = (dec >> 19 & 1) ? cH : cD;
+			for (int sy = 0; sy < s; sy++)
+				for (int sx = 0; sx < s; sx++) qk[(size_t) dpitch * sy + sx] = (uint16_t) xbr_resolve_q(E16k, cE, cand, ramps[sy * s + sx], dec);
 		}
 	}
 	return busy;
@@ -1132,13 +1296,14 @@ struct ScaleCache::Impl {
 	uint16_t *direct_dst;
 	int direct_pitch;
 	int fail, skip;          /* the shift search found nothing this many times in a row; pictures to go before it looks again */
+	int last_shape, last_kk; /* previous frame's winning shift for fast-check short-circuit */
 	ScaleStats st;
-	Impl() : kind(SC_NONE), w(0), h(0), f(1), ow(0), nb(0), valid(false), out_valid(false), direct(false), frame(0), gen(0), src(0), spitch(0), direct_dst(0), direct_pitch(0), fail(0), skip(0) { memset(&st, 0, sizeof st); }
+	Impl() : kind(SC_NONE), w(0), h(0), f(1), ow(0), nb(0), valid(false), out_valid(false), direct(false), frame(0), gen(0), src(0), spitch(0), direct_dst(0), direct_pitch(0), fail(0), skip(0), last_shape(0), last_kk(0) { memset(&st, 0, sizeof st); }
 };
 
 ScaleCache::ScaleCache() : p_(new Impl) {}
 ScaleCache::~ScaleCache() { delete p_; }
-void ScaleCache::reset() { p_->valid = false; p_->out_valid = false; p_->direct = false; p_->chunks.clear(); }
+void ScaleCache::reset() { p_->valid = false; p_->out_valid = false; p_->direct = false; p_->last_shape = 0; p_->last_kk = 0; p_->chunks.clear(); }
 int ScaleCache::chunks() const { return (int) p_->chunks.size(); }
 const uint16_t *ScaleCache::out() const { return p_->out.empty() ? 0 : &p_->out[0]; }
 int ScaleCache::out_pitch() const { return p_->ow; }
@@ -1256,6 +1421,7 @@ int ScaleCache::plan_into(ScalerKind k, const uint16_t *src, int w, int h, int s
 		d.dxr.assign((size_t) h, 0); d.pdx.assign((size_t) h, 0);
 		d.gen++;
 		d.fail = d.skip = 0;
+		d.last_shape = d.last_kk = 0;
 		d.valid = true;
 		d.out_valid = false;
 	}
@@ -1282,59 +1448,97 @@ int ScaleCache::plan_into(ScalerKind k, const uint16_t *src, int w, int h, int s
 		const bool want_search = allow_shift && kept_est * 10 < h * nb * 7 && h >= 16 && nb >= 4;
 		if (want_search && d.skip > 0) d.skip--;
 		else if (want_search) {
-			/* a vertical shift of the whole picture */
-			{
-				const int K = h / 4 < 24 ? h / 4 : 24;
-				int sc_[49];
-				shift_scores(src, spitch, &d.prev[0], w, h, nb, m0, false, K, sc_);
-				int bk = 0, bs = 0;
-				for (int q = -K; q <= K; q++) if (sc_[q + K] > bs) { bs = sc_[q + K]; bk = q; }
-				if (bk) {
-					for (int y = 0; y < h; y++) d.ms[y] = (y + bk >= 0 && y + bk < h) ? eq_blocks(src + (size_t) spitch * y, &d.prev[(size_t) w * (y + bk)], w, nb, 0) : 0;
-					int tot = 0;
-					for (int y = 0; y < h; y++) { d.tmp[y] = reusable(&d.ms[0], 0, y, h, nb, F, bk, false) & ~keep[y]; tot += pop64(keep[y] | d.tmp[y]); }
-					if (tot > best) { best = tot; shape = 1; kk = bk; for (int y = 0; y < h; y++) mv[y] = d.tmp[y]; }
+			/* Fast-check previous frame's winning shift first; short-circuit if reuse >= 75%. */
+			bool fast_hit = false;
+			const int K = h / 4 < 24 ? h / 4 : 24;
+			if (d.last_shape == 1 && d.last_kk != 0 && d.last_kk >= -K && d.last_kk <= K) {
+				const int bk = d.last_kk;
+				for (int y = 0; y < h; y++) d.ms[y] = (y + bk >= 0 && y + bk < h) ? eq_blocks(src + (size_t) spitch * y, &d.prev[(size_t) w * (y + bk)], w, nb, 0) : 0;
+				int tot = 0;
+				for (int y = 0; y < h; y++) { d.tmp[y] = reusable(&d.ms[0], 0, y, h, nb, F, bk, false) & ~keep[y]; tot += pop64(keep[y] | d.tmp[y]); }
+				if (tot > best && tot * 4 >= h * nb * 3) {
+					best = tot; shape = 1; kk = bk;
+					for (int y = 0; y < h; y++) mv[y] = d.tmp[y];
+					fast_hit = true;
 				}
-			}
-			/* a horizontal shift, per row (parallax layers scroll at their own speeds) */
-			{
-				const int D = 16;
-				int sc_[2 * D + 1];
-				shift_scores(src, spitch, &d.prev[0], w, h, nb, m0, true, D, sc_);
-				int top[3] = { 0, 0, 0 }, nt = 0;
-				for (int t = 0; t < 3; t++) {
-					int bk = 0, bs = 0;
-					for (int q = -D; q <= D; q++) { if (!q) continue; bool used = false; for (int u = 0; u < nt; u++) used |= top[u] == q; if (!used && sc_[q + D] > bs) { bs = sc_[q + D]; bk = q; } }
-					if (bk && bs > 0) top[nt++] = bk;
-				}
-				if (nt) {
-					std::vector<int16_t> &dx = d.dxr;
-					std::vector<u64> &msh = d.ms;
-					for (int y = 0; y < h; y++) {
-						if (m0[y] == full) { dx[y] = 0; msh[y] = 0; continue; }       /* unchanged: kept as it is */
-						int cands[6], nc = 0;
-						if (y > 0 && dx[y - 1]) cands[nc++] = dx[y - 1];
-						if (d.pdx[y]) cands[nc++] = d.pdx[y];
-						for (int t = 0; t < nt; t++) cands[nc++] = top[t];
-						int bd = 0, bp = -1;
-						u64 bm = 0;
-						for (int c = 0; c < nc; c++) {
-							bool dup = false;
-							for (int e = 0; e < c; e++) dup |= cands[e] == cands[c];
-							if (dup) continue;
-							const u64 mm = eq_blocks(src + (size_t) spitch * y, &d.prev[(size_t) w * y], w, nb, cands[c]);
-							const int pc = pop64(mm);
-							if (pc > bp) { bp = pc; bd = cands[c]; bm = mm; }
-						}
-						dx[y] = (int16_t) bd; msh[y] = bm;
+			} else if (d.last_shape == 2) {
+				std::vector<int16_t> &dx = d.dxr;
+				std::vector<u64> &msh = d.ms;
+				for (int y = 0; y < h; y++) {
+					if (m0[y] == full) { dx[y] = 0; msh[y] = 0; continue; }
+					int cand = d.pdx[y];
+					if (!cand && y > 0) cand = dx[y - 1];
+					if (cand) {
+						dx[y] = (int16_t) cand;
+						msh[y] = eq_blocks(src + (size_t) spitch * y, &d.prev[(size_t) w * y], w, nb, cand);
+					} else {
+						dx[y] = 0; msh[y] = 0;
 					}
-					int tot = 0;
-					for (int y = 0; y < h; y++) { d.tmp[y] = dx[y] ? (reusable(&msh[0], &dx[0], y, h, nb, F, 0, false) & ~keep[y]) : 0; tot += pop64(keep[y] | d.tmp[y]); }
-					if (tot > best) { best = tot; shape = 2; for (int y = 0; y < h; y++) mv[y] = d.tmp[y]; }
+				}
+				int tot = 0;
+				for (int y = 0; y < h; y++) { d.tmp[y] = dx[y] ? (reusable(&msh[0], &dx[0], y, h, nb, F, 0, false) & ~keep[y]) : 0; tot += pop64(keep[y] | d.tmp[y]); }
+				if (tot > best && tot * 4 >= h * nb * 3) {
+					best = tot; shape = 2;
+					for (int y = 0; y < h; y++) mv[y] = d.tmp[y];
+					fast_hit = true;
 				}
 			}
-			/* a picture that changes all over and moves nowhere (a fade, a video) does not pay the search every time */
-			if (best * 100 < kept_est * 100 + 5 * h * nb) { if (d.fail < 3) d.fail++; d.skip = (1 << d.fail) - 1; } else d.fail = 0;
+			if (fast_hit) {
+				d.fail = 0;
+			} else {
+				/* a vertical shift of the whole picture */
+				{
+					int sc_[49];
+					shift_scores(src, spitch, &d.prev[0], w, h, nb, m0, false, K, sc_);
+					int bk = 0, bs = 0;
+					for (int q = -K; q <= K; q++) if (sc_[q + K] > bs) { bs = sc_[q + K]; bk = q; }
+					if (bk) {
+						for (int y = 0; y < h; y++) d.ms[y] = (y + bk >= 0 && y + bk < h) ? eq_blocks(src + (size_t) spitch * y, &d.prev[(size_t) w * (y + bk)], w, nb, 0) : 0;
+						int tot = 0;
+						for (int y = 0; y < h; y++) { d.tmp[y] = reusable(&d.ms[0], 0, y, h, nb, F, bk, false) & ~keep[y]; tot += pop64(keep[y] | d.tmp[y]); }
+						if (tot > best) { best = tot; shape = 1; kk = bk; for (int y = 0; y < h; y++) mv[y] = d.tmp[y]; }
+					}
+				}
+				/* a horizontal shift, per row (parallax layers scroll at their own speeds) */
+				{
+					const int D = 16;
+					int sc_[2 * D + 1];
+					shift_scores(src, spitch, &d.prev[0], w, h, nb, m0, true, D, sc_);
+					int top[3] = { 0, 0, 0 }, nt = 0;
+					for (int t = 0; t < 3; t++) {
+						int bk = 0, bs = 0;
+						for (int q = -D; q <= D; q++) { if (!q) continue; bool used = false; for (int u = 0; u < nt; u++) used |= top[u] == q; if (!used && sc_[q + D] > bs) { bs = sc_[q + D]; bk = q; } }
+						if (bk && bs > 0) top[nt++] = bk;
+					}
+					if (nt) {
+						std::vector<int16_t> &dx = d.dxr;
+						std::vector<u64> &msh = d.ms;
+						for (int y = 0; y < h; y++) {
+							if (m0[y] == full) { dx[y] = 0; msh[y] = 0; continue; }       /* unchanged: kept as it is */
+							int cands[6], nc = 0;
+							if (y > 0 && dx[y - 1]) cands[nc++] = dx[y - 1];
+							if (d.pdx[y]) cands[nc++] = d.pdx[y];
+							for (int t = 0; t < nt; t++) cands[nc++] = top[t];
+							int bd = 0, bp = -1;
+							u64 bm = 0;
+							for (int c = 0; c < nc; c++) {
+								bool dup = false;
+								for (int e = 0; e < c; e++) dup |= cands[e] == cands[c];
+								if (dup) continue;
+								const u64 mm = eq_blocks(src + (size_t) spitch * y, &d.prev[(size_t) w * y], w, nb, cands[c]);
+								const int pc = pop64(mm);
+								if (pc > bp) { bp = pc; bd = cands[c]; bm = mm; }
+							}
+							dx[y] = (int16_t) bd; msh[y] = bm;
+						}
+						int tot = 0;
+						for (int y = 0; y < h; y++) { d.tmp[y] = dx[y] ? (reusable(&msh[0], &dx[0], y, h, nb, F, 0, false) & ~keep[y]) : 0; tot += pop64(keep[y] | d.tmp[y]); }
+						if (tot > best) { best = tot; shape = 2; for (int y = 0; y < h; y++) mv[y] = d.tmp[y]; }
+					}
+				}
+				/* a picture that changes all over and moves nowhere (a fade, a video) does not pay the search every time */
+				if (best * 100 < kept_est * 100 + 5 * h * nb) { if (d.fail < 3) d.fail++; d.skip = (1 << d.fail) - 1; } else d.fail = 0;
+			}
 		}
 	} else {
 		for (int y = 0; y < h; y++) { keep[y] = 0; mv[y] = 0; }
@@ -1352,6 +1556,8 @@ int ScaleCache::plan_into(ScalerKind k, const uint16_t *src, int w, int h, int s
 		d.direct_pitch = direct_pitch;
 		d.out_valid = false;
 		d.gen++;
+		d.last_shape = 0;
+		d.last_kk = 0;
 		d.st.shift_k = 0;
 		d.st.shape = 0;
 		d.st.computed = h * nb;
@@ -1362,7 +1568,7 @@ int ScaleCache::plan_into(ScalerKind k, const uint16_t *src, int w, int h, int s
 			d.chunks.push_back(c);
 		}
 		for (int y = 0; y < h; y++)
-			if (!can_cmp || m0[y] != full) memcpy(&d.prev[(size_t) w * y], src + (size_t) spitch * y, (size_t) w * 2u);
+			if (!can_cmp || m0[y] != full) pk_memcpy(&d.prev[(size_t) w * y], src + (size_t) spitch * y, (size_t) w * 2u);
 		for (int y = 0; y < h; y++) d.pdx[y] = 0;
 		d.st.chunks = (int) d.chunks.size();
 		return (int) d.chunks.size();
@@ -1374,6 +1580,8 @@ int ScaleCache::plan_into(ScalerKind k, const uint16_t *src, int w, int h, int s
 	}
 	d.st.shift_k = shape == 1 ? kk : shape == 2 ? 1 : 0;
 	d.st.shape = shape;
+	d.last_shape = shape;
+	d.last_kk = shape == 1 ? kk : 0;
 	/* the moves: whole runs of blocks, in an order that never reads what a move has already written */
 	const size_t orow = (size_t) d.ow;
 	int moved = 0, kept_blocks = 0;
@@ -1382,17 +1590,29 @@ int ScaleCache::plan_into(ScalerKind k, const uint16_t *src, int w, int h, int s
 		for (int yy = 0; yy < h; yy++) {
 			const int y = kk > 0 ? yy : h - 1 - yy;
 			u64 r = mv[y];
-			while (r) {
-				const int a = __builtin_ctzll(r);
-				int e = a;
-				while (e < nb && (r >> e & 1)) e++;
-				r &= ~((((u64) 1 << (e - a)) - 1) << a) ;
-				const int px0 = a * BLK, px1 = e * BLK < w ? e * BLK : w;
-				for (int sb = 0; sb < f; sb++)
-					memmove(&d.out[(size_t) (y * f + sb) * orow + (size_t) px0 * f], &d.out[(size_t) ((y + kk) * f + sb) * orow + (size_t) px0 * f], (size_t) (px1 - px0) * f * 2u);
-				moved += e - a;
+			if (!r) continue;
+			if (r == full) {
+				/* non-overlapping vertical shift (|kk| >= 1 -> >= f output rows apart): coalesce all f sub-rows */
+				pk_memcpy(&d.out[(size_t) (y * f) * orow], &d.out[(size_t) ((y + kk) * f) * orow], (size_t) f * orow * 2u);
+				moved += nb;
+			} else {
+				while (r) {
+					const int a = __builtin_ctzll(r);
+					int e = a;
+					while (e < nb && (r >> e & 1)) e++;
+					const int span = e - a;
+					r &= ~(span >= 64 ? ~(u64) 0 : ((((u64) 1 << span) - 1) << a));
+					const int px0 = a * BLK, px1 = e * BLK < w ? e * BLK : w;
+					if (px0 == 0 && px1 == w) {
+						pk_memcpy(&d.out[(size_t) (y * f) * orow], &d.out[(size_t) ((y + kk) * f) * orow], (size_t) f * orow * 2u);
+					} else {
+						for (int sb = 0; sb < f; sb++)
+							pk_memcpy(&d.out[(size_t) (y * f + sb) * orow + (size_t) px0 * f], &d.out[(size_t) ((y + kk) * f + sb) * orow + (size_t) px0 * f], (size_t) (px1 - px0) * f * 2u);
+					}
+					moved += span;
+				}
 			}
-			if (mv[y]) d.ver[y] = frame;
+			d.ver[y] = frame;
 		}
 	} else if (shape == 2) {
 		for (int y = 0; y < h; y++) {
@@ -1405,7 +1625,8 @@ int ScaleCache::plan_into(ScalerKind k, const uint16_t *src, int w, int h, int s
 				const int a = __builtin_ctzll(r);
 				int e = a;
 				while (e < nb && (r >> e & 1)) e++;
-				r &= ~((((u64) 1 << (e - a)) - 1) << a);
+				const int span = e - a;
+				r &= ~(span >= 64 ? ~(u64) 0 : ((((u64) 1 << span) - 1) << a));
 				runs_a[nr] = a; runs_e[nr] = e; nr++;
 			}
 			for (int q = 0; q < nr; q++) {
@@ -1413,7 +1634,7 @@ int ScaleCache::plan_into(ScalerKind k, const uint16_t *src, int w, int h, int s
 				const int a = runs_a[qi], e = runs_e[qi];
 				const int px0 = a * BLK, px1 = e * BLK < w ? e * BLK : w;
 				for (int sb = 0; sb < f; sb++)
-					memmove(&d.out[(size_t) (y * f + sb) * orow + (size_t) px0 * f], &d.out[(size_t) (y * f + sb) * orow + (size_t) (px0 + dx) * f], (size_t) (px1 - px0) * f * 2u);
+					pk_memmove(&d.out[(size_t) (y * f + sb) * orow + (size_t) px0 * f], &d.out[(size_t) (y * f + sb) * orow + (size_t) (px0 + dx) * f], (size_t) (px1 - px0) * f * 2u);
 				moved += e - a;
 			}
 			d.ver[y] = frame;
@@ -1453,7 +1674,7 @@ int ScaleCache::plan_into(ScalerKind k, const uint16_t *src, int w, int h, int s
 	d.st.computed = computed_blocks; d.st.shifted = moved; d.st.same = kept_blocks;
 	/* the kept picture is now this one; the shift of each row is the next picture's first guess */
 	for (int y = 0; y < h; y++)
-		if (!can_cmp || m0[y] != full) memcpy(&d.prev[(size_t) w * y], src + (size_t) spitch * y, (size_t) w * 2u);
+		if (!can_cmp || m0[y] != full) pk_memcpy(&d.prev[(size_t) w * y], src + (size_t) spitch * y, (size_t) w * 2u);
 	for (int y = 0; y < h; y++) d.pdx[y] = d.dxr[y];
 	d.st.chunks = (int) d.chunks.size();
 	return (int) d.chunks.size();
@@ -1484,8 +1705,8 @@ int ScaleCache::blit(uint16_t *dst, int dpitch, TexSync &t)
 		int e = y + 1;
 		while (e < d.h && (all || d.ver[e] > t.epoch)) e++;
 		const size_t r0 = (size_t) y * d.f, r1 = (size_t) e * d.f;
-		if (dpitch == d.ow) memcpy(dst + r0 * (size_t) dpitch, &d.out[r0 * (size_t) d.ow], (r1 - r0) * (size_t) d.ow * 2u);
-		else for (size_t r = r0; r < r1; r++) memcpy(dst + r * (size_t) dpitch, &d.out[r * (size_t) d.ow], (size_t) d.ow * 2u);
+		if (dpitch == d.ow) pk_memcpy(dst + r0 * (size_t) dpitch, &d.out[r0 * (size_t) d.ow], (r1 - r0) * (size_t) d.ow * 2u);
+		else for (size_t r = r0; r < r1; r++) pk_memcpy(dst + r * (size_t) dpitch, &d.out[r * (size_t) d.ow], (size_t) d.ow * 2u);
 		rows += e - y;
 		y = e;
 	}

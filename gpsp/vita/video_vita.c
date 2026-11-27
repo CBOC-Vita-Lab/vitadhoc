@@ -37,6 +37,9 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
 
 #include "video_vita.h"
 #include "video_vita_priv.h"
@@ -1834,6 +1837,116 @@ static const uint16_t *look_frame(int who, const uint16_t *pix, unsigned w,
       wp = w32[g_blend < 0 ? 0 : g_blend > 10 ? 10 : g_blend];
    }
    mix = g_blend && g_look_w[who] == w && g_look_h[who] == h;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+   if (mix)
+   {
+      const uint16x8_t v_wc = vdupq_n_u16((uint16_t)(32u - wp));
+      const uint16x8_t v_wp = vdupq_n_u16((uint16_t)wp);
+      const uint16x8_t m_g  = vdupq_n_u16(0x003Fu);
+      const uint16x8_t m_b  = vdupq_n_u16(0x001Fu);
+      const int half = (wp == 16u);
+      for (y = 0; y < h; y++)
+      {
+         const uint16_t *s = pix + pitch * y;
+         o = g_look_out[who] + (size_t)w * y;
+         p = g_look_prev[who] + (size_t)w * y;
+         x = 0;
+         if (!lut)
+         {
+            for (; x + 8u <= w; x += 8u)
+            {
+               const uint16x8_t va = vld1q_u16(s + x);
+               const uint16x8_t vb = vld1q_u16(p + x);
+               const uint16x8_t diff = veorq_u16(va, vb);
+               if ((vgetq_lane_u64(vreinterpretq_u64_u16(diff), 0) |
+                    vgetq_lane_u64(vreinterpretq_u64_u16(diff), 1)) == 0)
+               {
+                  vst1q_u16(o + x, va);
+                  continue;
+               }
+               vst1q_u16(p + x, va);
+               {
+                  const uint16x8_t ra = vshrq_n_u16(va, 11), rb = vshrq_n_u16(vb, 11);
+                  const uint16x8_t ga = vandq_u16(vshrq_n_u16(va, 5), m_g);
+                  const uint16x8_t gb = vandq_u16(vshrq_n_u16(vb, 5), m_g);
+                  const uint16x8_t ba = vandq_u16(va, m_b), bb = vandq_u16(vb, m_b);
+                  uint16x8_t rm, gm, bm;
+                  if (half)
+                  {
+                     rm = vhaddq_u16(ra, rb);
+                     gm = vhaddq_u16(ga, gb);
+                     bm = vhaddq_u16(ba, bb);
+                  }
+                  else
+                  {
+                     rm = vshrq_n_u16(vmlaq_u16(vmulq_u16(ra, v_wc), rb, v_wp), 5);
+                     gm = vshrq_n_u16(vmlaq_u16(vmulq_u16(ga, v_wc), gb, v_wp), 5);
+                     bm = vshrq_n_u16(vmlaq_u16(vmulq_u16(ba, v_wc), bb, v_wp), 5);
+                  }
+                  vst1q_u16(o + x, vorrq_u16(vorrq_u16(vshlq_n_u16(rm, 11),
+                                                       vshlq_n_u16(gm, 5)), bm));
+               }
+            }
+         }
+         else
+         {
+            for (; x + 8u <= w; x += 8u)
+            {
+               const uint16x8_t va = vld1q_u16(s + x);
+               const uint16x8_t vb = vld1q_u16(p + x);
+               const uint16x8_t diff = veorq_u16(va, vb);
+               if ((vgetq_lane_u64(vreinterpretq_u64_u16(diff), 0) |
+                    vgetq_lane_u64(vreinterpretq_u64_u16(diff), 1)) == 0)
+               {
+                  o[x]     = lut[s[x]];     o[x + 1] = lut[s[x + 1]];
+                  o[x + 2] = lut[s[x + 2]]; o[x + 3] = lut[s[x + 3]];
+                  o[x + 4] = lut[s[x + 4]]; o[x + 5] = lut[s[x + 5]];
+                  o[x + 6] = lut[s[x + 6]]; o[x + 7] = lut[s[x + 7]];
+                  continue;
+               }
+               vst1q_u16(p + x, va);
+               {
+                  const uint16x8_t ra = vshrq_n_u16(va, 11), rb = vshrq_n_u16(vb, 11);
+                  const uint16x8_t ga = vandq_u16(vshrq_n_u16(va, 5), m_g);
+                  const uint16x8_t gb = vandq_u16(vshrq_n_u16(vb, 5), m_g);
+                  const uint16x8_t ba = vandq_u16(va, m_b), bb = vandq_u16(vb, m_b);
+                  uint16x8_t rm, gm, bm;
+                  uint16_t tmp[8];
+                  if (half)
+                  {
+                     rm = vhaddq_u16(ra, rb);
+                     gm = vhaddq_u16(ga, gb);
+                     bm = vhaddq_u16(ba, bb);
+                  }
+                  else
+                  {
+                     rm = vshrq_n_u16(vmlaq_u16(vmulq_u16(ra, v_wc), rb, v_wp), 5);
+                     gm = vshrq_n_u16(vmlaq_u16(vmulq_u16(ga, v_wc), gb, v_wp), 5);
+                     bm = vshrq_n_u16(vmlaq_u16(vmulq_u16(ba, v_wc), bb, v_wp), 5);
+                  }
+                  vst1q_u16(tmp, vorrq_u16(vorrq_u16(vshlq_n_u16(rm, 11),
+                                                     vshlq_n_u16(gm, 5)), bm));
+                  o[x]     = lut[tmp[0]]; o[x + 1] = lut[tmp[1]];
+                  o[x + 2] = lut[tmp[2]]; o[x + 3] = lut[tmp[3]];
+                  o[x + 4] = lut[tmp[4]]; o[x + 5] = lut[tmp[5]];
+                  o[x + 6] = lut[tmp[6]]; o[x + 7] = lut[tmp[7]];
+               }
+            }
+         }
+         for (; x < w; x++)
+         {
+            const uint32_t a = s[x], b = p[x];
+            const uint32_t fa = (a | (a << 16)) & 0x07E0F81Fu;
+            const uint32_t fb = (b | (b << 16)) & 0x07E0F81Fu;
+            const uint32_t fm = ((fa * (32u - wp) + fb * wp) >> 5) & 0x07E0F81Fu;
+            const unsigned m = (unsigned)((fm | (fm >> 16)) & 0xFFFFu);
+            p[x] = (uint16_t)a;
+            o[x] = lut ? lut[m] : (uint16_t)m;
+         }
+      }
+   }
+   else
+#endif
    for (y = 0; y < h; y++)
    {
       const uint16_t *s = pix + pitch * y;

@@ -32,6 +32,7 @@ struct Vis {
     uint32_t local;
     uint32_t code;
     uint16_t h16, gfx;
+    uint32_t hit;     /* 1-based pool index cached during overlap(), 0 = not found */
 };
 
 inline uint32_t local_key(int layer, int32_t col, int32_t row, int *ok)
@@ -153,21 +154,27 @@ void wk_map_clear(wk_map *m)
 
 static inline uint32_t slot_of(const wk_map *m, uint64_t key)
 {
-    return (uint32_t)((key * 0x9E3779B97F4A7C15ull) >> 40) & m->tabmask;
+    uint32_t h = ((uint32_t)key ^ ((uint32_t)(key >> 32) * 0x9E3779B1u)) * 0x9E3779B1u;
+    return (h ^ (h >> 15)) & m->tabmask;
 }
 
-static Entry *find(const wk_map *m, uint64_t key)
+static uint32_t find_idx(const wk_map *m, uint64_t key)
 {
     uint32_t s = slot_of(m, key);
     for (;;) {
         uint32_t v = m->tab[s];
         if (!v)
-            return NULL;
-        Entry *e = &m->pool[v - 1];
-        if (e->key == key)
-            return e;
+            return 0;
+        if (m->pool[v - 1].key == key)
+            return v;
         s = (s + 1) & m->tabmask;
     }
+}
+
+static Entry *find(const wk_map *m, uint64_t key)
+{
+    uint32_t v = find_idx(m, key);
+    return v ? &m->pool[v - 1] : NULL;
 }
 
 static void rebuild(wk_map *m)
@@ -298,14 +305,16 @@ static int observed(const wk_frame *f, const wk_out *out, int l)
 }
 
 /* Gather the on-screen cells of every observed layer. */
-static int gather(wk_map *m, const wk_frame *f, const wk_out *out)
+static int gather(wk_map *m, const wk_frame *f, const wk_out *out, int *has_dups)
 {
     int n = 0;
+    int dups = 0;
     for (int l = 0; l < f->nlayers; l++) {
         if (!observed(f, out, l))
             continue;
         const wk_layer *L = &f->layer[l];
-        int mw = L->map_w, mh = L->map_h, tp = L->tile_px;
+        const int mw = L->map_w, mh = L->map_h, tp = L->tile_px;
+        const WkDiv mw_div = wk_div_make(mw), mh_div = wk_div_make(mh), tp_div = wk_div_make(tp);
         uint16_t g16 = L->map_by_cell ? 0 : fold16(L->gfx_id);
         int32_t prev_wx = 0, prev_row = 0;
         int have = 0;
@@ -313,21 +322,26 @@ static int gather(wk_map *m, const wk_frame *f, const wk_out *out)
             if (!out->coherent[l][y])
                 continue;
             int32_t wx = out->world_x[l][y];
-            int32_t wr = wk_floordiv(out->world_row[l][y], tp);
+            int32_t wr = wk_div_floor(out->world_row[l][y], &tp_div);
             if (have && wx == prev_wx && wr == prev_row)
                 continue;
+            if (have && wr <= prev_row)
+                dups = 1;
             have = 1;
             prev_wx = wx;
             prev_row = wr;
-            int32_t tf = wk_floordiv(wx, tp);
-            int nv = (int)(wk_floordiv(wx + f->view_w - 1, tp) - tf + 1);
-            int rr = wk_floormod(wr, mh);
+            int32_t tf = wk_div_floor(wx, &tp_div);
+            int nv = (int)(wk_div_floor(wx + f->view_w - 1, &tp_div) - tf + 1);
+            int rr = wk_div_mod(wr, &mh_div);
+            int rc = wk_div_mod(tf, &mw_div);
+            const int row_base = rr * mw;
             for (int i = 0; i < nv && n < kMaxVis; i++) {
                 int ok;
                 uint32_t lk = local_key(l, tf + i, wr, &ok);
+                int idx = row_base + rc;
+                if (++rc == mw) rc = 0;
                 if (!ok)
                     continue;
-                int idx = rr * mw + wk_floormod(tf + i, mw);
                 if (L->code && L->code[idx] == WK_CODE_NOREC)
                     continue;
                 m->vis[n].local = lk;
@@ -338,15 +352,32 @@ static int gather(wk_map *m, const wk_frame *f, const wk_out *out)
             }
         }
     }
+    if (has_dups)
+        *has_dups = dups;
     return n;
 }
 
-static void overlap(const wk_map *m, uint32_t room, int n, int *found, int *matched)
+static void overlap(wk_map *m, uint32_t room, int n, int *found, int *matched, int save_hits)
 {
+    const Room *r = room_by_id(m, room);
+    if (r && r->ncells == 0) {
+        if (save_hits)
+            for (int i = 0; i < n; i++)
+                m->vis[i].hit = 0;
+        *found = 0;
+        *matched = 0;
+        return;
+    }
     int fo = 0, ma = 0;
+    const uint64_t rbase = (uint64_t)room << 32;
     for (int i = 0; i < n; i++) {
-        const Entry *e = find(m, ((uint64_t)room << 32) | m->vis[i].local);
-        if (!e || e->gfx != m->vis[i].gfx || e->scout)
+        uint32_t v = find_idx(m, rbase | m->vis[i].local);
+        if (save_hits)
+            m->vis[i].hit = v;
+        if (!v)
+            continue;
+        const Entry *e = &m->pool[v - 1];
+        if (e->gfx != m->vis[i].gfx || e->scout)
             continue;
         fo++;
         if (m->cfg.match_by_code ? e->code == m->vis[i].code : e->h16 == m->vis[i].h16)
@@ -380,7 +411,8 @@ void wk_map_update(wk_map *m, const wk_frame *f, const wk_out *out)
         return;
     }
     m->since_event++;
-    int n = gather(m, f, out);
+    int has_dups = 0;
+    int n = gather(m, f, out, &has_dups);
     if (n == 0)
         return;
 
@@ -395,7 +427,7 @@ void wk_map_update(wk_map *m, const wk_frame *f, const wk_out *out)
                 m->cand = 0;
                 m->cand_ok = 0;
             } else {
-                overlap(m, m->cand, n, &fo, &ma);
+                overlap(m, m->cand, n, &fo, &ma, 0);
                 if (fo * 100 >= n * m->cfg.found_pct && fo >= 24 && ma * 100 >= fo * bpct) {
                     if (++m->cand_ok < m->cfg.bind_frames)
                         return;
@@ -429,7 +461,7 @@ void wk_map_update(wk_map *m, const wk_frame *f, const wk_out *out)
             if (!r->id)
                 continue;
             int fo, ma;
-            overlap(m, r->id, n, &fo, &ma);
+            overlap(m, r->id, n, &fo, &ma, 0);
             if (fo * 100 >= n * m->cfg.found_pct && fo >= 24 &&
                 ma * 100 >= fo * bpct && ma > best_m) {
                 best = r->id;
@@ -470,7 +502,7 @@ void wk_map_update(wk_map *m, const wk_frame *f, const wk_out *out)
 
 bound_now:
     int found, matched;
-    overlap(m, m->cur_room, n, &found, &matched);
+    overlap(m, m->cur_room, n, &found, &matched, 1);
     m->st.found = found;
     m->st.matched = matched;
     if (found >= 24) {
@@ -502,11 +534,15 @@ bound_now:
      * the stored cells must still be the old room's */
     if (found >= 24 && m->miss > 0)
         return;
-    /* record */
+    /* record (reuses Entry* cached during overlap unless an eviction compacts pool or
+     * duplicate keys in vis[] were inserted earlier in this loop) */
     uint64_t rbase = (uint64_t)m->cur_room << 32;
+    int evicted = 0, inserted = 0;
     for (int i = 0; i < n; i++) {
         uint64_t key = rbase | m->vis[i].local;
-        Entry *e = find(m, key);
+        Entry *e = evicted ? find(m, key) : (m->vis[i].hit ? &m->pool[m->vis[i].hit - 1] : NULL);
+        if (!e && inserted && has_dups)
+            e = find(m, key);
         if (e) {
             e->live = 1;
             if (e->h16 == m->vis[i].h16 && e->gfx == m->vis[i].gfx) {
@@ -530,9 +566,13 @@ bound_now:
                 e->conf = 1;
             }
         } else {
+            uint32_t before = m->npool;
             e = insert(m, key);
             if (!e)
                 break;
+            if (m->npool <= before)
+                evicted = 1;
+            inserted = 1;
             e->code = m->vis[i].code;
             e->h16 = m->vis[i].h16;
             e->gfx = m->vis[i].gfx;
@@ -566,7 +606,10 @@ static int cell_at(const wk_map *m, const wk_frame *f, const wk_out *out, int la
     if (m->cfg.seam_tiles > 0 && index >= 1) {
         /* the visible tiles next to the seam, same tile row, must be what the room holds */
         const int mw = L->map_w, mh = L->map_h;
-        const int rr = wk_floormod(wk_floordiv(out->world_row[layer][y], g.tp), mh);
+        const int rr = wk_floormod(row, mh);
+        const int row_base = rr * mw;
+        const int32_t c2_start = side == WK_LEFT ? g.tile_first : g.tile_first + g.nvis - 1;
+        int rc2 = wk_floormod(c2_start, mw);
         for (int k = 0; k < m->cfg.seam_tiles && k < g.nvis; k++) {
             int32_t c2 = side == WK_LEFT ? g.tile_first + k : g.tile_first + g.nvis - 1 - k;
             int ok2;
@@ -574,10 +617,15 @@ static int cell_at(const wk_map *m, const wk_frame *f, const wk_out *out, int la
             if (!ok2)
                 return 0;
             const Entry *e2 = find(m, ((uint64_t)m->cur_room << 32) | lk2);
-            const int i2 = rr * mw + wk_floormod(c2, mw);
+            const int i2 = row_base + rc2;
             const uint32_t live = L->code ? L->code[i2] : L->hash[i2];
             if (!e2 || e2->scout || live == WK_CODE_NOREC || e2->code != live)
                 return 0;
+            if (side == WK_LEFT) {
+                if (++rc2 == mw) rc2 = 0;
+            } else {
+                if (--rc2 < 0) rc2 = mw - 1;
+            }
         }
     }
     if (cell) {
@@ -603,7 +651,7 @@ void wk_map_record_scout(wk_map *m, const wk_frame *f, const wk_out *out)
 {
     if (!m->bound || !m->cur_room || out->scene_event || out->epoch != m->epoch_seen)
         return;
-    int n = gather(m, f, out);
+    int n = gather(m, f, out, NULL);
     uint64_t rbase = (uint64_t)m->cur_room << 32;
     for (int i = 0; i < n; i++) {
         uint64_t key = rbase | m->vis[i].local;
@@ -629,6 +677,7 @@ void wk_map_serve(wk_map *m, const wk_frame *f, wk_out *out)
     for (int l = 0; l < f->nlayers; l++) {
         if (!observed(f, out, l))
             continue;
+        const WkDiv tp_div = wk_div_make(f->layer[l].tile_px);
         int32_t prev_wx = 0, prev_row = 0;
         uint16_t memo[2] = {0, 0};
         int have = 0;
@@ -656,7 +705,7 @@ void wk_map_serve(wk_map *m, const wk_frame *f, wk_out *out)
             wk_geom g;
             wk_line_geom(f, out, l, y, &g);
             {
-                const int32_t trow = wk_floordiv(wr, g.tp);
+                const int32_t trow = wk_div_floor(wr, &tp_div);
                 if (!ck_have || ck_wx != wx || ck_trow != trow) {
                     ck_have = 1;
                     ck_wx = wx;
@@ -667,7 +716,7 @@ void wk_map_serve(wk_map *m, const wk_frame *f, wk_out *out)
             for (int s = 0; s < 2; s++) {
                 int ring = out->line[y].ring[s][l];
                 int part = g.part[s];
-                int n = ring >= part ? (ring - part) / g.tp : 0;
+                int n = ring >= part ? (int)wk_div_floor(ring - part, &tp_div) : 0;
                 int real = out->line[y].real[s][l];
                 if (real < M) {
                     int n0 = n;

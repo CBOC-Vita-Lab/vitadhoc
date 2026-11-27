@@ -30,15 +30,63 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if (defined(__ARM_NEON) || defined(__ARM_NEON__)) && !defined(MMPX_NO_NEON)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
+#ifndef MMPX_NO_NEON
 #define MM_NEON 1
 #endif
+#endif
 
-/* The widest and tallest piece done in one go; the border is on top. */
+/* The widest and tallest piece done in one go; the border is on top.
+ * MM_BSTRIDE leaves room past the right border for aligned 8-pixel NEON
+ * sliding-window loads without reading into the next row. */
 #define MM_PAD 3
 #define MM_BAND 8
 #define MM_SPAN 320
+#define MM_BSTRIDE (MM_SPAN + 2 * MM_PAD + 16)
+
+static inline uint32_t up_rgb565_to_rgba8(uint16_t v, int bgr)
+{
+   const unsigned hi = (v >> 11) & 31u, g6 = (v >> 5) & 63u, lo = v & 31u;
+   const unsigned h8 = (hi << 3) | (hi >> 2);
+   const unsigned g8 = (g6 << 2) | (g6 >> 4);
+   const unsigned l8 = (lo << 3) | (lo >> 2);
+   return bgr ? (0xFF000000u | (h8 << 16) | (g8 << 8) | l8)
+              : (0xFF000000u | (l8 << 16) | (g8 << 8) | h8);
+}
+
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+/* Branchless 8-pixel RGB565/BGR565 -> RGBA8888 (bit-exact with g_lut[bgr]). */
+static inline void up_rgb565_to_rgba8_x8(uint16x8_t v, uint32_t *dst, int bgr)
+{
+   const uint8x8_t hi0 = vshrn_n_u16(v, 8);
+   const uint8x8_t h8  = vsri_n_u8(hi0, hi0, 5);
+   const uint8x8_t g0  = vshrn_n_u16(v, 3);
+   const uint8x8_t g8  = vsri_n_u8(g0, g0, 6);
+   const uint8x8_t l0  = vshl_n_u8(vmovn_u16(v), 3);
+   const uint8x8_t l8  = vsri_n_u8(l0, l0, 5);
+   uint8x8x4_t rgba;
+   rgba.val[0] = bgr ? l8 : h8;
+   rgba.val[1] = g8;
+   rgba.val[2] = bgr ? h8 : l8;
+   rgba.val[3] = vdup_n_u8(0xFF);
+   vst4_u8((uint8_t *)dst, rgba);
+}
+#endif
+
+/* 0 = standard RGB565->RGBA8, 1 = standard BGR565->RGBA8, -1 = custom lut */
+static inline int mm_lut_kind(const uint32_t *lut)
+{
+   if (lut[0x0000] == 0xFF000000u && lut[0x07E0] == 0xFF00FF00u &&
+       lut[0x8410] == 0xFF848284u)
+   {
+      if (lut[0xF800] == 0xFF0000FFu && lut[0x001F] == 0xFFFF0000u)
+         return 0;
+      if (lut[0xF800] == 0xFFFF0000u && lut[0x001F] == 0xFF0000FFu)
+         return 1;
+   }
+   return -1;
+}
 
 /* tests: 1 = the plain C loop even where NEON is built in (the NEON path is
  * checked against it, pixel for pixel) */
@@ -212,24 +260,43 @@ static void mmpx_pixel(const uint16_t *const r[7], int x, uint16_t out[4])
 
 static inline uint16x8_t mm_luma8(uint16x8_t v)
 {
-   const uint16x8_t r = vshrq_n_u16(v, 11);
-   const uint16x8_t g = vandq_u16(vshrq_n_u16(v, 5), vdupq_n_u16(63));
-   const uint16x8_t b = vandq_u16(v, vdupq_n_u16(31));
-   const uint16x8_t r8 = vorrq_u16(vshlq_n_u16(r, 3), vshrq_n_u16(r, 2));
-   const uint16x8_t g8 = vorrq_u16(vshlq_n_u16(g, 2), vshrq_n_u16(g, 4));
-   const uint16x8_t b8 = vorrq_u16(vshlq_n_u16(b, 3), vshrq_n_u16(b, 2));
-   return vaddq_u16(vaddq_u16(vaddq_u16(r8, g8), b8), vdupq_n_u16(1));
+   const uint8x8_t r0 = vshrn_n_u16(v, 8);
+   const uint8x8_t r8 = vsri_n_u8(r0, r0, 5);
+   const uint8x8_t g0 = vshrn_n_u16(v, 3);
+   const uint8x8_t g8 = vsri_n_u8(g0, g0, 6);
+   const uint8x8_t b0 = vshl_n_u8(vmovn_u16(v), 3);
+   const uint8x8_t b8 = vsri_n_u8(b0, b0, 5);
+   return vaddq_u16(vaddw_u8(vaddl_u8(r8, g8), b8), vdupq_n_u16(1));
 }
 
-static void mmpx_pixel8(const uint16_t *const r[7], int x, uint16x8_t out[4])
+static inline void mm_luma_row(const uint16_t *src, uint16_t *dst, int count)
 {
-   const uint16x8_t A = MV(r[2] + x - 1), B = MV(r[2] + x), C = MV(r[2] + x + 1);
-   const uint16x8_t D = MV(r[3] + x - 1), E = MV(r[3] + x), F = MV(r[3] + x + 1);
-   const uint16x8_t G = MV(r[4] + x - 1), H = MV(r[4] + x), I = MV(r[4] + x + 1);
-   const uint16x8_t Q = MV(r[3] + x - 2), R = MV(r[3] + x + 2);
-   const uint16x8_t P = MV(r[1] + x), S = MV(r[5] + x);
-   const uint16x8_t Bl = mm_luma8(B), Dl = mm_luma8(D), El = mm_luma8(E),
-                    Fl = mm_luma8(F), Hl = mm_luma8(H);
+   int k;
+   for (k = 0; k < count; k += 8)
+      vst1q_u16(dst + k, mm_luma8(vld1q_u16(src + k)));
+}
+
+static void mmpx_pixel8(const uint16_t *const r[7], int x,
+                        uint16x8_t r2_c, uint16x8_t r2_n,
+                        uint16x8_t r3_c, uint16x8_t r3_n,
+                        uint16x8_t r4_c, uint16x8_t r4_n,
+                        const uint16_t *l2, const uint16_t *l3,
+                        const uint16_t *l4, uint16x8_t out[4])
+{
+   const uint16x8_t A = vextq_u16(r2_c, r2_n, 2), B = vextq_u16(r2_c, r2_n, 3),
+                    C = vextq_u16(r2_c, r2_n, 4);
+   const uint16x8_t D = vextq_u16(r3_c, r3_n, 2), E = vextq_u16(r3_c, r3_n, 3),
+                    F = vextq_u16(r3_c, r3_n, 4);
+   const uint16x8_t G = vextq_u16(r4_c, r4_n, 2), H = vextq_u16(r4_c, r4_n, 3),
+                    I = vextq_u16(r4_c, r4_n, 4);
+   const uint16x8_t Q = vextq_u16(r3_c, r3_n, 1), R = vextq_u16(r3_c, r3_n, 5);
+   const uint16x8_t r1_a = MV(r[1] + x - 1), r1_b = MV(r[1] + x + 7);
+   const uint16x8_t r5_a = MV(r[5] + x - 1), r5_b = MV(r[5] + x + 7);
+   const uint16x8_t P = vextq_u16(r1_a, r1_b, 1), S = vextq_u16(r5_a, r5_b, 1);
+   const uint16x8_t l3_a = MV(l3 + x - 1), l3_b = MV(l3 + x + 7);
+   const uint16x8_t Bl = MV(l2 + x), Dl = l3_a,
+                    El = vextq_u16(l3_a, l3_b, 1),
+                    Fl = vextq_u16(l3_a, l3_b, 2), Hl = MV(l4 + x);
    uint16x8_t J = E, K = E, L = E, M = E, c;
 
    /* 1:1 slope rules */
@@ -251,9 +318,9 @@ static void mmpx_pixel8(const uint16_t *const r[7], int x, uint16x8_t out[4])
    M = MSEL(c, F, M);
 
    /* Intersection rules */
-   c = MAND(MAND(MNE(E, F), MEQ4(E, C, I, D, Q)), MAND(MEQ2(F, B, H), MNE(F, MV(r[3] + x + 3))));
+   c = MAND(MAND(MNE(E, F), MEQ4(E, C, I, D, Q)), MAND(MEQ2(F, B, H), MNE(F, vextq_u16(r3_c, r3_n, 6))));
    K = MSEL(c, F, K); M = MSEL(c, F, M);
-   c = MAND(MAND(MNE(E, D), MEQ4(E, A, G, F, R)), MAND(MEQ2(D, B, H), MNE(D, MV(r[3] + x - 3))));
+   c = MAND(MAND(MNE(E, D), MEQ4(E, A, G, F, R)), MAND(MEQ2(D, B, H), MNE(D, r3_c)));
    J = MSEL(c, D, J); L = MSEL(c, D, L);
    c = MAND(MAND(MNE(E, H), MEQ4(E, G, I, B, P)), MAND(MEQ2(H, D, F), MNE(H, MV(r[6] + x))));
    L = MSEL(c, H, L); M = MSEL(c, H, M);
@@ -273,24 +340,24 @@ static void mmpx_pixel8(const uint16_t *const r[7], int x, uint16x8_t out[4])
       const uint16x8_t hb = MNE(H, B), fd = MNE(F, D);
       uint16x8_t g1, c1;
       g1 = MAND(hb, MAND(MAND(MNE(H, A), MNE(H, E)), MNE(H, C)));
-      c1 = MAND(g1, MAND(MEQ3(H, G, F, R), MNONE2(H, D, MV(r[2] + x + 2))));
+      c1 = MAND(g1, MAND(MEQ3(H, G, F, R), MNONE2(H, D, vextq_u16(r2_c, r2_n, 5))));
       L = MSEL(c1, M, L);
-      c1 = MAND(g1, MAND(MEQ3(H, I, D, Q), MNONE2(H, F, MV(r[2] + x - 2))));
+      c1 = MAND(g1, MAND(MEQ3(H, I, D, Q), MNONE2(H, F, vextq_u16(r2_c, r2_n, 1))));
       M = MSEL(c1, L, M);
       g1 = MAND(hb, MAND(MAND(MNE(B, I), MNE(B, G)), MNE(B, E)));
-      c1 = MAND(g1, MAND(MEQ3(B, A, F, R), MNONE2(B, D, MV(r[4] + x + 2))));
+      c1 = MAND(g1, MAND(MEQ3(B, A, F, R), MNONE2(B, D, vextq_u16(r4_c, r4_n, 5))));
       J = MSEL(c1, K, J);
-      c1 = MAND(g1, MAND(MEQ3(B, C, D, Q), MNONE2(B, F, MV(r[4] + x - 2))));
+      c1 = MAND(g1, MAND(MEQ3(B, C, D, Q), MNONE2(B, F, vextq_u16(r4_c, r4_n, 1))));
       K = MSEL(c1, J, K);
       g1 = MAND(fd, MAND(MAND(MNE(D, I), MNE(D, E)), MNE(D, C)));
-      c1 = MAND(g1, MAND(MEQ3(D, A, H, S), MNONE2(D, B, MV(r[5] + x + 1))));
+      c1 = MAND(g1, MAND(MEQ3(D, A, H, S), MNONE2(D, B, vextq_u16(r5_a, r5_b, 2))));
       J = MSEL(c1, L, J);
-      c1 = MAND(g1, MAND(MEQ3(D, G, B, P), MNONE2(D, H, MV(r[1] + x + 1))));
+      c1 = MAND(g1, MAND(MEQ3(D, G, B, P), MNONE2(D, H, vextq_u16(r1_a, r1_b, 2))));
       L = MSEL(c1, J, L);
       g1 = MAND(fd, MAND(MAND(MNE(F, E), MNE(F, A)), MNE(F, G)));
-      c1 = MAND(g1, MAND(MEQ3(F, C, H, S), MNONE2(F, B, MV(r[5] + x - 1))));
+      c1 = MAND(g1, MAND(MEQ3(F, C, H, S), MNONE2(F, B, r5_a)));
       K = MSEL(c1, M, K);
-      c1 = MAND(g1, MAND(MEQ3(F, I, B, P), MNONE2(F, H, MV(r[1] + x - 1))));
+      c1 = MAND(g1, MAND(MEQ3(F, I, B, P), MNONE2(F, H, r1_a)));
       M = MSEL(c1, K, M);
    }
    out[0] = J;
@@ -302,19 +369,27 @@ static void mmpx_pixel8(const uint16_t *const r[7], int x, uint16x8_t out[4])
 
 /* Rows [ya, yb) (at most MM_BAND), columns [xa, xb) (at most MM_SPAN). */
 static void mmpx_band(const uint16_t *src, int w, int h, const uint32_t *lut,
-                      uint32_t *at, size_t dp, int y0, int ya, int yb, int x0,
-                      int xa, int xb)
+                      int lut_bgr, uint32_t *at, size_t dp, int y0, int ya,
+                      int yb, int x0, int xa, int xb)
 {
-   uint16_t buf[(MM_BAND + 2 * MM_PAD) * (MM_SPAN + 2 * MM_PAD)];
+   uint16_t buf[(MM_BAND + 2 * MM_PAD) * MM_BSTRIDE];
    const int bw = xb - xa + 2 * MM_PAD, nrows = yb - ya + 2 * MM_PAD;
+   const int bstride = (bw + 8 + 7) & ~7;
    const uint16_t *rows[MM_BAND + 2 * MM_PAD];     /* each: the buffer row's start */
+#ifdef MM_NEON
+   uint16_t luma_ring[3][MM_BSTRIDE];
+   int luma_id[3] = { -1, -1, -1 };
+#endif
    int i, x, y;
+#ifndef MM_NEON
+   (void)lut_bgr;
+#endif
 
    /* the rows, the border repeated: ya - 3 .. yb + 2, clamped to the picture */
    for (i = 0; i < nrows; i++)
    {
       int sy = ya - MM_PAD + i;
-      uint16_t *d = buf + (size_t)bw * i;
+      uint16_t *d = buf + (size_t)bstride * (size_t)i;
       const uint16_t *s;
       int lo = xa - MM_PAD, hi = xb + MM_PAD, k;
       sy = sy < 0 ? 0 : sy > h - 1 ? h - 1 : sy;
@@ -330,60 +405,107 @@ static void mmpx_band(const uint16_t *src, int w, int h, const uint32_t *lut,
       }
       for (k = w; k < hi; k++)
          d[k - lo] = s[w - 1];
+      for (k = bw; k < bstride; k++)
+         d[k] = s[w - 1];
    }
    for (y = ya; y < yb; y++)
    {
-      const uint16_t *const *r = rows + (y - ya);   /* r[0..6]: y-3 .. y+3 */
+      const int by = y - ya;
+      const uint16_t *const *r = rows + by;   /* r[0..6]: y-3 .. y+3 */
       uint32_t *o = at + dp * 2u * (size_t)(y - y0) + 2u * (size_t)(xa - x0);
       /* x is the column in the buffer: the picture's xa is at MM_PAD */
       x = MM_PAD;
 #ifdef MM_NEON
-      /* Eight pixels at a time: the flat test (the 8 neighbours all equal
-       * the pixel) for the eight at once.  Eight flat pixels in a row are
-       * one colour (each equals the next), so that case is one lookup and
-       * four vector stores a row; otherwise all eight go through the rules
-       * together (mmpx_pixel8; flat pixels come out as themselves) -- the
-       * same answer for every pixel as the scalar loop below. */
-      for (; !g_mm_c_only && x + 8 <= MM_PAD + (xb - xa); x += 8, o += 16)
+      /* Eight pixels at a time: slide one 8-pixel window per row (r[2..4])
+       * via vextq_u16 and compute luma lazily once per band-row.  Output
+       * goes straight through branchless NEON RGB565->RGBA8888 (vst4_u8)
+       * with zero stack spill and zero 256 KiB g_lut lookups. */
+      if (!g_mm_c_only && x + 8 <= MM_PAD + (xb - xa))
       {
-         const uint16x8_t e = vld1q_u16(r[3] + x);
-         uint16x8_t f = vceqq_u16(e, vld1q_u16(r[2] + x - 1));
-         int i;
-         f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[2] + x)));
-         f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[2] + x + 1)));
-         f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[3] + x - 1)));
-         f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[3] + x + 1)));
-         f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[4] + x - 1)));
-         f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[4] + x)));
-         f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[4] + x + 1)));
-         if ((vgetq_lane_u64(vreinterpretq_u64_u16(f), 0) &
-              vgetq_lane_u64(vreinterpretq_u64_u16(f), 1)) == ~(uint64_t)0)
+         uint16x8_t r2_c = vld1q_u16(r[2] + x - 3);
+         uint16x8_t r3_c = vld1q_u16(r[3] + x - 3);
+         uint16x8_t r4_c = vld1q_u16(r[4] + x - 3);
+         for (; x + 8 <= MM_PAD + (xb - xa); x += 8, o += 16)
          {
-            const uint32x4_t c = vdupq_n_u32(lut[r[3][x]]);
-            vst1q_u32(o, c);
-            vst1q_u32(o + 4, c);
-            vst1q_u32(o + 8, c);
-            vst1q_u32(o + 12, c);
-            vst1q_u32(o + dp, c);
-            vst1q_u32(o + dp + 4, c);
-            vst1q_u32(o + dp + 8, c);
-            vst1q_u32(o + dp + 12, c);
-            continue;
-         }
-         {
-            uint16x8_t v[4];
-            uint16_t jj[4][8];
-            mmpx_pixel8(r, x, v);
-            vst1q_u16(jj[0], v[0]);
-            vst1q_u16(jj[1], v[1]);
-            vst1q_u16(jj[2], v[2]);
-            vst1q_u16(jj[3], v[3]);
-            for (i = 0; i < 8; i++)
+            const uint16x8_t r2_n = vld1q_u16(r[2] + x + 5);
+            const uint16x8_t r3_n = vld1q_u16(r[3] + x + 5);
+            const uint16x8_t r4_n = vld1q_u16(r[4] + x + 5);
+            const uint16x8_t e = vextq_u16(r3_c, r3_n, 3);
+            uint16x8_t f = vceqq_u16(e, vextq_u16(r2_c, r2_n, 2));
+            f = vandq_u16(f, vceqq_u16(e, vextq_u16(r2_c, r2_n, 3)));
+            f = vandq_u16(f, vceqq_u16(e, vextq_u16(r2_c, r2_n, 4)));
+            f = vandq_u16(f, vceqq_u16(e, vextq_u16(r3_c, r3_n, 2)));
+            f = vandq_u16(f, vceqq_u16(e, vextq_u16(r3_c, r3_n, 4)));
+            f = vandq_u16(f, vceqq_u16(e, vextq_u16(r4_c, r4_n, 2)));
+            f = vandq_u16(f, vceqq_u16(e, vextq_u16(r4_c, r4_n, 3)));
+            f = vandq_u16(f, vceqq_u16(e, vextq_u16(r4_c, r4_n, 4)));
+            if ((vgetq_lane_u64(vreinterpretq_u64_u16(f), 0) &
+                 vgetq_lane_u64(vreinterpretq_u64_u16(f), 1)) == ~(uint64_t)0)
             {
-               uint32_t *q = o + 2 * i;
-               q[0] = lut[jj[0][i]]; q[1] = lut[jj[1][i]];
-               q[dp] = lut[jj[2][i]]; q[dp + 1] = lut[jj[3][i]];
+               const uint32_t col = lut_bgr >= 0
+                  ? up_rgb565_to_rgba8(r[3][x], lut_bgr) : lut[r[3][x]];
+               const uint32x4_t c = vdupq_n_u32(col);
+               vst1q_u32(o, c);
+               vst1q_u32(o + 4, c);
+               vst1q_u32(o + 8, c);
+               vst1q_u32(o + 12, c);
+               vst1q_u32(o + dp, c);
+               vst1q_u32(o + dp + 4, c);
+               vst1q_u32(o + dp + 8, c);
+               vst1q_u32(o + dp + 12, c);
             }
+            else
+            {
+               const int r2_id = by + 2, r3_id = by + 3, r4_id = by + 4;
+               uint16_t *l2 = luma_ring[r2_id % 3];
+               uint16_t *l3 = luma_ring[r3_id % 3];
+               uint16_t *l4 = luma_ring[r4_id % 3];
+               uint16x8_t v[4];
+               if (luma_id[r2_id % 3] != r2_id)
+               {
+                  mm_luma_row(rows[r2_id], l2, bstride);
+                  luma_id[r2_id % 3] = r2_id;
+               }
+               if (luma_id[r3_id % 3] != r3_id)
+               {
+                  mm_luma_row(rows[r3_id], l3, bstride);
+                  luma_id[r3_id % 3] = r3_id;
+               }
+               if (luma_id[r4_id % 3] != r4_id)
+               {
+                  mm_luma_row(rows[r4_id], l4, bstride);
+                  luma_id[r4_id % 3] = r4_id;
+               }
+               mmpx_pixel8(r, x, r2_c, r2_n, r3_c, r3_n, r4_c, r4_n,
+                           l2, l3, l4, v);
+               if (lut_bgr >= 0)
+               {
+                  const uint16x8x2_t top = vzipq_u16(v[0], v[1]);
+                  const uint16x8x2_t bot = vzipq_u16(v[2], v[3]);
+                  up_rgb565_to_rgba8_x8(top.val[0], o, lut_bgr);
+                  up_rgb565_to_rgba8_x8(top.val[1], o + 8, lut_bgr);
+                  up_rgb565_to_rgba8_x8(bot.val[0], o + dp, lut_bgr);
+                  up_rgb565_to_rgba8_x8(bot.val[1], o + dp + 8, lut_bgr);
+               }
+               else
+               {
+                  uint16_t jj[4][8];
+                  int k;
+                  vst1q_u16(jj[0], v[0]);
+                  vst1q_u16(jj[1], v[1]);
+                  vst1q_u16(jj[2], v[2]);
+                  vst1q_u16(jj[3], v[3]);
+                  for (k = 0; k < 8; k++)
+                  {
+                     uint32_t *q = o + 2 * k;
+                     q[0] = lut[jj[0][k]]; q[1] = lut[jj[1][k]];
+                     q[dp] = lut[jj[2][k]]; q[dp + 1] = lut[jj[3][k]];
+                  }
+               }
+            }
+            r2_c = r2_n;
+            r3_c = r3_n;
+            r4_c = r4_n;
          }
       }
 #endif
@@ -417,16 +539,17 @@ static void mmpx_band(const uint16_t *src, int w, int h, const uint32_t *lut,
 void mmpx_rect(const uint16_t *src, int w, int h, const uint32_t *lut,
                uint32_t *at, size_t dp, int y0, int y1, int x0, int x1)
 {
-   int ya, xa;
+   int ya, xa, lut_bgr;
    if (!src || !lut || !at || w < 1 || h < 1)
       return;
+   lut_bgr = mm_lut_kind(lut);
    for (ya = y0; ya < y1; ya += MM_BAND)
    {
       const int yb = ya + MM_BAND < y1 ? ya + MM_BAND : y1;
       for (xa = x0; xa < x1; xa += MM_SPAN)
       {
          const int xb = xa + MM_SPAN < x1 ? xa + MM_SPAN : x1;
-         mmpx_band(src, w, h, lut, at, dp, y0, ya, yb, x0, xa, xb);
+         mmpx_band(src, w, h, lut, lut_bgr, at, dp, y0, ya, yb, x0, xa, xb);
       }
    }
 }

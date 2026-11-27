@@ -349,6 +349,8 @@ struct wk_compose {
     uint8_t th8[8][2][WK_MAX_MARGIN];    /* kBayer8 value (stipple threshold)                  */
     uint8_t zero[WK_MAX_MARGIN];         /* all-zero dither (stipple)                          */
     int lut5[32], lut6[64];              /* 5 and 6 bit channel to 0..255 (edge colours)       */
+    uint32_t *recip;                     /* precomputed ceil(2^32 / wsum) for edge_colours */
+    int recip_n;
     wk_compose_scratch *own;             /* the scratch of wk_compose_frame and of the per frame part */
     int primed;
     /* periodic continuation */
@@ -451,6 +453,19 @@ wk_compose *wk_compose_create(const wk_compose_cfg *cfg, int view_w, int view_h,
     for (int F = 1; F <= 64; F++)
         for (int k = 0; k <= F; k++)
             c->ramp[F][k] = c->smooth[k * 64 / F];
+    if (c->cfg.soft_blur > 0) {
+        const int max_w = c->cfg.soft_blur >= 63 ? 4096 : (c->cfg.soft_blur + 1) * (c->cfg.soft_blur + 1);
+        c->recip = (uint32_t *)malloc((size_t)(max_w + 1) * sizeof(uint32_t));
+        if (!c->recip) {
+            wk_compose_destroy(c);
+            return NULL;
+        }
+        c->recip_n = max_w;
+        c->recip[0] = 0;
+        c->recip[1] = 0;
+        for (int d = 2; d <= max_w; d++)
+            c->recip[d] = (uint32_t)(((1ULL << 32) + (uint64_t)d - 1u) / (uint64_t)d);
+    }
     return c;
 }
 
@@ -461,6 +476,7 @@ void wk_compose_destroy(wk_compose *c)
     free(c->ext); free(c->stable); free(c->lvl_prev); free(c->gh_ext); free(c->gh_t);
     free(c->per); free(c->per_el);
     free(c->prev); free(c->edge); free(c->prev_stale);
+    free(c->recip);
     wk_compose_scratch_destroy(c->own);
     free(c);
 }
@@ -515,7 +531,9 @@ int wk_compose_period_bans(const wk_compose *c) { return c ? c->bans : 0; }
 
 static void edge_colours(wk_compose *c, const wk_compose_in *in)
 {
+    static const uint32_t kRecipNS[9] = { 0u, 65536u, 32768u, 21846u, 16384u, 13108u, 10923u, 9363u, 8192u };
     const int H = c->H, W = c->W, ns = wk_clamp(c->cfg.soft_sample, 1, 8);
+    const uint32_t ns_rec = kRecipNS[ns];
     int16_t raw[2][WK_MAX_LINES][3];
     for (int y = 0; y < H; y++) {
         const uint16_t *line = in->centre + (size_t)y * (size_t)in->centre_stride;
@@ -528,9 +546,9 @@ static void edge_colours(wk_compose *c, const wk_compose_in *in)
                 g += c->lut6[(p >> 5) & 63u];
                 b += c->lut5[p & 31u];
             }
-            raw[s][y][0] = (int16_t)(r / ns);
-            raw[s][y][1] = (int16_t)(g / ns);
-            raw[s][y][2] = (int16_t)(b / ns);
+            raw[s][y][0] = (int16_t)(((uint32_t)r * ns_rec) >> 16);
+            raw[s][y][1] = (int16_t)(((uint32_t)g * ns_rec) >> 16);
+            raw[s][y][2] = (int16_t)(((uint32_t)b * ns_rec) >> 16);
         }
     }
     /* Triangular blur over +-R lines inside the run of lines with the same hud flag.
@@ -553,6 +571,8 @@ static void edge_colours(wk_compose *c, const wk_compose_in *in)
     for (int y = H - 1; y >= 0; y--) {
         seg_hi[y] = (y < H - 1 && in->ana->line[y + 1].hud == in->ana->line[y].hud) ? seg_hi[y + 1] : y;
     }
+    const uint32_t *const recip = c->recip;
+    const int recip_n = c->recip_n;
     for (int s = 0; s < 2; s++) {
         for (int ch = 0; ch < 4; ch++) {
             S[ch][0] = 0;
@@ -572,8 +592,15 @@ static void edge_colours(wk_compose *c, const wk_compose_in *in)
                 acc[ch] = (R + 1) * (s_lo_y + s_y_hi) - (y * s_lo_y - t_lo_y) - (t_y_hi - y * s_y_hi);
             }
             const int wsum = acc[3] ? acc[3] : 1;
-            for (int ch = 0; ch < 3; ch++)
-                c->edge[((size_t)s * (size_t)H + (size_t)y) * 3 + (size_t)ch] = (int16_t)(acc[ch] / wsum);
+            int16_t *dst_e = &c->edge[((size_t)s * (size_t)H + (size_t)y) * 3];
+            if (wsum >= 2 && wsum <= recip_n) {
+                const uint32_t rec = recip[wsum];
+                for (int ch = 0; ch < 3; ch++)
+                    dst_e[ch] = (int16_t)(uint32_t)(((uint64_t)(uint32_t)acc[ch] * rec) >> 32);
+            } else {
+                for (int ch = 0; ch < 3; ch++)
+                    dst_e[ch] = (int16_t)(acc[ch] / wsum);
+            }
         }
     }
 }
@@ -732,12 +759,17 @@ static void period_layer(wk_compose *c, const wk_compose_in *in, int l)
                 continue;
             }
             const int real = wk_min(ana->line[y].real[s][l], M);
-            for (int d = 0; d < real; d++) {
-                int32_t wx = per_wx(c, ana, l, s, y, d);
+            const int Pp = pl.P;
+            const int ppow2 = wk_is_pow2(Pp);
+            const uint32_t pmask = (uint32_t)(Pp - 1);
+            int32_t wx = per_wx(c, ana, l, s, y, 0);
+            const int32_t wx_step = s == 1 ? 1 : -1;
+            for (int d = 0; d < real; d++, wx += wx_step) {
                 if (wx < pl.lo || wx > pl.hi)
                     continue;
                 const size_t i = (size_t)y * (size_t)M + (size_t)d;
-                if ((ob && !ob[i]) || cb[i] != pl.proto[wk_floormod(wx, pl.P)]) {
+                const int pidx = ppow2 ? (int)((uint32_t)wx & pmask) : wk_floormod(wx, Pp);
+                if ((ob && !ob[i]) || cb[i] != pl.proto[pidx]) {
                     bad = 1;
                     break;
                 }
@@ -796,10 +828,15 @@ static void period_layer(wk_compose *c, const wk_compose_in *in, int l)
             /* remember what is predicted, keyed by world column */
             build_seq(c, c->own, in, l, s, y, ext);
             const int Pp = pl.P;
-            for (int d = ext; d < ext + pl.ptail; d++) {
+            const int ppow2 = wk_is_pow2(Pp);
+            const uint32_t pmask = (uint32_t)(Pp - 1);
+            int32_t wx = per_wx(c, ana, l, s, y, ext);
+            const int32_t wx_step = s == 1 ? 1 : -1;
+            for (int d = ext; d < ext + pl.ptail; d++, wx += wx_step) {
                 c->own->seq[IN + d] = c->own->seq[IN + d - Pp];
                 c->own->seqo[IN + d] = 1;
-                pl.proto[wk_floormod(per_wx(c, ana, l, s, y, d), Pp)] = c->own->seq[IN + d];
+                const int pidx = ppow2 ? (int)((uint32_t)wx & pmask) : wk_floormod(wx, Pp);
+                pl.proto[pidx] = c->own->seq[IN + d];
             }
             if (s == 1) {
                 pl.lo = per_wx(c, ana, l, s, y, ext);
@@ -896,7 +933,9 @@ void wk_compose_lines(wk_compose *c, const wk_compose_in *in, int y0, int y1, wk
     for (int y = y0; y < y1; y++) {
         uint16_t *orow = in->out + (size_t)y * (size_t)in->out_stride;
         uint8_t *oprov = in->prov ? in->prov + (size_t)y * (size_t)in->out_stride : NULL;
-        memcpy(orow + M, in->centre + (size_t)y * (size_t)in->centre_stride, (size_t)W * 2);
+        const uint16_t *cptr = in->centre + (size_t)y * (size_t)in->centre_stride;
+        if (orow + M != cptr)
+            memcpy(orow + M, cptr, (size_t)W * 2);
         if (oprov)
             memset(oprov + M, WK_PROV_CENTRE, (size_t)W);
         const wk_line_out &lo = ana->line[y];
@@ -1088,16 +1127,18 @@ void wk_compose_lines(wk_compose *c, const wk_compose_in *in, int y0, int y1, wk
             }
             lp = (uint8_t)lvl_now;
             if (gt > 0 && !ana->scene_event && !lo.hud) {
-                const int lo_d = lvl_now, hi_d = ge;
-                const uint16_t *pv = c->prev + ((size_t)s * (size_t)H + (size_t)y) * (size_t)M;
-                int wv = 32 * gt / (cfg.ghost_frames + 1);
-                const int stale = c->prev_stale[s * H + y];   /* nothing to fade from: the stretch is marked, not blended */
-                for (int d = lo_d; d < hi_d && d < M; d++) {
-                    uint8_t wk8 = (uint8_t)wv;
-                    base_fill(c, t, bs, row, mat, d, 1, &wk8);
+                const int lo_d = lvl_now, end_d = wk_min((int)ge, M);
+                const int gn = end_d - lo_d;
+                if (gn > 0) {
+                    const uint16_t *pv = c->prev + ((size_t)s * (size_t)H + (size_t)y) * (size_t)M;
+                    const uint8_t wk8 = (uint8_t)(32 * gt / (cfg.ghost_frames + 1));
+                    const int stale = c->prev_stale[s * H + y];   /* nothing to fade from: the stretch is marked, not blended */
+                    memset(t->wrow, wk8, (size_t)gn);
+                    base_fill(c, t, bs, row, mat, lo_d, gn, t->wrow);
                     if (!stale)
-                        wk_blend_row(row + d, pv + d, &wk8, dith4 + d, 1);
-                    prow[d] = WK_PROV_GHOST;
+                        wk_blend_row(row + lo_d, pv + lo_d, t->wrow, dith4 + lo_d, gn);
+                    if (oprov)
+                        memset(prow + lo_d, WK_PROV_GHOST, (size_t)gn);
                 }
                 gt--;
             } else {

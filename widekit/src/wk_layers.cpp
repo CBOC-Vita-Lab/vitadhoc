@@ -43,6 +43,7 @@ struct LS {
     uint8_t prev_on[WK_MAX_LINES];
     int prev_ref;              /* reference line of the previous frame, -1 none */
     int have_prev;
+    uint8_t have_prev_hash;    /* 1 once prev_hash holds a real L->hash snapshot */
     uint32_t gfx_prev;
     int have_gfx;
     int32_t U, V, Umin, Umax;
@@ -223,13 +224,14 @@ void wk_out_raise(wk_out *out, int layer, int y, int side, int px)
 
 /* ------------------------------------------------------------------------- */
 
-static int row_period(const uint32_t *r, int n)
+static int row_period_divs(const uint32_t *r, int n, const int *divs, int nd)
 {
-    for (int p = 1; p <= n / 2; p++) {
-        if (n % p || r[0] != r[p])
+    for (int di = 0; di < nd; di++) {
+        const int p = divs[di];
+        if (r[0] != r[p])
             continue;
         int ok = 1;
-        for (int i = 0; i < n - p; i++)
+        for (int i = 1; i < n - p; i++)
             if (r[i] != r[i + p]) {
                 ok = 0;
                 break;
@@ -275,41 +277,46 @@ static int seen_ok(const Walk &k, int idx, int32_t ut)
 }
 
 /* Returns cells certified on one side.  dirn = -1 left, +1 right. */
-static int walk_side(const Walk &k, int dirn, int partial, Scratch &sc, int stamps)
+static int walk_side(const Walk &k, int dirn, int partial, Scratch &sc, int stamps,
+                     int first_rc, int edge_rc)
 {
     const wk_layers_cfg &c = k.w->cfg;
+    const int row_base = k.tr * k.mw;
     int n = 0;
     int32_t first = dirn < 0 ? k.tf - 1 : k.tf + k.nvis;
-    int32_t edge_t = dirn < 0 ? k.tf : k.tf + k.nvis - 1;
-    int rc;
+    int rc = first_rc;
     /* verified history */
     for (; partial + k.tp * n < k.M; n++) {
         int32_t ut = first + dirn * n;
-        rc = wk_floormod(ut, k.mw);
         if (sc.vis[rc])
             break;
-        int idx = k.tr * k.mw + rc;
+        int idx = row_base + rc;
         if (!seen_ok(k, idx, ut))
             break;
         sc.claimed[rc] = 1;
+        if (dirn > 0) {
+            if (++rc == k.mw) rc = 0;
+        } else {
+            if (--rc < 0) rc = k.mw - 1;
+        }
     }
     if (n > 0 || !stamps || k.s->chain_ban > 0)
         return n;
     /* chain from the edge */
-    int eidx = k.tr * k.mw + wk_floormod(edge_t, k.mw);
+    int eidx = row_base + edge_rc;
     int64_t e = (int64_t)k.L->stamp[eidx];
     int64_t prev = e;
     int64_t floor_t = (int64_t)k.w->epoch_start - 4;
     int resident = c.resident_px > 0 && k.s->quiet_travel >= (uint32_t)c.resident_px;
     int cnt = 0;
+    rc = first_rc;
     for (; partial + k.tp * n < k.M; n++) {
         if (k.lead_cap >= 0 && cnt >= k.lead_cap)
             break;
         int32_t ut = first + dirn * n;
-        rc = wk_floormod(ut, k.mw);
         if (sc.vis[rc] || sc.claimed[rc])
             break;
-        int idx = k.tr * k.mw + rc;
+        int idx = row_base + rc;
         int64_t st = (int64_t)k.L->stamp[idx];
         if (st < floor_t || st > (int64_t)k.frame)
             break;
@@ -326,6 +333,11 @@ static int walk_side(const Walk &k, int dirn, int partial, Scratch &sc, int stam
         k.s->pred_wc[idx] = (int16_t)ut;
         k.s->pred_ep[idx] = k.w->ep8;
         cnt++;
+        if (dirn > 0) {
+            if (++rc == k.mw) rc = 0;
+        } else {
+            if (--rc < 0) rc = k.mw - 1;
+        }
     }
     return n;
 }
@@ -378,23 +390,29 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
             s->tp = L->tile_px;
             s->cells = L->map_w * L->map_h;
             s->have_prev = 0;
-        s->prev_ref = -1;
+            s->have_prev_hash = 0;
+            s->prev_ref = -1;
             s->have_gfx = 0;
             s->travel_ema = 0;
             memset(s->seen_ep, 0, (size_t)s->cells);
             memset(s->pred_ep, 0, (size_t)s->cells);
-            memcpy(s->prev_hash, L->hash, (size_t)s->cells * 4);
+            if (!L->stamp) {
+                memcpy(s->prev_hash, L->hash, (size_t)s->cells * 4);
+                s->have_prev_hash = 1;
+            }
             ls_clear_scene(s);
         }
         const int wrap = s->map_w * s->tp, wraph = s->map_h * s->tp;
+        const WkWrap wx_wrap = wk_wrap_make(wrap), wy_wrap = wk_wrap_make(wraph);
         /* per line deltas */
-        for (int y = 0; y < H; y++) {
-            if (s->have_prev) {
-                sc.dsx[l][y] = wk_wrapdiff(L->scroll_x[y] - s->prev_sx[y], wrap);
-                sc.dsy[l][y] = wk_wrapdiff(L->row_y[y] - s->prev_row[y], wraph);
-            } else {
-                sc.dsx[l][y] = sc.dsy[l][y] = 0;
+        if (s->have_prev) {
+            for (int y = 0; y < H; y++) {
+                sc.dsx[l][y] = wk_wrap_diff(L->scroll_x[y] - s->prev_sx[y], &wx_wrap);
+                sc.dsy[l][y] = wk_wrap_diff(L->row_y[y] - s->prev_row[y], &wy_wrap);
             }
+        } else {
+            for (int y = 0; y < H; y++)
+                sc.dsx[l][y] = sc.dsy[l][y] = 0;
         }
         /* plurality (Boyer-Moore) of dx and dy over the lines that are on */
         int32_t cand = 0, cand_y = 0;
@@ -486,11 +504,12 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
              * [NES adapter fix] */
             const int pry = s->prev_ref;
             const int32_t wrapx = s->map_w * s->tp, wraph = s->map_h * s->tp;
+            const WkWrap wy_wrap = wk_wrap_make(wraph);
             int32_t dv = 0, pr = s->prev_row[pry];
             const int step = ry > pry ? 1 : -1;
             for (int y = pry + step;; y += step) {
                 if (s->prev_on[y] || y == ry) {
-                    dv += wk_wrapdiff(s->prev_row[y] - pr, wraph);
+                    dv += wk_wrap_diff(s->prev_row[y] - pr, &wy_wrap);
                     pr = s->prev_row[y];
                 }
                 if (y == ry)
@@ -577,49 +596,55 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
         LS *s = &w->ls[l];
         const int mw = s->map_w, mh = s->map_h, tp = s->tp;
         const int wrap = mw * tp;
+        const WkDiv mw_div = wk_div_make(mw), mh_div = wk_div_make(mh), tp_div = wk_div_make(tp);
+        const WkWrap wx_wrap = wk_wrap_make(wrap), wy_wrap = wk_wrap_make(mh * tp);
         const int role = sc.role[l];
         const int ry = sc.ref_y[l];
 
         /* rows in view */
         memset(sc.rowmark, 0, (size_t)mh);
-        int nrows = 0;
         for (int y = 0; y < H; y++) {
             if (!on(L, y))
                 continue;
-            int tr = wk_floormod(wk_floordiv(L->row_y[y], tp), mh);
-            if (!sc.rowmark[tr]) {
-                sc.rowmark[tr] = 1;
-                nrows++;
-            }
+            int tr = wk_div_mod(wk_div_floor(L->row_y[y], &tp_div), &mh_div);
+            sc.rowmark[tr] = 1;
         }
 
         /* streaming evidence: fresh writes at / beyond the view edges */
         int stream_now = 0;
         {
             const int32_t sxr = L->scroll_x[ry];
-            const int32_t tfr = wk_floordiv(sxr, tp);
-            const int cf = wk_floormod(tfr, mw);
-            int nv = (int)(wk_floordiv(sxr + W - 1, tp) - tfr + 1);
+            const int32_t tfr = wk_div_floor(sxr, &tp_div);
+            const int cf = wk_div_mod(tfr, &mw_div);
+            int nv = (int)(wk_div_floor(sxr + W - 1, &tp_div) - tfr + 1);
             if (nv > mw) nv = mw;
             for (int tr = 0; tr < mh && !stream_now; tr++) {
                 if (!sc.rowmark[tr])
                     continue;
+                const int row_base = tr * mw;
+                int rc = cf;
                 for (int rel = 0; rel < mw; rel++) {
-                    if (rel >= 2 && rel <= nv - 3)
-                        continue;
-                    int idx = tr * mw + (cf + rel) % mw;
-                    int fresh;
-                    if (L->stamp)
-                        fresh = (int64_t)f->frame - (int64_t)L->stamp[idx] <= 1;
-                    else
-                        fresh = L->hash[idx] != s->prev_hash[idx];
-                    if (fresh) {
-                        stream_now = 1;
-                        break;
+                    if (rel < 2 || rel > nv - 3) {
+                        int idx = row_base + rc;
+                        int fresh;
+                        if (L->stamp)
+                            fresh = (int64_t)f->frame - (int64_t)L->stamp[idx] <= 1;
+                        else
+                            fresh = s->have_prev_hash && (L->hash[idx] != s->prev_hash[idx]);
+                        if (fresh) {
+                            stream_now = 1;
+                            break;
+                        }
                     }
+                    if (++rc == mw) rc = 0;
                 }
             }
-            memcpy(s->prev_hash, L->hash, (size_t)s->cells * 4);
+            if (!L->stamp) {
+                memcpy(s->prev_hash, L->hash, (size_t)s->cells * 4);
+                s->have_prev_hash = 1;
+            } else {
+                s->have_prev_hash = 0;
+            }
         }
         out->streaming[l] = stream_now;
         if (stream_now) {
@@ -635,19 +660,34 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
         if (s->quiet_travel > 1000000u) s->quiet_travel = 1000000u;
         if (s->quiet_own > 1000000u) s->quiet_own = 1000000u;
 
-        /* periodic rows */
-        for (int tr = 0; tr < mh; tr++) {
-            if (!sc.rowmark[tr]) {
-                s->row_streak[tr] = 0;
-                continue;
-            }
-            int p = row_period(L->hash + (size_t)tr * mw, mw);
-            sc.periodic[tr] = p < mw || mw == 1;
-            if (sc.periodic[tr]) {
-                if (s->row_streak[tr] < 255) s->row_streak[tr]++;
+        /* periodic rows (only read when role == WK_ROLE_AUTO && !streamed && !was_main) */
+        if (role == WK_ROLE_AUTO && !s->streamed && !s->was_main) {
+            int divs[24], nd = 0;
+            if (mw_div.pow2) {
+                for (int p = 1; p < mw; p <<= 1)
+                    divs[nd++] = p;
             } else {
-                s->row_streak[tr] = 0;
+                for (int p = 1; p <= mw / 2; p++) {
+                    int m = p;
+                    while (m < mw) m += p;
+                    if (m == mw) divs[nd++] = p;
+                }
             }
+            for (int tr = 0; tr < mh; tr++) {
+                if (!sc.rowmark[tr]) {
+                    s->row_streak[tr] = 0;
+                    continue;
+                }
+                int p = row_period_divs(L->hash + (size_t)tr * mw, mw, divs, nd);
+                sc.periodic[tr] = p < mw || mw == 1;
+                if (sc.periodic[tr]) {
+                    if (s->row_streak[tr] < 255) s->row_streak[tr]++;
+                } else {
+                    s->row_streak[tr] = 0;
+                }
+            }
+        } else if (role != WK_ROLE_AUTO) {
+            memset(s->row_streak, 0, sizeof s->row_streak);
         }
 
         /* parallax ratio against the camera */
@@ -698,8 +738,9 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
         }
 
         /* world coordinates */
+        const int32_t sx_ref = L->scroll_x[ry];
         for (int y = 0; y < H; y++)
-            out->world_x[l][y] = s->U + wk_wrapdiff(L->scroll_x[y] - L->scroll_x[ry], wrap);
+            out->world_x[l][y] = s->U + wk_wrap_diff(L->scroll_x[y] - sx_ref, &wx_wrap);
         /* rows are unwrapped line to line from the reference line (lines of one
          * picture step by a few rows), not against the reference line alone: a
          * ring only as tall as the view (NES, 240 px) would otherwise fold the
@@ -707,16 +748,15 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
          * it.  Off lines take the row relative to the last on line.  [NES
          * adapter fix, see INTEGRATION.md] */
         {
-            const int32_t hw = mh * tp;
             int32_t pr = L->row_y[ry], pw = s->V;
             for (int y = ry; y < H; y++) {
-                int32_t wr = pw + wk_wrapdiff(L->row_y[y] - pr, hw);
+                int32_t wr = pw + wk_wrap_diff(L->row_y[y] - pr, &wy_wrap);
                 out->world_row[l][y] = wr;
                 if (on(L, y)) { pr = L->row_y[y]; pw = wr; }
             }
             pr = L->row_y[ry]; pw = s->V;
             for (int y = ry - 1; y >= 0; y--) {
-                int32_t wr = pw + wk_wrapdiff(L->row_y[y] - pr, hw);
+                int32_t wr = pw + wk_wrap_diff(L->row_y[y] - pr, &wy_wrap);
                 out->world_row[l][y] = wr;
                 if (on(L, y)) { pr = L->row_y[y]; pw = wr; }
             }
@@ -743,7 +783,7 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
                 lo->ring[0][l] = lo->ring[1][l] = 0;
                 continue;
             }
-            const int tr = wk_floormod(wk_floordiv(L->row_y[y], tp), mh);
+            const int tr = wk_div_mod(wk_div_floor(L->row_y[y], &tp_div), &mh_div);
             int back = 0;
             if (role == WK_ROLE_BACKDROP)
                 back = 1;
@@ -774,19 +814,21 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
             }
             /* new run */
             k.tr = tr;
-            k.tf = wk_floordiv(uy, tp);
-            k.nvis = (int)(wk_floordiv(uy + W - 1, tp) - k.tf + 1);
+            k.tf = wk_div_floor(uy, &tp_div);
+            k.nvis = (int)(wk_div_floor(uy + W - 1, &tp_div) - k.tf + 1);
             if (k.nvis > mw) k.nvis = mw;
             memset(sc.vis, 0, (size_t)mw);
             memset(sc.claimed, 0, (size_t)mw);
-            for (int i = 0; i < k.nvis; i++)
-                sc.vis[wk_floormod(k.tf + i, mw)] = 1;
             const int partL = uy - k.tf * tp;
             const int partR = (int)((k.tf + k.nvis) * tp - (uy + W));
             /* mark what is on screen now (and check old predictions) */
+            const int row_base = tr * mw;
+            const int rc_first = wk_div_mod(k.tf, &mw_div);
+            int rc = rc_first;
             for (int i = 0; i < k.nvis; i++) {
+                sc.vis[rc] = 1;
                 int32_t ut = k.tf + i;
-                int idx = tr * mw + wk_floormod(ut, mw);
+                int idx = row_base + rc;
                 if (s->pred_ep[idx] == w->ep8) {
                     if (s->pred_wc[idx] == (int16_t)ut) {
                         out->hs_checked++;
@@ -800,13 +842,14 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
                 s->seen_hash[idx] = L->hash[idx];
                 s->seen_wc[idx] = (int16_t)ut;
                 s->seen_ep[idx] = w->ep8;
+                if (++rc == mw) rc = 0;
             }
+            const int rc_last = rc == 0 ? mw - 1 : rc - 1;
+            const int rc_left = rc_first == 0 ? mw - 1 : rc_first - 1;
             k.fresh_edge = 0;
             if (L->stamp) {
-                int64_t ea = (int64_t)f->frame -
-                             (int64_t)L->stamp[tr * mw + wk_floormod(k.tf, mw)];
-                int64_t eb = (int64_t)f->frame -
-                             (int64_t)L->stamp[tr * mw + wk_floormod(k.tf + k.nvis - 1, mw)];
+                int64_t ea = (int64_t)f->frame - (int64_t)L->stamp[row_base + rc_first];
+                int64_t eb = (int64_t)f->frame - (int64_t)L->stamp[row_base + rc_last];
                 k.fresh_edge = (ea <= 2) | ((eb <= 2) << 1);
             }
             int nL, nR;
@@ -820,14 +863,14 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
             const int sL = L->stamp != NULL && s->dir < 0;
             if (s->dir >= 0) {
                 k.fresh_edge = (fe >> 1) & 1;
-                nR = walk_side(k, +1, partR, sc, sR);
+                nR = walk_side(k, +1, partR, sc, sR, rc, rc_last);
                 k.fresh_edge = fe & 1;
-                nL = walk_side(k, -1, partL, sc, sL);
+                nL = walk_side(k, -1, partL, sc, sL, rc_left, rc_first);
             } else {
                 k.fresh_edge = fe & 1;
-                nL = walk_side(k, -1, partL, sc, sL);
+                nL = walk_side(k, -1, partL, sc, sL, rc_left, rc_first);
                 k.fresh_edge = (fe >> 1) & 1;
-                nR = walk_side(k, +1, partR, sc, sR);
+                nR = walk_side(k, +1, partR, sc, sR, rc, rc_last);
             }
             /* a ring narrower than the view (NES one-screen / horizontal
              * mirroring: 32 tiles, 33 visible with fine scroll) gives a

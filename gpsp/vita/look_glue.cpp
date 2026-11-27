@@ -36,10 +36,10 @@ std::string trf(const char *key, ...)
 }  // namespace pk
 
 namespace std {
-void __throw_bad_alloc() { abort(); }
-void __throw_logic_error(const char *) { abort(); }
-void __throw_length_error(const char *) { abort(); }
-void __throw_out_of_range_fmt(const char *, ...) { abort(); }
+__attribute__((weak)) void __throw_bad_alloc() { abort(); }
+__attribute__((weak)) void __throw_logic_error(const char *) { abort(); }
+__attribute__((weak)) void __throw_length_error(const char *) { abort(); }
+__attribute__((weak)) void __throw_out_of_range_fmt(const char *, ...) { abort(); }
 }  // namespace std
 
 /* The GBA core's I/O registers: DISPCNT is the first (video mode in bits 0-2).

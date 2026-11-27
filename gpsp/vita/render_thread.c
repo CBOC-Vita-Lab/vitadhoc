@@ -61,9 +61,19 @@ static u8 g_shadow[1024 * 96] __attribute__((aligned(64)));
 /* Two pictures: the one shown stays whole while the next is drawn. */
 static u16 g_out[2][RT_PITCH * (160 + 1)] __attribute__((aligned(64)));
 static u16 g_wide_out[(RT_PITCH + 2 * WIDE_MARGIN_MAX) * 160] __attribute__((aligned(64)));
+static u16 *g_wide_orig;              /* core's wide_buf (ping-ponged with g_wide_out) */
+static const u16 *g_wide_last;        /* whole wide frame from last completed render */
 static int g_wide_valid;
 static unsigned g_wide_margin;
 static int g_cur;                     /* g_out[] the thread draws next     */
+
+static void rt_wide_restore(void)
+{
+   if (g_wide_orig && wide_pixels == g_wide_out)
+      wide_pixels = g_wide_orig;
+   g_wide_valid = 0;
+   g_wide_last = NULL;
+}
 
 static int g_mode;                    /* the mode in force (RT_*)           */
 static int g_fresh;                   /* the thread's object lists are old  */
@@ -165,6 +175,7 @@ static int rt_wait_to(unsigned us)
 
 void rt_shutdown(void)
 {
+   rt_wide_restore();
    if (!g_ready)
       return;
    g_quit = 1;
@@ -246,6 +257,7 @@ static void rt_stall(void)
 
 void rt_shutdown(void)
 {
+   rt_wide_restore();
    if (!g_ready)
       return;
    g_quit = 1;
@@ -308,10 +320,33 @@ void rt_frame_begin(int mode)
     * core drew itself, line by line) */
    if (!g_ready || (wide_margin && wide_selftest))
       mode = RT_OFF;
-   if (!mode || !wide_margin || wide_margin != g_wide_margin)
+   if (wide_pixels && wide_pixels != g_wide_out)
+      g_wide_orig = wide_pixels;
+   if (mode != RT_ON || !wide_margin || wide_margin != g_wide_margin)
    {
-      g_wide_valid = 0;
-      g_wide_margin = mode ? wide_margin : 0;
+      const int last_in_out = g_wide_last == g_wide_out;
+      rt_wide_restore();
+      if (mode == RT_ON && wide_margin && !last_in_out)
+         memset(g_wide_out, 0, sizeof(g_wide_out));
+      g_wide_margin = mode == RT_ON ? wide_margin : 0;
+   }
+   else if (g_wide_valid && wide_pixels == g_wide_last)
+   {
+      /* wide.c (wide_apply) reset wide_pixels back to wide_buf while it held
+       * the previous completed frame; move drawing to the spare buffer so
+       * g_wide_last (and g_last.pix / g_show.pix) is never overwritten in place. */
+      if (g_wide_last == g_wide_out)
+      {
+         if (g_wide_orig)
+            wide_pixels = g_wide_orig;
+         else
+         {
+            g_wide_valid = 0;
+            g_wide_last = NULL;
+         }
+      }
+      else
+         wide_pixels = g_wide_out;
    }
    if (mode == g_mode)
       return;
@@ -397,12 +432,24 @@ static const uint16_t *rt_stale_return(const uint16_t *pix, int mode,
       return pix;
    if (wide_margin && wide_pixels && pix == wide_pixels)
    {
-      if (g_wide_valid)
-         return g_wide_out;
+      if (g_wide_valid && g_wide_last)
+         return g_wide_last;
       if (allow_compose && g_drawn)
       {
+         u16 *done_buf = wide_pixels;
+         if (done_buf != g_wide_out)
+            g_wide_orig = done_buf;
          wide_compose(g_out[g_last]);
-         return pix;
+         g_wide_last = done_buf;
+         g_wide_valid = 1;
+         if (done_buf == g_wide_out)
+         {
+            if (g_wide_orig)
+               wide_pixels = g_wide_orig;
+         }
+         else
+            wide_pixels = g_wide_out;
+         return done_buf;
       }
       return NULL;
    }
@@ -416,7 +463,11 @@ const uint16_t *rt_frame_end(const uint16_t *pix)
    const int mode = g_mode;
 
    if (!g_posted)
+   {
+      if (mode == RT_ON && wide_margin && wide_pixels && pix == wide_pixels)
+         return rt_stale_return(pix, mode, 0);
       return pix;
+   }
    /* A picture from an earlier frame is still being drawn, and this
     * frame was not given to the thread (the hook saw it busy): the last
     * whole picture is shown again.  (With the core drawing too, mode 2,
@@ -473,13 +524,25 @@ const uint16_t *rt_frame_end(const uint16_t *pix)
       return pix;
    }
    /* The wide view: the margins were drawn as the lines went by; the
-    * middle goes in between them now (video.h wide_compose). */
+    * middle goes in between them now (video.h wide_compose).  Ping-pong
+    * wide_pixels between the core's buffer and g_wide_out so the completed
+    * frame stays intact for stale returns without a 95 KiB Core-0 memcpy. */
    if (wide_margin && wide_pixels && pix == wide_pixels)
    {
+      u16 *done_buf = wide_pixels;
+      if (done_buf != g_wide_out)
+         g_wide_orig = done_buf;
       wide_compose(out);
-      memcpy(g_wide_out, wide_pixels, sizeof(g_wide_out));
+      g_wide_last = done_buf;
       g_wide_valid = 1;
-      return pix;
+      if (done_buf == g_wide_out)
+      {
+         if (g_wide_orig)
+            wide_pixels = g_wide_orig;
+      }
+      else
+         wide_pixels = g_wide_out;
+      return done_buf;
    }
    /* (anything else the core hands over -- a post-processing pass of its
     * own, which this app does not use -- was made from a picture the core

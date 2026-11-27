@@ -16,14 +16,17 @@
 #include <string.h>
 
 #ifdef __vita__
+#include <psp2/kernel/clib.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/kernel/processmgr.h>
+#define HO_MEMCPY sceClibMemcpy
 #else
 #include <pthread.h>
 #include <errno.h>
 #include "host_sem.h"
 #include <time.h>
 #include <unistd.h>
+#define HO_MEMCPY memcpy
 #endif
 
 void *operator new(size_t n) { return malloc(n ? n : 1); }
@@ -325,20 +328,23 @@ extern "C" int ho_stage(const uint16_t *pix, unsigned w, unsigned h,
                         size_t pitch, uint32_t seq, int user)
 {
    pk::HandoffFrame *f;
-   unsigned y;
-   if (!ho_active() || !pix || !w || !h || (size_t)w * h * 2u > HO_PIX_BYTES)
+   const size_t row_bytes = (size_t)w * 2u;
+   if (!ho_active() || !pix || !w || !h || row_bytes * (size_t)h > HO_PIX_BYTES)
       return 0;
    if (g_staged)                 /* (a second picture in one pass: the newer) */
       ho_abandon();
    f = g_box->begin_write();
    if (!f)
       return 0;
-   for (y = 0; y < h; y++)
-      memcpy(f->data + g_extra + (size_t)y * w * 2u,
-             (const uint8_t *)pix + (size_t)y * pitch, (size_t)w * 2u);
+   if (pitch == row_bytes)
+      HO_MEMCPY(f->data + g_extra, pix, row_bytes * (size_t)h);
+   else
+      for (unsigned y = 0; y < h; y++)
+         HO_MEMCPY(f->data + g_extra + (size_t)y * row_bytes,
+                   (const uint8_t *)pix + (size_t)y * pitch, row_bytes);
    f->w = (int)w;
    f->h = (int)h;
-   f->pitch = (int)(w * 2u);
+   f->pitch = (int)row_bytes;
    f->seq = seq;
    f->user = user;
    g_staged = f;

@@ -21,6 +21,7 @@ typedef struct pp
    int broken;                   /* run_frame failed: no more frames */
    int local_slot;
    int ended;                    /* the session read slot 0 at its end frame */
+   int keep_host;                /* preserve host's live state when peer drops */
    int restore_ok;
    uint64_t frames;              /* frames the machine has completed */
    void (*hook)(void *hu, int slot, uint64_t frame);
@@ -192,10 +193,14 @@ static int pp_state_save(void *user, int slot, void *buf, size_t n)
    pp_t *p = (pp_t *)user;
    if (slot != 0)
       return n == 0 ? 0 : -1;
-   /* The session reads slot 0 only when the agreed end frame is reached. */
-   if (p->running)
-      p->ended = 1;
    return p->m.state_save(p->m.user, buf, n);
+}
+
+static void pp_keep_host(void *user)
+{
+   pp_t *p = (pp_t *)user;
+   if (p && p->running)
+      p->keep_host = 1;
 }
 
 static void pp_stop(void *user)
@@ -204,9 +209,10 @@ static void pp_stop(void *user)
    if (!p->running)
       return;
    p->running = 0;
-   /* A guest never keeps the host's game; a host keeps the machine only if
-    * the session reached its end frame, else it is back where it was. */
-   if (p->local_slot == 1 || !p->ended)
+   /* A guest never keeps the host's game; a host keeps the machine if the
+    * session reached its end frame or keep_host was requested (peer lost),
+    * else it is back where it was. */
+   if (p->local_slot == 1 || (!p->ended && !p->keep_host))
       restore_own(p);
    if (p->m.set_clock)
       p->m.set_clock(p->m.user, 0);
@@ -261,6 +267,7 @@ const fe_gblink_machines *fe_padpair_machines(const fe_pad_machine *m)
    p->v.state_save = pp_state_save;
    p->v.stop = pp_stop;
    p->v.partner_rom = NULL;      /* one cartridge: a different one is refused */
+   p->v.keep_host = pp_keep_host;
    return &p->v;
 }
 
@@ -268,4 +275,10 @@ int fe_padpair_restored(const fe_gblink_machines *v)
 {
    const pp_t *p = v ? (const pp_t *)v->user : NULL;
    return p ? p->restore_ok : 1;
+}
+
+void fe_padpair_keep_host(const fe_gblink_machines *v)
+{
+   if (v)
+      pp_keep_host(v->user);
 }

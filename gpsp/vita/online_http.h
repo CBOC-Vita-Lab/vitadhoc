@@ -16,11 +16,12 @@ extern "C" {
 enum { ONLINE_E_NONE = 0, ONLINE_E_NET, ONLINE_E_NOT_FOUND, ONLINE_E_FULL, ONLINE_E_VERSION,
        ONLINE_E_UPDATE, ONLINE_E_BUSY, ONLINE_E_RATE, ONLINE_E_TOKEN, ONLINE_E_RELAY, ONLINE_E_BAD,
        ONLINE_E_SERVER, ONLINE_E_CLOCK, ONLINE_E_CERT,
-       ONLINE_E_CONSOLE /* a 400 bad_request naming the field `console`: this service does not know the console id */ };
+       ONLINE_E_CONSOLE /* a 400 bad_request naming the field `console`: this service does not know the console id */,
+       ONLINE_E_RELAY_WAIT /* 403 relay_not_allowed: peer may still be catching up polling */ };
 /* NP_HTTPS_E_CLOCK -> CLOCK; NP_HTTPS_E_CERT -> CERT; any other transport failure -> NET.
  * status/code -> ONLINE_E_*: 404 NOT_FOUND; 409 room_full FULL; 409 version_mismatch VERSION;
  * 426 UPDATE; 503 over_budget/rooms_full/switched_off and 429 daily_cap BUSY; other 429 RATE; 401 TOKEN;
- * 403, 502, 503 relay_* RELAY; 400/413 BAD; other 5xx SERVER. */
+ * 403 relay_not_allowed RELAY_WAIT; other 403, 502, 503 relay_* RELAY; 400/413 BAD; other 5xx SERVER. */
 enum { ONLINE_OP_NONE = 0, ONLINE_OP_CREATE, ONLINE_OP_LOOKUP, ONLINE_OP_JOIN, ONLINE_OP_POLL,
        ONLINE_OP_RELAY, ONLINE_OP_ENDPOINT, ONLINE_OP_CLOSE, ONLINE_OP_RESOLVE, ONLINE_OP_INFO };
 enum { ONLINE_ROOM_OPEN = 0, ONLINE_ROOM_FULL, ONLINE_ROOM_JOINED, ONLINE_ROOM_RELAY, ONLINE_ROOM_CLOSED };

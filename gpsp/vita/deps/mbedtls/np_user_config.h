@@ -155,4 +155,9 @@ long long np_https_wallclock(long long *t);   /* defined in np_https_sys.cpp */
 #define MBEDTLS_ECP_FIXED_POINT_OPTIM           0
 #define MBEDTLS_X509_MAX_INTERMEDIATE_CA        6
 
+#ifdef NP_TARGET_VITA
+typedef enum { NP_USER_ENUM_CHECK_0 = 0 } np_user_enum_check_t;
+typedef char np_user_enum_size_guard[sizeof(np_user_enum_check_t) == 4 ? 1 : -1];
+#endif
+
 #endif /* NP_MBEDTLS_USER_CONFIG_H */

@@ -58,6 +58,7 @@ static struct
    int  hash_nes;                  /* ...as an NES file (RA console 7) */
    unsigned game_gen, hash_gen;    /* which game a hash answer is for */
    char hash_path[600];
+   int  pending_boot;              /* booted while offline / signing in: hash once login_done succeeds */
    int  was_linked;
    int  stale;                     /* progress must start over */
    ra_ach *list;
@@ -414,6 +415,15 @@ static void RC_CCONV login_done(int result, const char *error,
          else
             toast(tr("toast.signed_in_to_retroachievements_as"), u->display_name);
       }
+      if (R.pending_boot && R.hash_path[0] && !R.game_on)
+      {
+         R.pending_boot = 0;
+         R.game_on = 1;
+         R.game_hardcore = R.hardcore;
+         rc_client_set_hardcore_enabled(R.rc, R.game_hardcore);
+         cheats_hardcore(R.game_hardcore);
+         R.hash_want = 1;
+      }
       return;
    }
    if (with_password)
@@ -721,12 +731,25 @@ void ra_game_begin(const char *boot_path, fe_console_t console)
    R.game_title[0] = '\0';
    R.stale = 0;
    R.was_linked = 0;
+   R.pending_boot = 0;
    R.game_gen++;
+   snprintf(R.hash_path, sizeof(R.hash_path), "%s", boot_path ? boot_path : "");
    if (R.rc && !rc_client_get_user_info(R.rc) && !R.login_busy &&
-       R.user[0] && R.token[0])
+       R.user[0] && R.token[0] && (!R.online || R.online()))
       token_login();               /* a sign-in that did not get through */
-   if (!R.rc || (!rc_client_get_user_info(R.rc) && !R.login_busy))
+   if (!R.rc || !rc_client_get_user_info(R.rc))
+   {
+      if (R.rc && R.hash_path[0])
+      {
+         R.pending_boot = 1;
+         if (R.user[0] && R.token[0])
+         {
+            R.retry_login = 1;
+            R.retry_wait = 0;
+         }
+      }
       return;
+   }
    /* Hardcore is in force from the first frame; the achievements come
     * once the file's hash (the net thread's, ra_pump) and the server's
     * answer are in. */
@@ -734,7 +757,6 @@ void ra_game_begin(const char *boot_path, fe_console_t console)
    R.game_hardcore = R.hardcore;
    rc_client_set_hardcore_enabled(R.rc, R.game_hardcore);
    cheats_hardcore(R.game_hardcore);
-   snprintf(R.hash_path, sizeof(R.hash_path), "%s", boot_path);
    R.hash_want = 1;
 }
 
@@ -760,6 +782,8 @@ void ra_game_end(void)
 {
    ra_list_free();
    osd_ind_clear();
+   R.pending_boot = 0;
+   R.hash_path[0] = '\0';
    if (!R.game_on)
       return;
    R.game_on = 0;

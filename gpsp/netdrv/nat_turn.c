@@ -214,6 +214,7 @@ static void turn_build(nat_turn *c, nat_turn_txn *t)
    }
    t->len = m.n;
    t->authed = 0;
+   t->nonce_gen = 0;
    if (c->have_nonce)
    {
       turn_attr_str(&m, TA_USERNAME, c->user);
@@ -221,7 +222,10 @@ static void turn_build(nat_turn *c, nat_turn_txn *t)
       turn_attr_str(&m, TA_NONCE, c->nonce);
       t->len = m.n;
       if (turn_add_integrity(t->msg, &t->len, sizeof t->msg, c->key))
+      {
          t->authed = 1;
+         t->nonce_gen = c->nonce_gen;
+      }
    }
 }
 
@@ -271,6 +275,8 @@ static void turn_init(nat_turn *c, nat_send_fn send, void *ctx, uint32_t server_
    c->server_ip_be = server_ip_be;
    c->server_port = server_port;
    c->t0_ms = c->clock_ms = now_ms;
+   c->cred_mint_ms = now_ms;
+   c->cred_expires_ms = now_ms + (uint64_t)NAT_TURN_CRED_TTL_MS;
    turn_copy_str(c->user, sizeof c->user, user, (size_t)-1);
    turn_copy_str(c->pass, sizeof c->pass, pass, (size_t)-1);
    for (i = 0; i < 4; i++)
@@ -375,7 +381,7 @@ static void turn_timeout(nat_turn *c, nat_turn_txn *t, uint64_t now)
             break;
          }
          if (++c->refresh_fails >= 2)
-            turn_fail(c, NAT_RELAY_E_LOST);
+            turn_fail(c, c->err == NAT_RELAY_E_AUTH ? NAT_RELAY_E_AUTH : NAT_RELAY_E_LOST);
          else
             c->refresh_at = now + 1000;
          break;
@@ -419,7 +425,7 @@ void nat_turn_tick(nat_turn *c, uint64_t now)
       return;
    if (c->expires_at && now >= c->expires_at)
    {
-      turn_fail(c, NAT_RELAY_E_LOST);    /* the allocation ran out and nobody could refresh it */
+      turn_fail(c, c->err == NAT_RELAY_E_AUTH ? NAT_RELAY_E_AUTH : NAT_RELAY_E_LOST);    /* the allocation ran out and nobody could refresh it */
       return;
    }
    if (c->refresh_at && now >= c->refresh_at)
@@ -531,10 +537,14 @@ static void turn_retry_with_nonce(nat_turn *c, nat_turn_txn *t, const turn_parse
 {
    int tries = t->auth_tries + 1, kind = t->kind;
    nat_turn_txn *n;
-   turn_copy_str(c->realm, sizeof c->realm, p->realm, (size_t)-1);
-   turn_copy_str(c->nonce, sizeof c->nonce, p->nonce, (size_t)-1);
-   c->have_nonce = 1;
-   turn_long_term_key(c);
+   if (!c->have_nonce || strcmp(c->realm, p->realm) || strcmp(c->nonce, p->nonce))
+   {
+      turn_copy_str(c->realm, sizeof c->realm, p->realm, (size_t)-1);
+      turn_copy_str(c->nonce, sizeof c->nonce, p->nonce, (size_t)-1);
+      c->have_nonce = 1;
+      c->nonce_gen++;
+      turn_long_term_key(c);
+   }
    t->active = 0;
    n = turn_free_txn(c);
    if (!n)
@@ -569,6 +579,7 @@ static void turn_on_success(nat_turn *c, nat_turn_txn *t, const turn_parsed *p, 
          c->expires_at = now + (uint64_t)c->lifetime_s * 1000u;
          c->refresh_at = now + (uint64_t)c->lifetime_s * 500u;      /* half of it */
          c->refresh_fails = 0;
+         c->err = NAT_RELAY_E_NONE;
          c->state = NAT_RELAY_ALLOCATED;
          break;
       case TK_REFRESH:
@@ -582,6 +593,7 @@ static void turn_on_success(nat_turn *c, nat_turn_txn *t, const turn_parsed *p, 
          c->expires_at = now + (uint64_t)c->lifetime_s * 1000u;
          c->refresh_at = now + (uint64_t)c->lifetime_s * 500u;
          c->refresh_fails = 0;
+         c->err = NAT_RELAY_E_NONE;
          break;
       case TK_PERM:
          c->perm_busy = 0;
@@ -608,7 +620,7 @@ static void turn_on_error(nat_turn *c, nat_turn_txn *t, const turn_parsed *p, ui
    if ((code == 401 || code == 438) && p->has_nonce && p->has_realm)
    {
       int changed = !c->have_nonce || strcmp(c->nonce, p->nonce) || strcmp(c->realm, p->realm);
-      if (!t->authed || (changed && t->auth_tries < 3))
+      if (!t->authed || ((changed || t->nonce_gen != c->nonce_gen) && t->auth_tries < 3))
       {
          turn_retry_with_nonce(c, t, p, now);
          return;
@@ -632,7 +644,8 @@ static void turn_on_error(nat_turn *c, nat_turn_txn *t, const turn_parsed *p, ui
          }
          if (code == 403 && (kind == TK_PERM || kind == TK_BIND))
          {
-            c->perm_busy = c->bind_busy = 0;
+            if (kind == TK_PERM) c->perm_busy = 0;
+            else c->bind_busy = 0;
             c->retry_at = now + 5000;
             return;
          }
@@ -643,7 +656,8 @@ static void turn_on_error(nat_turn *c, nat_turn_txn *t, const turn_parsed *p, ui
             c->refresh_at = now + 30000;
          else
          {
-            c->perm_busy = c->bind_busy = 0;
+            if (kind == TK_PERM) c->perm_busy = 0;
+            else if (kind == TK_BIND) c->bind_busy = 0;
             c->retry_at = now + 30000;
          }
          return;
@@ -679,9 +693,12 @@ static void turn_on_error(nat_turn *c, nat_turn_txn *t, const turn_parsed *p, ui
    }
    if (kind == TK_ALLOC)
       turn_fail(c, NAT_RELAY_E_AUTH);     /* refused for a reason of its own */
+   else if (kind == TK_REFRESH)
+      c->refresh_at = now + 5000;
    else if (kind == TK_PERM || kind == TK_BIND)
    {
-      c->perm_busy = c->bind_busy = 0;
+      if (kind == TK_PERM) c->perm_busy = 0;
+      else c->bind_busy = 0;
       c->retry_at = now + 3000;
    }
 }
@@ -759,4 +776,27 @@ int nat_turn_relayed(const nat_turn *c, uint32_t *ip_be, uint16_t *port)
    if (port)
       *port = c->relayed_port;
    return 1;
+}
+
+void nat_turn_set_cred_ttl(nat_turn *c, uint64_t ttl_ms, uint64_t now_ms)
+{
+   if (!c)
+      return;
+   c->cred_mint_ms = now_ms;
+   c->cred_expires_ms = ttl_ms ? now_ms + ttl_ms : 0;
+}
+
+int nat_turn_cred_expiring(const nat_turn *c, uint64_t now_ms, uint64_t warn_before_ms, uint64_t *rem_ms)
+{
+   uint64_t default_warn = (uint64_t)(NAT_TURN_CRED_TTL_MS - NAT_TURN_CRED_WARN_MS);
+   uint64_t warn = warn_before_ms ? warn_before_ms : default_warn;
+   uint64_t rem;
+   if (rem_ms)
+      *rem_ms = 0;
+   if (!c || !turn_live(c) || !c->cred_expires_ms)
+      return 0;
+   rem = now_ms < c->cred_expires_ms ? c->cred_expires_ms - now_ms : 0;
+   if (rem_ms)
+      *rem_ms = rem;
+   return rem <= warn;
 }

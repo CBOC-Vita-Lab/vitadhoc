@@ -74,7 +74,7 @@ static inline int disc_game_id(const char *path, char out[9], uint32_t (*crc)(ui
          first = 0;
          while (*q == ' ' || *q == '\t')
             q++;
-         if (strncmp(q, "FILE", 4) || (q[4] != ' ' && q[4] != '\t'))
+         if (strncasecmp(q, "FILE", 4) || (q[4] != ' ' && q[4] != '\t'))
             continue;
          q += 4;
          while (*q == ' ' || *q == '\t')

@@ -25,8 +25,18 @@
 #ifndef UI_VITA_ONLINE_H
 #define UI_VITA_ONLINE_H
 
+#include <dirent.h>
+#include <sys/stat.h>
+
 #include "online_vita.h"      /* ON_*, ONLINE_Q_*, ONLINE_APP_VERSION */
 #include "online_lib.h"
+#include "ui_host_hooks.h"
+#include "zip_rom.h"
+
+extern char g_app_rom_dir[APP_PATH_CAP];
+#ifdef VITA
+static int snes_game_pick(char *path, size_t cap, char *title, size_t tcap);
+#endif
 
 static unsigned vita_frame_begin(unsigned *pad);   /* ui_psp.c, below */
 
@@ -68,6 +78,7 @@ static struct
    const char *l1, *l2;           /* OCP_BAD: the sentences                 */
    char title[40];                /* the game as the page names it          */
    int  cable;
+   int  diff_cart;                /* OCP_ASK shows compatible link-cable cartridges */
    online_lib_hit hit[ONLINE_LIB_MAX];
    int  nhit, top;
    int  frames;
@@ -319,8 +330,8 @@ static void oc_init_keys(void)
       k->row = (unsigned char)(i / 8);
       k->span = 1;
    }
-   g_oc_keys[OC_KEY_DEL] = (kp_key){ tr("online.del"), 0, KP_DEL, 7, 3, 1 };
-   g_oc_keys[OC_KEY_JOIN] = (kp_key){ tr("online.join"), 0, KP_OK, 0, 4, 8 };
+   g_oc_keys[OC_KEY_DEL] = (kp_key){ TR_KEY("online.del"), 0, KP_DEL, 7, 3, 1 };
+   g_oc_keys[OC_KEY_JOIN] = (kp_key){ TR_KEY("online.join"), 0, KP_OK, 0, 4, 8 };
 }
 
 static void oc_clear_code(void)
@@ -392,6 +403,7 @@ static void oc_card_begin(void)
    g_oc.phase = OCP_LOOK;
    g_oc.frames = 0;
    g_oc.nhit = g_oc.top = 0;
+   g_oc.diff_cart = 0;
    g_oc.l1 = g_oc.l2 = "";
    screen_to(SCR_ONLINE_CARD);
    g_cursor = OC_ROW_JOIN;
@@ -657,6 +669,86 @@ static void oc_found(void)
    fe_evt("online_lib_begin console=%s game=%s", c->console, c->game);
 }
 
+static int oc_cable_ext_ok(const char *path, int is_gba)
+{
+   const char *dot = path ? strrchr(path, '.') : NULL;
+   zip_rom_entry e;
+   if (!dot)
+      return 0;
+   if (is_gba)
+   {
+      if (!strcasecmp(dot, ".gba"))
+         return 1;
+      if (!strcasecmp(dot, ".zip") && zip_rom_peek(path, &e) == 0 && e.console == 0)
+         return 1;
+      return 0;
+   }
+   if (!strcasecmp(dot, ".gb") || !strcasecmp(dot, ".gbc"))
+      return 1;
+   if (!strcasecmp(dot, ".zip") && zip_rom_peek(path, &e) == 0 && (e.console == 1 || e.console == 2))
+      return 1;
+   return 0;
+}
+
+static void oc_cable_add(const char *path)
+{
+   int i;
+   if (!path || !path[0] || g_oc.nhit >= ONLINE_LIB_MAX)
+      return;
+   for (i = 0; i < g_oc.nhit; i++)
+      if (strcmp(g_oc.hit[i].path, path) == 0)
+         return;
+   memset(&g_oc.hit[g_oc.nhit], 0, sizeof(g_oc.hit[0]));
+   snprintf(g_oc.hit[g_oc.nhit].path, sizeof(g_oc.hit[0].path), "%s", path);
+   g_oc.nhit++;
+}
+
+static void oc_cable_scan_dir(const char *dir, int is_gba, int depth)
+{
+   DIR *d;
+   struct dirent *e;
+   char p[APP_PATH_CAP];
+   struct stat st;
+   if (!dir || !dir[0] || g_oc.nhit >= ONLINE_LIB_MAX)
+      return;
+   d = opendir(dir);
+   if (!d)
+      return;
+   while ((e = readdir(d)) != NULL && g_oc.nhit < ONLINE_LIB_MAX)
+   {
+      if (e->d_name[0] == '.')
+         continue;
+      if (snprintf(p, sizeof(p), "%s/%s", dir, e->d_name) >= (int)sizeof(p) || stat(p, &st) != 0)
+         continue;
+      if (S_ISDIR(st.st_mode))
+      {
+         if (depth == 0)
+            oc_cable_scan_dir(p, is_gba, 1);
+      }
+      else if (oc_cable_ext_ok(p, is_gba))
+         oc_cable_add(p);
+   }
+   closedir(d);
+}
+
+static void oc_cable_pick_list(void)
+{
+   int is_gba = g_oc.card.kind == ROOM_CABLE_GBA;
+   int i, extra;
+   g_oc.nhit = 0;
+#ifdef VITA
+   {
+      char hp[APP_PATH_CAP], title[128];
+      if (snes_game_pick(hp, sizeof(hp), title, sizeof(title)) == 0 && oc_cable_ext_ok(hp, is_gba))
+         oc_cable_add(hp);
+   }
+#endif
+   oc_cable_scan_dir(g_app_rom_dir, is_gba, 0);
+   extra = ui_host_extra_roots();
+   for (i = 0; i < extra && g_oc.nhit < ONLINE_LIB_MAX; i++)
+      oc_cable_scan_dir(ui_host_extra_root(i), is_gba, 0);
+}
+
 static void oc_searched(void)
 {
    int pick;
@@ -671,6 +763,20 @@ static void oc_searched(void)
       g_oc.phase = OCP_ASK;
       g_cursor = 0;
       g_oc.top = 0;
+   }
+   else if (g_oc.modal == 1 && (g_oc.card.kind == ROOM_CABLE_GBA || g_oc.card.kind == ROOM_CABLE_GB))
+   {
+      oc_cable_pick_list();
+      if (g_oc.nhit > 0)
+      {
+         fe_evt("online_diff_cart hits=%d kind=%d", g_oc.nhit, g_oc.card.kind);
+         g_oc.diff_cart = 1;
+         g_oc.phase = OCP_ASK;
+         g_cursor = 0;
+         g_oc.top = 0;
+      }
+      else
+         oc_bad(UI_FAIL_ONLINE_GAME);
    }
    else
       oc_bad(UI_FAIL_ONLINE_GAME);
@@ -898,7 +1004,12 @@ static ui_action screen_online_card(unsigned edges)
       const char *a, *b;
       char nm[64], dir[64], val[80];
       int i;
-      if (g_oc.cable)
+      if (g_oc.diff_cart)
+      {
+         vw_line(22, y - 6, 436, tr("online.your_friend_is_playing_a_different"), C_VALUE);
+         vw_line(22, y + 12, 436, tr("online.pick_the_one_to_open"), C_ITEM);
+      }
+      else if (g_oc.cable)
       {
          ui_online_fail_text(UI_FAIL_ONLINE_GAME_FILE, g_oc.title, NULL, &a, &b);
          vw_line(22, y - 6, 436, a, C_VALUE);

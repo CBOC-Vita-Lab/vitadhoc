@@ -121,7 +121,8 @@ int64_t g_floorOverride;
 int64_t BuildFloor() {
     if (g_floorOverride) return g_floorOverride;
     static int64_t floor_ = 0;
-    if (floor_) return floor_;
+    const int64_t cached = __atomic_load_n(&floor_, __ATOMIC_ACQUIRE);
+    if (cached) return cached;
     int64_t t = NP_HTTPS_ROOTS_DAY;
     static const char kMonths[] = "JanFebMarAprMayJunJulAugSepOctNovDec";   // __DATE__ = "Oct 30 2026" (day space-padded)
     const char* d = __DATE__;
@@ -139,8 +140,9 @@ int64_t BuildFloor() {
         const int64_t compiled = (era * 146097 + (int64_t)doe - 719468) * 86400;
         if (compiled > t) t = compiled;
     }
-    floor_ = t - 86400;
-    return floor_;
+    const int64_t val = t - 86400;
+    __atomic_store_n(&floor_, val, __ATOMIC_RELEASE);
+    return val;
 }
 #else
 int64_t BuildFloor() { return g_floorOverride; }
@@ -826,7 +828,7 @@ void WorkerMain(void*) {
         }
         if (next) next->state = SS_RUNNING;
         g_lock.unlock();
-        if (g_quit) {
+        if (__atomic_load_n(&g_quit, __ATOMIC_ACQUIRE)) {
             if (next) { g_lock.lock(); next->state = SS_QUEUED; g_lock.unlock(); }
             break;
         }
@@ -854,15 +856,15 @@ void WorkerMain(void*) {
 }
 
 bool EnsureWorker() {
-    if (g_running) return true;
+    if (__atomic_load_n(&g_running, __ATOMIC_ACQUIRE)) return true;
     g_workerLock.lock();
     bool ok = true;
-    if (!g_running) {
-        g_quit = 0;
+    if (!__atomic_load_n(&g_running, __ATOMIC_RELAXED)) {
+        __atomic_store_n(&g_quit, 0, __ATOMIC_RELEASE);
         if (!g_event) g_event = EventCreate();
         if (g_event) g_thread = ThreadStart(WorkerMain, nullptr);
         ok = g_event && g_thread;
-        if (ok) g_running = 1;
+        if (ok) __atomic_store_n(&g_running, 1, __ATOMIC_RELEASE);
     }
     g_workerLock.unlock();
     return ok;
@@ -1100,8 +1102,8 @@ void np_https_release(NpHttpsHandle h) {
 
 void np_https_shutdown(uint32_t timeout_ms) {
     g_workerLock.lock();
-    if (g_running) {
-        g_quit = 1;
+    if (__atomic_load_n(&g_running, __ATOMIC_RELAXED)) {
+        __atomic_store_n(&g_quit, 1, __ATOMIC_RELEASE);
         g_lock.lock();
         for (int i = 0; i < NP_HTTPS_SLOTS; i++)
             if (g_slots[i].state == SS_RUNNING) g_slots[i].cancel = 1;
@@ -1110,7 +1112,7 @@ void np_https_shutdown(uint32_t timeout_ms) {
         EventSignal(g_event);
         if (ThreadJoin(g_thread, timeout_ms)) {
             g_thread = nullptr;
-            g_running = 0;
+            __atomic_store_n(&g_running, 0, __ATOMIC_RELEASE);
             EventDestroy(g_event);
             g_event = nullptr;
             g_lock.lock();

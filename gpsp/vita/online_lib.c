@@ -279,6 +279,87 @@ static int disc_listed_by_m3u(const char *path)
    return 0;
 }
 
+/* Skip a .bin track that belongs to a .cue sheet in the same folder (so
+ * Mega Drive cartridge scanning does not read 100-700 MB Sega CD tracks). */
+static int bin_listed_by_cue(const char *path)
+{
+   const char *sl = strrchr(path, '/'), *co = strrchr(path, ':');
+   const char *base;
+   char dir[APP_PATH_CAP];
+   DIR *d;
+   struct dirent *e;
+   size_t dl;
+   if (co && (!sl || co > sl))
+      sl = co;
+   base = sl ? sl + 1 : path;
+   dl = sl ? (*sl == '/' ? (sl == path ? 1u : (size_t)(sl - path)) : (size_t)(sl - path + 1)) : 0u;
+   if (!*base || dl >= sizeof(dir))
+      return 0;
+   if (dl)
+   {
+      memcpy(dir, path, dl);
+      dir[dl] = '\0';
+   }
+   else
+      strcpy(dir, ".");
+   d = opendir(dir);
+   if (!d)
+      return 0;
+   while ((e = readdir(d)) != NULL)
+   {
+      char cue[APP_PATH_CAP], line[512];
+      FILE *f;
+      int first = 1;
+      if (e->d_name[0] == '.' || !ext_is(e->d_name, ".cue"))
+         continue;
+      if (snprintf(cue, sizeof(cue), "%s%s%s", dir, (sl && *sl == ':') ? "" : (!strcmp(dir, "/") ? "" : "/"), e->d_name) >= (int)sizeof(cue))
+         continue;
+      f = fopen(cue, "rb");
+      if (!f)
+         continue;
+      while (fgets(line, sizeof(line), f))
+      {
+         char *q = line, *end, *fn, *k;
+         if (first && (uint8_t)q[0] == 0xEF && (uint8_t)q[1] == 0xBB && (uint8_t)q[2] == 0xBF)
+            q += 3;
+         first = 0;
+         while (*q == ' ' || *q == '\t')
+            q++;
+         if (strncasecmp(q, "FILE", 4) || (q[4] != ' ' && q[4] != '\t'))
+            continue;
+         q += 4;
+         while (*q == ' ' || *q == '\t')
+            q++;
+         if (*q == '"')
+         {
+            q++;
+            if (!(end = strchr(q, '"')))
+               continue;
+         }
+         else
+         {
+            end = q;
+            while (*end && *end != ' ' && *end != '\t' && *end != '\r' && *end != '\n')
+               end++;
+         }
+         *end = '\0';
+         fn = q;
+         for (k = q; *k; k++)
+            if (*k == '/' || *k == '\\')
+               fn = k + 1;
+         if (*fn && strcasecmp(fn, base) == 0)
+         {
+            fclose(f);
+            closedir(d);
+            return 1;
+         }
+      }
+      fclose(f);
+   }
+   closedir(d);
+   return 0;
+}
+
 /* The id of the file at `path` as 8 upper-case hex digits; 1 = read, 0 = not a game of this family. */
 static int pad_id_of(const char *path, char out[9])
 {
@@ -289,10 +370,12 @@ static int pad_id_of(const char *path, char out[9])
    size_t n;
    if (G.family == OL_SEGA && !strcmp(G.sega, "scd"))
       return disc_game_id(path, out, ol_crc);         /* a Sega CD disc: its first sector (disc_id.h) */
+   if (ext_is(path, ".bin") && bin_listed_by_cue(path))
+      return 0;
    f = fopen(path, "rb");
    if (!f)
       return 0;
-   if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) <= 0)
+   if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) <= 0 || size > 16L * 1024 * 1024)
    {
       fclose(f);
       return 0;
@@ -472,9 +555,10 @@ int online_lib_step(int files)
                G.skipped++;
                continue;
             }
-            if (!pad_ext_ok(path) || (G.family == OL_SEGA && !strcmp(G.sega, "scd") && (pk_m3u_is_list(path) ? !pk_m3u_names_discs(path) : disc_listed_by_m3u(path))) ||
-                !pad_id_of(path, id) || strcasecmp(id, G.game) != 0)
+            if (!pad_ext_ok(path) || (G.family == OL_SEGA && !strcmp(G.sega, "scd") && (pk_m3u_is_list(path) ? !pk_m3u_names_discs(path) : disc_listed_by_m3u(path))))
                continue;
+            if (!pad_id_of(path, id) || strcasecmp(id, G.game) != 0)
+               break;                /* pad_id_of reads a file: at most one hash per UI frame */
             add_hit(path);
             break;
          }
@@ -484,7 +568,7 @@ int online_lib_step(int files)
          if (rc <= 0)
             continue;
          code_of(hdr, code);
-         if (strcmp(code, G.game) != 0)
+         if ((G.family == OL_GB ? strcasecmp(code, G.game) : strcmp(code, G.game)) != 0)
             continue;
          add_hit(path);
          break;                      /* a hit costs a file read: one a call */

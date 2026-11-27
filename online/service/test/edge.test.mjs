@@ -1,7 +1,7 @@
 // The Worker: what it answers without waking the object (every request the object sees is a Durable Object request on the bill).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeWorker, hostDesc, guestDesc, UA } from './helpers.mjs';
+import { makeWorker, hostDesc, guestDesc, UA, V } from './helpers.mjs';
 
 test('unknown paths and wrong methods are 404 not_found at the edge, with no object request', async () => {
   const w = await makeWorker();
@@ -146,4 +146,124 @@ test('IPv6 addresses share a /64 bucket', async () => {
   assert.equal((await w.call('GET', '/v1/info', { ip: '2001:db8:1:2:bbbb::2' })).status, 200);
   assert.equal((await w.call('GET', '/v1/info', { ip: '2001:db8:1:2:cccc::3' })).status, 429);
   assert.equal((await w.call('GET', '/v1/info', { ip: '2001:db8:1:3::1' })).status, 200);
+});
+
+test('Worker cached over-budget returns live retryAfterSec matching Retry-After and clears over.hard / over.soft on successful 10-minute probes', async () => {
+  const realNow = Date.now;
+  let fakeNow = Date.UTC(2026, 10, 15, 3, 0, 0);
+  Date.now = () => fakeNow;
+  try {
+    const mod = await import(`../src/worker.js?fresh=${Math.random()}`);
+    let doCalls = 0;
+    let nextMode = 'soft';
+    const env = {
+      RATE_LIMIT_SCALE: '1000',
+      ROOMS: {
+        idFromName: (n) => n,
+        get: () => ({
+          fetch: async (req) => {
+            doCalls++;
+            const path = new URL(req.url).pathname;
+            if (path === '/v1/info') return new Response(JSON.stringify({ service: 'vitadhoc', busy: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+            if (path.endsWith('/close')) return new Response(JSON.stringify({}), { status: 200, headers: { 'content-type': 'application/json' } });
+            if (nextMode === 'soft') {
+              return new Response(JSON.stringify({ error: { code: 'over_budget', message: 'busy', retryAfterSec: 1800, reason: 'busy' } }), {
+                status: 503,
+                headers: { 'content-type': 'application/json', 'retry-after': '1800', 'x-vad-budget': 'new-over' },
+              });
+            }
+            if (nextMode === 'hard') {
+              return new Response(JSON.stringify({ error: { code: 'over_budget', message: 'busy', retryAfterSec: 1800, reason: 'busy' } }), {
+                status: 503,
+                headers: { 'content-type': 'application/json', 'retry-after': '1800', 'x-vad-budget': 'over' },
+              });
+            }
+            if (nextMode === 'err500') return new Response(JSON.stringify({ error: { code: 'internal', message: 'internal error' } }), { status: 500, headers: { 'content-type': 'application/json' } });
+            if (req.method === 'POST' && path === '/v1/rooms') return new Response(JSON.stringify({ code: 'ABCDE' }), { status: 201, headers: { 'content-type': 'application/json' } });
+            return new Response(JSON.stringify({ error: { code: 'not_found', message: 'no such room' } }), { status: 404, headers: { 'content-type': 'application/json' } });
+          },
+        }),
+      },
+    };
+    const send = async (method, path, body) => {
+      const h = { 'cf-connecting-ip': '198.51.100.120', 'user-agent': UA };
+      const init = { method, headers: h };
+      if (body !== undefined) { init.body = JSON.stringify(body); h['content-type'] = 'application/json'; h['content-length'] = String(Buffer.byteLength(init.body)); }
+      const resp = await mod.default.fetch(new Request(`https://test.invalid${path}?${V}`, init), env);
+      return { status: resp.status, data: await resp.json(), headers: resp.headers };
+    };
+
+    // Trigger new-over (over.soft) and verify live retryAfterSec 2 minutes later
+    const s1 = await send('POST', '/v1/rooms', hostDesc());
+    assert.equal(s1.status, 503);
+    assert.equal(doCalls, 1);
+    fakeNow += 120_000;
+    const s2 = await send('POST', '/v1/rooms', hostDesc());
+    assert.equal(s2.status, 503);
+    assert.equal(doCalls, 1, 'cached soft refusal did not wake DO');
+    assert.equal(s2.headers.get('retry-after'), '1680');
+    assert.equal(s2.data.error.retryAfterSec, 1680, 'soft retryAfterSec must be live');
+
+    // Trigger over (over.hard) at +120s and verify live retryAfterSec 3 minutes later
+    nextMode = 'hard';
+    const h1 = await send('GET', '/v1/rooms/ABCDE');
+    assert.equal(h1.status, 503);
+    assert.equal(doCalls, 2);
+    fakeNow += 180_000; // now = T0 + 300s (180s after hard, 300s after soft)
+    const h2 = await send('GET', '/v1/rooms/ABCDE');
+    assert.equal(h2.status, 503);
+    assert.equal(doCalls, 2);
+    assert.equal(h2.headers.get('retry-after'), '1620');
+    assert.equal(h2.data.error.retryAfterSec, 1620, 'hard retryAfterSec must match Retry-After');
+
+    // /v1/info and /close pass through without clearing over.hard or over.soft
+    assert.equal((await send('GET', '/v1/info')).status, 200);
+    assert.equal((await send('POST', '/v1/rooms/ABCDE/close', { token: 'A'.repeat(22), reason: 'cancel' })).status, 200);
+    assert.equal(doCalls, 4);
+    assert.equal((await send('GET', '/v1/rooms/ABCDE')).status, 503);
+    assert.equal(doCalls, 4, 'info/close must not clear over.hard');
+
+    // Probe at 10 minutes after hard (T0 + 720s) returns 500 -> does NOT clear over.hard
+    fakeNow += 420_000; // now = T0 + 720s (hard probeAt was T0 + 720s)
+    nextMode = 'err500';
+    assert.equal((await send('GET', '/v1/rooms/ABCDE')).status, 500);
+    assert.equal(doCalls, 5);
+    fakeNow += 1_000;
+    assert.equal((await send('GET', '/v1/rooms/ABCDE')).status, 503);
+    assert.equal(doCalls, 5, '500 response must not clear over.hard');
+
+    // Refresh over.soft at T0 + 721s? Wait: first let soft probe fail with new-over so soft.probeAt moves to T0 + 1321s
+    nextMode = 'soft';
+    // At T0 + 721s, over.hard is still cached (probeAt = T0 + 1320s), so wait until T0 + 1320s for hard probe to recover
+    fakeNow = Date.UTC(2026, 10, 15, 3, 0, 0) + 1_320_000;
+    // Let soft probe once and stay soft-over at T0 + 1320s? First test GET (non-isNew) recovering hard only:
+    nextMode = 'ok';
+    assert.equal((await send('GET', '/v1/rooms/ABCDE')).status, 404);
+    assert.equal(doCalls, 6);
+    fakeNow += 1_000; // T0 + 1321s: GET reaches DO because over.hard.until was cleared!
+    assert.equal((await send('GET', '/v1/rooms/ABCDE')).status, 404);
+    assert.equal(doCalls, 7, 'over.hard cleared on successful probe');
+
+    // Refresh soft-over, then verify POST /v1/rooms probe clears over.soft
+    nextMode = 'soft';
+    fakeNow += 1_000; // T0 + 1322s (soft.probeAt was T0 + 600s, so this probes and refreshes soft with probeAt = T0 + 1922s)
+    assert.equal((await send('POST', '/v1/rooms', hostDesc())).status, 503);
+    assert.equal(doCalls, 8);
+    // Non-isNew GET still passes through and must not clear over.soft
+    nextMode = 'ok';
+    assert.equal((await send('GET', '/v1/rooms/ABCDE')).status, 404);
+    assert.equal(doCalls, 9);
+    assert.equal((await send('POST', '/v1/rooms', hostDesc())).status, 503);
+    assert.equal(doCalls, 9, 'non-isNew request must not clear over.soft');
+
+    // At soft's 10-minute probe, POST /v1/rooms succeeds (201) -> clears over.soft
+    fakeNow += 600_000; // T0 + 1922s
+    assert.equal((await send('POST', '/v1/rooms', hostDesc())).status, 201);
+    assert.equal(doCalls, 10);
+    fakeNow += 1_000;
+    assert.equal((await send('POST', '/v1/rooms', hostDesc())).status, 201);
+    assert.equal(doCalls, 11, 'over.soft cleared on successful route.isNew probe');
+  } finally {
+    Date.now = realNow;
+  }
 });

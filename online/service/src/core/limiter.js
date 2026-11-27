@@ -37,11 +37,14 @@ function createMissStore(db) {
   let saltDay = -1;
   let noneDay = -1; // the day we looked and found no salt (nothing counted yet): do not look again until we make one
   function roll(day, make) {
+    if (day < saltDay) return false;
     if (saltDay === day) return true;
     if (noneDay !== day) {
       const row = db.get(`SELECT value FROM settings WHERE key = 'miss_day'`);
       const [d, s] = String((row && row.value) || '').split(':');
-      if (Number(d) === day && s) { salt = s; saltDay = day; return true; }
+      const dbDay = Number(d);
+      if (s && dbDay > day) { salt = s; saltDay = dbDay; return false; }
+      if (s && dbDay === day) { salt = s; saltDay = day; return true; }
       noneDay = day;
     }
     if (!make) return false; // nothing was counted today: nothing to read
@@ -62,9 +65,10 @@ function createMissStore(db) {
       return r ? { hour: Number(r.hour), h: Number(r.h), day, d: Number(r.d) } : null;
     },
     save(ipk, e) {
-      roll(e.day, true);
+      if (!roll(e.day, true)) return false;
       db.run(`INSERT INTO misses (fp, hour, h, d) VALUES (?, ?, ?, ?) ON CONFLICT(fp) DO UPDATE SET hour = excluded.hour, h = excluded.h, d = excluded.d`,
         fp(ipk), e.hour, e.h, e.d);
+      return true;
     },
   };
 }
@@ -81,11 +85,14 @@ function createMintStore(db) {
   let saltDay = -1;
   let noneDay = -1;
   function roll(day, make) {
+    if (day < saltDay) return false;
     if (saltDay === day) return true;
     if (noneDay !== day) {
       const row = db.get(`SELECT value FROM settings WHERE key = 'mint_day'`);
       const [d, s] = String((row && row.value) || '').split(':');
-      if (Number(d) === day && s) { salt = s; saltDay = day; return true; }
+      const dbDay = Number(d);
+      if (s && dbDay > day) { salt = s; saltDay = dbDay; return false; }
+      if (s && dbDay === day) { salt = s; saltDay = day; return true; }
       noneDay = day;
     }
     if (!make) return false;
@@ -105,8 +112,9 @@ function createMintStore(db) {
       return r ? Number(r.n) || 0 : 0;
     },
     save(ipk, day, n) {
-      roll(day, true);
+      if (!roll(day, true)) return false;
       db.run(`INSERT INTO mints (fp, n) VALUES (?, ?) ON CONFLICT(fp) DO UPDATE SET n = excluded.n`, fp(ipk), Math.max(0, n));
+      return true;
     },
   };
 }
@@ -158,6 +166,7 @@ export function createLimiter(cfg, db) {
     createDayCount(ipk, now) {
       const d = dayIdx(now);
       const e = createsToday.get(ipk);
+      if (e && d < e.day) return;
       boundedSet(createsToday, ipk, e && e.day === d ? { day: d, n: e.n + 1 } : { day: d, n: 1 });
     },
     roomsPerAddrCap: () => scaled(cfg.roomsPerAddr),
@@ -166,7 +175,7 @@ export function createLimiter(cfg, db) {
     mintDayCheck(ipk, now) {
       const d = dayIdx(now);
       let e = mintsToday.get(ipk);
-      if (!e && mintStore) { e = { day: d, n: mintStore.load(ipk, d) }; boundedSet(mintsToday, ipk, e); }
+      if ((!e || e.day < d) && mintStore) { e = { day: d, n: mintStore.load(ipk, d) }; boundedSet(mintsToday, ipk, e); }
       if (e && e.day === d && e.n >= scaled(cfg.mintsPerAddrDay)) {
         return tooMany(secondsTo((d + 1) * 86400000, now), 'relay_limit', 'too many relay credentials from this address today');
       }
@@ -175,10 +184,11 @@ export function createLimiter(cfg, db) {
     mintDayCount(ipk, now, by = 1) {
       const d = dayIdx(now);
       let e = mintsToday.get(ipk);
+      if (e && d < e.day) return;
       const base = e && e.day === d ? e.n : (mintStore ? mintStore.load(ipk, d) : 0);
       const n = Math.max(0, base + by);
+      if (mintStore && !mintStore.save(ipk, d, n)) return;
       boundedSet(mintsToday, ipk, { day: d, n });
-      if (mintStore) mintStore.save(ipk, d, n);
     },
     mintMemberCap: () => scaled(cfg.mintsPerMember),
     mintRoomCap: () => scaled(cfg.mintsPerRoom),
@@ -207,11 +217,12 @@ export function createLimiter(cfg, db) {
       const hour = Math.floor(now / 3600000);
       const d = dayIdx(now);
       const e = misses.get(ipk) || (missStore && missStore.load(ipk, d)) || { hour, h: 0, day: d, d: 0 };
+      if (d < e.day || hour < e.hour) return;
       if (e.hour !== hour) { e.hour = hour; e.h = 0; }
       if (e.day !== d) { e.day = d; e.d = 0; }
       e.h++; e.d++;
+      if (missStore) { try { if (!missStore.save(ipk, e)) return; } catch { /* the count in memory still stands */ } }
       boundedSet(misses, ipk, e);
-      if (missStore) { try { missStore.save(ipk, e); } catch { /* the count in memory still stands */ } }
     },
     size: () => Object.values(buckets).reduce((a, b) => a + b.size(), 0) + createsToday.size + mintsToday.size + misses.size,
   };

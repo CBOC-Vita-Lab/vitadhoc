@@ -32,24 +32,37 @@ function edgeLimit(request, env) {
 const blocks = new Map();
 const MAX_BLOCKS = 6000;
 
-const over = { hard: { until: 0, probeAt: 0, body: null }, soft: { until: 0, probeAt: 0, body: null } };
+const over = { hard: { until: 0, probeAt: 0, payload: null, body: null }, soft: { until: 0, probeAt: 0, payload: null, body: null } };
 function overAnswer(st, now) {
   if (!st.until) return null;
   if (now >= st.until) { st.until = 0; return null; }
   if (now >= st.probeAt) { st.probeAt = now + 600_000; return null; }
   const wait = Math.max(60, Math.ceil((st.until - now) / 1000));
-  return new Response(st.body, { status: 503, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'retry-after': String(wait), 'x-vad-budget': 'over' } });
+  const body = st.payload
+    ? JSON.stringify({ ...st.payload, error: { ...st.payload.error, retryAfterSec: wait } })
+    : st.body;
+  return new Response(body, { status: 503, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'retry-after': String(wait), 'x-vad-budget': 'over' } });
 }
 
-async function forward(request, env, ipk) {
+async function forward(request, env, ipk, route) {
   const resp = await env.ROOMS.get(env.ROOMS.idFromName('main')).fetch(request);
   const flag = resp.headers.get('x-vad-budget');
   if (flag === 'over' || flag === 'new-over') {
     const wait = Number(resp.headers.get('retry-after')) || 600;
+    const now = Date.now();
     const st = flag === 'over' ? over.hard : over.soft;
-    st.until = Date.now() + wait * 1000;
-    st.probeAt = Date.now() + 600_000;
+    st.until = now + wait * 1000;
+    st.probeAt = now + 600_000;
     st.body = await resp.clone().text();
+    try {
+      const parsed = JSON.parse(st.body);
+      st.payload = parsed && typeof parsed === 'object' && parsed.error && typeof parsed.error === 'object' ? parsed : null;
+    } catch {
+      st.payload = null;
+    }
+  } else if (resp.status < 500 && !route.isInfo && !route.isLeave) {
+    over.hard.until = 0;
+    if (route.isNew) over.soft.until = 0;
   }
   const m = /^addr:(\d{1,6})$/.exec(resp.headers.get('x-vad-block') || '');
   if (m) {
@@ -88,6 +101,6 @@ export default {
     }
     const slow = edgeLimit(request, env); // before anything that wakes the object
     if (slow) return slow;
-    return forward(request, env, ipk);
+    return forward(request, env, ipk, route);
   },
 };

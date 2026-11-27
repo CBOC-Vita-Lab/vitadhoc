@@ -32,6 +32,8 @@ enum { NAT_RELAY_E_NONE = 0, NAT_RELAY_E_TIMEOUT, NAT_RELAY_E_AUTH, NAT_RELAY_E_
 
 #define NAT_TURN_CHANNEL 0x4000
 #define NAT_TURN_TXNS    4
+#define NAT_TURN_CRED_TTL_MS  3600000u  /* 1-hour TURN REST credential lifetime */
+#define NAT_TURN_CRED_WARN_MS 3300000u  /* warn at 55 minutes (5 min before expiry) */
 
 /* One request in flight (kept for its retransmissions). */
 typedef struct nat_turn_txn
@@ -39,6 +41,7 @@ typedef struct nat_turn_txn
    int      active;
    int      kind;               /* allocate, refresh, permission, bind */
    int      sends, authed, auth_tries;
+   uint32_t nonce_gen;          /* c->nonce_gen when this request was signed */
    uint8_t  txid[12];
    size_t   len;
    uint8_t  msg[640];
@@ -62,9 +65,12 @@ typedef struct nat_turn
    uint64_t t0_ms;
    uint64_t clock_ms;           /* the last time start / bind / tick / release were given: answers are
                                    handled at that time (nat_turn_handle takes none) */
+   uint64_t cred_mint_ms;       /* monotonic ms when credentials were minted / started */
+   uint64_t cred_expires_ms;    /* monotonic ms when credentials expire (0 = untracked) */
    /* long-term credential */
    char     realm[128], nonce[192];
    int      have_nonce;
+   uint32_t nonce_gen;
    uint8_t  key[16];
    /* allocation */
    uint32_t lifetime_s;
@@ -107,6 +113,10 @@ void nat_turn_release(nat_turn *c, uint64_t now_ms);
 int  nat_turn_state(const nat_turn *c);                   /* LAN_RELAY_* */
 int  nat_turn_error(const nat_turn *c);                   /* LAN_RELAY_E_* */
 int  nat_turn_relayed(const nat_turn *c, uint32_t *ip_be, uint16_t *port);
+/* Override the tracked credential TTL from the host mint time (default 1 hour from nat_turn_start). */
+void nat_turn_set_cred_ttl(nat_turn *c, uint64_t ttl_ms, uint64_t now_ms);
+/* Non-zero when credentials are within warn_before_ms (0 -> 5 min) of expiry; writes remaining ms to *rem_ms. */
+int  nat_turn_cred_expiring(const nat_turn *c, uint64_t now_ms, uint64_t warn_before_ms, uint64_t *rem_ms);
 
 /* ChannelData (RFC 8656 12.4), UDP form: 40 00 | length BE16 | payload, no
  * padding.  wrap returns the framed length (0 if cap is too small); unwrap

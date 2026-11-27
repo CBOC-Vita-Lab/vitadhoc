@@ -37,6 +37,11 @@
 #endif
 #endif
 
+#if defined(NP_TARGET_VITA)
+enum NpEnumSizeCheck { NP_ESC_0 = 0 };
+static_assert(sizeof(NpEnumSizeCheck) == 4, "nethttps requires -fno-short-enums");
+#endif
+
 namespace nph {
 
 int64_t (*g_wall_override)(void) = nullptr;
@@ -148,10 +153,13 @@ bool ThreadJoin(Thread* t, uint32_t timeout_ms) {
 static bool g_netUp;
 static SpinLock g_netLock;
 static bool EnsureNet() {
-    if (g_netUp) return true;
+    if (__atomic_load_n(&g_netUp, __ATOMIC_ACQUIRE)) return true;
     g_netLock.lock();
-    const bool ok = net_vita_init() >= 0;
-    g_netUp = ok;
+    bool ok = __atomic_load_n(&g_netUp, __ATOMIC_RELAXED);
+    if (!ok) {
+        ok = net_vita_init() >= 0;
+        __atomic_store_n(&g_netUp, ok, __ATOMIC_RELEASE);
+    }
     g_netLock.unlock();
     return ok;
 }

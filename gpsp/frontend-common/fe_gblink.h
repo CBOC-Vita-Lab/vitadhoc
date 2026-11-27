@@ -140,6 +140,9 @@ typedef struct fe_gblink_machines
     * destroyed).  Called in setup, before start().  0 = ok.  A NULL
     * function means the pair can only run one cartridge. */
    int (*partner_rom)(void *user, const char *path);
+   /* Optional: called just before stop() when the host keeps its live state on
+    * FE_GBLINK_E_PEER_LOST (fe_padpair_keep_host). */
+   void (*keep_host)(void *user);
 } fe_gblink_machines;
 
 typedef struct fe_gblink_platform

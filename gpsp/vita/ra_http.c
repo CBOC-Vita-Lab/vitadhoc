@@ -308,6 +308,7 @@ out:
 static int g_tls;            /* 0 not up (tried again each request), 1 up */
 static int g_tpl = -1;
 static int g_certs_rc;
+static int g_active_req = -1; /* atomic: inflight Vita HTTP handle to abort on stop */
 
 static void tls_up(void)
 {
@@ -331,10 +332,23 @@ static void tls_up(void)
       data[i].size = ra_root_sizes[i];
       list[i] = &data[i];
    }
-   /* Beside the console's own store; if the library will not take them the
-    * console's store is what is left. */
+   /* Beside the console's own store; load each root on its own so one
+    * rejected by SceSsl never prevents the rest from loading. */
    if (g_tpl < 0)
-      g_certs_rc = sceHttpsLoadCert(RA_ROOTS_N, list, NULL, NULL);
+   {
+      int loaded = 0;
+      g_certs_rc = 0;
+      for (i = 0; i < RA_ROOTS_N; i++)
+      {
+         rc = sceHttpsLoadCert(1, &list[i], NULL, NULL);
+         if (rc >= 0)
+            loaded++;
+         else if (!g_certs_rc)
+            g_certs_rc = rc;
+      }
+      if (loaded > 0)
+         g_certs_rc = 0;
+   }
    if (g_tpl < 0)
       g_tpl = sceHttpCreateTemplate(H.agent, SCE_HTTP_VERSION_1_1, SCE_TRUE);
    if (g_tpl < 0)
@@ -373,6 +387,12 @@ static void http_tls(void)
    {
       snprintf(why, sizeof(why), "request 0x%08x", (unsigned)req);
       fail(RA_HTTP_RETRY, why);
+      goto out;
+   }
+   A_STORE(g_active_req, req);
+   if (A_LOAD(H.quit))
+   {
+      fail(RA_HTTP_RETRY, "stopped");
       goto out;
    }
    if (H.post)
@@ -432,6 +452,7 @@ static void http_tls(void)
    snprintf(H.res.note, sizeof(H.res.note), "https certs 0x%08x",
             (unsigned)g_certs_rc);
 out:
+   A_STORE(g_active_req, -1);
    if (req >= 0)
       sceHttpDeleteRequest(req);
    if (conn >= 0)
@@ -597,6 +618,13 @@ void ra_http_stop(uint32_t timeout_us)
    if (!H.running)
       return;
    A_STORE(H.quit, 1);
+#ifdef __vita__
+   {
+      int r = A_LOAD(g_active_req);
+      if (r >= 0)
+         sceHttpAbortRequest(r);
+   }
+#endif
    if (plat_net_join(timeout_us))
    {
       H.running = 0;

@@ -1,7 +1,7 @@
 // Every limit of PROTOCOL.md 1.2 (RATE_LIMIT_SCALE=1 so they are real), with an injected clock.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeServer, hostDesc, guestDesc, joined } from './helpers.mjs';
+import { makeServer, hostDesc, guestDesc, joined, T0, V, UA } from './helpers.mjs';
 
 const sec = (n) => n * 1000;
 const rl = (r, status, reason) => { assert.equal(r.status, status, r.text); if (reason) { assert.equal(r.data.error.code, 'rate_limited', r.text); assert.equal(r.data.error.reason, reason, r.text); } };
@@ -235,4 +235,99 @@ test('enumeration: the guess counters survive the object leaving memory (a salte
   s.rebuild();
   assert.equal((await s.call('GET', '/v1/rooms/ABCDE', undefined, { ip: '203.0.113.97' })).status, 404);
   assert.equal(s.store.sql.exec('SELECT COUNT(*) AS n FROM misses').toArray()[0].n, 1);
+});
+
+test('UTC-midnight rollover: pre-midnight miss settling after midnight does not wipe day D+1 misses', async () => {
+  const s = real({ ADDR_DAILY: '0', DAILY_REQUEST_BUDGET: '0', LOOKUP_BURST: '100', MISSES_PER_HOUR: '2', MISSES_PER_DAY: '2' });
+  const day = Math.floor(T0 / 86400000);
+  const d0 = Date.UTC(2026, 10, 15, 23, 59, 59, 900);
+  const d1 = Date.UTC(2026, 10, 16, 0, 0, 0, 100);
+  s.clock.now = d0;
+
+  let releaseBody;
+  const gate = new Promise((res) => { releaseBody = res; });
+  const stream = new ReadableStream({
+    async start(controller) {
+      await gate;
+      controller.enqueue(new TextEncoder().encode(JSON.stringify({ token: 'A'.repeat(22) })));
+      controller.close();
+    },
+  });
+  const pending = s.app.handle(new Request(`https://test.invalid/v1/rooms/ZZZZZ/poll?${V}`, {
+    method: 'POST',
+    headers: { 'cf-connecting-ip': '203.0.113.10', 'user-agent': UA, 'content-type': 'application/json' },
+    body: stream,
+    duplex: 'half',
+  }));
+  await new Promise((r) => setTimeout(r, 15));
+
+  s.clock.now = d1;
+  const ipD1 = '203.0.113.11';
+  assert.equal((await s.call('GET', '/v1/rooms/ABCDE', undefined, { ip: ipD1 })).status, 404);
+  assert.equal((await s.call('GET', '/v1/rooms/ABCDF', undefined, { ip: ipD1 })).status, 404);
+  assert.ok(s.setting('miss_day').startsWith(`${day + 1}:`), s.setting('miss_day'));
+  assert.equal(s.rows('SELECT * FROM misses').length, 1);
+
+  releaseBody();
+  const rOld = await pending;
+  assert.equal(rOld.status, 404);
+  assert.ok(s.setting('miss_day').startsWith(`${day + 1}:`), `miss_day rolled backwards: ${s.setting('miss_day')}`);
+  assert.equal(s.rows('SELECT * FROM misses').length, 1, 'day D+1 misses row must not be deleted');
+
+  s.rebuild();
+  rl(await s.call('GET', '/v1/rooms/ABCDE', undefined, { ip: ipD1 }), 429, 'guessing');
+});
+
+test('UTC-midnight rollover: pre-midnight relay rollback after midnight does not wipe day D+1 mints or turn_day', async () => {
+  let gateRelease;
+  const gate = new Promise((res) => { gateRelease = res; });
+  let callIdx = 0;
+  const turnFetch = async () => {
+    const idx = ++callIdx;
+    if (idx === 1) {
+      await gate;
+      return new Response('nope', { status: 500 });
+    }
+    return new Response(JSON.stringify({ iceServers: [{ urls: ['turn:t:3478?transport=udp'], username: `u${idx}`, credential: 'c' }] }), { status: 200 });
+  };
+  const s = makeServer({
+    TURN_PROVIDER: 'cloudflare',
+    TURN_KEY_ID: 'keyid-123456',
+    TURN_KEY_API_TOKEN: 'tok-tok-tok-tok-tok',
+    RATE_LIMIT_SCALE: '1',
+    MINTS_PER_ADDR_DAY: '1',
+    MINTS_PER_MEMBER: '10',
+    MINTS_PER_ROOM: '10',
+    TURN_MAX_CREDS_PER_DAY: '100',
+    ADDR_DAILY: '0',
+    DAILY_REQUEST_BUDGET: '0',
+  }, { deps: { turnFetch } });
+
+  const day = Math.floor(T0 / 86400000);
+  const d0 = Date.UTC(2026, 10, 15, 23, 59, 59, 900);
+  const d1 = Date.UTC(2026, 10, 16, 0, 0, 0, 100);
+  s.clock.now = d0;
+  const ip1 = '203.0.113.21';
+  const ip2 = '203.0.113.22';
+  const r1 = await joined(s);
+  const p1 = s.relay(r1.code, r1.gt, { ip: ip1 });
+  await new Promise((r) => setTimeout(r, 15));
+
+  s.clock.now = d1;
+  const r2 = await joined(s);
+  assert.equal((await s.relay(r2.code, r2.gt, { ip: ip2 })).status, 200);
+  const r3 = await joined(s);
+  assert.equal((await s.relay(r3.code, r3.gt, { ip: ip1 })).status, 200);
+  assert.ok(s.setting('mint_day').startsWith(`${day + 1}:`), s.setting('mint_day'));
+  assert.equal(s.setting('turn_day'), '2026-11-16:2');
+  assert.equal(s.setting('turn_month'), '2026-11:3');
+
+  gateRelease();
+  const res1 = await p1;
+  assert.equal(res1.status, 502);
+  assert.ok(s.setting('mint_day').startsWith(`${day + 1}:`), `mint_day rolled backwards: ${s.setting('mint_day')}`);
+  assert.deepEqual(s.rows('SELECT n FROM mints').map((x) => x.n), [1, 1], 'day D+1 mints rows preserved');
+  assert.equal(s.setting('turn_day'), '2026-11-16:2', 'day D+1 turn_day preserved');
+  assert.equal(s.setting('turn_month'), '2026-11:2', 'month counter released failed pre-midnight reservation');
+  rl(await s.relay(r3.code, r3.ht, { ip: ip1 }), 429, 'relay_limit');
 });

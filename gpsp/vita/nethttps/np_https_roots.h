@@ -854,10 +854,10 @@ static const NpHttpsRootEntry np_https_roots[] = {
     { "SSL.com TLS RSA Root CA 2022", np_root_SSL_com_TLS_RSA_Root_CA_2022, (unsigned)sizeof(np_root_SSL_com_TLS_RSA_Root_CA_2022), np_root_SSL_com_TLS_RSA_Root_CA_2022_sha256, 2418309261LL, 0 },
     { "SSL.com Root Certification Authority ECC", np_root_SSL_com_Root_Certification_Authority_ECC, (unsigned)sizeof(np_root_SSL_com_Root_Certification_Authority_ECC), np_root_SSL_com_Root_Certification_Authority_ECC_sha256, 2244305643LL, 0 },
     { "SSL.com Root Certification Authority RSA", np_root_SSL_com_Root_Certification_Authority_RSA, (unsigned)sizeof(np_root_SSL_com_Root_Certification_Authority_RSA), np_root_SSL_com_Root_Certification_Authority_RSA_sha256, 2244303579LL, 0 },
-    { "USERTrust ECC Certification Authority", np_root_USERTrust_ECC_Certification_Authority, (unsigned)sizeof(np_root_USERTrust_ECC_Certification_Authority), np_root_USERTrust_ECC_Certification_Authority_sha256, 2147471999LL, "api.github.com" },
-    { "USERTrust RSA Certification Authority", np_root_USERTrust_RSA_Certification_Authority, (unsigned)sizeof(np_root_USERTrust_RSA_Certification_Authority), np_root_USERTrust_RSA_Certification_Authority_sha256, 2147471999LL, "api.github.com" },
-    { "Sectigo Public Server Authentication Root E46", np_root_Sectigo_Public_Server_Authentication_Root_E46, (unsigned)sizeof(np_root_Sectigo_Public_Server_Authentication_Root_E46), np_root_Sectigo_Public_Server_Authentication_Root_E46_sha256, 2405289599LL, "api.github.com" },
-    { "Sectigo Public Server Authentication Root R46", np_root_Sectigo_Public_Server_Authentication_Root_R46, (unsigned)sizeof(np_root_Sectigo_Public_Server_Authentication_Root_R46), np_root_Sectigo_Public_Server_Authentication_Root_R46_sha256, 2405289599LL, "api.github.com" },
+    { "USERTrust ECC Certification Authority", np_root_USERTrust_ECC_Certification_Authority, (unsigned)sizeof(np_root_USERTrust_ECC_Certification_Authority), np_root_USERTrust_ECC_Certification_Authority_sha256, 2147471999LL, 0 },
+    { "USERTrust RSA Certification Authority", np_root_USERTrust_RSA_Certification_Authority, (unsigned)sizeof(np_root_USERTrust_RSA_Certification_Authority), np_root_USERTrust_RSA_Certification_Authority_sha256, 2147471999LL, 0 },
+    { "Sectigo Public Server Authentication Root E46", np_root_Sectigo_Public_Server_Authentication_Root_E46, (unsigned)sizeof(np_root_Sectigo_Public_Server_Authentication_Root_E46), np_root_Sectigo_Public_Server_Authentication_Root_E46_sha256, 2405289599LL, 0 },
+    { "Sectigo Public Server Authentication Root R46", np_root_Sectigo_Public_Server_Authentication_Root_R46, (unsigned)sizeof(np_root_Sectigo_Public_Server_Authentication_Root_R46), np_root_Sectigo_Public_Server_Authentication_Root_R46_sha256, 2405289599LL, 0 },
 };
 #define NP_HTTPS_ROOT_COUNT 12
 

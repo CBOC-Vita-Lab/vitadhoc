@@ -40,15 +40,15 @@ export function createBudget(db, cfg, rateScale) {
   const midnight = (now) => Math.max(1, Math.ceil(((dayIndex(now) + 1) * 86400000 - now) / 1000));
   const newLimit = () => Math.max(0, Math.floor((cfg.dailyBudget * (100 - cfg.liveReservePct)) / 100));
 
-  function save(now) {
+  function save() {
     st.stored = st.ob;
     st.force = false;
-    db.run(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, KEY, `${dayIndex(now)}:${st.n}:${st.ra}:${st.rb}:${st.ob}`);
+    db.run(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, KEY, `${st.day}:${st.n}:${st.ra}:${st.rb}:${st.ob}`);
   }
   /** Loads today's stored counts on the first call after a start and when the day changed. */
   function roll(now) {
     const day = dayIndex(now);
-    if (st.day === day) return;
+    if (day <= st.day) return;
     const row = db.get(`SELECT value FROM settings WHERE key = ?`, KEY);
     const s = parse(row && row.value, day);
     st.day = day; st.n = s.n; st.ra = s.ra; st.rb = s.rb; st.ob = s.ob; st.stored = s.ob;
@@ -57,8 +57,8 @@ export function createBudget(db, cfg, rateScale) {
   }
   /** Saves when the save step has passed or after a start. Called once at the END of every request (`settle`), so the stored row also
    *  holds that request's own admitted / refused counts. */
-  function dirty(now) {
-    if (st.force || st.ob - st.stored >= cfg.saveEvery) save(now);
+  function dirty() {
+    if (st.force || st.ob - st.stored >= cfg.saveEvery) save();
   }
   function bump(map, key) {
     const v = (map.get(key) || 0) + 1;
@@ -87,7 +87,7 @@ export function createBudget(db, cfg, rateScale) {
     /** End of a request: store the counts when due (every BUDGET_SAVE_EVERY requests; at once after a start or a new day). */
     settle(now) {
       roll(now);
-      dirty(now);
+      dirty();
     },
     objects: () => st.ob,
     /** True once new sessions are refused (route 2 from 80 %) or everything is (100 %): what /v1/info calls busy. */

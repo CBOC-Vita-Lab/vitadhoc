@@ -172,6 +172,7 @@
 #include "cheats_vita.h"
 #include "net_vita.h"
 #include "online_vita.h"
+#include "update_check.h"
 #include "link_snes.h"
 #include "transport_lan.h"
 #include "transport_vadhoc.h"
@@ -487,13 +488,15 @@ static const char *fail_line(int code)
 
 static const char *backend_name(void)
 {
+   return S.drc ?
 #if defined(__arm__)
-   return S.drc ? "arm" : "arm-interp";
+      "arm"
 #elif defined(__x86_64__) || defined(__i386__)
-   return S.drc ? "x86" : "x86-interp";
+      "x86"
 #else
-   return "interp";
+      "interp"
 #endif
+      : "interp";
 }
 
 /* The GBA BIOS the core will run: the player's file, or the built-in one.
@@ -1764,9 +1767,16 @@ static int session_begin(void)
 
    if (SL.on)
    {
-      /* SNES: the session is snes.bin's.  The host hands over at once (it has seen its guest); the guest waits until
-       * the host's netdrv has answered, so that it never leaves a host that has not noticed it. */
-      SL.delay = L.is_host ? delay_pick(&how) : 0;
+      /* SNES / MD: the session is pk_link's.  With Auto delay (< 1), leave SL.delay = 0 so
+       * pk_link runs its own PAL-aware RTT calibration; fixed delays (>= 1) are forwarded. */
+      if (L.is_host && g_pcfg.link_delay >= 1)
+         SL.delay = delay_pick(&how);
+      else
+      {
+         SL.delay = 0;
+         if (L.is_host)
+            how = "auto";
+      }
       fe_evt("link_snes_session role=%s delay=%u how=%s", L.is_host ? "host" : "guest", SL.delay, how);
       SL.sub = L.is_host ? 2 : 1;
       SL.t_seen = L.ticks;
@@ -2047,6 +2057,8 @@ void link_action(int is_host)
    }
    if (L.conn == LINK_CONN_ONLINE)
    {
+      /* Drop any background update check before hitting np_https for the room service. */
+      upd_stop();
       /* No target and no list: the room service finds the other console. */
       rc = infra_open(is_host, 0, 0);
       if (rc != 0)
@@ -2433,7 +2445,9 @@ static void link_end(int st, unsigned pad_new)
    else if (was_pad && pr.ran)
       osd_toast(desync
                 ? tr("toast.the_games_fell_out_of_step")
-                : tr("toast.link_lost_the_other_vita_is"));
+                : was_host
+                  ? tr("toast.link_lost_the_other_vita_is_2")
+                  : tr("toast.link_lost_the_other_vita_is"));
    else if (st == FE_GBLINK_DONE)
       osd_toast(tr("toast.link_ended_game_saved"));
    else if (why == LW_CANCEL)
@@ -2675,6 +2689,8 @@ static void mirror_service(unsigned pad_new)
             phase_set(PH_HOSTING);
          return;
       }
+      if (L.conn == LINK_CONN_ONLINE && L.on_live && L.on_stage != ON_CONNECTED)
+         return;
       if (L.phase == PH_HOSTING)
       {
          peer_name_take();
@@ -2684,7 +2700,9 @@ static void mirror_service(unsigned pad_new)
          L.echoes = 0;
          /* (a SNES link measures too: its delay goes into the launch file, and without this a relayed or Same
           * Wi-Fi SNES game ran on the connection's fixed guess whatever the path was) */
-         if (L.transport == TR_LAN && g_pcfg.link_delay < 1)
+         if (L.transport == TR_LAN && g_pcfg.link_delay < 1 && !SL.on &&
+             !(L.conn == LINK_CONN_ONLINE && L.on_live &&
+               lan_transport_echo_result(L.lan, NULL, NULL, NULL) >= 2))
          {
             lan_transport_echo_reset(L.lan);
             phase_set(PH_MEASURE);
@@ -3404,6 +3422,7 @@ int ui_host_online_lookup(const char *code)
       return UI_ROOMS_E_BUSY;
    if (!S.up || !net_vita_wifi_status(&w))
       return UI_ROOMS_E_NO_WIFI;
+   upd_stop();
    if (online_card_begin(code) != 0)
       return UI_ROOMS_E_FAILED;
    C.asked = 1;

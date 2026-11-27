@@ -3,7 +3,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { makeServer, joined, T0 } from './helpers.mjs';
-import { udpOnly, stubProvider } from '../src/core/turn.js';
+import { udpOnly, stubProvider, createUsageReader } from '../src/core/turn.js';
+import { loadConfig } from '../src/core/config.js';
+import { SCHEMA } from '../src/core/rooms.js';
+import { openNodeSql } from '../src/sqlite-node.js';
 
 const sec = (n) => n * 1000;
 const err = (r, status, code) => { assert.equal(r.status, status, r.text); assert.equal(r.data.error.code, code, r.text); };
@@ -256,7 +259,7 @@ test('optional usage read: egress from the GraphQL analytics, cached TURN_USAGE_
     }
     return new Response(JSON.stringify({ iceServers: [{ urls: ['turn:t:3478?transport=udp'], username: 'u', credential: 'c' }] }), { status: 200 });
   };
-  const env = { TURN_PROVIDER: 'cloudflare', TURN_KEY_ID: 'keyid-123456', TURN_KEY_API_TOKEN: 'tok-tok-tok-tok-tok', TURN_USAGE_ACCOUNT_ID: 'acct123', TURN_USAGE_API_TOKEN: 'analytics-token-1', TURN_USAGE_BUDGET_GB: '700', MINTS_PER_MEMBER: '100', MINTS_PER_ROOM: '100', MINTS_PER_ADDR_DAY: '1000', TURN_MAX_CREDS_PER_DAY: '1000' };
+  const env = { CONNECT_SEC: '1000', TURN_PROVIDER: 'cloudflare', TURN_KEY_ID: 'keyid-123456', TURN_KEY_API_TOKEN: 'tok-tok-tok-tok-tok', TURN_USAGE_ACCOUNT_ID: 'acct123', TURN_USAGE_API_TOKEN: 'analytics-token-1', TURN_USAGE_BUDGET_GB: '700', MINTS_PER_MEMBER: '100', MINTS_PER_ROOM: '100', MINTS_PER_ADDR_DAY: '1000', TURN_MAX_CREDS_PER_DAY: '1000' };
   const s = makeServer(env, { deps: { turnFetch } });
   const r = await joined(s);
   assert.equal((await s.relay(r.code, r.gt)).status, 200);
@@ -363,4 +366,154 @@ test('a relayed address posted without a credential is not a use: join, post, ca
   }
   assert.equal(s.setting('turn_used'), `${day(T0).slice(0, 7)}:1`, 'uses never pass the mints of the room');
   assert.equal(s.setting('turn_month'), `${day(T0).slice(0, 7)}:1`);
+});
+
+test('route 6 checks auth and room state synchronously BEFORE usageCheck GraphQL fetch', async () => {
+  let graphqlCalls = 0;
+  const turnFetch = async (url) => {
+    if (String(url).startsWith('https://api.cloudflare.com/client/v4/graphql')) {
+      graphqlCalls++;
+      return new Response(JSON.stringify({ data: { viewer: { accounts: [{ callsTurnUsageAdaptiveGroups: [{ sum: { egressBytes: 1e9 } }] }] } }, errors: null }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ iceServers: [{ urls: ['turn:t:3478?transport=udp'], username: 'u', credential: 'c' }] }), { status: 200 });
+  };
+  const baseEnv = {
+    TURN_PROVIDER: 'cloudflare',
+    TURN_KEY_ID: 'keyid-123456',
+    TURN_KEY_API_TOKEN: 'tok-tok-tok-tok-tok',
+    TURN_USAGE_ACCOUNT_ID: 'acct123',
+    TURN_USAGE_API_TOKEN: 'analytics-token-1',
+    TURN_USAGE_BUDGET_GB: '700',
+  };
+  const s = makeServer(baseEnv, { deps: { turnFetch } });
+  const c = await s.create();
+  err(await s.relay(c.data.code, 'bad'), 400, 'bad_request');
+  err(await s.relay('ZZZZZ', c.data.token), 404, 'not_found');
+  err(await s.relay(c.data.code, 'A'.repeat(22)), 401, 'bad_token');
+  err(await s.relay(c.data.code, c.data.token), 403, 'relay_not_allowed');
+  assert.equal(graphqlCalls, 0, 'invalid token, unknown room, and open room must not call GraphQL');
+
+  const closed = await s.create();
+  await s.close(closed.data.code, closed.data.token, 'cancel');
+  err(await s.relay(closed.data.code, closed.data.token), 404, 'not_found');
+  assert.equal(graphqlCalls, 0, 'closed room must not call GraphQL');
+
+  const off = makeServer({ ...baseEnv, TURN_PROVIDER: '' }, { deps: { turnFetch } });
+  const rOff = await joined(off);
+  err(await off.relay(rOff.code, rOff.gt), 503, 'relay_unavailable');
+  assert.equal(graphqlCalls, 0, 'unconfigured provider must not call GraphQL');
+
+  const j = await s.join(c.data.code);
+  await s.poll(c.data.code, c.data.token);
+  assert.equal((await s.relay(c.data.code, j.data.token)).status, 200);
+  assert.equal(graphqlCalls, 1, 'valid joined room calls GraphQL once');
+});
+
+test('concurrent usageCheck calls coalesce to a single GraphQL fetch', async () => {
+  let graphqlCalls = 0;
+  let releaseGql;
+  let gqlGate = new Promise((res) => { releaseGql = res; });
+  let egress = 100e9;
+  const turnFetch = async (url) => {
+    if (String(url).startsWith('https://api.cloudflare.com/client/v4/graphql')) {
+      graphqlCalls++;
+      await gqlGate;
+      return new Response(JSON.stringify({ data: { viewer: { accounts: [{ callsTurnUsageAdaptiveGroups: [{ sum: { egressBytes: egress } }] }] } }, errors: null }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ iceServers: [{ urls: ['turn:t:3478?transport=udp'], username: 'u', credential: 'c' }] }), { status: 200 });
+  };
+
+  // Direct createUsageReader coalescing (over budget and under budget)
+  const store = openNodeSql();
+  for (const stmt of SCHEMA) store.sql.exec(stmt).toArray();
+  const db = {
+    get: (q, ...b) => store.sql.exec(q, ...b).toArray()[0] ?? null,
+    run: (q, ...b) => { store.sql.exec(q, ...b).toArray(); },
+  };
+  const cfg = loadConfig({ TURN_USAGE_ACCOUNT_ID: 'acct123', TURN_USAGE_API_TOKEN: 'analytics-token-1', TURN_USAGE_BUDGET_GB: '700', TURN_USAGE_EVERY_SEC: '300' });
+  const reader = createUsageReader(db, cfg.turn, turnFetch);
+  const directPending = Array.from({ length: 5 }, () => reader.check(T0));
+  assert.equal(graphqlCalls, 1);
+  releaseGql();
+  await Promise.all(directPending);
+  assert.equal(graphqlCalls, 1);
+
+  // Over-budget coalescing after cache expiry
+  egress = 700e9;
+  gqlGate = new Promise((res) => { releaseGql = res; });
+  const overPending = Array.from({ length: 4 }, () => reader.check(T0 + 301_000));
+  assert.equal(graphqlCalls, 2);
+  releaseGql();
+  const settled = await Promise.allSettled(overPending);
+  assert.ok(settled.every((x) => x.status === 'rejected' && x.reason.status === 503 && x.reason.code === 'relay_budget'));
+
+  // End-to-end concurrent /relay requests
+  egress = 50e9;
+  graphqlCalls = 0;
+  gqlGate = new Promise((res) => { releaseGql = res; });
+  const s = makeServer({
+    TURN_PROVIDER: 'cloudflare',
+    TURN_KEY_ID: 'keyid-123456',
+    TURN_KEY_API_TOKEN: 'tok-tok-tok-tok-tok',
+    TURN_USAGE_ACCOUNT_ID: 'acct123',
+    TURN_USAGE_API_TOKEN: 'analytics-token-1',
+    TURN_USAGE_BUDGET_GB: '700',
+    MINTS_PER_MEMBER: '10',
+    MINTS_PER_ROOM: '10',
+    RATE_LIMIT_SCALE: '1000',
+  }, { deps: { turnFetch } });
+  const rooms = [];
+  for (let i = 0; i < 4; i++) rooms.push(await joined(s));
+  const relays = rooms.map((r) => s.relay(r.code, r.gt));
+  await new Promise((r) => setTimeout(r, 15));
+  assert.equal(graphqlCalls, 1, 'concurrent /relay calls must coalesce to 1 GraphQL fetch');
+  releaseGql();
+  const results = await Promise.all(relays);
+  assert.ok(results.every((r) => r.status === 200));
+  assert.equal(graphqlCalls, 1);
+});
+
+test('guest relay rollback after room reopen and guest swap does not decrement Guest 2 guest_mints', async () => {
+  let releaseFirstMint;
+  const firstMintGate = new Promise((res) => { releaseFirstMint = res; });
+  let mintCalls = 0;
+  const turnFetch = async () => {
+    const n = ++mintCalls;
+    if (n === 1) {
+      await firstMintGate;
+      return new Response('nope', { status: 500 });
+    }
+    return new Response(JSON.stringify({ iceServers: [{ urls: ['turn:t:3478?transport=udp'], username: `u${n}`, credential: 'c' }] }), { status: 200 });
+  };
+  const s = makeServer({
+    TURN_PROVIDER: 'cloudflare',
+    TURN_KEY_ID: 'keyid-123456',
+    TURN_KEY_API_TOKEN: 'tok-tok-tok-tok-tok',
+    RATE_LIMIT_SCALE: '1',
+    MINTS_PER_MEMBER: '1',
+    MINTS_PER_ROOM: '4',
+    MINTS_PER_ADDR_DAY: '100',
+  }, { deps: { turnFetch } });
+  const r = await joined(s);
+  const p1 = s.relay(r.code, r.gt);
+  await new Promise((res) => setTimeout(res, 15));
+  assert.equal(s.rows()[0].guest_mints, 1);
+
+  // Guest 1 cancels and Guest 2 joins + mints while Guest 1's provider.mint() is in flight
+  assert.equal((await s.close(r.code, r.gt, 'cancel')).status, 200);
+  const j2 = await s.join(r.code);
+  assert.equal(j2.status, 200);
+  await s.poll(r.code, r.ht);
+  assert.equal((await s.relay(r.code, j2.data.token)).status, 200);
+  assert.equal(s.rows()[0].guest_token, j2.data.token);
+  assert.equal(s.rows()[0].guest_mints, 1);
+
+  // Guest 1's upstream mint fails and rolls back
+  releaseFirstMint();
+  err(await p1, 502, 'turn_upstream');
+  assert.equal(s.rows()[0].guest_token, j2.data.token);
+  assert.equal(s.rows()[0].guest_mints, 1, 'Guest 1 rollback must never decrement Guest 2 guest_mints');
+  const g2Limit = await s.relay(r.code, j2.data.token);
+  err(g2Limit, 429, 'rate_limited');
+  assert.equal(g2Limit.data.error.reason, 'relay_limit');
 });

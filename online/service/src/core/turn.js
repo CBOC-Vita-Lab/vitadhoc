@@ -96,7 +96,15 @@ function readCounter(db, key, period) {
   return p === period ? Number(n) || 0 : 0;
 }
 function writeCounter(db, key, period, n) {
+  const row = db.get(`SELECT value FROM settings WHERE key = ?`, key);
+  const [p] = String((row && row.value) || '').split(':');
+  if (p && p > period) return;
   db.run(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, `${period}:${Math.max(0, n)}`);
+}
+function releaseCounter(db, key, period) {
+  const row = db.get(`SELECT value FROM settings WHERE key = ?`, key);
+  const [p, n] = String((row && row.value) || '').split(':');
+  if (p === period) writeCounter(db, key, period, (Number(n) || 0) - 1);
 }
 
 /**
@@ -109,6 +117,7 @@ export function createUsageReader(db, t, fetchImpl = fetch) {
   const on = !!(t.usageAccountId && t.usageToken);
   const query = `query($a: String!, $from: Date!, $to: Date!) { viewer { accounts(filter: { accountTag: $a }) {
     callsTurnUsageAdaptiveGroups(limit: 1, filter: { date_geq: $from, date_leq: $to }) { sum { egressBytes } } } } }`;
+  let inflight = null;
   return {
     enabled: on,
     cached(now) {
@@ -119,26 +128,36 @@ export function createUsageReader(db, t, fetchImpl = fetch) {
     async check(now) {
       if (!on || !(t.usageBudgetGb > 0)) return;
       let u = this.cached(now);
-      if (!u || now - u.at >= t.usageEverySec * 1000) {
+      while (!u || now - u.at >= t.usageEverySec * 1000) {
         const month = monthKey(now);
-        let bytes = u ? u.bytes : 0;
-        try {
-          const resp = await fetchImpl('https://api.cloudflare.com/client/v4/graphql', {
-            method: 'POST',
-            headers: { authorization: `Bearer ${t.usageToken}`, 'content-type': 'application/json' },
-            body: JSON.stringify({ query, variables: { a: t.usageAccountId, from: `${month}-01`, to: dayKey(now) } }),
-          });
-          if (resp.ok) {
-            const data = await resp.json();
-            const rows = data && data.data && data.data.viewer && data.data.viewer.accounts && data.data.viewer.accounts[0]
-              && data.data.viewer.accounts[0].callsTurnUsageAdaptiveGroups;
-            if (Array.isArray(rows) && !(data.errors && data.errors.length)) {
-              bytes = rows.reduce((a, r) => a + (Number(r && r.sum && r.sum.egressBytes) || 0), 0);
+        if (!inflight) {
+          let bytes = u ? u.bytes : 0;
+          inflight = (async () => {
+            try {
+              const resp = await fetchImpl('https://api.cloudflare.com/client/v4/graphql', {
+                method: 'POST',
+                headers: { authorization: `Bearer ${t.usageToken}`, 'content-type': 'application/json' },
+                body: JSON.stringify({ query, variables: { a: t.usageAccountId, from: `${month}-01`, to: dayKey(now) } }),
+              });
+              if (resp.ok) {
+                const data = await resp.json();
+                const rows = data && data.data && data.data.viewer && data.data.viewer.accounts && data.data.viewer.accounts[0]
+                  && data.data.viewer.accounts[0].callsTurnUsageAdaptiveGroups;
+                if (Array.isArray(rows) && !(data.errors && data.errors.length)) {
+                  bytes = rows.reduce((a, r) => a + (Number(r && r.sum && r.sum.egressBytes) || 0), 0);
+                }
+              }
+            } catch { /* fail open: the estimate guards still stand */ }
+            const cur = String((db.get(`SELECT value FROM settings WHERE key = 'turn_usage'`) || {}).value || '').split(':')[0];
+            if (!cur || cur <= month) {
+              db.run(`INSERT INTO settings (key, value) VALUES ('turn_usage', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, `${month}:${bytes}:${now}`);
             }
-          }
-        } catch { /* fail open: the estimate guards still stand */ }
-        db.run(`INSERT INTO settings (key, value) VALUES ('turn_usage', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, `${month}:${bytes}:${now}`);
-        u = { bytes, at: now };
+            return { month, bytes, at: now };
+          })().finally(() => { inflight = null; });
+        }
+        const res = await inflight;
+        if (res.month >= month) { u = res; break; }
+        u = this.cached(now);
       }
       if (u.bytes >= t.usageBudgetGb * 1e9) {
         throw new ApiError(503, 'relay_budget', 'the relay budget for this month is used up', { retryAfterSec: 3600 });
@@ -177,8 +196,8 @@ export function createTurnGuards(db, cfg, fetchImpl) {
       writeCounter(db, 'turn_month', monthKey(now), m + 1);
     },
     release(now) {
-      writeCounter(db, 'turn_day', dayKey(now), readCounter(db, 'turn_day', dayKey(now)) - 1);
-      writeCounter(db, 'turn_month', monthKey(now), readCounter(db, 'turn_month', monthKey(now)) - 1);
+      releaseCounter(db, 'turn_day', dayKey(now));
+      releaseCounter(db, 'turn_month', monthKey(now));
     },
     /** A member posted its relayed address for the first time: the credential was USED. Information only (status); it does not move a guard. */
     used(now) {

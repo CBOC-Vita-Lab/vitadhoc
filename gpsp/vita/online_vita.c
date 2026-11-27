@@ -110,6 +110,7 @@ static struct
    uint64_t    t_resolve;
    int         resolve_tries;
    int         stun_started;
+   int         stun_fb_tried;            /* fell back from default STUN provider once */
 
    /* the peer */
    int         peer_known, mode_relay, relayed;
@@ -405,7 +406,9 @@ static int map_err(int err, int op, int retry_after)
       case ONLINE_E_RATE:    /* slow_down, too_many_rooms, guessing, ...: the wait says which sentence is true */
          return retry_after > 0 && retry_after <= T_SLOW_MAX_S ? ONLINE_FAIL_SLOW : ONLINE_FAIL_BUSY;
       case ONLINE_E_TOKEN:   return ONLINE_FAIL_CLOSED;
-      case ONLINE_E_RELAY:   return ONLINE_FAIL_UNREACHABLE;
+      case ONLINE_E_RELAY:
+      case ONLINE_E_RELAY_WAIT:
+         return ONLINE_FAIL_UNREACHABLE;
       case ONLINE_E_CLOCK:   return ONLINE_FAIL_CLOCK;
       case ONLINE_E_CONSOLE: return ONLINE_FAIL_CONSOLE;
       default:               return ONLINE_FAIL_SERVICE;   /* NET, CERT, SERVER, BAD */
@@ -450,12 +453,11 @@ void online_setup(const online_cfg *cfg)
    online_http_config(O.cfg.url, ONLINE_APP_VERSION);
 }
 
-static void parse_stun_list(void)
+static void parse_stun_str(const char *s)
 {
-   const char *s = O.cfg.stun;
    O.nst = 0;
    O.st_idx = 0;
-   if (!strcmp(s, "off"))
+   if (!s || !strcmp(s, "off"))
       return;
    while (*s && O.nst < 2)
    {
@@ -484,6 +486,11 @@ static void parse_stun_list(void)
          e->have_ip = 1;
       O.nst++;
    }
+}
+
+static void parse_stun_list(void)
+{
+   parse_stun_str(O.cfg.stun);
 }
 
 /* Forget the connection, keep what outlives it: the configuration, a close
@@ -789,6 +796,11 @@ static void guest_left(void)
       lan_transport_relay_stop(O.t);
    O.peer_known = O.saw_peer = O.punch_started = O.mode_relay = O.relayed = 0;
    O.alloc_started = O.alloc_posted = O.bound = 0;
+   O.creds_asked = O.creds_ok = O.creds_err = O.creds_tries = 0;
+   O.turn_ip_ok = O.turn_resolve_failed = 0;
+   if (O.resolve_for == 2)
+      O.resolve_for = 0;
+   O.retry_at = 0;
    O.relay_peer[0] = O.peer_nick[0] = O.peer_pub[0] = O.peer_lan[0] = 0;
    O.t_join = 0;
    O.next_poll = now_ms() + (uint64_t)poll_table();
@@ -873,6 +885,8 @@ static void on_join(const online_reply *r)
 static void on_relay_reply(const online_reply *r)
 {
    O.creds_asked = 0;
+   if (O.stage < ON_PUNCH || O.stage > ON_RELAY_CREDS)
+      return;
    if (r->err != ONLINE_E_NONE)
    {
       /* during the punch this is not fatal: the punch may still win.  At the
@@ -886,7 +900,7 @@ static void on_relay_reply(const online_reply *r)
             O.retry_at = now_ms() + T_RETRY_MS;
             return;
          }
-         if (r->err == ONLINE_E_RELAY && O.creds_tries < CREDS_TRIES_403)
+         if (r->err == ONLINE_E_RELAY_WAIT && O.creds_tries < CREDS_TRIES_403)
          {
             O.retry_at = now_ms() + T_CREDS_403_MS;
             return;
@@ -1198,6 +1212,20 @@ static void stage_resolve(void)
 }
 
 /* ON_STUN */
+static int stun_try_fallback(void)
+{
+   if (O.stun_fb_tried || !O.cfg.stun || strcmp(O.cfg.stun, ONLINE_STUN_DEFAULT) != 0)
+      return 0;
+   O.stun_fb_tried = 1;
+   O.resolve_for = 0;
+   O.resolve_tries = 0;
+   O.stun_started = 0;
+   parse_stun_str("stun.l.google.com:19302,stun1.l.google.com:19302");
+   fe_evt("online_stun_fallback host=stun.l.google.com");
+   set_stage(ON_RESOLVE);
+   return 1;
+}
+
 static void stage_stun(void)
 {
    uint32_t ip[2];
@@ -1217,6 +1245,8 @@ static void stage_stun(void)
       O.stun_started = 1;
       if (n == 0)
       {
+         if (stun_try_fallback())
+            return;
          fe_evt("online_stun pub=%s sym=0 rc=-1", "");
          own_addr(O.desc.lan, sizeof O.desc.lan);
          if (!O.cfg.post_lan)
@@ -1226,6 +1256,8 @@ static void stage_stun(void)
       }
       if (lan_transport_stun_start(O.t, ip, port, n) != 0)
       {
+         if (stun_try_fallback())
+            return;
          fe_evt("online_stun pub=%s sym=0 rc=-2", "");
          if (O.cfg.post_lan)
             own_addr(O.desc.lan, sizeof O.desc.lan);
@@ -1245,6 +1277,8 @@ static void stage_stun(void)
    }
    else if (ns.stun == LAN_STUN_FAILED || now_ms() - O.t_resolve > T_STUN_MS)
    {
+      if (stun_try_fallback())
+         return;
       O.desc.pub[0] = 0;
       fe_evt("online_stun pub=%s sym=0 rc=%d", "", 1);
    }
@@ -1317,7 +1351,7 @@ static void relay_prefetch(void)
    {
       /* beside the punch one try is enough (a failure is not fatal there);
        * at the fallback (stage RELAY_CREDS) there is one more */
-      if (O.creds_tries >= (O.stage == ON_PUNCH ? 1 : O.creds_err == ONLINE_E_RELAY ? CREDS_TRIES_403 : 2))
+      if (O.creds_tries >= (O.stage == ON_PUNCH ? 1 : O.creds_err == ONLINE_E_RELAY_WAIT ? CREDS_TRIES_403 : 2))
          return;
       if (req_ok(ONLINE_OP_RELAY, online_http_relay(O.code, O.token)))
       {
@@ -1412,7 +1446,7 @@ static void stage_relay(void)
          case ON_RELAY_CREDS:
             if (O.creds_ok)
                set_stage(ON_RELAY_RESOLVE);
-            else if (!O.creds_asked && O.creds_tries >= (O.creds_err == ONLINE_E_RELAY ? CREDS_TRIES_403 : 2) &&
+            else if (!O.creds_asked && O.creds_tries >= (O.creds_err == ONLINE_E_RELAY_WAIT ? CREDS_TRIES_403 : 2) &&
                      !O.cfg.no_relay)
                fail(ONLINE_FAIL_UNREACHABLE, 0);
             break;

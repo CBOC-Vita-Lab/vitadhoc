@@ -153,13 +153,19 @@ export function createApp({ sql, tx, env = {}, now = Date.now, turnFetch = fetch
     });
   }
 
-  /** Route 6, step 1 (synchronous): who may ask, every guard, and the reservation. Returns what step 3 needs to give it back. */
-  function relayReserve(c, params, body, ipk) {
+  /** Synchronous authentication and room-state check for route 6, before any async usage read. */
+  function relayPrecheck(rc, code, body) {
     const token = tokenOf(body);
-    const { r, role } = roomAndRole(c, params.code, token);
+    const { r, role } = roomAndRole(rc, code, token);
     if (r.state === 'closed') throw new ApiError(404, 'not_found', 'no such room');
     if (r.state === 'open') throw new ApiError(403, 'relay_not_allowed', 'relay credentials are for rooms with two members');
     if (!provider) throw new ApiError(503, 'relay_unavailable', 'the relay is not configured');
+    return { r, role, token };
+  }
+
+  /** Route 6, step 1 (synchronous): who may ask, every guard, and the reservation. Returns what step 3 needs to give it back. */
+  function relayReserve(c, params, body, ipk) {
+    const { r, role, token } = relayPrecheck(c, params.code, body);
     const col = role === 'host' ? 'host_mints' : 'guest_mints';
     // both members must be alive: each polled (the guest's join counts as its first poll) within RELAY_POLL_FRESH_SEC and after the join.
     // One person can still be both members from one address, so this only raises the price of an abuse; the caps below stand it.
@@ -175,20 +181,21 @@ export function createApp({ sql, tx, env = {}, now = Date.now, turnFetch = fetch
     guards.reserve(c.now); // 503 relay_budget (monthly, then daily)
     db.run(`UPDATE rooms SET ${col} = ${col} + 1 WHERE code = ?`, r.code);
     limiter.mintDayCount(ipk, c.now);
-    return { code: r.code, col };
+    return { code: r.code, col, tokenCol: role === 'host' ? 'host_token' : 'guest_token', token, now: c.now };
   }
 
   async function relay(c, params, body, ipk) {
-    if (provider) await guards.usageCheck(c.now); // optional: the real egress of the month (a no-op unless TURN_USAGE_* are set)
-    const rsv = atomic(() => relayReserve(c, params, body, ipk));
+    atomic(() => relayPrecheck({ db, cfg, now: now() }, params.code, body));
+    if (provider) await guards.usageCheck(now()); // optional: the real egress of the month (a no-op unless TURN_USAGE_* are set)
+    const rsv = atomic(() => relayReserve({ db, cfg, now: now() }, params, body, ipk));
     let minted;
     try {
-      minted = await provider.mint(cfg.turn.ttlSec, c.now);
+      minted = await provider.mint(cfg.turn.ttlSec, rsv.now);
     } catch (e) {
       tx(() => { // the reservation goes back
-        guards.release(c.now);
-        db.run(`UPDATE rooms SET ${rsv.col} = MAX(0, ${rsv.col} - 1) WHERE code = ?`, rsv.code);
-        limiter.mintDayCount(ipk, c.now, -1);
+        guards.release(rsv.now);
+        db.run(`UPDATE rooms SET ${rsv.col} = MAX(0, ${rsv.col} - 1) WHERE code = ? AND ${rsv.tokenCol} = ?`, rsv.code, rsv.token);
+        limiter.mintDayCount(ipk, rsv.now, -1);
       });
       if (e instanceof ApiError) throw e;
       throw new ApiError(502, 'turn_upstream', 'the relay service is unavailable');
@@ -241,7 +248,7 @@ export function createApp({ sql, tx, env = {}, now = Date.now, turnFetch = fetch
       }
       return errorResponse(new ApiError(500, 'internal', 'internal error')); // never the message: it could hold a value
     } finally {
-      try { budget.settle(t); } catch { /* the count is best effort once the answer is made */ }
+      try { budget.settle(now()); } catch { /* the count is best effort once the answer is made */ }
     }
   }
 

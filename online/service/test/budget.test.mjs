@@ -2,7 +2,11 @@
 // 20 requests and at the first request after a start.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeServer, hostDesc, T0 } from './helpers.mjs';
+import { makeServer, hostDesc, T0, UA, V } from './helpers.mjs';
+import { createBudget } from '../src/core/budget.js';
+import { loadConfig } from '../src/core/config.js';
+import { SCHEMA } from '../src/core/rooms.js';
+import { openNodeSql } from '../src/sqlite-node.js';
 
 const open = (o = {}) => makeServer({ ADDR_DAILY: '0', ...o }); // per-address ceilings off: the budget is under test
 const day = Math.floor(T0 / 86400000);
@@ -164,4 +168,68 @@ test('KILL_SWITCH: all / rooms refuse every room route but close with 503 switch
   assert.equal(r.data.error.code, 'switched_off');
   assert.equal(r.data.error.message, 'Relay is resting');
   assert.equal((await s.call('GET', '/v1/info')).data.relay, false);
+});
+
+test('UTC-midnight rollover: stale pre-await timestamps never roll budget_day backwards or wipe per-address counts', async () => {
+  const store = openNodeSql();
+  for (const stmt of SCHEMA) store.sql.exec(stmt).toArray();
+  const db = {
+    get: (q, ...b) => store.sql.exec(q, ...b).toArray()[0] ?? null,
+    run: (q, ...b) => { store.sql.exec(q, ...b).toArray(); },
+  };
+  const cfg = loadConfig({ DAILY_REQUEST_BUDGET: '100', ADDR_DAILY: '1', BUDGET_SAVE_EVERY: '1', RATE_LIMIT_SCALE: '1' });
+  const b = createBudget(db, cfg, 1);
+  const d0 = Date.UTC(2026, 10, 15, 23, 59, 59, 900);
+  const d1 = Date.UTC(2026, 10, 16, 0, 0, 0, 100);
+  b.touch(d0);
+  assert.equal(b.gateAddress('ip1', d0), null);
+  assert.equal(b.admit(d0, false), null);
+  b.settle(d0);
+
+  // Midnight crosses and day D+1 runs
+  b.touch(d1);
+  assert.equal(b.gateAddress('ip2', d1), null);
+  assert.equal(b.admit(d1, false), null);
+  b.settle(d1);
+  const savedD1 = store.sql.exec(`SELECT value FROM settings WHERE key = 'budget_day'`).toArray()[0].value;
+  assert.ok(savedD1.startsWith(`${day + 1}:`), savedD1);
+
+  // Pre-midnight request resumes late with stale d0
+  b.admit(d0, false);
+  b.settle(d0);
+  assert.equal(b.status(d1).day, day + 1);
+  const afterStale = store.sql.exec(`SELECT value FROM settings WHERE key = 'budget_day'`).toArray()[0].value;
+  assert.ok(afterStale.startsWith(`${day + 1}:`), `settings.budget_day must stay on day ${day + 1}: ${afterStale}`);
+  const blocked = b.gateAddress('ip2', d1);
+  assert.ok(blocked, 'addr map for day D+1 must not be wiped by stale d0');
+  assert.equal(blocked.status, 429);
+
+  // End-to-end app.handle with suspended body stream crossing UTC midnight
+  const s = makeServer({ ADDR_DAILY: '1', BUDGET_SAVE_EVERY: '1', RATE_LIMIT_SCALE: '1' });
+  s.clock.now = d0;
+  let releaseBody;
+  const bodyGate = new Promise((res) => { releaseBody = res; });
+  const slowStream = new ReadableStream({
+    async start(controller) {
+      await bodyGate;
+      controller.enqueue(new TextEncoder().encode(JSON.stringify(hostDesc())));
+      controller.close();
+    },
+  });
+  const pending = s.app.handle(new Request(`https://test.invalid/v1/rooms?${V}`, {
+    method: 'POST',
+    headers: { 'cf-connecting-ip': '198.51.100.10', 'user-agent': UA, 'content-type': 'application/json' },
+    body: slowStream,
+    duplex: 'half',
+  }));
+  await new Promise((r) => setTimeout(r, 15));
+  s.clock.now = d1;
+  assert.equal((await s.create(hostDesc(), { ip: '198.51.100.11' })).status, 201);
+  releaseBody();
+  await pending;
+  assert.equal(s.app.status().budget.day, day + 1);
+  assert.ok(s.setting('budget_day').startsWith(`${day + 1}:`), s.setting('budget_day'));
+  const cap = await s.create(hostDesc(), { ip: '198.51.100.11' });
+  assert.equal(cap.status, 429);
+  assert.equal(cap.data.error.reason, 'daily_cap');
 });

@@ -72,18 +72,35 @@ static void load(void)
 static void save(void)
 {
    FILE *f;
-   char tmp[620];
+   char tmp[620], old[620];
+   int wr_err, had_old;
    if (!U.path[0])
       return;
    snprintf(tmp, sizeof(tmp), "%s.tmp", U.path);
+   snprintf(old, sizeof(old), "%s.old", U.path);
    f = fopen(tmp, "w");
    if (!f)
       return;
    fprintf(f, "checked=%lld\nlatest=%s\n", (long long)U.last, U.latest);
    if (U.announced[0])
       fprintf(f, "announced=%s\n", U.announced);
-   if (fclose(f) != 0 || rename(tmp, U.path) != 0)
+   wr_err = ferror(f);
+   if (fclose(f) != 0 || wr_err)
+   {
       remove(tmp);
+      return;
+   }
+   remove(old);
+   had_old = rename(U.path, old) == 0;
+   if (rename(tmp, U.path) != 0)
+   {
+      if (had_old)
+         rename(old, U.path);
+      remove(tmp);
+      return;
+   }
+   if (had_old)
+      remove(old);
 }
 
 /* ---- the setting and the state ------------------------------------------- */
@@ -185,6 +202,12 @@ static int begin(time_t now, int by_hand)
    {
       fe_evt("update_check start_failed err=%s by_hand=%d",
              np_https_error_name(err), by_hand);
+      if (!by_hand && UPD_DAY_S > 3600)
+      {
+         /* Transient start failure on a daily check: retry in ~1 hour instead of 24 hours. */
+         U.last = now > (time_t)(UPD_DAY_S - 3600) ? now - UPD_DAY_S + 3600 : 0;
+         save();
+      }
       U.state = UPD_FAILED;
       U.result_pending = 1;
       U.result_kind = UPD_FAILED;
@@ -196,12 +219,18 @@ static int begin(time_t now, int by_hand)
    return 0;
 }
 
-static void finish(int kind, const char *shown)
+static void finish(int kind, const char *shown, time_t now)
 {
    if (kind == UPD_NEWER)
+   {
       snprintf(U.latest, sizeof(U.latest), "%s", shown);
+      if (U.by_hand)
+         snprintf(U.announced, sizeof(U.announced), "%s", U.latest);
+   }
    else if (kind == UPD_CURRENT)
       U.latest[0] = '\0';
+   else if (kind == UPD_FAILED && !U.by_hand && UPD_DAY_S > 3600)
+      U.last = now > (time_t)(UPD_DAY_S - 3600) ? now - UPD_DAY_S + 3600 : 0;
    /* a failed try does not forget a newer version learnt before */
    U.state = kind == UPD_FAILED && U.latest[0] ? UPD_NEWER : kind;
    save();
@@ -209,10 +238,10 @@ static void finish(int kind, const char *shown)
    U.result_kind = kind;
    U.result_hand = U.by_hand;
    if (kind == UPD_NEWER)
-      U.noticed = 0;                 /* the home screen may say it now */
+      U.noticed = U.by_hand ? 1 : 0;  /* manual checks toast via upd_take_result, not home notice */
 }
 
-static void collect(void)
+static void collect(time_t now)
 {
    NpHttpsResult r;
    int rc;
@@ -229,7 +258,7 @@ static void collect(void)
    if (rc < 0)
    {
       U.h = 0;
-      finish(UPD_FAILED, NULL);
+      finish(UPD_FAILED, NULL, now);
       return;
    }
    if (r.error != NP_HTTPS_OK)
@@ -237,29 +266,29 @@ static void collect(void)
       fe_evt("update_check failed err=%s stage=%s http=%d ms=%u",
              np_https_error_name(r.error), np_https_stage_name(r.stage),
              r.http_status, r.elapsed_ms);
-      finish(UPD_FAILED, NULL);
+      finish(UPD_FAILED, NULL, now);
    }
    else if (r.http_status != 200)
    {
       fe_evt("update_check failed http=%d", r.http_status);
-      finish(UPD_FAILED, NULL);
+      finish(UPD_FAILED, NULL, now);
    }
    else if (!upd_release_parse((const char *)r.body, r.body_len, shown,
                                sizeof(shown)))
    {
       /* a draft, a pre-release, not JSON, a tag that is no version */
       fe_evt("update_check unusable_answer bytes=%u", (unsigned)r.body_len);
-      finish(UPD_FAILED, NULL);
+      finish(UPD_FAILED, NULL, now);
    }
    else if (upd_ver_newer(shown, U.version))
    {
       fe_evt("update_check newer latest=%s mine=%s", shown, U.version);
-      finish(UPD_NEWER, shown);
+      finish(UPD_NEWER, shown, now);
    }
    else
    {
       fe_evt("update_check current latest=%s mine=%s", shown, U.version);
-      finish(UPD_CURRENT, NULL);
+      finish(UPD_CURRENT, NULL, now);
    }
 #if !defined(NP_TARGET_VITA)
    if (U.plain)
@@ -276,7 +305,7 @@ void upd_poll(int idle, time_t now)
       return;
    if (U.h)
    {
-      collect();
+      collect(now);
       return;
    }
    if (!U.daily || idle < UPD_IDLE_FRAMES)

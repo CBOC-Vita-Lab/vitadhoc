@@ -100,6 +100,10 @@ const fe_gblink_machines *fe_padpair_machines(const fe_pad_machine *m);
  * frontend should then reload its own game. */
 int fe_padpair_restored(const fe_gblink_machines *v);
 
+/* Mark a running host pair to keep its live gameplay state at stop() instead of
+ * rolling back to its pre-session state (used when the peer drops cleanly). */
+void fe_padpair_keep_host(const fe_gblink_machines *v);
+
 #ifdef __cplusplus
 }
 #endif

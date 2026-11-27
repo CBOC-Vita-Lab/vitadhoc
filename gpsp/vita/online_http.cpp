@@ -74,9 +74,15 @@ enum { K_NONE = 0, K_TLS, K_PLAIN, K_LOCAL, K_RESOLVE };
 struct ResolveJob {
     char host[64];
     volatile int cancel, done;
+    int refs;                 // 2 initially (caller Slot/Zombie + ResolveMain worker); last ref deletes
     uint32_t ip;
     int rc;
 };
+
+void ReleaseResolveJob(ResolveJob* j) {
+    if (j && __atomic_sub_fetch(&j->refs, 1, __ATOMIC_ACQ_REL) == 0)
+        delete j;
+}
 
 struct Slot {
     int kind;
@@ -96,9 +102,9 @@ void ReapZombies() {
     for (int i = 0; i < kZombies; i++) {
         Zombie& z = g_zombie[i];
         if (!z.job) continue;
-        if (!z.job->done) continue;
+        if (!__atomic_load_n(&z.job->done, __ATOMIC_ACQUIRE)) continue;
         if (!nph::ThreadJoin(z.th, 50)) continue;
-        delete z.job;
+        ReleaseResolveJob(z.job);
         z.job = nullptr;
         z.th = nullptr;
     }
@@ -109,6 +115,7 @@ void ResolveMain(void* arg) {
     int sys = 0;
     j->rc = nph::Resolve(j->host, &j->ip, kResolveMs, &j->cancel, &sys);
     __atomic_store_n(&j->done, 1, __ATOMIC_RELEASE);
+    ReleaseResolveJob(j);
 }
 
 // ---- the flat JSON reader --------------------------------------------------------------------------------------------------------
@@ -281,7 +288,8 @@ int MapStatus(int status, const char* code, const char* reason) {
         return ONLINE_E_BAD;
     case 426: return ONLINE_E_UPDATE;
     case 401: return ONLINE_E_TOKEN;
-    case 403: case 502: return ONLINE_E_RELAY;
+    case 403: return !strcmp(code, "relay_not_allowed") ? ONLINE_E_RELAY_WAIT : ONLINE_E_RELAY;
+    case 502: return ONLINE_E_RELAY;
     case 429: return !strcmp(reason, "daily_cap") || !strcmp(code, "daily_cap") ? ONLINE_E_BUSY : ONLINE_E_RATE;
     case 503:
         if (!strcmp(code, "over_budget") || !strcmp(code, "rooms_full") || !strcmp(code, "switched_off")) return ONLINE_E_BUSY;
@@ -704,6 +712,7 @@ int online_http_resolve(const char *host)
    ResolveJob *job = new ResolveJob();
    memset(job, 0, sizeof *job);
    strcpy(job->host, host);
+   __atomic_store_n(&job->refs, 2, __ATOMIC_RELEASE);
    nph::Thread *th = nph::ThreadStart(ResolveMain, job);
    if (!th)
    {
@@ -756,7 +765,7 @@ int online_http_take(online_reply *out)
          else
             out->err = ONLINE_E_NET;
          nph::ThreadJoin(s.th, 200);
-         delete s.job;
+         ReleaseResolveJob(s.job);
          memset(&s, 0, sizeof s);
          return 1;
       }
@@ -795,14 +804,16 @@ void online_http_drop(void)
       else if (s.kind == K_RESOLVE)
       {
          // Never wait here: this runs on the frame thread.  The resolve thread is told to stop and handed to the reaper, which
-         // frees it once it is done (a Vita resolver may need its whole time-out to notice).  If even the reaper's table is full
-         // the thread and its small job are left to finish on their own and are not reclaimed: a few hundred bytes, in a case that
-         // needs more than kZombies resolves abandoned within one resolver time-out.
-         s.job->cancel = 1;
+         // drops the main thread's ref once joined; if the table is full or ThreadJoin times out at shutdown, the worker drops the
+         // last ref when nph::Resolve exits so ResolveJob is neither leaked nor freed under a live worker.
+         __atomic_store_n(&s.job->cancel, 1, __ATOMIC_RELEASE);
          if (!__atomic_load_n(&s.job->done, __ATOMIC_ACQUIRE))
             nph::ResolveAbortFor(&s.job->cancel);
+         bool queued = false;
          for (int z = 0; z < kZombies; z++)
-            if (!g_zombie[z].job) { g_zombie[z].job = s.job; g_zombie[z].th = s.th; break; }
+            if (!g_zombie[z].job) { g_zombie[z].job = s.job; g_zombie[z].th = s.th; queued = true; break; }
+         if (!queued)
+            ReleaseResolveJob(s.job);
       }
       memset(&s, 0, sizeof s);
    }
@@ -820,8 +831,9 @@ void online_http_shutdown(void)
       if (g_zombie[z].job)
       {
          nph::ThreadJoin(g_zombie[z].th, kResolveMs + 500);
-         delete g_zombie[z].job;
+         ReleaseResolveJob(g_zombie[z].job);
          g_zombie[z].job = nullptr;
+         g_zombie[z].th = nullptr;
       }
    LogDrain();
 }

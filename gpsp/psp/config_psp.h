@@ -195,8 +195,8 @@ typedef struct
     * button); 0 = Cross is A; 1 = Circle is A.  Written once chosen. */
    int  ab_buttons;
    /* Settings > Controls > Rewind with right stick (CONFIG.INI
-    * stick_rewind): 1 = the right stick held left rewinds; 0 = it does not
-    * (the default; the Rewind button still does). */
+    * stick_rewind): 1 = the right stick held left rewinds (the default);
+    * 0 = it does not (the Rewind button still does). */
    int  stick_rewind;
    /* Settings > Controls > Tap screen for menu (CONFIG.INI tap_menu): 1 =
     * a short tap on the game opens the menu (the default); 0 = only the

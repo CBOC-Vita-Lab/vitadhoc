@@ -65,7 +65,9 @@ namespace {
  *   GBA   282x160: 3x.  4x is 721k px (1.78 times 3x): hand-set only, never
  *                  a start and never a climb.  The owner's order puts a
  *                  locked 60 first, so this is the start to be corrected.
- *   GB/C  160x144: 3x until measured (4x is 369k px, but nothing has run)
+ *   GB/C  160x144: 4x (640x576 = 369k px, smaller than GBA wide 3x and
+ *                  supersampled cleanly down to 604x544 at Fit; measured 21%
+ *                  load at 3x on real Vita hardware)
  *   WS    224x144: 3x
  *   NES   424x240: 2x (wide view); 3x exceeds the 544-line panel and the
  *                  pixel budget, so 2x and the GPU's stretch is cleaner too
@@ -83,8 +85,8 @@ struct Console {
 
 const Console k_consoles[] = {
    { "gba", 282, 160, 3, 1 },
-   { "gb", 160, 144, 3, 0 },
-   { "gbc", 160, 144, 3, 0 },
+   { "gb", 160, 144, 4, 0 },
+   { "gbc", 160, 144, 4, 0 },
    { "ws", 224, 144, 3, 0 },
    { "nes", 424, 240, 2, 0 },
 };

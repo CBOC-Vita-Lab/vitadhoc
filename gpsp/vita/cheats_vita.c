@@ -85,6 +85,10 @@ static char        *g_global_extra;      /* .cht lines that are no cheat's */
 static char        *g_db_block;
 static char         g_db_name[160];
 static int          g_db_match;
+static char         g_db_path[512];
+static int          g_db_deferred;     /* 1: cheats_db_open_later() path not opened yet */
+static char         g_rom_path[640];
+static int          g_db_pending;      /* 1: db_find() deferred until first DB/list query */
 
 static cheat_gba_ctx g_ctx;
 
@@ -1201,18 +1205,107 @@ static int db_find(const char *rom_path, fe_console_t console, int *match)
 /* the contract                                                             */
 /* ======================================================================== */
 
+static void db_open_if_deferred(void)
+{
+   int n;
+   if (!g_db_deferred)
+      return;
+   g_db_deferred = 0;
+   n = cheatdb_open(g_db_path);
+#ifndef CHEATS_VITA_NO_CORE
+   fe_evt("cheats_db games=%d path=%s", n, g_db_path);
+#else
+   (void)n;
+#endif
+}
+
+/* Populate the bundled database's entries for the loaded game on demand.
+ * On the Vita this is deferred past game launch so cold boot avoids opening
+ * app0:cheats.db and hashing multi-megabyte ROMs unless the player actually
+ * opens Cheats (or has an encrypted GBA .cht entry that needs a DB seed). */
+static void cheats_ensure_db(void)
+{
+   int game;
+   if (!g_loaded || !g_db_pending)
+      return;
+   g_db_pending = 0;
+   db_open_if_deferred();
+   game = db_find(g_rom_path, g_console, &g_db_match);
+   if (game >= 0)
+   {
+      unsigned n = 0, k;
+      size_t size = 0;
+      g_db_block = cheatdb_load(game, &n, &size);
+      if (g_db_block)
+      {
+         const char *p = g_db_block;
+         int own = g_count, j, had_unusable = 0, now_usable = 0;
+         for (j = 0; j < own; j++)
+            if (g_list[j].enabled && !g_list[j].usable)
+               had_unusable = 1;
+         snprintf(g_db_name, sizeof(g_db_name), "%s", p);
+         p += strlen(p) + 1;
+         for (k = 0; k < n; k++)
+         {
+            const char *ename = p, *ecode = p + strlen(p) + 1;
+            int have = 0;
+            p = ecode + strlen(ecode) + 1;
+            for (j = 0; j < own && !have; j++)
+               have = code_same(g_list[j].code, ecode);
+            if (!have)
+               entry_insert(g_count, NULL, ename, NULL, ecode, NULL, 0, 1);
+         }
+         validate_all();
+         if (had_unusable)
+         {
+            for (j = 0; j < own; j++)
+               if (g_list[j].enabled && g_list[j].usable)
+                  now_usable = 1;
+            if (now_usable)
+               push();
+         }
+      }
+      else
+         g_db_match = CHEATS_MATCH_NONE;
+   }
+#if defined(__vita__) && !defined(CHEATS_VITA_NO_CORE)
+   fe_evt("cheats_db_loaded n=%d match=%d db=\"%s\"", g_count, g_db_match,
+          g_db_name);
+#endif
+}
+
 int cheats_db_open(const char *path)
 {
+   g_db_deferred = 0;
+   g_db_path[0] = 0;
    return cheatdb_open(path);
+}
+
+void cheats_db_open_later(const char *path)
+{
+   cheatdb_close();
+   g_db_deferred = 0;
+   g_db_path[0] = 0;
+   if (!path || !*path || strlen(path) >= sizeof(g_db_path))
+      return;
+   strcpy(g_db_path, path);
+   g_db_deferred = 1;
+}
+
+int cheats_db_pending(void)
+{
+   return g_db_pending;
 }
 
 const char *cheats_db_game(void)
 {
+   cheats_ensure_db();
    return g_db_name;
 }
 
 int cheats_db_match(void)
 {
+   cheats_ensure_db();
    return g_db_match;
 }
 
@@ -1233,6 +1326,8 @@ void cheats_unload(void)
    g_global_extra = NULL;
    g_db_name[0] = 0;
    g_db_match = CHEATS_MATCH_NONE;
+   g_db_pending = 0;
+   g_rom_path[0] = 0;
    g_cht_path[0] = 0;
    g_loaded = 0;
    g_dirty = 0;
@@ -1244,7 +1339,7 @@ void cheats_unload(void)
 int cheats_load(const char *root, const char *rom_path, fe_console_t console)
 {
    const char *name, *dot;
-   int game, stem;
+   int stem;
 
    cheats_unload();
    if (!root || !rom_path)
@@ -1254,39 +1349,32 @@ int cheats_load(const char *root, const char *rom_path, fe_console_t console)
    stem = dot && dot != name ? (int)(dot - name) : (int)strlen(name);
    snprintf(g_cht_dir, sizeof(g_cht_dir), "%s/cheats", root);
    snprintf(g_cht_path, sizeof(g_cht_path), "%s/%.*s.cht", g_cht_dir, stem, name);
+   snprintf(g_rom_path, sizeof(g_rom_path), "%s", rom_path);
    g_console = console;
    g_loaded = 1;
 
    cht_read(g_cht_path);
-
-   game = db_find(rom_path, console, &g_db_match);
-   if (game >= 0)
-   {
-      unsigned n = 0, k;
-      size_t size = 0;
-      g_db_block = cheatdb_load(game, &n, &size);
-      if (g_db_block)
-      {
-         const char *p = g_db_block;
-         int own = g_count, j;
-         snprintf(g_db_name, sizeof(g_db_name), "%s", p);
-         p += strlen(p) + 1;
-         for (k = 0; k < n; k++)
-         {
-            const char *ename = p, *ecode = p + strlen(p) + 1;
-            int have = 0;
-            p = ecode + strlen(ecode) + 1;
-            for (j = 0; j < own && !have; j++)
-               have = code_same(g_list[j].code, ecode);
-            if (!have)
-               entry_insert(g_count, NULL, ename, NULL, ecode, NULL, 0, 1);
-         }
-      }
-      else
-         g_db_match = CHEATS_MATCH_NONE;
-   }
-
    validate_all();
+   g_db_pending = 1;
+#ifdef __vita__
+   /* Only query the database eagerly on boot when a GBA .cht has an enabled
+    * non-raw or unusable entry (CodeBreaker, GameShark, and ARv3 codes may
+    * require a DEADFACE master-code seed from the bundled database). */
+   if (g_console == FE_CONSOLE_GBA)
+   {
+      int i;
+      for (i = 0; i < g_count; i++)
+         if (g_list[i].enabled &&
+             (!g_list[i].usable || g_list[i].kind != CHEAT_KIND_GBA_RAW))
+         {
+            cheats_ensure_db();
+            break;
+         }
+   }
+#else
+   cheats_ensure_db();
+#endif
+
    push();
    return g_count;
 }
@@ -1300,6 +1388,7 @@ int cheats_export_database(const char *path)
    FILE *f;
    if (!g_loaded || !path)
       return -1;
+   cheats_ensure_db();
    for (i = 0; i < g_count; i++)
       if (g_list[i].builtin && g_list[i].usable)
          n++;
@@ -1330,11 +1419,13 @@ int cheats_export_database(const char *path)
 
 int cheats_count(void)
 {
+   cheats_ensure_db();
    return g_count;
 }
 
 const cheat_entry *cheats_get(int i)
 {
+   cheats_ensure_db();
    return i >= 0 && i < g_count ? &g_list[i] : NULL;
 }
 
@@ -1349,6 +1440,7 @@ int cheats_enabled_count(void)
 int cheats_set_enabled(int i, int on)
 {
    int overflow;
+   cheats_ensure_db();
    if (i < 0 || i >= g_count)
       return CHEATS_E_RANGE;
    on = on ? 1 : 0;
@@ -1416,7 +1508,10 @@ int cheats_validate(const char *code, fe_console_t console)
       static cheat_gba_ctx ctx;
       cheat_out out;
       if (g_loaded && g_console == FE_CONSOLE_GBA)
+      {
+         cheats_ensure_db();
          ctx = g_ctx;
+      }
       else
          cheat_gba_ctx_init(&ctx);
       cheat_gba_ctx_scan(&ctx, clean);
@@ -1462,6 +1557,7 @@ int cheats_add(const char *name, const char *code)
 
    if (!g_loaded)
       return CHEATS_E_RANGE;
+   cheats_ensure_db();
    if (g_count >= CHEATS_MAX)
       return CHEATS_E_FULL;
    rc = cheats_validate(code, g_console);
@@ -1513,6 +1609,7 @@ int cheats_add(const char *name, const char *code)
 
 int cheats_remove(int i)
 {
+   cheats_ensure_db();
    if (i < 0 || i >= g_count)
       return CHEATS_E_RANGE;
    if (g_list[i].builtin)
@@ -1533,6 +1630,7 @@ int cheats_remove(int i)
 int cheats_rename(int i, const char *name)
 {
    char *cname;
+   cheats_ensure_db();
    if (i < 0 || i >= g_count)
       return CHEATS_E_RANGE;
    if (!name || !name[0])
@@ -1598,6 +1696,7 @@ void cheats_button(int down)
 
 const char *cheats_note(int i)
 {
+   cheats_ensure_db();
    if (i < 0 || i >= g_count)
       return "";
    if (!g_list[i].usable)

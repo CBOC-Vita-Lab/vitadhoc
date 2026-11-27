@@ -378,9 +378,51 @@ typedef struct
 } hm_tile;
 
 static hm_tile g_hm_tile[HM_TILES];
+static vs_img *g_hm_tile_pool[HM_TILES];
+static int g_hm_tile_pool_n;
 static unsigned g_hm_frame;
 static uint32_t *g_hm_buf;          /* 240 x 160 RGBA scratch              */
 static uint32_t *g_hm_sq;           /* HM_TEX^2 RGBA scratch               */
+
+static void hm_tile_pool_put(vs_img *im)
+{
+   if (!im)
+      return;
+   if (g_hm_tile_pool_n < HM_TILES)
+      g_hm_tile_pool[g_hm_tile_pool_n++] = im;
+   else
+      vs_img_free(im);
+}
+
+static vs_img *hm_tile_pool_take(void)
+{
+   int i;
+   for (i = g_hm_tile_pool_n - 1; i >= 0; i--)
+      if (vs_img_writable(g_hm_tile_pool[i]))
+      {
+         vs_img *im = g_hm_tile_pool[i];
+         g_hm_tile_pool[i] = g_hm_tile_pool[--g_hm_tile_pool_n];
+         return im;
+      }
+   return NULL;
+}
+
+static void hm_tile_pool_clear(void)
+{
+   int i;
+   for (i = 0; i < g_hm_tile_pool_n; i++)
+      vs_img_free(g_hm_tile_pool[i]);
+   g_hm_tile_pool_n = 0;
+}
+
+static hm_tile *hm_tile_peek(int rom)
+{
+   int i;
+   for (i = 0; i < HM_TILES; i++)
+      if (g_hm_tile[i].rom == rom)
+         return &g_hm_tile[i];
+   return NULL;
+}
 
 static int hm_scratch(void)
 {
@@ -409,7 +451,7 @@ static hm_tile *hm_tile_find(int rom)
          oldest = i;
    }
    if (g_hm_tile[oldest].img)
-      vs_img_free(g_hm_tile[oldest].img);
+      hm_tile_pool_put(g_hm_tile[oldest].img);
    memset(&g_hm_tile[oldest], 0, sizeof(g_hm_tile[oldest]));
    g_hm_tile[oldest].rom = rom;
    g_hm_tile[oldest].x = -1.0f;
@@ -529,6 +571,44 @@ static struct
    uint64_t retry_us;
    unsigned art_epoch;
 } g_hm_pic = { -1, 0, NULL, 0, 0, 0.0f, NULL, 0, 0, 0.0f, -1 };
+
+/* 1-slot reusable still texture spare: avoids CDRAM sceKernelAllocMemBlock,
+ * sceGxmMapMemory, and 2.1 MiB uncached memset on steady-state game switches
+ * without raising peak CDRAM usage above two stills. */
+static vs_img *g_hm_still_spare;
+static int g_hm_still_spare_w, g_hm_still_spare_h;
+
+static void hm_still_spare_drop(void)
+{
+   if (g_hm_still_spare)
+      vs_img_free(g_hm_still_spare);
+   g_hm_still_spare = NULL;
+   g_hm_still_spare_w = g_hm_still_spare_h = 0;
+}
+
+static void hm_still_spare_put(vs_img *im, int w, int h)
+{
+   if (!im)
+      return;
+   if (g_hm_still_spare)
+      vs_img_free(g_hm_still_spare);
+   g_hm_still_spare = im;
+   g_hm_still_spare_w = w;
+   g_hm_still_spare_h = h;
+}
+
+static vs_img *hm_still_spare_take(int w, int h)
+{
+   if (g_hm_still_spare && g_hm_still_spare_w == w &&
+       g_hm_still_spare_h == h && vs_img_writable(g_hm_still_spare))
+   {
+      vs_img *im = g_hm_still_spare;
+      g_hm_still_spare = NULL;
+      g_hm_still_spare_w = g_hm_still_spare_h = 0;
+      return im;
+   }
+   return NULL;
+}
 
 static void hm_pic_load_decode(int rom)
 {
@@ -669,7 +749,7 @@ static void hm_selection_tick(int rom)
    hm_clip_cancel();
    g_hm_clip.none_for = -1;
    if (g_hm_pic.old)
-      vs_img_free(g_hm_pic.old);
+      hm_still_spare_put(g_hm_pic.old, g_hm_pic.old_w, g_hm_pic.old_h);
    g_hm_pic.old = NULL;
    g_hm_pic.old_a = 0.0f;
    g_hm_pic.old_rom = -1;
@@ -697,7 +777,7 @@ static void hm_clip_open(int rom)
 static int hm_clip_textures(unsigned w, unsigned h)
 {
    int i;
-   if (g_hm_clip.w == w && g_hm_clip.h == h && g_hm_clip.tex[0])
+   if (g_hm_clip.w == w && g_hm_clip.h == h)
       return 0;
    for (i = 0; i < HM_CLIP_TEX; i++)
    {
@@ -707,17 +787,7 @@ static int hm_clip_textures(unsigned w, unsigned h)
    }
    g_hm_clip.w = w;
    g_hm_clip.h = h;
-   for (i = 0; i < HM_CLIP_TEX; i++)
-      if (!(g_hm_clip.tex[i] = vs_img_new_565((int)w, (int)h)))
-      {
-         int j;
-         for (j = 0; j < i; j++)
-         {
-            vs_img_free(g_hm_clip.tex[j]);
-            g_hm_clip.tex[j] = NULL;
-         }
-         return -1;
-      }
+   g_hm_clip.shown = -1;
    return 0;
 }
 
@@ -791,8 +861,30 @@ static void hm_clip_tick(int rom, int idle)
          for (int step = 1; step <= HM_CLIP_TEX; step++)
          {
             int at = (g_hm_clip.shown + step) % HM_CLIP_TEX;
-            if (at != g_hm_clip.shown && vs_img_writable(g_hm_clip.tex[at]))
+            if (at != g_hm_clip.shown && g_hm_clip.tex[at] &&
+                vs_img_writable(g_hm_clip.tex[at]))
             { t = at; break; }
+         }
+         if (t < 0)
+         {
+            /* Lazily allocate one clip texture per frame instead of 3 at once. */
+            for (int step = 1; step <= HM_CLIP_TEX; step++)
+            {
+               int at = (g_hm_clip.shown + step) % HM_CLIP_TEX;
+               if (at != g_hm_clip.shown && !g_hm_clip.tex[at])
+               {
+                  g_hm_clip.tex[at] = vs_img_new_565((int)g_hm_clip.w,
+                                                     (int)g_hm_clip.h);
+                  if (!g_hm_clip.tex[at])
+                  {
+                     hm_clip_cancel();
+                     g_hm_clip.none_for = rom;
+                     return;
+                  }
+                  t = at;
+                  break;
+               }
+            }
          }
          if (t < 0) break; /* Keep the CPU pin and old frame; never wait. */
          vs_img_set_565(g_hm_clip.tex[t], g_hm_clip.next.pixels,
@@ -1978,27 +2070,62 @@ static void hm_adopt_image(int rom, menu_load_result *r)
 {
    vs_img *im = NULL;
    int status = r->status;
-   if (status == ML_OK)
-   {
-      im = vs_img_new((int)r->w, (int)r->h);
-      if (im) { vs_img_set(im, r->pixels, (int)r->w); g_hm_uploaded = 1; }
-      else status = ML_ERROR;
-   }
    if (r->kind == ML_TILE)
    {
       hm_tile *t = hm_tile_find(rom);
-      if (im)
+      if (status == ML_OK)
       {
-         if (t->img) vs_img_free(t->img);
-         t->img = im; t->state = 1;
+         int standard = (int)r->w == HM_TEX && (int)r->h == HM_TEX;
+         if (standard && t->img && vs_img_writable(t->img))
+         {
+            im = t->img;
+            vs_img_set(im, r->pixels, (int)r->w);
+            g_hm_uploaded = 1;
+         }
+         else
+         {
+            im = standard ? hm_tile_pool_take() : NULL;
+            if (!im) im = vs_img_new((int)r->w, (int)r->h);
+            if (im)
+            {
+               vs_img_set(im, r->pixels, (int)r->w);
+               g_hm_uploaded = 1;
+               if (t->img)
+               {
+                  if (standard) hm_tile_pool_put(t->img);
+                  else vs_img_free(t->img);
+               }
+               t->img = im;
+            }
+            else status = ML_ERROR;
+         }
+         if (im) t->state = 1;
       }
-      else if (!t->img) t->state = -1;
+      if (!im && !t->img) t->state = -1;
       t->epoch = r->job.epoch;
       t->art_epoch = r->job.art_epoch;
       t->retry_us = hm_retry(status, &t->attempts);
+      return;
    }
    else if (r->kind == ML_STILL)
    {
+      if (status == ML_OK)
+      {
+         if (g_hm_pic.old && g_hm_pic.old_a <= 0.5f)
+         {
+            hm_still_spare_put(g_hm_pic.old, g_hm_pic.old_w, g_hm_pic.old_h);
+            g_hm_pic.old = NULL;
+         }
+         im = hm_still_spare_take((int)r->w, (int)r->h);
+         if (!im)
+         {
+            /* Drop mismatched spare first so peak CDRAM stays <= 2 stills. */
+            hm_still_spare_drop();
+            im = vs_img_new((int)r->w, (int)r->h);
+         }
+         if (im) { vs_img_set(im, r->pixels, (int)r->w); g_hm_uploaded = 1; }
+         else status = ML_ERROR;
+      }
       g_hm_still_for = rom;
       g_hm_pic.epoch = r->job.epoch;
       g_hm_pic.art_epoch = r->job.art_epoch;
@@ -2016,13 +2143,20 @@ static void hm_adopt_image(int rom, menu_load_result *r)
          g_hm_pic.state = r->source == ML_SOURCE_HERO ? 3 : 1;
          g_hm_pic.a = 0;
       }
+      return;
    }
    else
    {
       unsigned i = 0;
       while (i < PSP_STATE_SLOT_COUNT && r->kind != ((unsigned)ML_STATE0 << i)) i++;
       if (i >= PSP_STATE_SLOT_COUNT || g_hm_cards.rom != rom)
-      { if (im) vs_img_free(im); return; }
+         return;
+      if (status == ML_OK)
+      {
+         im = vs_img_new((int)r->w, (int)r->h);
+         if (im) { vs_img_set(im, r->pixels, (int)r->w); g_hm_uploaded = 1; }
+         else status = ML_ERROR;
+      }
       if (im)
       {
          if (g_hm_cards.img[i]) vs_img_free(g_hm_cards.img[i]);
@@ -2075,7 +2209,11 @@ static void hm_load_pump(const char *rom_dir, int cur, int n, int n_scan, int id
       g_hm_load_active = 0; g_hm_load_left = 0;
       g_hm_load_rom = rom; g_hm_load_open = g_browser_state_open;
       g_hm_load_dirty = 0;
-      if (idle < IDLE_SELECTED) return;
+      if (idle < IDLE_SELECTED)
+      {
+         artfetch_nav_busy(1);
+         return;
+      }
    }
    menu_load_resume();
    for (unsigned i = 0; i < 4 && menu_load_take(0, &r); i++)
@@ -2088,10 +2226,9 @@ static void hm_load_pump(const char *rom_dir, int cur, int n, int n_scan, int id
       md_end(MD_PUBLISH, began);
    }
    {
-      /* Pictures for the shelf and the covers: a TIME budget a frame, not a
-       * count (a texture upload costs 2.7-5.3 ms on the console, Galaxy
-       * 13 Nov): at least one, more while the frame's 4 ms last.  The most
-       * in one frame is logged when it grows (the census of the budget). */
+      /* At most one actual GPU texture upload per frame so a 160x160 tile
+       * never stacks with a 960x544 hero upload inside the same 16.6 ms frame;
+       * absent/error results still drain within the 4 ms budget. */
       static unsigned up_max;
       const uint64_t t0 = plat_time_us();
       unsigned ups = 0;
@@ -2104,7 +2241,7 @@ static void hm_load_pump(const char *rom_dir, int cur, int n, int n_scan, int id
          menu_load_release(r.slot);
          md_end(MD_PUBLISH, began);
          ups++;
-         if (plat_time_us() - t0 >= HM_UPLOAD_BUDGET_US)
+         if (g_hm_uploaded || plat_time_us() - t0 >= HM_UPLOAD_BUDGET_US)
             break;
       }
       if (ups > up_max)
@@ -2115,10 +2252,10 @@ static void hm_load_pump(const char *rom_dir, int cur, int n, int n_scan, int id
       }
    }
    if (!g_hm_load_left) g_hm_load_active = 0;
-   if (g_hm_load_active) return;
+   if (g_hm_load_active) { artfetch_nav_busy(1); return; }
    /* The batch boundary: artwork that arrived meanwhile becomes due now. */
    hm_art_apply();
-   if (!hm_job(rom_dir, rom, &jobs[0])) return;
+   if (!hm_job(rom_dir, rom, &jobs[0])) { artfetch_nav_busy(0); return; }
    g_hm_batch_rom[0] = rom;
    const hm_meta *m = hm_metadata(rom);
    if (!m || (m->retry_us && now >= m->retry_us)) jobs[0].tasks |= ML_META;
@@ -2152,8 +2289,8 @@ static void hm_load_pump(const char *rom_dir, int cur, int n, int n_scan, int id
             else if (vi < 0 || vi >= n) continue;
             at = view_rom(vi);
             if (at == rom) continue;
-            t = hm_tile_find(at);
-            if (t->x >= VS_W || !hm_image_due(t, at, now)) continue;
+            t = hm_tile_peek(at);
+            if (!t || t->x >= VS_W || !hm_image_due(t, at, now)) continue;
             if (hm_job(rom_dir, at, &jobs[count]))
             {
                g_hm_batch_rom[count] = at;
@@ -2162,13 +2299,14 @@ static void hm_load_pump(const char *rom_dir, int cur, int n, int n_scan, int id
          }
    }
    for (unsigned i = 0; i < count; i++) total += hm_task_count(jobs[i].tasks);
-   if (!total) return;
+   if (!total) { artfetch_nav_busy(0); return; }
    if (++g_hm_load_serial == 0) ++g_hm_load_serial;
    for (unsigned i = 0; i < count; i++) jobs[i].focus = g_hm_load_serial;
    if (menu_load_submit(jobs, count))
    { g_hm_load_active = 1; g_hm_load_left = total; g_hm_batch_n = count; }
    else
       g_hm_batch_n = 0;
+   artfetch_nav_busy(g_hm_load_active);
 }
 
 /* Settings and cheats cover Home.  Entering parks the loader without
@@ -2181,6 +2319,9 @@ static void hm_load_pump(const char *rom_dir, int cur, int n, int n_scan, int id
 static void home_modal_enter(void)
 {
    menu_load_pause();
+   artfetch_nav_busy(0);
+   hm_still_spare_drop();
+   hm_tile_pool_clear();
    g_hm_load_active = 0;
    g_hm_load_left = 0;
    g_hm_load_dirty = 1;
@@ -2223,7 +2364,7 @@ static void shell_home(const char *rom_dir, int cur, int n, int n_scan,
       hm_ease(&g_hm_pic.old_a, 0.0f, 0.2f);
       if (g_hm_pic.old_a <= 0.5f)
       {
-         vs_img_free(g_hm_pic.old);
+         hm_still_spare_put(g_hm_pic.old, g_hm_pic.old_w, g_hm_pic.old_h);
          g_hm_pic.old = NULL;
       }
    }
@@ -2548,6 +2689,7 @@ static void home_free(void)
 {
    int i;
    menu_load_pause();
+   artfetch_nav_busy(0);
    if (++g_hm_generation == 0) ++g_hm_generation;
    memset(g_hm_meta, 0, sizeof(g_hm_meta));
    memset(g_hm_epoch, 0, sizeof(g_hm_epoch));
@@ -2563,6 +2705,8 @@ static void home_free(void)
       memset(&g_hm_tile[i], 0, sizeof(g_hm_tile[i]));
       g_hm_tile[i].rom = -1;
    }
+   hm_tile_pool_clear();
+   hm_still_spare_drop();
    if (g_hm_pic.img)
       vs_img_free(g_hm_pic.img);
    if (g_hm_pic.old)

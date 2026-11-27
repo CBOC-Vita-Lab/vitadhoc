@@ -234,6 +234,7 @@ static int g_draw_core = 1;
  * claimed and was then preempted in would hold the drawing thread up for the rest of the emulated frame. */
 static std::atomic<int> g_emu_busy(0);
 static std::atomic<int> g_help_on_core0[3];
+static std::atomic<int> g_help_deferred[3];
 
 static void core4_repin(const char *why)
 {
@@ -316,7 +317,7 @@ static unsigned g_serial_seen, g_up_serial;
 static int g_crop_top, g_crop_bot, g_crop_cand_top, g_crop_cand_bot, g_crop_votes;
 static int g_have_picture;
 static unsigned g_fence_skips;
-static std::atomic<unsigned> g_scale_us(0), g_scale_pics(0), g_scale_nonflat(0), g_scale_helped(0), g_scale_waits(0), g_scale_blocks(0), g_scale_blocks_done(0), g_scale_blocks_moved(0);   /* the drawing thread's scaler, per second */
+static std::atomic<unsigned> g_scale_us(0), g_scale_pics(0), g_scale_max_us(0), g_scale_nonflat(0), g_scale_helped(0), g_scale_waits(0), g_scale_blocks(0), g_scale_blocks_done(0), g_scale_blocks_moved(0);   /* the drawing thread's scaler, per second */
 static std::atomic<int> g_scale_last(0);     /* the scaler of the last picture (pk::ScalerKind), for the log */
 /* PS TV or handheld: asked once (the answer cannot change while the player runs), not on every picture */
 static bool console_is_tv() { static int v = -1; if (v < 0) v = sceKernelIsPSVitaTV() ? 1 : 0; return v == 1; }
@@ -510,13 +511,37 @@ static unsigned job_wait_done(int nch)
 	return waits;
 }
 
+static inline void emu_idle_wake_helpers(void)
+{
+	g_emu_busy.store(0, std::memory_order_seq_cst);
+	for (int i = 0; i < g_help_n; i++) {
+		if (g_help_deferred[i].load(std::memory_order_seq_cst) &&
+		    g_help_deferred[i].exchange(0, std::memory_order_seq_cst))
+			sceKernelSignalSema(g_help_sema[i], 1);
+	}
+}
+
 static int help_thread(SceSize, void *argp)
 {
 	const int idx = *(int *) argp;
 	while (!g_help_stop) {
 		sceKernelWaitSema(g_help_sema[idx], 1, NULL);
-		if (g_help_stop) break;
-		job_work(g_help_scratch[idx], true, g_help_on_core0[idx].load(std::memory_order_relaxed) != 0, idx + 1);
+		for (;;) {
+			if (g_help_stop) return sceKernelExitThread(0);
+			const bool low = g_help_on_core0[idx].load(std::memory_order_relaxed) != 0;
+			if (low && g_emu_busy.load(std::memory_order_seq_cst)) {
+				/* main is mid-frame (e.g. sleeping on a VDP/FM join): defer so we don't lose the wakeup token */
+				g_help_deferred[idx].store(1, std::memory_order_seq_cst);
+				if (g_emu_busy.load(std::memory_order_seq_cst)) break;
+				g_help_deferred[idx].store(0, std::memory_order_relaxed);
+			}
+			job_work(g_help_scratch[idx], true, low, idx + 1);
+			if (low) {
+				const uint64_t st = g_job.state.load(std::memory_order_acquire);
+				if ((uint32_t) (st & 0xFFFFu) < (uint32_t) ((st >> 16) & 0x3FFFu)) continue;
+			}
+			break;
+		}
 	}
 	return sceKernelExitThread(0);
 }
@@ -530,7 +555,8 @@ static void help_start(int n_wanted)
 		if (!s) break;
 		char nm[16];
 		snprintf(nm, sizeof nm, "md_scale%d", i);
-		g_help_on_core0[i] = s->mask == (unsigned) SCE_KERNEL_CPU_MASK_USER_0;
+		g_help_on_core0[i].store(s->mask == (unsigned) SCE_KERNEL_CPU_MASK_USER_0 ? 1 : 0, std::memory_order_relaxed);
+		g_help_deferred[i].store(0, std::memory_order_relaxed);
 		g_help_sema[i] = sceKernelCreateSema(nm, 0, 0, 1 << 16, NULL);
 		if (g_help_sema[i] < 0) break;
 		g_help_thread[i] = sceKernelCreateThread(nm, help_thread, s->prio, 0x10000, 0, s->mask, NULL);
@@ -702,7 +728,10 @@ static int video_upload(const pic_settings &ps, int frame_no, const Pic &s0, con
 			const uint64_t t0 = sceKernelGetProcessTimeWide();
 			const unsigned nf = scale_picture(kind, scaler_src, w, h, scaler_pitch_px, (uint16_t *) vita2d_texture_get_datap(st),
 			    (int) (vita2d_texture_get_stride(st) / 2), g_scaled_sync[si]);
-			g_scale_us.fetch_add((unsigned) (sceKernelGetProcessTimeWide() - t0));
+			const unsigned sc_dt = (unsigned) (sceKernelGetProcessTimeWide() - t0);
+			g_scale_us.fetch_add(sc_dt);
+			unsigned pm = g_scale_max_us.load(std::memory_order_relaxed);
+			while (sc_dt > pm && !g_scale_max_us.compare_exchange_weak(pm, sc_dt, std::memory_order_relaxed)) {}
 			g_scale_pics.fetch_add(1);
 			g_scale_nonflat.fetch_add(nf);
 			g_sc_i = si; g_sc_f = f;
@@ -1772,6 +1801,7 @@ int main(int argc, char **argv)
 	unsigned w16 = 0, w20 = 0, w25 = 0;
 	double hd_draw_ms = 0;
 	unsigned hd_repeated = 0, missed_refr = 0, pal_planned = 0;
+	unsigned hd_look_us0 = g_hd_cum_us.load(std::memory_order_relaxed), hd_look_n0 = g_hd_cum_n.load(std::memory_order_relaxed);
 	uint64_t stall_max_us = 0, work_max_us = 0;
 	unsigned s_w16 = 0, s_w20 = 0, s_w25 = 0;
 	double s_stall = 0, s_work = 0, s_agap = 0;
@@ -1873,14 +1903,14 @@ int main(int argc, char **argv)
 			g_ahead_an.armed = wide_run; g_ahead_an.done = false; g_ahead_an.us = 0;
 			if (wide_run) { g_ahead_an.frame = (uint32_t) emu_frame + 1; g_ahead_an.margin = g_pl->wide_margin(); g_ahead_an.S = g_wide_S; g_ahead_an.mt = frame_mt; }
 			uint64_t t0 = sceKernelGetProcessTimeWide();
-			g_emu_busy.store(1, std::memory_order_relaxed);
+			g_emu_busy.store(1, std::memory_order_seq_cst);
 			if (g_link) {
 				/* both players' buttons are needed for a frame: a late partner is a stall (no frame this refresh) */
 				const int lr = g_link->step((uint16_t) g_pl->link_pad());
-				if (lr == mdnet::STEP_OVER) { why = pk::EXIT_GAME_LIST; link_over = true; g_emu_busy.store(0, std::memory_order_relaxed); break; }
-				if (lr != mdnet::STEP_FRAME) { g_emu_busy.store(0, std::memory_order_relaxed); break; }
+				if (lr == mdnet::STEP_OVER) { why = pk::EXIT_GAME_LIST; link_over = true; emu_idle_wake_helpers(); break; }
+				if (lr != mdnet::STEP_FRAME) { emu_idle_wake_helpers(); break; }
 			} else g_pl->run_frame(render);
-			g_emu_busy.store(0, std::memory_order_relaxed);
+			emu_idle_wake_helpers();
 			uint64_t t1 = sceKernelGetProcessTimeWide();
 			const uint16_t *dpix = NULL;
 			int dw = 0, dh = 0, dpp = 0;
@@ -2009,6 +2039,12 @@ int main(int argc, char **argv)
 			prev_loop0 = 0;
 			sec_start = sceKernelGetProcessTimeWide();
 			frames_run = vblanks = 0;
+			emu_us = main_us = fetch_us = draw_us = finish_us = vwait_us = 0;
+			drawn = skipped = pic_fresh = not_rendered = 0;
+			hd_look_us0 = g_hd_cum_us.load(std::memory_order_relaxed);
+			hd_look_n0 = g_hd_cum_n.load(std::memory_order_relaxed);
+			hd_repeated = missed_refr = pal_planned = 0;
+			g_scale_us.exchange(0); g_scale_pics.exchange(0); g_scale_max_us.exchange(0);
 			continue;
 		}
 		if (fresh) pic_fresh++;
@@ -2072,7 +2108,7 @@ int main(int argc, char **argv)
 			if (g_pipe.box().census_line(now, hl, sizeof hl)) {
 				hd_draw_ms = g_hd_draw_us.exchange(0) / 1000.0;
 				const char *rp = strstr(hl, "repeated=");
-				hd_repeated = rp ? (unsigned) atoi(rp + 9) : 0;
+				hd_repeated += rp ? (unsigned) atoi(rp + 9) : 0;
 				logf_("%s draw_ms=%.1f\n", hl, hd_draw_ms);
 			}
 		}
@@ -2108,26 +2144,34 @@ int main(int argc, char **argv)
 				w16 = w20 = w25 = 0; stall_max_us = work_max_us = 0;
 				stats_pending = true;
 			}
-			const unsigned sc_us = g_scale_us.exchange(0), sc_pics = g_scale_pics.exchange(0), sc_nonflat = g_scale_nonflat.exchange(0),
-			    sc_help = g_scale_helped.exchange(0), sc_waits = g_scale_waits.exchange(0);
+			const unsigned sc_us = g_scale_us.exchange(0), sc_pics = g_scale_pics.exchange(0), sc_max_us = g_scale_max_us.exchange(0),
+			    sc_nonflat = g_scale_nonflat.exchange(0), sc_help = g_scale_helped.exchange(0), sc_waits = g_scale_waits.exchange(0);
+			const unsigned hd_cu = g_hd_cum_us.load(std::memory_order_relaxed), hd_cn = g_hd_cum_n.load(std::memory_order_relaxed);
+			const unsigned hd_us = hd_cu - hd_look_us0, hd_n = hd_cn - hd_look_n0;
+			hd_look_us0 = hd_cu; hd_look_n0 = hd_cn;
 			{
-				/* the look governor's second (costs as fractions of a 60 Hz refresh) */
-				const double budget = 16683.0, refr = vblanks > 0 ? vblanks : 1;
+				/* the look governor's second (costs as fractions of a 60 Hz refresh: emulation per emulated frame,
+				 * drawing and filter per drawn picture) */
+				const double budget = 16683.0;
 				pk::LookSecond ls;
 				ls.refreshes = vblanks;
 				ls.emu = frames_run ? (float) (emu_us / (double) frames_run / budget) : 0.f;
-				const double all_draw_us = g_hd_ok ? hd_draw_ms * 1000.0 : (double) (draw_us + fetch_us + finish_us);
-				ls.filter = (float) (sc_us / refr / budget);
-				ls.draw = (float) ((all_draw_us > sc_us ? all_draw_us - sc_us : 0.0) / refr / budget);
+				const unsigned pic_n = hd ? hd_n : drawn;
+				const double pic_draw_us = pic_n ? (hd ? (double) hd_us : (double) (draw_us + fetch_us + finish_us)) / (double) pic_n : 0.0;
+				const unsigned sc_denom = sc_pics > pic_n ? sc_pics : pic_n;
+				const double filter_us = sc_denom ? (double) sc_us / (double) sc_denom : 0.0;
+				ls.filter = (float) (filter_us / budget);
+				ls.draw = (float) ((pic_draw_us > filter_us ? pic_draw_us - filter_us : 0.0) / budget);
 				const unsigned planned = pal_planned;
 				pal_planned = 0;
 				/* a PAL game runs 5 frames in 6 refreshes: its cost per refresh is 49.7 / 59.94 of the cost per frame */
 				if (pal && !g_pl->pal_fast()) ls.emu *= (float) (frame_hz / vita_hz);
-				const unsigned late = g_hd_ok ? (hd_repeated > planned ? hd_repeated - planned : 0) : missed_refr;
+				const unsigned late = hd ? (hd_repeated > planned ? hd_repeated - planned : 0) : missed_refr;
 				ls.missed = (int) late;
 				ls.parallel = hd;
-				ls.pace_half = half;
-				g_pl->look_second(ls);
+				ls.pace_half = g_pl->pace_mode() == pk::PACE_HALF;
+				g_pl->look_second(ls, sc_max_us);
+				hd_repeated = 0;
 				missed_refr = 0;
 			}
 			{

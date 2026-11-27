@@ -3580,6 +3580,15 @@ static inline int lz_rom_has_block(u32 pc, u32 thumb)
   return 0;
 }
 
+#if defined(SMC_RANGE) && SMC_RANGE
+#ifndef SMC_RANGE_CARVE
+#define SMC_RANGE_CARVE (1536u * 1024u)
+#endif
+#define LZ_SMC_CARVE SMC_RANGE_CARVE
+#else
+#define LZ_SMC_CARVE 0u
+#endif
+
 /* Called by the drain: true when the exit was pointed at an island. */
 static int lz_try_island(u8 *src, u32 target, u32 thumb)
 {
@@ -3589,13 +3598,14 @@ static int lz_try_island(u8 *src, u32 target, u32 thumb)
     return 0;
   if (!(region == 0x0 || (region >= 0x8 && region <= 0xD)) || target == 8)
     return 0;
-  if (src < rom_translation_cache || src >= rom_translation_ptr)
-    return 0;                               /* a RAM block's exit: eager */
+  if (src < rom_translation_cache + rom_cache_watermark ||
+      src >= rom_translation_ptr)
+    return 0;                               /* a RAM or watermark block's exit: eager */
   if (lz_rom_has_block(target, thumb))
     return 0;                               /* already there: link it */
   if (rom_translation_ptr + LAZY_ISLAND_BYTES + 64 >
       rom_translation_cache + rom_translation_cache_size -
-      (1024u * 1024u) - TRANSLATION_CACHE_LIMIT_THRESHOLD)  /* SMC carve: conservative */
+      LZ_SMC_CARVE - TRANSLATION_CACHE_LIMIT_THRESHOLD)
     return 0;
   translation_ptr = rom_translation_ptr;
   if (thumb) { generate_lazy_exit_island(thumb, target, src); }
@@ -3754,7 +3764,7 @@ static bool process_deferred_exits(void)
 #define SMC_PARTIAL_DEFAULT 1
 #endif
 #ifndef SMC_RANGE_CARVE
-#define SMC_RANGE_CARVE (1024u * 1024u)
+#define SMC_RANGE_CARVE (1536u * 1024u)
 #endif
 /* One lookup can need a whole RAM cache of new code (see above), plus the
  * one block that is translated before the cache-full test finds it does not
@@ -3763,7 +3773,7 @@ static bool process_deferred_exits(void)
 #define SMCR_NOCODE    0xFFFFFFFFu
 #define SMCR_HASH_BITS 13
 #define SMCR_HASH_SIZE (1u << SMCR_HASH_BITS)
-#define SMCR_MAXVER    8          /* kept versions of one pc and mode */
+#define SMCR_MAXVER    256        /* kept versions of one pc and mode (LRU via MTF; holds multi-variant SMC mixers/engines) */
 #define SMCR_CAP_DESC  65536u     /* reclaim beyond these (bookkeeping) */
 #define SMCR_CAP_SRC   (4u << 20)
 #define SMCR_CAP_EXITS (256u * 1024u)
@@ -3787,6 +3797,7 @@ typedef struct
   u32 key;        /* canonical pc | thumb */
   u32 end;        /* block_end_pc */
   u32 src;        /* offset of the source copy in smcr_srcb */
+  u32 src_hash;   /* fast pre-filter hash of guest bytes [pc, end) */
   u32 code;       /* offset of the entry from smcr_base, or SMCR_NOCODE */
   u32 s_body;     /* bytes up to the end of the last instruction */
   u32 s_total;    /* bytes emitted */
@@ -4230,19 +4241,68 @@ static void smcr_depth0(void)
     smcr_verify_state("lookup");
 }
 
-/* A kept translation of exactly the current bytes at pc, mode: index+1. */
+static u32 smcr_hash_bytes(u32 h, const u8 *p, u32 len)
+{
+  while (len >= 4) {
+    u32 w;
+    memcpy(&w, p, 4);
+    h = (h ^ w) * 2654435761u;
+    p += 4;
+    len -= 4;
+  }
+  while (len--)
+    h = (h ^ *p++) * 16777619u;
+  return h;
+}
+
+static u32 smcr_mem_hash(u32 pc, u32 len)
+{
+  u8 *a, *b;
+  u32 n, h = 2166136261u ^ len;
+  smcr_mem_pieces(pc, len, &a, &n, &b);
+  h = smcr_hash_bytes(h, a, n);
+  if (len > n)
+    h = smcr_hash_bytes(h, b, len - n);
+  return h;
+}
+
+/* A kept translation of exactly the current bytes at pc, mode: index+1.
+ * Moves hits to the head of the hash chain so active versions are found in
+ * O(1) and smcr_trim() evicts true LRU versions rather than oldest-compiled. */
 static u32 smcr_find(u32 pc, u32 thumb, u32 *versions)
 {
   u32 key = pc | thumb, i;
+  u32 h = smcr_hashf(key);
+  u32 *link = &smcr_hash[h];
+  u32 cached_len = 0, cached_hash = 0;
   *versions = 0;
-  for (i = smcr_hash[smcr_hashf(key)]; i; i = smcr_d[i - 1].next) {
-    const smcr_desc *d = &smcr_d[i - 1];
-    if (d->key != key)
+  while ((i = *link) != 0) {
+    smcr_desc *d = &smcr_d[i - 1];
+    u32 len;
+    if (d->key != key) {
+      link = &d->next;
       continue;
+    }
     (*versions)++;
-    if (d->s_in == smcr_vb_get(d->nins - 1) &&
-        !smcr_mem_cmp(pc, smcr_srcb + d->src, d->end - pc))
+    if (d->s_in != smcr_vb_get(d->nins - 1)) {
+      link = &d->next;
+      continue;
+    }
+    len = d->end - pc;
+    if (len != cached_len) {
+      cached_len = len;
+      cached_hash = smcr_mem_hash(pc, len);
+    }
+    if (d->src_hash == cached_hash &&
+        !smcr_mem_cmp(pc, smcr_srcb + d->src, len)) {
+      if (link != &smcr_hash[h]) {
+        *link = d->next;
+        d->next = smcr_hash[h];
+        smcr_hash[h] = i;
+      }
       return i;
+    }
+    link = &d->next;
   }
   return 0;
 }
@@ -4362,6 +4422,7 @@ static u32 smcr_translate(u32 pc, u32 thumb, u32 redo)
     d->gate = smcr_last_gate;
     d->nins = len / (thumb ? 2 : 4);
     d->s_in = smcr_vb_get(d->nins - 1);
+    d->src_hash = smcr_mem_hash(pc, len);
     smcr_mem_read(smcr_srcb + smcr_nsrc, pc, len);
     smcr_nsrc += len;
     for (i = 0; i < d->nins; i++)
@@ -5624,7 +5685,8 @@ static void lz_link(u8 *src, u8 *ret, u32 gen)
       ret == BLOCK_LOOKUP_UNMAPPABLE ||
       ret < rom_translation_cache + rom_cache_watermark ||
       ret >= rom_translation_ptr ||
-      src < rom_translation_cache || src >= rom_translation_ptr)
+      src < rom_translation_cache + rom_cache_watermark ||
+      src >= rom_translation_ptr)
     return;
   generate_branch_patch_unconditional(src, ret);
   JCTR_SYNC(src, src + 8);
@@ -7030,7 +7092,14 @@ void init_bios_hooks(void)
 #ifdef DRPROF_TWIN
   drprof_stub_end = rom_translation_ptr;   /* emitter stubs end here */
 #endif
-  bios_swi_entrypoint = block_lookup_address_arm(0x8);
+  {
+    /* Permanent BIOS SWI hook lives below rom_cache_watermark: always link
+     * its exits eagerly so a ROM flush can never invalidate its target. */
+    u32 saved_lazy = jit_lazy_exits;
+    jit_lazy_exits = 0;
+    bios_swi_entrypoint = block_lookup_address_arm(0x8);
+    jit_lazy_exits = saved_lazy;
+  }
   rom_cache_watermark = (u32)(rom_translation_ptr - rom_translation_cache);
 #ifdef JIT_CODE_DISCIPLINE
   /* The STUB zone now ends here and is immutable until the next rebuild. */

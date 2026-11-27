@@ -40,6 +40,10 @@
 #include <strings.h>
 #include <stdint.h>
 #include <sys/stat.h>
+#if defined(VITA) || defined(__unix__) || defined(__APPLE__)
+#include <dirent.h>
+#include <errno.h>
+#endif
 #include "state_slots.h"
 
 /* The folder name the states of a console live in. */
@@ -302,6 +306,60 @@ static inline void sidecar_move_file(const char *from, const char *to,
       m->failed++;                /* the old one stays and is read from */
 }
 
+#if defined(VITA) || defined(__unix__) || defined(__APPLE__)
+/* Map a legacy sidecar suffix starting at '.' to its bit index in [0, 52]:
+ *   0..49  : .st<0..9> + { "", ".thumb", ".shot", ".p2", ".old" }
+ *   50..52 : .rsm      + { "", ".pt", ".old" }
+ * Returns -1 for anything else. */
+static inline int sidecar_suffix_idx(const char *s)
+{
+   if (!s || s[0] != '.')
+      return -1;
+   if ((s[1] | 0x20) == 's' && (s[2] | 0x20) == 't' &&
+       s[3] >= '0' && s[3] <= '9')
+   {
+      int slot0 = s[3] - '0';
+      const char *rest = s + 4;
+      int t = -1;
+      if (!rest[0])                       t = 0;
+      else if (!strcasecmp(rest, ".thumb")) t = 1;
+      else if (!strcasecmp(rest, ".shot"))  t = 2;
+      else if (!strcasecmp(rest, ".p2"))    t = 3;
+      else if (!strcasecmp(rest, ".old"))   t = 4;
+      return t >= 0 ? slot0 * 5 + t : -1;
+   }
+   if ((s[1] | 0x20) == 'r' && (s[2] | 0x20) == 's' &&
+       (s[3] | 0x20) == 'm')
+   {
+      const char *rest = s + 4;
+      if (!rest[0])                    return 50;
+      if (!strcasecmp(rest, ".pt"))    return 51;
+      if (!strcasecmp(rest, ".old"))   return 52;
+   }
+   return -1;
+}
+
+/* Non-zero if `name` is any legacy .st0..st9 / .rsm sidecar file (for any
+ * game), used to decide whether a scanned directory can be cached as clean. */
+static inline int sidecar_name_is_state(const char *name)
+{
+   const char *d1 = strrchr(name, '.');
+   if (!d1)
+      return 0;
+   if (sidecar_suffix_idx(d1) >= 0)
+      return 1;
+   if (d1 > name)
+   {
+      const char *p = d1 - 1;
+      while (p > name && *p != '.')
+         p--;
+      if (*p == '.' && sidecar_suffix_idx(p) >= 0)
+         return 1;
+   }
+   return 0;
+}
+#endif
+
 /* Everything older versions made for one game and console: all ten slots with
  * their pictures, the link pair file and the old-state copy, and Continue
  * with its patch note.  `old1` / `new1` are the two slot-1 paths. */
@@ -313,23 +371,160 @@ static inline void sidecar_migrate(const char *old1, const char *new1,
    char a[PSP_FILE_PATH_CAP + 16], b[PSP_FILE_PATH_CAP + 16];
    char sa[PSP_FILE_PATH_CAP], sb[PSP_FILE_PATH_CAP];
    unsigned slot, t;
+   uint64_t match_mask = ~0ull;
    memset(m, 0, sizeof(*m));
    if (!old1 || !new1 || !strcmp(old1, new1))
       return;
+#if defined(VITA) || defined(__unix__) || defined(__APPLE__)
+   /* On Vita FAT32, 53 blind stat() calls in a 1000-file ROM folder stall for
+    * 10-45 s per new game.  Scan old_dir once with opendir()/readdir() and
+    * remember up to 16 directories that contain zero legacy sidecar files so
+    * subsequent games in those folders issue 0 syscalls. */
+   {
+      enum { SIDECAR_CLEAN_CAP = 16 };
+      static struct
+      {
+         unsigned hash;
+         size_t   len;
+         time_t   mtime;
+         off_t    size;
+         char     dir[PSP_FILE_PATH_CAP];
+      } clean[SIDECAR_CLEAN_CAP];
+      static unsigned clean_n, clean_next;
+
+      const char *sl = strrchr(old1, '/');
+      const char *fname, *dot;
+      char old_dir[PSP_FILE_PATH_CAP];
+      size_t dir_len = 0, stem_len = 0;
+
+      if (!sl)
+         sl = strrchr(old1, ':');
+      if (sl)
+      {
+         if (*sl == ':')
+            dir_len = (size_t)(sl - old1) + 1;
+         else if (sl == old1)
+            dir_len = 1;
+         else
+            dir_len = (size_t)(sl - old1);
+         fname = sl + 1;
+      }
+      else
+      {
+         old_dir[0] = '.';
+         old_dir[1] = '\0';
+         dir_len = 1;
+         fname = old1;
+      }
+      dot = strrchr(fname, '.');
+      if (dot && dot > fname && dir_len < sizeof(old_dir))
+      {
+         unsigned h, i;
+         struct stat dst;
+         int have_dst;
+         DIR *d;
+         if (sl)
+         {
+            memcpy(old_dir, old1, dir_len);
+            old_dir[dir_len] = '\0';
+         }
+         stem_len = (size_t)(dot - fname);
+         h = sidecar_dir_hash(old_dir, dir_len);
+         have_dst = stat(old_dir, &dst) == 0;
+         if (!have_dst && (errno == ENOENT || errno == ENOTDIR))
+            return;
+         if (have_dst)
+         {
+            for (i = 0; i < clean_n; i++)
+               if (clean[i].hash == h && clean[i].len == dir_len &&
+                   clean[i].mtime == dst.st_mtime && clean[i].size == dst.st_size &&
+                   !memcmp(clean[i].dir, old_dir, dir_len))
+                  return;
+         }
+         d = opendir(old_dir);
+         if (d)
+         {
+            struct dirent *ent;
+            int dir_has_any = 0, rd_err = 0;
+            uint64_t scanned_mask = 0ull;
+            errno = 0;
+            while ((ent = readdir(d)) != NULL)
+            {
+               const char *nm = ent->d_name;
+               size_t nlen;
+               if (nm[0] == '.' && (!nm[1] || (nm[1] == '.' && !nm[2])))
+                  continue;
+               nlen = strlen(nm);
+               if (nlen > stem_len && nm[stem_len] == '.' &&
+                   !strncasecmp(nm, fname, stem_len))
+               {
+                  int bit = sidecar_suffix_idx(nm + stem_len);
+                  if (bit >= 0)
+                  {
+                     scanned_mask |= (1ull << (unsigned)bit);
+                     dir_has_any = 1;
+                  }
+               }
+               if (!dir_has_any && sidecar_name_is_state(nm))
+                  dir_has_any = 1;
+               errno = 0;
+            }
+            rd_err = errno;
+            closedir(d);
+            if (!rd_err)
+            {
+               match_mask = scanned_mask;
+               if (!dir_has_any && have_dst)
+               {
+                  unsigned dst_slot = clean_n;
+                  for (i = 0; i < clean_n; i++)
+                     if (clean[i].hash == h && clean[i].len == dir_len &&
+                         !memcmp(clean[i].dir, old_dir, dir_len))
+                     {
+                        dst_slot = i;
+                        break;
+                     }
+                  if (dst_slot == clean_n)
+                  {
+                     dst_slot = clean_next;
+                     clean_next = (clean_next + 1u) % SIDECAR_CLEAN_CAP;
+                     if (clean_n < SIDECAR_CLEAN_CAP)
+                        clean_n++;
+                  }
+                  clean[dst_slot].hash = h;
+                  clean[dst_slot].len = dir_len;
+                  clean[dst_slot].mtime = dst.st_mtime;
+                  clean[dst_slot].size = dst.st_size;
+                  memcpy(clean[dst_slot].dir, old_dir, dir_len + 1);
+               }
+               if (!match_mask)
+                  return;
+            }
+         }
+         else if (errno == ENOENT || errno == ENOTDIR)
+            return;
+      }
+   }
+#endif
    for (slot = 1; slot <= PSP_STATE_SLOT_COUNT; slot++)
    {
+      if ((match_mask & (0x1Full << ((slot - 1u) * 5u))) == 0)
+         continue;
       if (psp_state_path_for_slot(sa, sizeof(sa), old1, slot) != 0 ||
           psp_state_path_for_slot(sb, sizeof(sb), new1, slot) != 0)
          continue;
       for (t = 0; t < sizeof(tail) / sizeof(tail[0]); t++)
-         if (snprintf(a, sizeof(a), "%s%s", sa, tail[t]) < (int)sizeof(a) &&
+         if ((match_mask & (1ull << ((slot - 1u) * 5u + t))) &&
+             snprintf(a, sizeof(a), "%s%s", sa, tail[t]) < (int)sizeof(a) &&
              snprintf(b, sizeof(b), "%s%s", sb, tail[t]) < (int)sizeof(b))
             sidecar_move_file(a, b, m);
    }
-   if (psp_state_resume_path(sa, sizeof(sa), old1) == 0 &&
+   if ((match_mask & (0x7ull << 50u)) &&
+       psp_state_resume_path(sa, sizeof(sa), old1) == 0 &&
        psp_state_resume_path(sb, sizeof(sb), new1) == 0)
       for (t = 0; t < sizeof(rtail) / sizeof(rtail[0]); t++)
-         if (snprintf(a, sizeof(a), "%s%s", sa, rtail[t]) < (int)sizeof(a) &&
+         if ((match_mask & (1ull << (50u + t))) &&
+             snprintf(a, sizeof(a), "%s%s", sa, rtail[t]) < (int)sizeof(a) &&
              snprintf(b, sizeof(b), "%s%s", sb, rtail[t]) < (int)sizeof(b))
             sidecar_move_file(a, b, m);
 }

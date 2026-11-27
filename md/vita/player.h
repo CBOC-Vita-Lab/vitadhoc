@@ -132,9 +132,9 @@ public:
 	 * (remembered for the game, <root>/look/<console>/..), and given back when there is room. A scaler chosen by hand in the Pixel
 	 * art scaler row is never eased. picture() is the look to show: the settings with the governor's steps applied (tier_steps). */
 	void look_start(int mhz);
-	void look_second(const pk::LookSecond &s);
+	void look_second(const pk::LookSecond &s, uint32_t filter_max_us = 0);
 	void look_safe_point(pk::LookSafe k);
-	void look_reset_window() { look_.reset_window(); }
+	void look_reset_window() { look_.reset_window(); look_pace_reset(); }
 	const pk::LookGovernor &look() const { return look_; }
 	int look_ceiling_tier() const { return look_ceiling_; }
 
@@ -346,6 +346,9 @@ private:
 	void look_sync_rows();
 	void look_apply(const char *why);
 	void look_save(bool final_);
+	void look_pace_reset();
+	unsigned look_drawn_ = 0, look_over_ = 0, look_over_rec_ = 0, look_over_rec_prev_ = 0;
+	int pace_half_secs_ = 0;
 
 	Platform *pf_;
 	Writer writer_;

@@ -87,6 +87,10 @@ enum
  * Vita).  A missing database is not an error: games then have only the
  * player's own files.  Returns the number of games in it, or 0. */
 int  cheats_db_open(const char *path);
+/* Record the database path without opening it until first queried. */
+void cheats_db_open_later(const char *path);
+/* Non-zero while the loaded game's database lookup is still deferred. */
+int  cheats_db_pending(void);
 /* The database's name for the running game ("Pokemon - Emerald Version
  * (USA, Europe)"), or "" when it is not in the database. */
 const char *cheats_db_game(void);

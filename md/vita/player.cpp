@@ -1281,6 +1281,7 @@ int MdPlayer::speed_plan(int normal)
 		/* the pacing and the look governor start afresh at both ends: what they measured is not what a normal frame costs */
 		pacer_.reset(PACE_FULL);
 		look_.reset_window();
+		look_pace_reset();
 		speed_.take_ended();
 		speed_was_busy_ = b;
 	}
@@ -1363,6 +1364,10 @@ bool MdPlayer::want_render(uint32_t frame) const
 void MdPlayer::drawn_cost(uint32_t cost_us)
 {
 	if (speed_.busy()) return;           /* fast forward and rewind cost a multiple of a frame: the pacer would only back off */
+	look_drawn_++;
+	const pk::PaceConfig &pc = pacer_.config();
+	if (cost_us > pc.budget_us) look_over_++;
+	if (cost_us > (uint32_t) ((uint64_t) pc.budget_us * (uint64_t) pc.recover_pct / 100u)) look_over_rec_++;
 	if (!steady_) { pacer_.add(cost_us); return; }
 	bool changed = false;
 	PaceMode m = pacer_.add(cost_us, &changed);
@@ -1693,6 +1698,7 @@ void MdPlayer::open_menu(int player)
 	/* the battery RAM is written once the menu is on screen (menu_drawn), on the writer thread */
 	menu_srm_pending_ = md_host_sram_dirty() != 0;
 	pacer_.reset(PACE_FULL);
+	look_pace_reset();
 	look_save(false);
 }
 
@@ -1712,6 +1718,7 @@ MenuEvent MdPlayer::menu_update(const MenuInput &in)
 		if (settings_dirty_) settings_queue_save();
 		srm_recheck_ = true;
 		pacer_.reset(PACE_FULL);
+		look_pace_reset();
 		look_safe_point(LOOK_SAFE_MENU);
 		if (ev == MENU_RESET_DONE) notice(tr("player.the_game_was_reset"), NOTICE_INFO);
 	}
@@ -1808,7 +1815,7 @@ void MdPlayer::on_change(int row, int v)
 	case ROW_RAMCART: ram_cart_ = clampi(v, 0, 6); notice(tr("md.the_ram_cartridge_changes_when_the_game"), NOTICE_OK); break;
 	case ROW_FM: fm_ = clampi(v, 0, 2); md_host_set_option("fm", fm_); break;
 	case ROW_YM2413: ym2413_ = clampi(v, 0, 2); md_host_set_option("ym2413", ym2413_); break;
-	case ROW_STEADY: steady_ = v != 0; pacer_.set_enabled(steady_); break;
+	case ROW_STEADY: steady_ = v != 0; pacer_.set_enabled(steady_); if (!steady_) look_pace_reset(); break;
 	case ROW_HANDOFF: handoff_ = v != 0; break;
 	case ROW_PALSPEED: pal_mode_ = pk::pal_mode_of(v); break;
 	case ROW_LOOK: look_mode_ = clampi(v, 0, 2); qsync_ = true; break;       /* no row any more: the launch file and the tests */
@@ -1857,6 +1864,7 @@ bool MdPlayer::restore_state(const uint8_t *data, size_t n)
 	srm_recheck_ = true;
 	jumps_++;
 	pacer_.reset(PACE_FULL);
+	look_pace_reset();
 	speed_.state_changed();              /* "a moment ago" is another timeline now */
 	if (r == 0 && scd_ && discs_.size() > 1 && !disc_phase_) sync_disc_row();      /* the state's disc is in the drive now */
 	return r == 0;
@@ -1932,7 +1940,7 @@ bool MdPlayer::queue_state_write(StateJob &job)
  * replaces with what it learns. To add a rung: a line here and its effect in look_apply(). */
 static const LookRung kLookLadder[] = {
 	{ "xBR 3x -> 2x", MdPlayer::ROW_SCALER, 0.10f, 25 },
-	{ "xBR 2x -> sharp", MdPlayer::ROW_SCALER, 0.20f, 45 },
+	{ "xBR 2x -> sharp", MdPlayer::ROW_SCALER, 0.55f, 45 },
 };
 
 /* a row on Auto is the governor's; a row set to something else is the player's, by hand */
@@ -1968,9 +1976,16 @@ void MdPlayer::look_apply(const char *why)
 	}
 }
 
+void MdPlayer::look_pace_reset()
+{
+	look_drawn_ = look_over_ = look_over_rec_ = look_over_rec_prev_ = 0;
+	pace_half_secs_ = 0;
+}
+
 void MdPlayer::look_start(int mhz)
 {
 	look_bad_ = false;
+	look_pace_reset();
 	look_mhz_ = mhz;
 	md_video_info vi;
 	md_host_video_info(&vi);
@@ -1995,21 +2010,53 @@ void MdPlayer::look_start(int mhz)
 	logf("look: governor on (ceiling tier %d, %d rungs), memory %s, mask=%u\n", look_ceiling_, rungs, had ? "loaded" : "none", look_.mask());
 }
 
-void MdPlayer::look_second(const LookSecond &s)
+void MdPlayer::look_second(const LookSecond &s0, uint32_t filter_max_us)
 {
+	const unsigned drawn = look_drawn_, over = look_over_, over_rec = look_over_rec_;
+	look_drawn_ = look_over_ = look_over_rec_ = 0;
 	if (!look_on_) return;
-	if (speed_.busy() || speed_was_busy_) { look_.reset_window(); return; }     /* fast forward / rewind seconds are no measure of the look */
-	look_bad_ = pk::LookGovernor::load_of(s) >= look_.config().bad_load;
+	if (speed_.busy() || speed_was_busy_) { look_.reset_window(); look_pace_reset(); return; }     /* fast forward / rewind seconds are no measure of the look */
+	if (s0.refreshes < LOOK_MIN_REFRESHES) { look_over_rec_prev_ = 0; return; }
+	LookSecond s = s0;
+	const bool half = s.pace_half || pacer_.mode() == PACE_HALF;
+	s.pace_half = half;
+	pace_half_secs_ = half ? pace_half_secs_ + 1 : 0;
+	if (half && drawn > 0 && over > 0) {
+		/* drawn frames over budget would have missed at 60 Hz even though half mode's repeats are planned */
+		const int pm = (int) ((uint64_t) over * (uint64_t) s.refreshes / (uint64_t) drawn);
+		if (pm > s.missed) s.missed = pm;
+	}
+	const int need_miss = (s.refreshes + 9) / 10;       /* 10% (LookConfig::bad_miss) */
+	/* steady pacing needs recover_ms (3 s) below recover_pct (80%) to leave half mode; if half mode persists
+	 * past that with frames still over recover_pct, pacing is trapped at 30 Hz and the look must ease */
+	const bool pace_blocked = half && ((pace_half_secs_ >= 4 && over_rec > 0) || (pace_half_secs_ >= 6 && look_over_rec_prev_ > 0));
+	if (pace_blocked && s.missed < need_miss) s.missed = need_miss;
+	if (half && s.filter > 0.f && filter_max_us > 0 && (pace_blocked || s.missed >= need_miss)) {
+		/* high-variance scalers (ScaleCache) can average under 80% while peak frames block pacing recovery:
+		 * report the blocking scaler peak (capped) so LookGovernor's learned saving prevents flapping back up */
+		float peak_f = (float) filter_max_us / (float) pacer_.config().budget_us;
+		if (peak_f > 1.20f) peak_f = 1.20f;
+		if (peak_f > s.filter) s.filter = peak_f;
+	}
+	look_over_rec_prev_ = over_rec;
+	look_bad_ = pk::LookGovernor::load_of(s) >= look_.config().bad_load || (s.refreshes > 0 && s.missed >= need_miss);
 	const bool changed = look_.second(s);
 	char line[400];
 	if (look_.census_line(line, sizeof line)) logf("%s\n", line);
-	if (changed || look_.generation() != look_gen_) look_apply("second");
+	if (changed || look_.generation() != look_gen_) {
+		look_apply("second");
+		if (changed) look_pace_reset();
+	}
 }
 
 void MdPlayer::look_safe_point(LookSafe k)
 {
 	if (!look_on_) return;
-	if (look_.safe_point(k) || look_.generation() != look_gen_) look_apply("safe point");
+	const bool changed = look_.safe_point(k);
+	if (changed || look_.generation() != look_gen_) {
+		look_apply("safe point");
+		if (changed) look_pace_reset();
+	}
 }
 
 /* the game's memory, on the writer thread, only when it differs from what is on the card */

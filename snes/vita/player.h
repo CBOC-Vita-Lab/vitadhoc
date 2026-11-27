@@ -131,11 +131,12 @@ public:
 	enum { LOOK_SCALER = 0, LOOK_ILACE, LOOK_HIRES };   /* rung ids = positions in the ladder (player.cpp) */
 	/* the game starts: the CPU clock in MHz now (the remembered look is for one clock); call once, before the first frame */
 	void look_start(int mhz);
-	/* once a second of play (not while a menu, pause or load is up): the costs are fractions of one refresh (1 = 16.7 ms) */
-	void look_second(const pk::LookSecond &s);
+	/* once a second of play (not while a menu, pause or load is up): the costs are fractions of one refresh (1 = 16.7 ms);
+	 * `filter_max_us` is the slowest scaled picture of the second (0 when unmeasured) */
+	void look_second(const pk::LookSecond &s, uint32_t filter_max_us = 0);
 	/* after the menu closed, a scene change or blank frames: a change that waited for one is applied now */
 	void look_safe_point(pk::LookSafe k);
-	void look_reset_window() { look_.reset_window(); }
+	void look_reset_window() { look_.reset_window(); look_pace_reset(); }
 	const pk::LookGovernor &look() const { return look_; }
 
 	/* ---- every frame while the game runs ---- */
@@ -335,6 +336,8 @@ private:
 	void look_sync_rows();
 	void look_apply(const char *why);
 	void look_save(bool final_);
+	void look_pace_reset();
+	unsigned look_drawn_ = 0, look_over_ = 0, look_over_rec_ = 0, look_over_rec_prev_ = 0;
 	bool settings_dirty_ = false;
 	bool steady_ = true;
 	bool handoff_ = true;

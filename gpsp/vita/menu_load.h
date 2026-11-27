@@ -83,6 +83,10 @@ int menu_load_shutdown(uint32_t timeout_us);
 /* A picture was written to boxart/, hero/, scenes/, titles/ or cache/:
  * the loader's names of those folders are read again (menu_files.c). */
 void menu_files_art_changed(void);
+/* Incremental notification that a single file at `path` was just created
+ * inside a picture folder: inserts its name into the worker's index without
+ * invalidating the whole 7-directory cache. Thread-safe and lock-free. */
+void menu_files_art_added(const char *path);
 
 typedef struct menu_load_diag
 {

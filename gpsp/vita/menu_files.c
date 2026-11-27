@@ -290,7 +290,7 @@ static int mf_stat(const char *path, char *stamp)
  * opened.  Anything the app writes there (artfetch, the cover picker)
  * calls menu_files_art_changed: the names are then not trusted until they
  * are read again (at most every 5 s), and the opens are made as before. */
-#define PIX_N 16384u                     /* a power of two */
+#define PIX_N 32768u                     /* a power of two */
 static const char *const k_pix_dirs[] = { "boxart", "hero", "scenes", "titles",
                                           SIDECAR_THUMB_DIR,
                                           SIDECAR_ART_CACHE "/boxart",
@@ -305,9 +305,41 @@ static int g_pix_ok;
 static unsigned g_art_gen = 1;           /* bumped by any writer (atomic) */
 static uint32_t g_pix_skips;
 
+/* Lock-free incremental additions from artfetch/writers so downloading covers
+ * keeps g_pix hot instead of triggering 5 s of blind FAT32 misses. */
+#define PIX_ADD_CAP 128u
+static uint64_t g_pix_add[PIX_ADD_CAP];
+static unsigned g_pix_add_any;
+
+static uint64_t pix_hash(const char *s, size_t n);
+
 void menu_files_art_changed(void)
 {
    __atomic_add_fetch(&g_art_gen, 1u, __ATOMIC_RELAXED);
+}
+
+void menu_files_art_added(const char *path)
+{
+   uint64_t h;
+   unsigned i;
+   if (!path || !path[0])
+   {
+      menu_files_art_changed();
+      return;
+   }
+   h = pix_hash(path, strlen(path));
+   for (i = 0; i < PIX_ADD_CAP; i++)
+   {
+      uint64_t expected = 0;
+      if (__atomic_compare_exchange_n(&g_pix_add[i], &expected, h, 0,
+                                      __ATOMIC_RELEASE, __ATOMIC_RELAXED))
+      {
+         __atomic_store_n(&g_pix_add_any, 1u, __ATOMIC_RELEASE);
+         return;
+      }
+   }
+   /* Overflow: fall back to full cache invalidation. */
+   menu_files_art_changed();
 }
 
 static uint64_t pix_hash(const char *s, size_t n)
@@ -334,9 +366,22 @@ static int pix_put(uint64_t h)
    return 0;
 }
 
+static void pix_drain_added(void)
+{
+   unsigned i;
+   if (!__atomic_exchange_n(&g_pix_add_any, 0u, __ATOMIC_ACQ_REL))
+      return;
+   for (i = 0; i < PIX_ADD_CAP; i++)
+   {
+      uint64_t h = __atomic_exchange_n(&g_pix_add[i], 0u, __ATOMIC_ACQ_REL);
+      if (h && g_pix_ok && pix_put(h) != 0)
+         g_pix_ok = 0;
+   }
+}
+
 static void pix_build(const char *root)
 {
-   unsigned k;
+   unsigned k, i;
    char dir[ML_PATH], full[ML_PATH + 256];
    g_pix_ok = 0;
    if (!g_pix && !(g_pix = (uint64_t *)calloc(PIX_N, sizeof(uint64_t))))
@@ -344,6 +389,11 @@ static void pix_build(const char *root)
    memset(g_pix, 0, PIX_N * sizeof(uint64_t));
    g_pix_n = 0;
    g_pix_gen = __atomic_load_n(&g_art_gen, __ATOMIC_RELAXED);
+   /* Clear stale pre-build incremental hints; anything added during the scan
+    * stays visible on the next pix_drain_added(). */
+   __atomic_store_n(&g_pix_add_any, 0u, __ATOMIC_RELEASE);
+   for (i = 0; i < PIX_ADD_CAP; i++)
+      __atomic_store_n(&g_pix_add[i], 0u, __ATOMIC_RELAXED);
    g_pix_built_us = plat_time_us();
    snprintf(g_pix_root, sizeof(g_pix_root), "%s", root);
    for (k = 0; k < PIX_DIRS; k++)
@@ -388,6 +438,8 @@ static int pix_absent(const char *path)
    unsigned k, i;
    if (!sl)
       return 0;
+   if (g_pix_ok)
+      pix_drain_added();
    dh = pix_hash(path, (size_t)(sl - path));
    for (k = 0; k < PIX_DIRS && g_pix_dir[k] != dh; k++)
       ;
@@ -417,6 +469,9 @@ static int pix_absent(const char *path)
       memcpy(root, path, rl);
       root[rl] = '\0';
       pix_build(root);
+      if (!g_pix_ok)
+         return 0;
+      pix_drain_added();
       if (!g_pix_ok)
          return 0;
       for (k = 0; k < PIX_DIRS && g_pix_dir[k] != dh; k++)
@@ -767,10 +822,140 @@ static int mf_header_blurb(const menu_load_job *job, char out[400])
       gamedb_blurb_sys('A', name, out, 400);
    return mf_cancelled() ? ML_CANCELLED : ML_OK;
 }
+/* Live presence check for a single state hash bucket (usually 0-10 files):
+ * returns -1 if the bucket directory does not exist (ENOENT -> all slots &
+ * resume are absent in 1 syscall), 1 if `hashes[0..*count-1]` holds every
+ * filename in the bucket, or 0 to fall back to individual mf_stat() probes. */
+#define MF_BUCKET_MAX 64u
+static int mf_bucket_scan(const char *state1, uint64_t hashes[MF_BUCKET_MAX],
+                          unsigned *count)
+{
+   char dir[ML_PATH];
+   const char *sl;
+   DIR *d;
+   struct dirent *e;
+   unsigned n = 0;
+   *count = 0;
+#ifdef MENU_FILES_TEST
+   if (g_hook) return 0;
+#endif
+   sl = strrchr(state1, '/');
+   if (!sl || sl == state1 || (size_t)(sl - state1) >= sizeof(dir))
+      return 0;
+   memcpy(dir, state1, (size_t)(sl - state1));
+   dir[sl - state1] = '\0';
+   d = opendir(dir);
+   if (!d)
+      return errno == ENOENT ? -1 : 0;
+   while ((e = readdir(d)) != NULL)
+   {
+      if (e->d_name[0] == '.' &&
+          (e->d_name[1] == '\0' || (e->d_name[1] == '.' && e->d_name[2] == '\0')))
+         continue;
+      if (n >= MF_BUCKET_MAX)
+      {
+         closedir(d);
+         return 0;
+      }
+      hashes[n++] = pix_hash(e->d_name, strlen(e->d_name));
+   }
+   closedir(d);
+   *count = n;
+   return 1;
+}
+
+static int mf_bucket_has(const uint64_t *hashes, unsigned count, const char *path)
+{
+   const char *leaf = strrchr(path, '/');
+   uint64_t h;
+   unsigned i;
+   leaf = leaf ? leaf + 1 : path;
+   h = pix_hash(leaf, strlen(leaf));
+   for (i = 0; i < count; i++)
+      if (hashes[i] == h)
+         return 1;
+   return 0;
+}
+
+/* Patch files (.ips/.bps/.ups) beside ROMs: scanned once per ROM folder so
+ * landing on each game does not walk a 1000-file FAT32 folder 3 times. */
+#define MF_PATCH_MAX 256u
+static char     g_patch_dir[ML_PATH];
+static uint64_t g_patch_h[MF_PATCH_MAX];
+static unsigned g_patch_n, g_patch_gen;
+static uint64_t g_patch_us;
+static int      g_patch_ok;
+
+static int mf_patch_absent(const char *path)
+{
+   const char *sl;
+   size_t dl;
+   uint64_t now, h;
+   unsigned gen, i;
+#ifdef MENU_FILES_TEST
+   if (g_hook) return 0;
+#endif
+   sl = strrchr(path, '/');
+   if (!sl || sl == path)
+      return 0;
+   dl = (size_t)(sl - path);
+   if (dl >= sizeof(g_patch_dir))
+      return 0;
+   now = plat_time_us();
+   gen = __atomic_load_n(&g_art_gen, __ATOMIC_RELAXED);
+   if (!g_patch_ok || g_patch_gen != gen ||
+       strlen(g_patch_dir) != dl || memcmp(g_patch_dir, path, dl) != 0 ||
+       now - g_patch_us > 30000000u)
+   {
+      DIR *d;
+      struct dirent *e;
+      unsigned seen = 0;
+      g_patch_ok = 0;
+      g_patch_n = 0;
+      g_patch_gen = gen;
+      g_patch_us = now;
+      memcpy(g_patch_dir, path, dl);
+      g_patch_dir[dl] = '\0';
+      d = opendir(g_patch_dir);
+      if (!d)
+         return 0;
+      while ((e = readdir(d)) != NULL)
+      {
+         const char *ext;
+         if ((++seen & 63u) == 0 && mf_cancelled())
+         {
+            closedir(d);
+            return 0;
+         }
+         ext = strrchr(e->d_name, '.');
+         if (!ext) continue;
+         if (!strcasecmp(ext, ".ips") || !strcasecmp(ext, ".bps") ||
+             !strcasecmp(ext, ".ups"))
+         {
+            if (g_patch_n >= MF_PATCH_MAX)
+            {
+               closedir(d);
+               return 0;
+            }
+            g_patch_h[g_patch_n++] = pix_hash(e->d_name, strlen(e->d_name));
+         }
+      }
+      closedir(d);
+      g_patch_ok = 1;
+   }
+   h = pix_hash(sl + 1, strlen(sl + 1));
+   for (i = 0; i < g_patch_n; i++)
+      if (g_patch_h[i] == h)
+         return 0;
+   return 1;
+}
+
 static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
 {
    char path[ML_PATH + 4];
-   int i, rc, answer = ML_OK, n;
+   int i, rc, answer = ML_OK, n, bucket_mode;
+   uint64_t bhashes[MF_BUCKET_MAX];
+   unsigned bcount = 0;
    uint64_t t = plat_time_us();
    out->battery = ML_UNKNOWN;
    {
@@ -785,24 +970,51 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
          flat[0] = '\0';
       sidecar_migrate_game(was, flat, job->state1, &mig);
    }
+   if (mf_cancelled()) return ML_CANCELLED;
    for (i = 0; i < PSP_STATE_SLOT_COUNT; i++) out->state[i] = ML_UNKNOWN;
-   for (i = 0; i < PSP_STATE_SLOT_COUNT; i++)
+   bucket_mode = mf_bucket_scan(job->state1, bhashes, &bcount);
+   if (bucket_mode < 0)
    {
-      if (psp_state_path_for_slot(path, sizeof(path), job->state1, (unsigned)i + 1))
-      { answer = ML_ERROR; continue; }
-      rc = mf_stat(path, out->when[i]);
-      if (rc == ML_CANCELLED) return rc;
-      if (rc == ML_OK) out->state[i] = ML_PRESENT;
-      else if (rc == ML_ABSENT)
+      for (i = 0; i < PSP_STATE_SLOT_COUNT; i++) out->state[i] = ML_MISSING;
+      out->resume = ML_MISSING;
+   }
+   else
+   {
+      for (i = 0; i < PSP_STATE_SLOT_COUNT; i++)
       {
-         strcat(path, ".old");
-         rc = mf_stat(path, out->when[i]);
+         if (psp_state_path_for_slot(path, sizeof(path), job->state1, (unsigned)i + 1))
+         { answer = ML_ERROR; continue; }
+         if (bucket_mode > 0 && !mf_bucket_has(bhashes, bcount, path))
+            rc = ML_ABSENT;
+         else
+            rc = mf_stat(path, out->when[i]);
          if (rc == ML_CANCELLED) return rc;
-         if (rc == ML_OK) out->state[i] = ML_OLD_ONLY;
-         else if (rc == ML_ABSENT) out->state[i] = ML_MISSING;
+         if (rc == ML_OK) out->state[i] = ML_PRESENT;
+         else if (rc == ML_ABSENT)
+         {
+            strcat(path, ".old");
+            if (bucket_mode > 0 && !mf_bucket_has(bhashes, bcount, path))
+               rc = ML_ABSENT;
+            else
+               rc = mf_stat(path, out->when[i]);
+            if (rc == ML_CANCELLED) return rc;
+            if (rc == ML_OK) out->state[i] = ML_OLD_ONLY;
+            else if (rc == ML_ABSENT) out->state[i] = ML_MISSING;
+            else answer = ML_ERROR;
+         }
          else answer = ML_ERROR;
       }
-      else answer = ML_ERROR;
+      out->resume = ML_UNKNOWN;
+      if (psp_state_resume_path(path, sizeof(path), job->state1) == 0)
+      {
+         if (bucket_mode > 0 && !mf_bucket_has(bhashes, bcount, path))
+            rc = ML_ABSENT;
+         else
+            rc = mf_stat(path, out->resume_when);
+         if (rc == ML_CANCELLED) return rc;
+         out->resume = rc == ML_OK ? ML_PRESENT : rc == ML_ABSENT ? ML_MISSING
+                                                                 : ML_UNKNOWN;
+      }
    }
    if (job->console == FE_CONSOLE_GBA)
       n = psp_rom_path_suffix(path, sizeof(path), job->rom, ".sav");
@@ -822,21 +1034,14 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
       else if (rc == ML_ABSENT) out->battery = ML_MISSING;
       else answer = ML_ERROR;
    }
-   /* Where the game was left (state_slots.h), and a patch beside the ROM
-    * (rom_patch.h: the first of .ips, .bps, .ups that is there). */
-   out->resume = ML_UNKNOWN;
-   if (psp_state_resume_path(path, sizeof(path), job->state1) == 0)
-   {
-      rc = mf_stat(path, out->resume_when);
-      if (rc == ML_CANCELLED) return rc;
-      out->resume = rc == ML_OK ? ML_PRESENT : rc == ML_ABSENT ? ML_MISSING
-                                                              : ML_UNKNOWN;
-   }
+   /* A patch beside the ROM (rom_patch.h: the first of .ips, .bps, .ups). */
    out->patch = 0;
    for (i = 0; i < 3 && !out->patch; i++)
    {
       static const char *const ext[3] = { ".ips", ".bps", ".ups" };
       if (psp_rom_path_suffix(path, sizeof(path), job->rom, ext[i]) != 0)
+         continue;
+      if (mf_patch_absent(path))
          continue;
       rc = mf_stat(path, NULL);
       if (rc == ML_CANCELLED) return rc;

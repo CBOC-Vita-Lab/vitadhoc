@@ -251,25 +251,49 @@ void pspcompat_pad2_menu(int on) { g_pad2_menu = on ? 1 : 0; }
 static unsigned vita_pad_read(int apply_swap)
 {
    static int analog_on;
+   static int have_ts;
+   static SceUInt64 last_ts;
    unsigned btn;
+   SceCtrlData pads[8];
    SceCtrlData pad;
+   int n;
    if (!analog_on)
    {
       /* Digital-only is the power-on mode: the stick reads 128,128. */
       sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
       analog_on = 1;
    }
-   memset(&pad, 0, sizeof(pad));
-   pad.lx = pad.ly = 128;
-   if (sceCtrlPeekBufferPositive(0, &pad, 1) < 0)
+   memset(pads, 0, sizeof(pads));
+   n = sceCtrlPeekBufferPositive(0, pads, apply_swap ? 8 : 1);
+   if (n <= 0)
       return 0;
+   pad = pads[n - 1];
    /* Plain PeekBufferPositive reports the Vita's L and R -- and a PS TV
     * pad's L1/R1 -- as LTRIGGER/RTRIGGER, the PSP's shoulder bits. */
    btn = pad.buttons & 0xF3F9u;
+   btn |= stick_bits(pad.lx, pad.ly);
+   if (apply_swap)
+   {
+      /* Latch any brief direction tap seen between frames so a quick press
+       * right after landing on a new game is never dropped. */
+      if (have_ts)
+      {
+         const unsigned dir_mask = PSP_CTRL_UP | PSP_CTRL_DOWN |
+                                   PSP_CTRL_LEFT | PSP_CTRL_RIGHT;
+         int i;
+         for (i = 0; i < n - 1; i++)
+         {
+            if (pads[i].timeStamp > last_ts)
+               btn |= (pads[i].buttons | stick_bits(pads[i].lx, pads[i].ly)) &
+                      dir_mask;
+         }
+      }
+      have_ts = 1;
+      last_ts = pad.timeStamp;
+   }
    if (apply_swap && g_pc_face_swap && ((btn & PSP_CTRL_CROSS) != 0) !=
                                        ((btn & PSP_CTRL_CIRCLE) != 0))
       btn ^= PSP_CTRL_CROSS | PSP_CTRL_CIRCLE;
-   btn |= stick_bits(pad.lx, pad.ly);
    if (g_pad2_menu)
    {
       /* two players: the second controller drives the menu as well */

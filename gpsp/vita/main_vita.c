@@ -229,7 +229,8 @@ static struct
                                * follow a scrolled picture
                                * (upscale_slide_mode; 2 the default)      */
    int      main_cpu;         /* main_cpu = 0..2: keep the emulator's thread
-                               * on that core; -1 leave it to the system */
+                               * on that core (0 default); -1 leave it to
+                               * the system */
    int      drain;            /* drain = 0 / 1 / 2: a frame starts only once
                                * the last picture is on the glass (1, the
                                * default) / taken by the display queue (2) /
@@ -289,7 +290,7 @@ static struct
                                * update check's answer, on the twin only
                                * (it asks nobody without it) */
    int      update_timeout;   /* update_timeout = ms: the twin's tests */
-} g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, -1, 1, 1,
+} g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, 0, 1, 1,
            "", 0, 2, 1, 0, 0, 3, 2, 1, 1, 1, 1, 1, -1, -1, -1,
            "", "", 0, "", 0 };
 
@@ -3410,12 +3411,12 @@ static void sink_video(const uint16_t *pix, unsigned w, unsigned h,
    {
       /* A GBA or NES wide picture is center-cropped to the console's own
        * columns for g_last (clips, thumbnails, wake shots); g_show keeps
-       * the margins the screen has room for (GBA) or NES wide's 16:9. */
+       * the margins the screen has room for so both NTSC (224p -> 394x224)
+       * and PAL (240p -> 422x240) fill the full 544px height at Fit. */
       unsigned m = (g_game_console == FE_CONSOLE_NES && w > 256) ? (w - 256) / 2
                  : (g_game_console == FE_CONSOLE_GBA && h == 160 && w > 240)
                    ? (w - 240) / 2 : 0;
-      unsigned fit = (g_game_console == FE_CONSOLE_NES) ? m
-                   : m ? (unsigned)vid_margin_fit(w - 2 * m, h, (int)m) : 0;
+      unsigned fit = m ? (unsigned)vid_margin_fit(w - 2 * m, h, (int)m) : 0;
       g_last.pix = pix + m;
       g_last.w = w - 2 * m;
       g_last.h = h;
@@ -5438,8 +5439,8 @@ static void window_begin(void)
       vid_upscale_stats(&up);
       if (up.jobs || up.dropped)
       {
-         int ids[2], k, n = upscale_thread_ids(ids, 2);
-         static const char *const tag[2] = { "up0", "up1" };
+         int ids[3], k, n = upscale_thread_ids(ids, 3);
+         static const char *const tag[3] = { "up0", "up1", "up2" };
          for (k = 0; k < n; k++)
             plat_thread_watch(tag[k], ids[k]);
          fe_evt("vita_upscale filter=%s jobs=%u us=%u/%u dropped=%u "
@@ -5506,7 +5507,7 @@ static void window_begin(void)
    {
       /* Where the threads ran this window: core/affinity/us run/preempted
        * by threads/by interrupts/moved between cores (plat.h). */
-      char line[400];
+      char line[480];
       plat_thread_report(line, sizeof(line));
       if (line[0])
          fe_evt("vita_threads %s", line);
@@ -6596,8 +6597,15 @@ static int game_boot(const char *rom_path, fe_console_t console)
       /* (a zipped game's checksum and header are the unpacked file's) */
       int n = cheats_load(g_app_root, g_game.zipped ? g_game.boot_path
                                                     : g_game.rom_path, console);
+#ifdef __vita__
+      int pend = cheats_db_pending();
+      fe_evt("cheats_load n=%d enabled=%d match=%d db=\"%s\" deferred=%d", n,
+             cheats_enabled_count(), pend ? 0 : cheats_db_match(),
+             pend ? "" : cheats_db_game(), pend);
+#else
       fe_evt("cheats_load n=%d enabled=%d match=%d db=\"%s\"", n,
              cheats_enabled_count(), cheats_db_match(), cheats_db_game());
+#endif
    }
    link_game_begin();
    link_local_game_begin();
@@ -7982,8 +7990,10 @@ int main(int argc, char **argv)
                 plat_app_dir()[strlen(plat_app_dir()) - 1] == ':' ? "" : "/")
           == 0)
    {
-      int n = cheats_db_open(path);
-      fe_evt("cheats_db games=%d path=%s", n, path);
+      /* opened on demand by the first cheats database query, like gamedb.txt
+       * below, so cold boot never stalls on app0:cheats.db */
+      cheats_db_open_later(path);
+      fe_evt("cheats_db_deferred path=%s", path);
    }
    if (path_fmt(path, sizeof(path), "%s%sgamedb.txt", plat_app_dir(),
                 plat_app_dir()[strlen(plat_app_dir()) - 1] == ':' ? "" : "/")

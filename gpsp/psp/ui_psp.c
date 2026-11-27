@@ -99,6 +99,7 @@ static inline void *memalign(size_t al, size_t n)
 #include "fe_gblink.h"      /* FE_GBLINK_FL_*: Fast link, as a session runs it */
 #ifdef VITA
 #include "artfetch.h"        /* Settings > Covers */
+static void art_dir_cache_invalidate(void);
 #endif
 #ifdef GPSP_CHEATS
 #include "fe_cheats.h"
@@ -4922,6 +4923,7 @@ static ui_action screen_settings_page(unsigned edges)
    if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_COVERS)
    {
       artfetch_retry();
+      art_dir_cache_invalidate();
       osd_toast(tr("toast.looking_again_for_missing_covers"));
       fe_evt("art_retry_asked");
       edges &= ~PSP_CTRL_CROSS;
@@ -10978,12 +10980,285 @@ static int home_states_known_empty(int rom);
 static void home_state_invalidate(int rom);
 static void home_modal_enter(void);
 static void home_modal_leave(int artwork_may_change);
+
+/* ---- art directory filename-presence cache (Vita FAT32) -------------------
+ * A negative sceIoGetstat() in a large FAT32 art directory (boxart/, hero/,
+ * cache/boxart/, cache/hero/) walks the entire directory cluster chain (~2 s
+ * per miss, 7-14 probes per art_load_any()).  Lazily scan each of the 4 art
+ * directories once with sceIoDopen/sceIoDread and keep a sorted array of
+ * 64-bit FNV-1a hashes of lowercased filenames so missing files take 0
+ * syscalls.  Updated on art_cache_565() writes, synced against artfetch /
+ * custom-cover changes, and freed by art_free_all() before fe_host_boot(). */
+enum
+{
+   ART_DIR_CACHE_HERO = 0,
+   ART_DIR_HERO,
+   ART_DIR_CACHE_BOXART,
+   ART_DIR_BOXART,
+   ART_DIR_COUNT
+};
+#define ART_DIR_MAX_ENTRIES 65536u
+
+typedef struct
+{
+   int       valid;
+   uint64_t *hashes;
+   size_t    count;
+   size_t    cap;
+} art_dir_cache;
+
+static art_dir_cache g_art_dc[ART_DIR_COUNT];
+static void art_dir_cache_sync(void);
+
+static uint64_t art_fnv64_lower(const char *s)
+{
+   uint64_t h = 14695981039346656037ull;
+   for (; *s; s++)
+   {
+      unsigned char c = (unsigned char)*s;
+      if (c >= 'A' && c <= 'Z')
+         c = (unsigned char)(c + 32);
+      h = (h ^ (uint64_t)c) * 1099511628211ull;
+   }
+   return h;
+}
+
+static int art_fnv64_cmp(const void *a, const void *b)
+{
+   uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+   return x < y ? -1 : x > y ? 1 : 0;
+}
+
+static int art_dir_id(const char *dir, int in_cache)
+{
+   if (!dir)
+      return -1;
+   if (!strcmp(dir, "hero"))
+      return in_cache ? ART_DIR_CACHE_HERO : ART_DIR_HERO;
+   if (!strcmp(dir, "boxart"))
+      return in_cache ? ART_DIR_CACHE_BOXART : ART_DIR_BOXART;
+   return -1;
+}
+
+static int art_dir_path(int id, char *out, size_t sz)
+{
+   static const char *const rel[ART_DIR_COUNT] = {
+      SIDECAR_ART_CACHE "/hero",
+      "hero",
+      SIDECAR_ART_CACHE "/boxart",
+      "boxart"
+   };
+   int n;
+   if (id < 0 || id >= ART_DIR_COUNT)
+      return -1;
+   n = snprintf(out, sz, "%s/%s", g_dir_base, rel[id]);
+   return (n > 0 && (size_t)n < sz) ? 0 : -1;
+}
+
+static void art_dir_cache_invalidate(void)
+{
+   int i;
+   for (i = 0; i < ART_DIR_COUNT; i++)
+   {
+      g_art_dc[i].valid = 0;
+      g_art_dc[i].count = 0;
+   }
+}
+
+static void art_dir_cache_free(void)
+{
+   int i;
+   for (i = 0; i < ART_DIR_COUNT; i++)
+   {
+      free(g_art_dc[i].hashes);
+      g_art_dc[i].hashes = NULL;
+      g_art_dc[i].count = 0;
+      g_art_dc[i].cap = 0;
+      g_art_dc[i].valid = 0;
+   }
+}
+
+static void art_dir_cache_populate(int id)
+{
+   art_dir_cache *c = &g_art_dc[id];
+   char dpath[PSP_FILE_PATH_CAP];
+   SceUID d;
+   SceIoDirent ent;
+   c->valid = 0;
+   c->count = 0;
+   if (art_dir_path(id, dpath, sizeof(dpath)) != 0)
+      return;
+   d = sceIoDopen(dpath);
+   if (d < 0)
+   {
+      SceIoStat st;
+      /* Missing directory: empty and valid (0 future sceIoGetstat misses).
+       * Existing directory with transient dopen failure: stay invalid so
+       * lookups fall back safely to sceIoGetstat(). */
+      if (sceIoGetstat(dpath, &st) < 0)
+         c->valid = 1;
+      return;
+   }
+   {
+      int rd;
+      while ((rd = sceIoDread(d, &ent)) > 0)
+      {
+         const char *nm = ent.d_name;
+         if (nm[0] == '.' && (!nm[1] || (nm[1] == '.' && !nm[2])))
+            continue;
+         if (c->count >= ART_DIR_MAX_ENTRIES)
+         {
+            sceIoDclose(d);
+            free(c->hashes);
+            c->hashes = NULL;
+            c->count = c->cap = 0;
+            return;
+         }
+         if (c->count == c->cap)
+         {
+            size_t ncap = c->cap ? c->cap * 2u : 64u;
+            uint64_t *nh;
+            if (ncap > ART_DIR_MAX_ENTRIES)
+               ncap = ART_DIR_MAX_ENTRIES;
+            nh = (uint64_t *)realloc(c->hashes, ncap * sizeof(uint64_t));
+            if (!nh)
+            {
+               sceIoDclose(d);
+               free(c->hashes);
+               c->hashes = NULL;
+               c->count = c->cap = 0;
+               return;
+            }
+            c->hashes = nh;
+            c->cap = ncap;
+         }
+         c->hashes[c->count++] = art_fnv64_lower(nm);
+      }
+      sceIoDclose(d);
+      if (rd < 0)
+      {
+         free(c->hashes);
+         c->hashes = NULL;
+         c->count = c->cap = 0;
+         return;
+      }
+   }
+   if (c->count > 1)
+      qsort(c->hashes, c->count, sizeof(uint64_t), art_fnv64_cmp);
+   c->valid = 1;
+}
+
+static int art_dir_cache_has(int id, const char *fname)
+{
+   art_dir_cache *c;
+   uint64_t h;
+   size_t lo, hi;
+   if (id < 0 || id >= ART_DIR_COUNT || !fname || !fname[0])
+      return 1;
+   art_dir_cache_sync();
+   c = &g_art_dc[id];
+   if (!c->valid)
+      art_dir_cache_populate(id);
+   if (!c->valid)
+      return 1;                 /* conservative fallback on OOM / dopen error */
+   h = art_fnv64_lower(fname);
+   lo = 0;
+   hi = c->count;
+   while (lo < hi)
+   {
+      size_t mid = lo + (hi - lo) / 2u;
+      if (c->hashes[mid] < h)
+         lo = mid + 1u;
+      else if (c->hashes[mid] > h)
+         hi = mid;
+      else
+         return 1;
+   }
+   return 0;
+}
+
+static void art_dir_cache_add(int id, const char *fname)
+{
+   art_dir_cache *c;
+   uint64_t h;
+   size_t lo, hi;
+   if (id < 0 || id >= ART_DIR_COUNT || !fname || !fname[0])
+      return;
+   c = &g_art_dc[id];
+   if (!c->valid)
+      return;
+   h = art_fnv64_lower(fname);
+   lo = 0;
+   hi = c->count;
+   while (lo < hi)
+   {
+      size_t mid = lo + (hi - lo) / 2u;
+      if (c->hashes[mid] < h)
+         lo = mid + 1u;
+      else if (c->hashes[mid] > h)
+         hi = mid;
+      else
+         return;                /* already recorded */
+   }
+   if (c->count >= ART_DIR_MAX_ENTRIES)
+   {
+      c->valid = 0;
+      return;
+   }
+   if (c->count == c->cap)
+   {
+      size_t ncap = c->cap ? c->cap * 2u : 64u;
+      uint64_t *nh;
+      if (ncap > ART_DIR_MAX_ENTRIES)
+         ncap = ART_DIR_MAX_ENTRIES;
+      nh = (uint64_t *)realloc(c->hashes, ncap * sizeof(uint64_t));
+      if (!nh)
+      {
+         c->valid = 0;
+         return;
+      }
+      c->hashes = nh;
+      c->cap = ncap;
+   }
+   if (lo < c->count)
+      memmove(&c->hashes[lo + 1u], &c->hashes[lo],
+              (c->count - lo) * sizeof(uint64_t));
+   c->hashes[lo] = h;
+   c->count++;
+}
+
+static int art_path_ends_with(const char *s, size_t len, const char *suf)
+{
+   size_t sl = strlen(suf);
+   return len >= sl && memcmp(s + len - sl, suf, sl) == 0;
+}
+
+static void art_dir_cache_record_path(const char *path)
+{
+   const char *sl = path ? strrchr(path, '/') : NULL;
+   size_t dlen;
+   int id = -1;
+   if (!sl || !sl[1])
+      return;
+   dlen = (size_t)(sl - path);
+   if (art_path_ends_with(path, dlen, "/" SIDECAR_ART_CACHE "/boxart"))
+      id = ART_DIR_CACHE_BOXART;
+   else if (art_path_ends_with(path, dlen, "/" SIDECAR_ART_CACHE "/hero"))
+      id = ART_DIR_CACHE_HERO;
+   else if (art_path_ends_with(path, dlen, "/boxart"))
+      id = ART_DIR_BOXART;
+   else if (art_path_ends_with(path, dlen, "/hero"))
+      id = ART_DIR_HERO;
+   if (id >= 0)
+      art_dir_cache_add(id, sl + 1);
+}
 #endif
 static void art_free_all(void)
 {
    int i;
 #ifdef VITA
    home_free();
+   art_dir_cache_free();
 #endif
    for (i = 0; i < ART_SLOTS; i++)
    {
@@ -11387,6 +11662,10 @@ static void art_cache_565(const char *path, const uint16_t *tex, int stride,
    }
    close_rc = sceIoClose(f);
    UI_DIAG_END(MD_CACHE_WRITE, t);
+#ifdef VITA
+   if (y == h && close_rc >= 0)
+      art_dir_cache_record_path(path);
+#endif
    fe_evt("art_cached path=%s %dx%d ok=%d bytes=%d writes=%d close_rc=%d",
           path, w, h, y == h && close_rc >= 0, wrote, writes, close_rc);
 }
@@ -11402,6 +11681,9 @@ static void art_cache_565(const char *path, const uint16_t *tex, int stride,
  * 256x320 copy replaced the hero's and the next visit drew the backdrop from
  * it, visibly soft at 960x544. */
 static int g_art_cover_as_hero;
+/* Set around cold game launch (launch_art_from_path) so a decoded PNG skips
+ * the blocking synchronous .vh565 disk write (~5.7 s on Vita FAT32). */
+static int g_art_no_cache_write;
 /* The home screen's tile picture: the thumbnail the fetch thread made for this
  * cover (cache/boxart/<stem>.t2.565, at most ART_THUMB_W x ART_THUMB_H).  One read of
  * a small file, no decode.  0 = read; -1 = there is none (the caller falls back
@@ -11413,17 +11695,29 @@ static int art_thumb_load(int rom_idx, uint16_t *tex, int stride,
    const char *base = g_roms[rom_idx].base;
    int stem = (int)ui_rom_stem_length(base);
    char path[PSP_FILE_PATH_CAP];
+   char fname[PSP_FILE_PATH_CAP];
 
    char was[PSP_FILE_PATH_CAP];
    sidecar_mig mig = {0};
+   int flen = snprintf(fname, sizeof(fname), "%.*s%s", stem, base,
+                       ART_THUMB_SUFFIX);
    int len = snprintf(path, sizeof(path), "%s/" SIDECAR_THUMB_DIR "/%.*s%s",
                       g_dir_base, stem, base, ART_THUMB_SUFFIX);
    if (len < 0 || (size_t)len >= sizeof(path))
       return -1;
    /* one an older version left in boxart/ moves to cache/ */
-   if (snprintf(was, sizeof(was), "%s/boxart/%.*s%s", g_dir_base, stem, base,
+   if (flen > 0 && (size_t)flen < sizeof(fname) &&
+       art_dir_cache_has(ART_DIR_BOXART, fname) &&
+       snprintf(was, sizeof(was), "%s/boxart/%.*s%s", g_dir_base, stem, base,
                 ART_THUMB_SUFFIX) < (int)sizeof(was))
+   {
       sidecar_move_file(was, path, &mig);
+      if (mig.moved || mig.copied)
+         art_dir_cache_add(ART_DIR_CACHE_BOXART, fname);
+   }
+   if (flen > 0 && (size_t)flen < sizeof(fname) &&
+       !art_dir_cache_has(ART_DIR_CACHE_BOXART, fname))
+      return -1;
    return art_load_565(path, tex, stride, dw, dh);
 }
 #endif
@@ -11469,6 +11763,15 @@ static int art_load_any(const char *base, const char *dir, uint16_t *tex,
        * the same frame to fit into. */
       *dw = boxw; *dh = boxh;
 #ifdef VITA
+      {
+         char fname[PSP_FILE_PATH_CAP];
+         int dir_id = art_dir_id(dir, e == 0);
+         int flen = snprintf(fname, sizeof(fname), "%.*s.%s", stem, base,
+                             ext[e]);
+         if (dir_id >= 0 && flen > 0 && (size_t)flen < sizeof(fname) &&
+             !art_dir_cache_has(dir_id, fname))
+            continue;
+      }
       if (e == 0)
          path_len = snprintf(path, sizeof(path), "%s/" SIDECAR_ART_CACHE
                              "/%s/%.*s.%s", g_dir_base, dir, stem, base,
@@ -11515,9 +11818,14 @@ static int art_load_any(const char *base, const char *dir, uint16_t *tex,
           * make the emulator look hung on first run. */
          char cpath[PSP_FILE_PATH_CAP];
 #ifdef VITA
-         int cache_len = snprintf(cpath, sizeof(cpath), "%s/" SIDECAR_ART_CACHE
-                                  "/%s/%.*s.%s", g_dir_base, dir, stem, base,
-                                  ext[0]);
+         int cache_len;
+         fe_evt("art_time fmt=png us=%u %s",
+                (unsigned)sceKernelGetSystemTimeLow() - t0, path);
+         if (g_art_no_cache_write)
+            return 0;
+         cache_len = snprintf(cpath, sizeof(cpath), "%s/" SIDECAR_ART_CACHE
+                              "/%s/%.*s.%s", g_dir_base, dir, stem, base,
+                              ext[0]);
 #else
          int cache_len = snprintf(cpath, sizeof(cpath),
                                   "%s/%s/%.*s." UI_ART_CACHE_EXT,
@@ -11525,8 +11833,10 @@ static int art_load_any(const char *base, const char *dir, uint16_t *tex,
 #endif
          if (cache_len < 0 || (size_t)cache_len >= sizeof(cpath))
             return 0; /* art decoded, but its cache destination cannot fit */
+#ifndef VITA
          fe_evt("art_time fmt=png us=%u %s",
                 (unsigned)sceKernelGetSystemTimeLow() - t0, path);
+#endif
          art_cache_565(cpath, tex, stride, *dw, *dh);
          return 0;
       }
@@ -12404,8 +12714,14 @@ static void launch_art_from_path(const char *path)
    if (!g_pcfg.loading_art)
       return;
    base = base ? base + 1 : path;
+#ifdef VITA
+   g_art_no_cache_write = 1;
+#endif
    if (hero_decode(HERO_IDX_PATH, base))
       launch_art_take();
+#ifdef VITA
+   g_art_no_cache_write = 0;
+#endif
    art_free_all();
    fe_evt("launch_art_source path=%s reused=0 found=%d us=%u", base,
           vid_ambient_source() == 1,
@@ -14169,6 +14485,60 @@ static void browser_switch_apply(const char *rom_dir, int *n_scan, int *n,
 #include "ui_vita_home.h"
 #include "ui_vita_cover.h"
 
+/* Detect external art changes (artfetch downloads/resyncs, custom cover picks,
+ * inbox matches, or a changed data root) and invalidate the 4-dir cache. */
+static void art_dir_cache_sync(void)
+{
+   static char     last_root[128];
+   static int      last_have = -1, last_seen = -1, last_any = 0, have_inv_set = 0;
+   static unsigned last_epoch_sum = 0, last_have_inv_us = 0;
+   int seen = 0, total = 0, have = 0;
+   unsigned epoch_sum = 0;
+   int i, dirty = 0;
+
+   if (strcmp(last_root, g_dir_base) != 0)
+   {
+      snprintf(last_root, sizeof(last_root), "%s", g_dir_base);
+      dirty = 1;
+   }
+   (void)artfetch_progress(&seen, &total, &have);
+   if (seen < last_seen)
+   {
+      last_have = have;
+      dirty = 1;
+   }
+   else if (have != last_have)
+   {
+      /* Throttle background download invalidations to avoid repeated UI-thread
+       * directory rescans in Shelf/Marquee while artfetch is active; focused
+       * ROM arrivals still invalidate immediately via g_hm_art_epoch / g_hm_art_any. */
+      unsigned now = pspcompat_time_us();
+      if (last_have < 0 || !have_inv_set ||
+          (unsigned)(now - last_have_inv_us) >= 5000000u)
+      {
+         last_have = have;
+         last_have_inv_us = now;
+         have_inv_set = 1;
+         dirty = 1;
+      }
+   }
+   last_seen = seen;
+   if (g_hm_art_any && !last_any)
+      dirty = 1;
+   last_any = g_hm_art_any;
+   for (i = 0; i < BROWSER_MAX; i++)
+      epoch_sum += g_hm_art_epoch[i];
+   if (epoch_sum != last_epoch_sum)
+   {
+      last_epoch_sum = epoch_sum;
+      dirty = 1;
+   }
+   if (g_cv.tex && g_cv.changed)
+      dirty = 1;
+   if (dirty)
+      art_dir_cache_invalidate();
+}
+
 /* The browser below, with the toasts moved off its header for as long as
  * it runs (it has half a dozen ways out). */
 static int ui_browser_run(const char *rom_dir, char *out, size_t out_sz,
@@ -15025,6 +15395,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 #endif
          settings_changed = browser_settings();
 #ifdef VITA
+         art_dir_cache_invalidate();
          if (g_ui_home) home_modal_leave(1);
          md_resume();
          if (g_oc.launch)
@@ -15156,7 +15527,13 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       ui_cover_pump(n_scan, idle);
       if (!g_ui_home || n <= 0)
       {
+         artfetch_nav_busy(0);
          hm_art_poll(rom_dir, n_scan, idle);
+         if (g_hm_art_any)
+         {
+            art_dir_cache_invalidate();
+            g_hm_art_any = g_hm_art_all = 0;
+         }
          hm_art_focus(rom_dir, rom, idle);
       }
 #endif
@@ -15165,6 +15542,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       if ((edges & BROWSER_COVER_BUTTON) && n > 0 && !g_browser_state_open)
       {
          ui_cover_enter(rom_dir, rom, n_scan);
+         art_dir_cache_invalidate();
          edges = 0;
          idle = 0;
          tch_reset();

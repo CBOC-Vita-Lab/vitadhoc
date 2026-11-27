@@ -558,7 +558,7 @@ void plat_audio_thread_stop(void)
 
 /* ---- where the threads run ------------------------------------------------ */
 
-#define WATCH_MAX 8
+#define WATCH_MAX 12
 static struct
 {
    const char *tag;
@@ -582,7 +582,23 @@ void plat_thread_watch(const char *tag, int thid)
          return;
       }
    if (g_nwatch >= WATCH_MAX)
+   {
+      /* Reclaim a slot whose thread has already exited (e.g. across games). */
+      for (i = 0; i < g_nwatch; i++)
+      {
+         SceKernelThreadInfo info;
+         memset(&info, 0, sizeof(info));
+         info.size = sizeof(info);
+         if (sceKernelGetThreadInfo(g_watch[i].id, &info) < 0)
+         {
+            memset(&g_watch[i], 0, sizeof(g_watch[0]));
+            g_watch[i].tag = tag;
+            g_watch[i].id = thid;
+            return;
+         }
+      }
       return;
+   }
    memset(&g_watch[g_nwatch], 0, sizeof(g_watch[0]));
    g_watch[g_nwatch].tag = tag;
    g_watch[g_nwatch].id = thid;

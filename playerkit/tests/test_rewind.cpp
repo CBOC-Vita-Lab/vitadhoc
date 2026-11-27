@@ -240,7 +240,7 @@ TEST(rewind_budget_is_respected_and_the_oldest_moment_is_what_goes)
 	RewindStats s = rw.stats();
 	CHECK(s.used_bytes <= s.ring_bytes);
 	CHECK(s.total_bytes <= budget);
-	CHECK(s.ring_bytes + 2 * N <= budget);
+	CHECK(s.ring_bytes + 2 * N + delta_bound(N) <= budget);
 	CHECK(s.dropped > 0);                      /* it did not all fit: the oldest steps went */
 	CHECK(s.interval > 2);                     /* and the interval grew to keep more */
 	CHECK(s.frames < 3000);
@@ -284,7 +284,7 @@ TEST(rewind_ring_wraparound_stress)
 		const size_t N = 3000 + r.below(9000);
 		Machine m(N, 1 + r.below(60), 100 + (uint64_t) round);
 		Rewind rw;
-		CHECK(rw.open(cfg_for(N, 20, 2 * N + 140u * 1024 + r.below(80u * 1024), 1 + (int) r.below(3), 8 + (int) r.below(20))));
+		CHECK(rw.open(cfg_for(N, 20, 2 * N + delta_bound(N) + 140u * 1024 + r.below(80u * 1024), 1 + (int) r.below(3), 8 + (int) r.below(20))));
 		std::vector<std::vector<uint8_t> > hist;
 		for (int seg = 0; seg < 6; seg++) {
 			run(rw, m, 200 + r.below(400), &hist);

@@ -335,3 +335,57 @@ TEST(scale_cache_restarts_on_a_change_of_kind_or_size)
 	CHECK_EQ(n2, 0);
 	CHECK_EQ(cache.plan(SC_NONE, &pic[0], 64, 50, 64), 0);
 }
+
+TEST(scale_cache_horizontal_scroll_emits_disjoint_edge_chunks)
+{
+	/* Regression test for C5: horizontal scrolling marks left and right edge blocks dirty while the middle is moved.
+	 * Disjoint chunk emission must NOT collapse [left_edge, right_edge] into a single full-width chunk per stripe. */
+	scale_init();
+	const int w = 256, h = 64;
+	World world(512, 128, 99);
+	ScaleCache cache;
+	ScaleScratch sc;
+	std::vector<uint16_t> pic, ref;
+	world.window(w, h, 0, 0, 0, pic);
+	int n = cache.plan(SC_XBR2, &pic[0], w, h, w);
+	for (int c = 0; c < n; c++) cache.run_chunk(c, sc);
+	/* scroll horizontally by 2 px: middle blocks move, only left/right edges compute -> >= 2 chunks per 8-row stripe */
+	world.window(w, h, 2, 0, 0, pic);
+	n = cache.plan(SC_XBR2, &pic[0], w, h, w);
+	CHECK_EQ(cache.stats().shape, 2);
+	CHECK(cache.stats().shifted > 0);
+	CHECK(cache.stats().computed * 4 < cache.stats().blocks);   /* < 25% of blocks need recompute */
+	CHECK(n >= (h / 8) * 2);                                    /* disjoint left + right edge chunks, not 1 full-width box */
+	for (int c = 0; c < n; c++) cache.run_chunk(c, sc);
+	ref.assign((size_t) w * 2 * h * 2, 0);
+	scale_rows(SC_XBR2, &pic[0], w, h, w, &ref[0], w * 2, 0, h, sc);
+	CHECK(memcmp(cache.out(), &ref[0], ref.size() * 2) == 0);
+}
+
+TEST(scale_cache_plan_into_direct_bypass_is_bit_identical)
+{
+	/* Verify plan_into() direct-to-texture bypass + seamless return to incremental caching across 3 rotating textures. */
+	scale_init();
+	const int w = 96, h = 64, f = 2, ow = w * f, tp = 512;
+	World world(256, 256, 123);
+	ScaleCache cache;
+	ScaleScratch sc;
+	std::vector<uint16_t> tex[3], ref, pic;
+	TexSync ts[3];
+	for (int i = 0; i < 3; i++) tex[i].assign((size_t) tp * 256, 0xAAAA);
+	for (int n = 0; n < 36; n++) {
+		/* Frames 0..11: diagonal scroll (triggers direct bypass); 12..23: static+sprite (re-enters cache); 24..35: horizontal scroll */
+		if (n < 12) world.window(w, h, n * 3, n * 2, 0, pic);
+		else if (n < 24) world.window(w, h, 36, 24, 0, pic);
+		else world.window(w, h, 36 + (n - 23) * 2, 24, 0, pic);
+		sprite(pic, w, h, (n * 5) % w, (n * 3) % h, (uint16_t) (0x4444 + n));
+		ref.assign((size_t) ow * h * f, 0);
+		scale_rows(SC_XBR2, &pic[0], w, h, w, &ref[0], ow, 0, h, sc);
+		const int ti = n % 3;
+		const int nch = cache.plan_into(SC_XBR2, &pic[0], w, h, w, &tex[ti][0], tp, true);
+		for (int c = 0; c < nch; c++) cache.run_chunk(c, sc);
+		cache.blit(&tex[ti][0], tp, ts[ti]);
+		for (int y = 0; y < h * f; y++)
+			CHECK(memcmp(&tex[ti][(size_t) y * tp], &ref[(size_t) y * ow], (size_t) ow * 2) == 0);
+	}
+}

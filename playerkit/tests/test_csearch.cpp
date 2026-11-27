@@ -447,3 +447,22 @@ TEST(csearch_menu_lists_results_only_when_few)
 	CHECK_EQ(f.menu.search_count(), 50);
 	CHECK_EQ(f.menu.row_count(), base_rows + 50);
 }
+
+TEST(csearch_any_boundary_snapshot_stays_fresh_when_next_chunk_has_no_candidates)
+{
+	for (int w = 2; w <= 4; w += 2) {
+		pk_cs cs; Mem m; setup(cs, m, PK_CS_GBA, PK_CS_LE);
+		const uint32_t off = (uint32_t) (0x1000 - (w == 2 ? 1 : 3));
+		auto put_val = [&](uint32_t v) {
+			for (int k = 0; k < w; k++) m.a[off + (uint32_t) k] = (uint8_t) ((v >> (k * 8)) & 0xFF);
+		};
+		put_val(10);
+		CHECK(pk_cs_start_ex(&cs, w, 1) > 0);
+		CHECK_EQ(pk_cs_step(&cs, PK_CS_EQ, 10), 1);
+		put_val(w == 2 ? (10 | (1u << 8)) : (10 | (1u << 24)));
+		CHECK_EQ(pk_cs_step(&cs, PK_CS_INC, 0), 1);
+		CHECK_EQ(pk_cs_step(&cs, PK_CS_UNCHANGED, 0), 1);
+		CHECK_EQ(pk_cs_step(&cs, PK_CS_CHANGED, 0), 0);
+		pk_cs_free(&cs);
+	}
+}

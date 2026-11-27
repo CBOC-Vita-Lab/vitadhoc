@@ -5,6 +5,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __vita__
+#include <psp2/kernel/sysmem.h>
+#endif
 
 /* The main app already builds stb_truetype's implementation (stb_impl_vita.c; it
  * defines PK_GLYPHS_EXTERNAL_STB and puts the header on the include path);
@@ -34,6 +37,10 @@ struct pk_gfont
    const unsigned char *data;
    unsigned char       *owned;     /* the file's bytes, when read from a file */
    size_t               size;
+#ifdef __vita__
+   SceUID               memblock;
+   int                  has_memblock;
+#endif
    char                 name[40];  /* "" for a font in memory                 */
    int                  state;     /* 0 not tried, 1 ready, 2 unusable        */
    int                  cjk;       /* the CJK file: regular weight only       */
@@ -111,6 +118,24 @@ pk_gfont *pk_gfont_mem(const unsigned char *ttf)
    return &g_fonts[g_nfonts++];
 }
 
+static void font_free_owned(pk_gfont *f)
+{
+   if (!f || !f->owned)
+      return;
+#ifdef __vita__
+   if (f->has_memblock)
+   {
+      sceKernelFreeMemBlock(f->memblock);
+      f->memblock = 0;
+      f->has_memblock = 0;
+      f->owned = NULL;
+      return;
+   }
+#endif
+   free(f->owned);
+   f->owned = NULL;
+}
+
 static int font_load(pk_gfont *f)
 {
    if (f->state)
@@ -138,7 +163,29 @@ static int font_load(pk_gfont *f)
          fclose(fp);
          return 0;
       }
-      f->owned = (unsigned char *)malloc((size_t)n);
+#ifdef __vita__
+      if ((size_t)n > 1024u * 1024u)
+      {
+         SceSize aligned = (SceSize)(((size_t)n + 4095u) & ~(size_t)4095u);
+         SceUID mb = sceKernelAllocMemBlock("pk_font", SCE_KERNEL_MEMBLOCK_TYPE_USER_RW, aligned, NULL);
+         if (mb >= 0)
+         {
+            void *base = NULL;
+            if (sceKernelGetMemBlockBase(mb, &base) >= 0 && base)
+            {
+               f->owned = (unsigned char *)base;
+               f->memblock = mb;
+               f->has_memblock = 1;
+            }
+            else
+            {
+               sceKernelFreeMemBlock(mb);
+            }
+         }
+      }
+#endif
+      if (!f->owned)
+         f->owned = (unsigned char *)malloc((size_t)n);
       if (!f->owned)
       {
          fclose(fp);
@@ -148,8 +195,7 @@ static int font_load(pk_gfont *f)
       fclose(fp);
       if (got != (size_t)n)
       {
-         free(f->owned);
-         f->owned = NULL;
+         font_free_owned(f);
          return 0;
       }
       f->data = f->owned;
@@ -161,8 +207,7 @@ static int font_load(pk_gfont *f)
       if (f->owned)
       {
          g_font_bytes -= f->size;
-         free(f->owned);
-         f->owned = NULL;
+         font_free_owned(f);
       }
       f->data = NULL;
       return 0;
@@ -198,7 +243,7 @@ int pk_glyph_invisible(uint32_t cp)
 
 #define HASH_BITS 11
 #define HASH_SIZE (1 << HASH_BITS)
-#define IDLE_FRAMES 4              /* a cell is reused after this many frames unused */
+#define IDLE_FRAMES 1              /* a cell is reused after this many frames unused */
 #define ADV_Q 32.0f                /* advances kept in 1/32 pixel            */
 
 typedef struct

@@ -131,7 +131,7 @@ TEST(input_left_stick_is_the_dpad_by_default_on_every_console)
 	for (const PadModel *m : models) {
 		Profile d = profile_defaults(*m, true);
 		CHECK_EQ(d.stick_left, STICK_MOVE);
-		CHECK_EQ(d.stick_right, STICK_OFF);
+		CHECK_EQ(d.stick_right, STICK_BIND);
 		Rig a(*m), b(*m);
 		a.step(PH_LEFT);
 		b.step(0, 0, 128);
@@ -572,4 +572,40 @@ TEST(input_menu_chords_open_on_every_console)
 	bool fired = false;
 	for (int i = 0; i < 30 && !fired; i++) { m.step(PH_START | PH_SELECT); fired = m.r.menu; }
 	CHECK(fired);
+}
+
+TEST(input_chord_guard_allows_start_with_single_l_or_r_and_md_gameplay_combos)
+{
+	/* Holding L alone or R alone must NOT suppress Start (legacy menu chord requires BOTH L and R). */
+	const uint32_t START = model_snes().btn[6].out_bit;
+	for (int k = 0; k < 2; k++) {
+		Rig r;
+		const uint32_t shoulder = k == 0 ? PH_L : PH_R;
+		r.step(shoulder);
+		for (int i = 0; i < 12; i++) r.step(shoulder | PH_START);
+		CHECK(r.r.pad[0] & START);
+		CHECK(!r.r.menu);
+	}
+	/* Holding L + R + Start DOES suppress Start and opens the menu. */
+	{
+		Rig r;
+		bool opened = false, leaked = false;
+		for (int i = 0; i < 30; i++) { r.step(PH_L | PH_R | PH_START); opened |= r.r.menu; leaked |= (r.r.pad[0] & START) != 0; }
+		CHECK(opened);
+		CHECK(!leaked);
+	}
+	/* Mega Drive 6-button: holding X (PH_L) or Z (PH_R) and pressing Start or Mode (PH_SELECT) delivers cleanly without triggering shortcuts. */
+	const uint32_t MD_START = model_md().btn[6].out_bit;
+	const uint32_t MD_MODE = model_md().btn[7].out_bit;
+	for (int k = 0; k < 2; k++) {
+		const uint32_t xz = k == 0 ? PH_L : PH_R;
+		Rig r(model_md(), true);
+		r.step(xz);
+		for (int i = 0; i < 12; i++) { r.step(xz | PH_START); CHECK_EQ(r.r.fired & (FIRE_QSAVE | FIRE_QLOAD), 0u); }
+		CHECK(r.r.pad[0] & MD_START);
+		Rig m(model_md(), true);
+		m.step(xz);
+		for (int i = 0; i < 12; i++) { m.step(xz | PH_SELECT); CHECK_EQ(m.r.fired & (FIRE_QSAVE | FIRE_QLOAD), 0u); }
+		CHECK(m.r.pad[0] & MD_MODE);
+	}
 }

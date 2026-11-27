@@ -266,9 +266,9 @@ static Place place3(CoreProfile p, Role r, int idx)
 		case R_UPSCALE: { Place x = { idx == 1 ? CORE_U0 : CORE_U2, 0xA0, 0xA0 }; return x; }
 		case R_WIDE_COMPOSE: { Place x = { CORE_U1, 0x68, 0x68 }; return x; }
 		case R_NET_IO: { Place x = { 0, 0xB8, 0xB8 }; return x; }
-		/* the VDP line renderer (md/core/vdp_thread.c) shares core 1 with the drawing thread; the FM synthesis worker shares core 2 with the sound
-		 * thread, which keeps its higher priority (0x40) */
-		case R_RENDER: { Place x = { CORE_U1, 0x60, 0x60 }; return x; }
+		/* the VDP line renderer (md/core/vdp_thread.c) shares core 1 with the drawing thread on 3-core: give it higher priority (0x58) so the
+		 * emulating thread's joins never wait behind scaling/drawing; the FM synthesis worker shares core 2 with the sound thread (0x40) */
+		case R_RENDER: { Place x = { CORE_U1, 0x58, 0x58 }; return x; }
 		case R_APU: { Place x = { CORE_U2, 0x60, 0x60 }; return x; }
 		default: break;                 /* SCOUT: md.bin has none; the SNES layout keeps a plan that asks anyway sane */
 		}
@@ -276,7 +276,7 @@ static Place place3(CoreProfile p, Role r, int idx)
 	if (p != CP_APP) {                  /* snes/vita/main.cpp, nes/vita/main.cpp */
 		switch (r) {
 		case R_EMU_MAIN: { Place x = { CORE_U0, 0x60, 0x60 }; return x; }          /* main_prio default, core 0 */
-		case R_RENDER: { Place x = { CORE_U1, 0x60, 0x60 }; return x; }            /* snes_host_thread_config(2, 0x60, 1, 0x60) */
+		case R_RENDER: { Place x = { CORE_U1, 0x58, 0x58 }; return x; }            /* PPU thread outranks draw (0x60) on shared core 1 */
 		case R_APU: { Place x = { CORE_U2, 0x60, 0x60 }; return x; }
 		case R_AUDIO_OUT: { Place x = { CORE_U2, 0x40, 0x40 }; return x; }         /* PRIO_AUDIO_DEFAULT, USER_2 */
 		case R_DRAW: { Place x = { CORE_U1, 0x60, 0x60 }; return x; }              /* draw_core 1, draw_prio 0x60 */
@@ -314,8 +314,11 @@ static Place place4(CoreProfile p, Role r, int idx, const Request &req)
 	if (p == CP_MD) {
 		switch (r) {
 		case R_AUDIO_OUT: case R_WRITER: o.mask = CORE_SYS; return o;
-		case R_UPSCALE: o.mask = idx == 0 ? CORE_U2 : idx == 1 ? CORE_SYS : CORE_U0; return o;      /* the extra core takes helper 1; helper 2 is the one in core 0's gaps */
-		case R_DRAW: case R_EMU_MAIN: case R_NET_IO: case R_RENDER: case R_APU: return o;
+		/* When the VDP thread is active on core 1, move the drawing thread to core 3 so VDP owns core 1 exclusively;
+		 * helper 1 then uses core 1's gaps instead of crowding core 3 behind drawing. */
+		case R_DRAW: if (req.has[R_RENDER]) o.mask = CORE_SYS; return o;
+		case R_UPSCALE: o.mask = idx == 0 ? CORE_U2 : idx == 1 ? (req.has[R_RENDER] ? CORE_U1 : CORE_SYS) : CORE_U0; return o;
+		case R_EMU_MAIN: case R_NET_IO: case R_RENDER: case R_APU: return o;
 		default: break;
 		}
 	}

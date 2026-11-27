@@ -97,19 +97,19 @@ TEST(uiprefs_roundtrip_and_unknown_keys)
 {
 	pkh::TempDir td;
 	UiPrefs p = uiprefs_load(td.path);
-	CHECK(p.screen == 0 && p.text_large == 0 && p.contrast == 0);       /* no file: Auto, Normal, Off */
-	p.screen = PK_SCREEN_OLED; p.text_large = 1; p.contrast = 1;
+	CHECK(p.screen == 0 && p.text_large == 0 && p.contrast == 0 && p.theme == 0 && p.tap_menu == 1);       /* no file: Auto, Normal, Off, Dark, Tap On */
+	p.screen = PK_SCREEN_OLED; p.text_large = 1; p.contrast = 1; p.theme = 1; p.tap_menu = 0;
 	CHECK(uiprefs_save(td.path, p));
 	UiPrefs q = uiprefs_load(td.path);
-	CHECK(q.screen == PK_SCREEN_OLED && q.text_large == 1 && q.contrast == 1);
+	CHECK(q.screen == PK_SCREEN_OLED && q.text_large == 1 && q.contrast == 1 && q.theme == 1 && q.tap_menu == 0);
 	/* the words the app writes (config_psp.c) parse */
 	Ini ini;
-	ini.parse("screen=pstv\ntext_size=Large\ncontrast=on\nfuture=1\n");
+	ini.parse("screen=pstv\ntext_size=Large\ncontrast=on\ntheme=light\ntap_menu=off\nfuture=1\n");
 	UiPrefs r = uiprefs_parse(ini);
-	CHECK(r.screen == PK_SCREEN_PSTV && r.text_large == 1 && r.contrast == 1);
-	ini.parse("screen=bogus\ntext_size=huge\ncontrast=maybe\n");
+	CHECK(r.screen == PK_SCREEN_PSTV && r.text_large == 1 && r.contrast == 1 && r.theme == 1 && r.tap_menu == 0);
+	ini.parse("screen=bogus\ntext_size=huge\ncontrast=maybe\ntheme=sepia\ntap_menu=maybe\n");
 	r = uiprefs_parse(ini);
-	CHECK(r.screen == 0 && r.text_large == 0 && r.contrast == 0);
+	CHECK(r.screen == 0 && r.text_large == 0 && r.contrast == 0 && r.theme == 0 && r.tap_menu == 1);
 	/* a key we do not know stays when we save */
 	CHECK(file_exists(uiprefs_path(td.path)));
 	Ini keep; keep.load(uiprefs_path(td.path)); keep.set("future", "7"); ini_save(uiprefs_path(td.path), keep);
@@ -145,10 +145,15 @@ TEST(crt_mask_draws_one_multiplied_quad)
 	SoftGfx g;
 	CrtMask m;
 	g.clear(0xFFFFFF);
+	m.prepare(&g, 0, 240, 80);
 	m.draw(&g, 0, 100, 100, 240, 160, 80);             /* strength 0: nothing drawn, nothing made */
 	CHECK_EQ(g.live_textures(), 0);
 	CHECK_EQ(g.pixel(150, 150), 0xFFFFFFFFu);
+	/* draw() without prepare() never creates a texture inside a draw pass */
+	m.draw(&g, 10, 100, 100, 240, 160, 80);
+	CHECK_EQ(g.live_textures(), 0);
 	/* 240 px for 80 source pixels: 3 px per source pixel, 1 px columns */
+	m.prepare(&g, 10, 240, 80);
 	m.draw(&g, 10, 100, 100, 240, 160, 80);
 	CHECK_EQ(g.live_textures(), 1);
 	CHECK_EQ(m.width(), 240);
@@ -168,9 +173,11 @@ TEST(crt_mask_draws_one_multiplied_quad)
 	for (int y = 100; y < 260; y++) for (int x = 100; x < 340; x++) { uint32_t c = g.pixel(x, y); sum += (c & 0xFF) + ((c >> 8) & 0xFF) + ((c >> 16) & 0xFF); n += 3; }
 	CHECK(fabs(sum / n / 255.0 - pk_crt_mean(10)) < 0.01);
 	/* the same strength again reuses the texture; another strength rebuilds it; a wider pixel scale widens the columns */
+	m.prepare(&g, 10, 240, 80);
 	m.draw(&g, 10, 100, 100, 240, 160, 80);
 	CHECK_EQ(g.live_textures(), 1);
 	g.clear(0xFFFFFF);
+	m.prepare(&g, 5, 480, 80);
 	m.draw(&g, 5, 0, 0, 480, 160, 80);                 /* 6 px per source pixel: columns of 2 */
 	const int d5 = pk_crt_dark(5);
 	CHECK_EQ((int) (g.pixel(0, 10) & 0xFF), 255);
@@ -187,6 +194,7 @@ TEST(crt_mask_period_is_stable_across_rows_and_follows_the_left_edge)
 	SoftGfx g;
 	CrtMask m;
 	g.clear(0xFFFFFF);
+	m.prepare(&g, 7, 300, 100);
 	m.draw(&g, 7, 37, 20, 300, 100, 100);
 	for (int y = 20; y < 120; y++) CHECK_EQ(g.pixel(60, y), g.pixel(60, 20));      /* the same all the way down */
 	/* the pattern starts at the picture's left edge, not the screen's */
@@ -496,6 +504,83 @@ TEST(menu_every_page_fits_in_japanese_and_chinese)
 		g_catalogue = 0;
 	}
 	pk_glyphs_set_region(PK_REGION_JP);
+}
+
+TEST(menu_light_theme_frame0_btntest_and_ra_have_zero_overlaps_or_clipping)
+{
+	pk_glyphs_set_dir("../gpsp/vita/assets");
+	for (int theme = 0; theme < 2; theme++) {
+		for (int large = 0; large < 2; large++) {
+			pkh::TempDir td;
+			pkh::MockHost host;
+			host.cheat_list.resize(2);
+			host.cheat_list[0].name = "Infinite lives"; host.cheat_list[0].on = true;
+			host.cheat_list[1].name = "Moon jump";
+			pk::MenuAchievement a; a.title = "Speedrunner"; a.desc = "Beat boss fast."; a.points = 25; a.unlocked = true; a.hardcore = true;
+			host.achs.push_back(a);
+			host.ra_summary = "1 / 1 (HC)";
+			RecGfx g; Text t(&g);
+			StateLayout l; l.root = td.path; l.console = "snes"; l.name = "Super Very Long Example World Adventure Title (USA)";
+			States states(l);
+			std::vector<uint8_t> d(1024, 1); std::vector<uint16_t> px; pkh::make_game_frame(0, px);
+			states.save(1, d.data(), d.size(), Frame(&px[0], 256, 224, 512));
+			states.set_lock(1, true);
+			states.undo_store(d.data(), d.size());
+			Mapper mapper; Profile prof = profile_defaults(model_snes(), true);
+			mapper.configure(model_snes(), prof, MapperConfig());
+			ProfileStore store(td.path, "snes", l.name);
+			Menu m;
+			MenuConfig c; c.game_name = l.name; c.console_label = "Super Nintendo";
+			c.caps = CAP_ALL_BASIC | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_CHEATS | CAP_REWIND | CAP_CHEAT_EDIT | CAP_PLAY_TOGETHER | CAP_RA | CAP_SHOT;
+			m.configure(c, &host, &states);
+			m.attach_input(&mapper, &store, &model_snes(), &prof);
+			m.set_value(ROW_UI_THEME, theme);
+			m.set_value(ROW_UI_TEXT, large);
+			m.open(0);
+			for (int i = 0; i < 15; i++) m.update(pkh::idle(16));
+			/* Frame 0 check: hints_left_ must be computed before title is clipped on the very first draw */
+			g.glyphs.clear(); g.clear(0x101010);
+			m.draw(&g, &t);
+			Audit a0 = audit(g.glyphs);
+			CHECK_EQ(a0.off_screen, 0);
+			CHECK_EQ(a0.overlaps, 0);
+
+			/* Walk all cards (verifies 2-line Large Text cards never overlap) */
+			for (int card = 0; card < 8; card++) {
+				for (int i = 0; i < 12; i++) m.update(pkh::idle());
+				g.glyphs.clear(); g.clear(0x101010);
+				m.draw(&g, &t);
+				Audit ac = audit(g.glyphs);
+				CHECK_EQ(ac.off_screen, 0);
+				CHECK_EQ(ac.overlaps, 0);
+				pkh::press(m, PH_RIGHT);
+			}
+			/* Save states (locked + undo; row 5 is clipped by hardware clip at view_h), Cheats, RA list, Interface, Button test */
+			Menu::PageId extras[] = { Menu::PAGE_STATES, Menu::PAGE_CHEATS, Menu::PAGE_RA, Menu::PAGE_INTERFACE };
+			for (size_t e = 0; e < sizeof extras / sizeof extras[0]; e++) {
+				m.goto_page(extras[e]);
+				if (extras[e] == Menu::PAGE_CHEATS) pkh::press(m, PH_DOWN);
+				for (int i = 0; i < 20; i++) m.update(pkh::idle());
+				g.glyphs.clear(); g.clear(0x101010);
+				m.draw(&g, &t);
+				Audit ae = audit(g.glyphs);
+				if (extras[e] != Menu::PAGE_STATES) CHECK_EQ(ae.off_screen, 0);
+				CHECK_EQ(ae.overlaps, 0);
+			}
+			m.goto_page(Menu::PAGE_CONTROLS);
+			for (int i = 0; i < 4; i++) pkh::press(m, PH_DOWN);
+			pkh::press(m, PH_CROSS);
+			CHECK(m.button_test_open());
+			MenuInput bi = pkh::idle(); bi.pads[0].buttons = PH_START | PH_SELECT;
+			m.update(bi);
+			g.glyphs.clear(); g.clear(0x101010);
+			m.draw(&g, &t);
+			Audit ab = audit(g.glyphs);
+			CHECK_EQ(ab.off_screen, 0);
+			CHECK_EQ(ab.overlaps, 0);
+			m.release_textures();
+		}
+	}
 }
 
 /* ---- a shipped catalogue (lang/pk_<code>.txt): PK_TEST_LANG=<code> (es fr de it pt-BR ja zh-Hans) --------------------

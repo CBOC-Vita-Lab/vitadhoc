@@ -2,8 +2,8 @@ input.a_game_button_takes_one_button	游戏按键只能设为一个按键
 input.a_shortcut_takes_at_most_four	快捷键最多可设四个按键
 input.button_1	按键 1
 input.button_2	按键 2
-input.circle	Circle
-input.cross	Cross
+input.circle	○ 键
+input.cross	× 键
 input.d_pad_down	方向键下
 input.d_pad_left	方向键左
 input.d_pad_right	方向键右
@@ -15,7 +15,7 @@ input.left_stick_down	左摇杆下
 input.left_stick_left	左摇杆左
 input.left_stick_right	左摇杆右
 input.left_stick_up	左摇杆上
-input.mode	Mode
+input.mode	模式
 input.no_such_button	没有这个按键
 input.not_set	未设置
 input.only_player_1_has_shortcuts	只有玩家 1 有快捷键
@@ -33,11 +33,11 @@ input.right_stick_left	右摇杆左
 input.right_stick_right	右摇杆右
 input.right_stick_up	右摇杆上
 input.screenshot	截图
-input.select	Select
-input.square	Square
-input.start	Start
+input.select	SELECT
+input.square	□ 键
+input.start	START
 input.start_select_opens_the_menu_pick	Start + Select 用于打开菜单；请选其他按键
-input.triangle	Triangle
+input.triangle	△ 键
 input.turbo_a	连发 A
 input.turbo_b	连发 B
 input.up	上
@@ -143,6 +143,7 @@ menu.a_faint_pixel_grid_like_a	淡淡的像素网格，像掌机屏幕。1 为�
 menu.a_number_you_type	由你输入的数字
 menu.a_shortcut_can_be_one_button	快捷键可以是一个按键或组合键：同时按下它们。
 menu.a_soft_glow_beside_the_picture	用画面旁的柔和光晕代替黑边。
+menu.achievements	成就
 menu.add_a_cheat	添加金手指
 menu.all_games	全部游戏
 menu.ambient_glow	氛围光
@@ -176,10 +177,12 @@ menu.confirm	确认
 menu.controls	操作
 menu.controls_reset_to_the_defaults	操作已恢复默认
 menu.controls_save_failed	无法保存操作设置：%s
+menu.could_not_change_slot_lock	无法更改存档位锁定状态
 menu.could_not_save_the_state_the	无法保存即时存档：无法截取游戏状态
 menu.crt_mask	CRT 荫罩
 menu.customised	已自定义
 menu.d_pad	方向键
+menu.dark	深色
 menu.dark_lines_between_the_rows_like	行与行之间的暗线，像电视一样。1 为淡，10 为浓。
 menu.default	默认
 menu.delete	删除
@@ -233,9 +236,11 @@ menu.leave_this_game_for_the_game	离开此游戏，回到游戏列表
 menu.left_stick	左摇杆
 menu.left_stick_2	左摇杆  %d, %d
 menu.lets_the_rear_touch_panel_s	让背面触摸板的四个角充当可映射的按键。
+menu.light	浅色
 menu.load	读取
 menu.load_undone	已撤销读取
 menu.loading_states_is_not_available	无法读取即时存档
+menu.lock	锁定
 menu.look_at_the_game_s_memory	立即查看游戏内存
 menu.make_this_a_cheat_that_keeps	把它变成一个保持当前数值不变的金手指。
 menu.map.press_ok_for	请按确定，然后按应作为 %s 的 Vita 按键。
@@ -289,6 +294,12 @@ menu.ps_tv	PS TV
 menu.put_every_button_stick_and_turbo	把所有按键、摇杆和连发设置恢复为默认。
 menu.put_this_player_s_buttons_back	把此玩家的按键恢复为默认。
 menu.quit	退出
+menu.ra.help	此游戏的 RetroAchievements 及已解锁的成就。
+menu.ra.locked	未解锁
+menu.ra.no_achievements	没有可显示的成就
+menu.ra.pts	%u 分
+menu.ra.unlocked	已解锁
+menu.ra.unlocked_hc	已解锁 (HC)
 menu.rear_touch_panel	背面触摸板
 menu.reason.no_link	此主机不可用：该播放器没有联机功能
 menu.reason.unsupported	此播放器不可用
@@ -336,7 +347,10 @@ menu.since_the_last_step	自上一步以来
 menu.size_of_the_number	数字大小
 menu.slot	存档位 %d
 menu.slot_deleted	存档位 %d 已删除
+menu.slot_is_locked_press_l	存档位已锁定 - 按 L 解锁
+menu.slot_locked	存档位 %d 已锁定
 menu.slot_of	存档位 %d / %d
+menu.slot_unlocked	存档位 %d 已解锁
 menu.smoothed_at_four_times_its_size	放大四倍并平滑。细节最多，负担最大。
 menu.smoothed_at_three_times_its_size	放大三倍并平滑。细节更多，负担更大。
 menu.smoothed_at_twice_the_game_s	放大两倍并平滑，再缩放到合适大小。
@@ -349,6 +363,7 @@ menu.state_loaded_from_slot	已从存档位 %d 读取即时存档
 menu.state_saved_to_slot	即时存档已保存到存档位 %d
 menu.states.empty	空
 menu.stay	留下
+menu.tap_screen_for_menu	轻触屏幕开菜单
 menu.text_size	文字大小
 menu.text_size_and_high_contrast_for	应用和播放器菜单的文字大小与高对比度。
 menu.the_cheat_could_not_be_deleted	无法删除该金手指
@@ -361,6 +376,7 @@ menu.the_state_could_not_be_deleted	无法删除该即时存档
 menu.the_state_could_not_be_loaded	无法读取该即时存档：此游戏或版本无法读取它
 menu.the_state_saved_there_will_be	保存在那里的即时存档将被游戏当前的状态替换。
 menu.the_undo_could_not_be_applied	无法执行撤销
+menu.theme	主题
 menu.there_is_no_memory_to_search	此游戏没有可搜索的内存
 menu.there_is_no_search_to_narrow	没有可缩小范围的搜索
 menu.this_game	此游戏
@@ -375,16 +391,20 @@ menu.turbo_b_speed	连发 B 速度
 menu.turbo_mode	连发模式
 menu.turn_cheats_on_and_off	开启或关闭金手指
 menu.turn_this_cheat_on_or_off	开启或关闭此金手指。
-menu.turn_this_cheat_on_or_off_2	开启或关闭此金手指。按 Triangle 或“删除”可将其移除。
+menu.turn_this_cheat_on_or_off_2	开启或关闭此金手指。按 △ 或“删除”可将其移除。
 menu.type_a_game_genie_pro_action	用键盘输入 Game Genie、Pro Action Replay 或 地址=数值 代码。
 menu.type_a_whole_number_from_0	请输入 0 到 %u 的整数（或以 0x 开头的十六进制）
 menu.ui.language_help	应用和播放器菜单的语言。“自动”跟随 Vita 自身的语言；没有翻译的语言会显示英文。
 menu.ui.large_text	大号文字
 menu.ui.normal_text	正常文字
+menu.ui.tap_menu_help	轻触游戏屏幕任意位置即可打开菜单。
+menu.ui.theme_help	在深色和浅色菜单主题之间切换。
 menu.ui.value_contrast	%s，高对比度
+menu.undo	撤销
 menu.undo_last_load	撤销上次读取
 menu.unlimited	无限制
 menu.unlimited_smooth	无限制平滑
+menu.unlock	解锁
 menu.video_filter_help	画面如何适应屏幕。锐利双线性：精确像素，边缘柔化，适用于任何尺寸。双线性：柔和，每个像素都与相邻像素融合。
 menu.waiting	等待中...  %d
 menu.what_the_left_stick_does_nothing	左摇杆的作用：无、方向键，或可映射的独立按键。
@@ -418,7 +438,6 @@ player.draws_each_picture_on_its_own	在独立线程中绘制每幅画面，因�
 player.european_games_run_at_50_hz	欧洲游戏以 50 Hz 运行。平滑 50 Hz 以其真实速度运行并让画面更均匀：每六次刷新有一次显示两帧的混合。真实 50 Hz 每六帧重复显示一帧；快速 60 Hz 则像在 60 Hz 屏幕上那样快 20％。
 player.fast_60_hz	快速 60 Hz
 player.game_not_started_err	无法启动此游戏：%s
-player.hardcore_mode_the_game_starts_from	硬核模式：游戏从头开始
 player.moved_old_states	已把 %d 个旧即时存档移到新存档位
 player.moved_one_old_state	已把 %d 个旧即时存档移到新存档位
 player.no_game_was_given	没有指定游戏。
@@ -539,6 +558,7 @@ states.the_state_could_not_be_read	无法从记忆卡读取该即时存档
 states.the_state_could_not_be_written	无法写入该即时存档
 states.the_state_file_is_damaged	即时存档文件已损坏
 states.the_state_file_is_too_large	即时存档文件过大
+states.this_slot_is_locked	此存档位已锁定
 util.bad_request	请求无效
 util.could_not_replace_the_old_file	无法替换旧文件（已保留）
 util.could_not_write_to_the_memory	无法写入记忆卡（已满或写保护）

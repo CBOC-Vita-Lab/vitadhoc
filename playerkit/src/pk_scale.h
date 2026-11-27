@@ -87,12 +87,20 @@ public:
 	void reset();                                     /* forget the kept pictures (the next plan() computes everything) */
 	/* `allow_shift` 0 turns the vertical shift search off (tests). Returns the number of chunks (0 for SC_NONE or a bad size). */
 	int plan(ScalerKind k, const uint16_t *src, int w, int h, int spitch, bool allow_shift = true);
+	/* Same as plan(), plus an optional direct texture target (`direct_dst`, `direct_pitch` in pixels): when most of the frame
+	 * must be recomputed anyway (no shift and >=65% dirty), run_chunk() scales straight into `direct_dst` and blit() becomes a
+	 * no-op, avoiding both the intermediate cache write and the full-frame texture copy while keeping `prev` current so the cache
+	 * resumes seamlessly once motion settles. Bit-identical to plan() + blit(). */
+	int plan_into(ScalerKind k, const uint16_t *src, int w, int h, int spitch, uint16_t *direct_dst, int direct_pitch, bool allow_shift = true);
 	unsigned run_chunk(int i, ScaleScratch &sc);      /* returns the non flat count of its rows */
 	int chunks() const;
 	/* Copies the rows that changed since `t` was written into the texture memory (dpitch in pixels, at least w * factor). */
 	int blit(uint16_t *dst, int dpitch, TexSync &t);
 	const uint16_t *out() const;                      /* the cached scaled picture, pitch out_pitch() pixels */
 	int out_pitch() const;
+	const uint16_t *prev() const;                     /* last unscaled source copy, pitch prev_width() pixels (NULL if invalid) */
+	int prev_width() const;
+	int prev_height() const;
 	const ScaleStats &stats() const;
 private:
 	struct Impl;

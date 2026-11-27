@@ -288,6 +288,8 @@ menu.a_number_you_type	Un número que escribes
 menu.a_shortcut_can_be_one_button	Un atajo puede ser un botón o una combinación: púlsalos a la vez.
 # context: on-screen text
 menu.a_soft_glow_beside_the_picture	Un suave brillo junto a la imagen en vez de bandas negras.
+# context: row label and page title
+menu.achievements	Logros
 # context: row label
 menu.add_a_cheat	Añadir un truco
 # context: row value
@@ -355,6 +357,8 @@ menu.controls_reset_to_the_defaults	Controles restablecidos a los valores origin
 # context: toast; %s is the reason (util.write_*)
 menu.controls_save_failed	No se pudieron guardar los controles: %s
 # context: toast notice
+menu.could_not_change_slot_lock	No se pudo cambiar el bloqueo de la ranura
+# context: toast notice
 menu.could_not_save_the_state_the	No se pudo guardar el estado: no se pudo capturar el juego
 # context: row label
 menu.crt_mask	Máscara CRT
@@ -362,6 +366,8 @@ menu.crt_mask	Máscara CRT
 menu.customised	Personalizado
 # context: row value
 menu.d_pad	Cruceta
+# context: row value
+menu.dark	Oscuro
 # context: on-screen text
 menu.dark_lines_between_the_rows_like	Líneas oscuras entre las filas, como una tele. 1 tenue, 10 fuerte.
 # context: row value
@@ -468,12 +474,16 @@ menu.left_stick	Palanca izquierda
 menu.left_stick_2	Palanca izquierda  %d, %d
 # context: on-screen text
 menu.lets_the_rear_touch_panel_s	Permite que las cuatro esquinas del panel táctil trasero actúen como botones asignables.
+# context: row value
+menu.light	Claro
 # context: button hint at the bottom
 menu.load	Cargar
 # context: toast notice
 menu.load_undone	Carga deshecha
 # context: toast notice
 menu.loading_states_is_not_available	Cargar estados no está disponible
+# context: button hint at the top
+menu.lock	Bloquear
 # context: row value
 menu.look_at_the_game_s_memory	Mirar la memoria del juego ahora
 # context: help line under a row
@@ -580,6 +590,18 @@ menu.put_every_button_stick_and_turbo	Devuelve todos los botones, palancas y aju
 menu.put_this_player_s_buttons_back	Devuelve los botones de este jugador a los valores originales.
 # context: question box
 menu.quit	Salir
+# context: help line under the Achievements row
+menu.ra.help	Los RetroAchievements de este juego y los que has desbloqueado.
+# context: achievement row status
+menu.ra.locked	Bloqueado
+# context: row label
+menu.ra.no_achievements	No hay logros que mostrar
+# context: achievement points; %u is the point value
+menu.ra.pts	%u pts
+# context: achievement row status
+menu.ra.unlocked	Desbloqueado
+# context: achievement row status in Hardcore mode
+menu.ra.unlocked_hc	Desbloqueado (HC)
 # context: row label
 menu.rear_touch_panel	Panel táctil trasero
 # context: why Play together is greyed
@@ -674,8 +696,14 @@ menu.size_of_the_number	Tamaño del número
 menu.slot	Ranura %d
 # context: toast notice
 menu.slot_deleted	Ranura %d eliminada
+# context: toast notice
+menu.slot_is_locked_press_l	La ranura está bloqueada - pulsa L para desbloquear
+# context: toast notice
+menu.slot_locked	Ranura %d bloqueada
 # context: on-screen text
 menu.slot_of	Ranura %d de %d
+# context: toast notice
+menu.slot_unlocked	Ranura %d desbloqueada
 # context: on-screen text
 menu.smoothed_at_four_times_its_size	Suavizado al cuádruple de tamaño. El más detallado y exigente.
 # context: on-screen text
@@ -701,6 +729,8 @@ menu.states.empty	Vacía
 # context: question box
 menu.stay	Quedarse
 # context: row label
+menu.tap_screen_for_menu	Tocar pantalla: menú
+# context: row label
 menu.text_size	Tamaño de texto
 # context: help line under a row
 menu.text_size_and_high_contrast_for	Tamaño de texto y alto contraste para los menús de la app y los reproductores.
@@ -724,6 +754,8 @@ menu.the_state_could_not_be_loaded	No se pudo cargar el estado: este juego o ver
 menu.the_state_saved_there_will_be	El juego tal como está ahora reemplazará el estado guardado allí.
 # context: toast notice
 menu.the_undo_could_not_be_applied	No se pudo aplicar el deshacer
+# context: row label
+menu.theme	Tema
 # context: toast notice
 menu.there_is_no_memory_to_search	Este juego no tiene memoria donde buscar
 # context: toast notice
@@ -764,14 +796,22 @@ menu.ui.language_help	Idioma de los menús de la app y los reproductores. Autom�
 menu.ui.large_text	Texto grande
 # context: value of the Interface link
 menu.ui.normal_text	Texto normal
+# context: help line under the Tap screen for menu row
+menu.ui.tap_menu_help	Toca cualquier punto de la pantalla del juego para abrir el menú.
+# context: help line under the Theme row
+menu.ui.theme_help	Cambia entre el tema de menú oscuro y claro.
 # context: value of the Interface link; %s is Normal text or Large text
 menu.ui.value_contrast	%s, alto contraste
+# context: button hint at the top
+menu.undo	Deshacer
 # context: on-screen text
 menu.undo_last_load	Deshacer última carga
 # context: row value
 menu.unlimited	Sin límite
 # context: row value
 menu.unlimited_smooth	Sin límite suave
+# context: button hint at the top
+menu.unlock	Desbloq.
 # context: help line under a row
 menu.video_filter_help	Cómo se ajusta la imagen a la pantalla. Bilineal nítido: píxeles exactos con bordes suavizados, a cualquier tamaño. Bilineal: suave, cada píxel se mezcla con el siguiente.
 # context: row label
@@ -838,8 +878,6 @@ player.european_games_run_at_50_hz	Los juegos europeos van a 50 Hz. 50 Hz suave 
 player.fast_60_hz	60 Hz rápido
 # context: notice kept for the app; %s is the core's own message (English)
 player.game_not_started_err	No se pudo iniciar este juego: %s
-# context: toast notice
-player.hardcore_mode_the_game_starts_from	Modo Hardcore: el juego empieza desde el principio
 # context: toast
 player.moved_old_states	Se pasaron %d estados guardados antiguos a las ranuras nuevas
 # context: toast (one state)
@@ -1079,6 +1117,8 @@ states.the_state_could_not_be_written	No se pudo escribir el estado
 states.the_state_file_is_damaged	El archivo de estado está dañado
 # context: on-screen text
 states.the_state_file_is_too_large	El archivo de estado es demasiado grande
+# context: on-screen text
+states.this_slot_is_locked	Esta ranura está bloqueada
 # context: on-screen text
 util.bad_request	solicitud incorrecta
 # context: on-screen text

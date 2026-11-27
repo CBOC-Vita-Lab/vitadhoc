@@ -21,11 +21,10 @@ class CrtMask {
 public:
 	CrtMask() : tex_(0), dw_(0), sw_(0), lvl_(0), gfx_(0) {}
 	~CrtMask() { release(); }
-	/* strength 0 draws nothing (and frees the texture); src_w = the picture's width in its own pixels; the quad is
-	 * the picture's rectangle on the screen */
-	void draw(Gfx *g, int strength, float dx, float dy, float dw, float dh, int src_w)
+	/* Call BEFORE opening a GXM scene on Vita so any tex_create / tex_free runs outside BeginScene..EndScene. */
+	void prepare(Gfx *g, int strength, float dw, int src_w)
 	{
-		if (!g || strength <= 0 || src_w <= 0 || dw < 1 || dh < 1) { release(); return; }
+		if (!g || strength <= 0 || src_w <= 0 || dw < 1) { release(); return; }
 		const int w = (int) (dw + 0.5f) < 1 ? 1 : (int) (dw + 0.5f);
 		if (w > 4096) return;
 		if (!tex_ || g != gfx_ || w != dw_ || src_w != sw_ || strength != lvl_) {
@@ -40,6 +39,13 @@ public:
 			g->tex_update(tex_, &row[0], w * 4);
 			gfx_ = g; dw_ = w; sw_ = src_w; lvl_ = strength;
 		}
+	}
+	/* Call prepare() BEFORE opening a GXM scene on Vita so OOM or state changes never call tex_create / sceGxmFinish inside BeginScene..EndScene. */
+	void draw(Gfx *g, int strength, float dx, float dy, float dw, float dh, int src_w)
+	{
+		if (!g || strength <= 0 || src_w <= 0 || dw < 1 || dh < 1 || !tex_) return;
+		const int w = (int) (dw + 0.5f) < 1 ? 1 : (int) (dw + 0.5f);
+		if (g != gfx_ || w != dw_ || src_w != sw_ || strength != lvl_) return;
 		g->tex_draw_mul(tex_, 0, 0, (float) dw_, 1, dx, dy, dw, dh);
 	}
 	void release() { if (tex_ && gfx_) gfx_->tex_free(tex_); tex_ = 0; gfx_ = 0; dw_ = sw_ = lvl_ = 0; }

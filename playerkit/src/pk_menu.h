@@ -51,6 +51,8 @@ enum Caps : uint32_t {
 	CAP_CHEAT_EDIT = 1u << 18,    /* the host can add (add_cheat) and delete (delete_cheat) codes */
 	CAP_CHEAT_SEARCH = 1u << 19,  /* "Search memory" (pk_csearch.h): the host gives the machine's memory (search_setup) and takes a code (add_cheat_code) */
 	CAP_CRT = 1u << 20,           /* the CRT mask row (the host draws it: pk_crt.h) */
+	CAP_RA = 1u << 21,            /* RetroAchievements list (MenuHost::list_achievements -> PAGE_RA under Settings) */
+	CAP_SHOT = 1u << 22,          /* Screenshot shortcut mappable on PAGE_MAPPING (ACT_SHOT) */
 	CAP_ALL_BASIC = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_GLOW |
 	                CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CRT
 };
@@ -67,6 +69,8 @@ enum RowId {
 	ROW_UI_TEXT,                  /* Text size: 0 Normal, 1 Large (the Interface page) */
 	ROW_UI_CONTRAST,              /* High contrast: 0 Off, 1 On */
 	ROW_UI_LANGUAGE,              /* Language: 0 Automatic, then English, Espanol, Francais, Deutsch, Italiano, Portugues (Brasil), Japanese, Simplified Chinese (pk_i18n.h LANG_*); one setting for the app and the players (display.ini language=) */
+	ROW_UI_THEME,                 /* Theme: 0 Dark, 1 Light */
+	ROW_UI_TAPMENU,               /* Tap screen for menu: 0 Off, 1 On */
 	ROW_COUNT,
 	ROW_HOST_BASE = 1000          /* rows the host adds itself (add_host_row) have ids from here */
 };
@@ -90,6 +94,16 @@ struct CheatItem {
 	bool on;
 	bool available;     /* false: shown greyed (a code this player cannot use) */
 	CheatItem() : on(false), available(true) {}
+};
+
+struct MenuAchievement {
+	std::string title;
+	std::string desc;
+	uint32_t points;
+	bool unlocked;
+	bool hardcore;
+	std::string progress;
+	MenuAchievement() : points(0), unlocked(false), hardcore(false) {}
 };
 
 class MenuHost {
@@ -139,6 +153,8 @@ public:
 	 * calls it before it reads or deletes a state. */
 	virtual bool queue_state_write(StateJob &job) { (void) job; return false; }
 	virtual void wait_state_writes() {}
+	/* CAP_RA: current game's achievements and an optional header summary string (e.g. "3 / 12 (HC)") */
+	virtual void list_achievements(std::vector<MenuAchievement> &out, std::string *summary) { (void) out; (void) summary; }
 };
 
 struct MenuConfig {
@@ -201,12 +217,14 @@ public:
 	void open(int nav_player = 0);
 	bool is_open() const { return open_; }
 	MenuEvent update(const MenuInput &in);
+	/* Upload / free pending thumbnail and screenshot textures BEFORE opening a GXM scene on Vita. */
+	void prepare_textures(Gfx *g);
 	void draw(Gfx *g, Text *t);
 	void release_textures();
 	Notices &notices() { return notices_; }
 
 	/* introspection, for tests */
-	enum PageId { PAGE_TOP = 0, PAGE_STATES, PAGE_SETTINGS, PAGE_PICTURE, PAGE_CONTROLS, PAGE_MAPPING, PAGE_SPEED, PAGE_CHEATS, PAGE_CHEAT_SEARCH, PAGE_INTERFACE };
+	enum PageId { PAGE_TOP = 0, PAGE_STATES, PAGE_SETTINGS, PAGE_PICTURE, PAGE_CONTROLS, PAGE_MAPPING, PAGE_SPEED, PAGE_CHEATS, PAGE_CHEAT_SEARCH, PAGE_INTERFACE, PAGE_RA };
 	PageId page() const { return page_; }
 	int cursor() const { return cursor_; }
 	void goto_page(PageId p);
@@ -270,6 +288,7 @@ private:
 	void map_row_text(Row &r, int action) const;
 	/* states */
 	void refresh_slots();
+	void refresh_cheats();
 	void do_save(int slot);
 	void do_load(int slot);
 	void do_delete(int slot);
@@ -302,6 +321,16 @@ private:
 	uint32_t accent(int a) const;
 	uint32_t accent_deep() const;
 	uint32_t accent_text() const;
+	bool is_light() const;
+	uint32_t c_bg(int a = 255) const;
+	uint32_t c_text(int a = 255) const;
+	uint32_t c_text2(int a = 255) const;
+	uint32_t c_text3(int a = 255) const;
+	uint32_t c_ink(int a = 255) const;
+	uint32_t c_sheet(int a = 255) const;
+	uint32_t c_plate(int a = 255) const;
+	uint32_t c_red(int a = 255) const;
+	uint32_t c_glass(int a = 255) const;
 
 	MenuConfig cfg_;
 	MenuHost *host_;
@@ -330,6 +359,9 @@ private:
 	int modal_, modal_arg_;
 	std::vector<Row> rows_;
 	std::vector<CheatItem> cheats_;
+	std::vector<MenuAchievement> ra_achs_;
+	std::string ra_summary_;
+	bool has_active_cheats_;
 	/* Search memory */
 	pk_cs cs_;
 	bool cs_ready_;                  /* search_setup() was done */
@@ -368,7 +400,8 @@ private:
 	Gfx *gfx_;
 	Texture *thumb_tex_[STATE_SLOTS];
 	Texture *shot_tex_;
-	bool tex_dirty_;
+	bool thumbs_dirty_;
+	bool shot_dirty_;
 	/* Button test: the pad as read now, and how long Start + Select have been held */
 	PadSample bt_pad_;
 	TouchPoint bt_touch_;

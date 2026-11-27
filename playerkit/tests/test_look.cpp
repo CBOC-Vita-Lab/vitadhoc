@@ -655,3 +655,28 @@ TEST(look_with_the_real_pacer_in_the_loop)
 	CHECK(half_secs_late <= 4);                                      /* after the look came down, every frame again */
 	CHECK(pacer.mode() == PACE_FULL);
 }
+
+TEST(look_safe_point_menu_steps_back_up_when_headroom_sustained)
+{
+	/* Regression test: safe_point(LOOK_SAFE_MENU) previously cleared fit_run_ before testing it, making menu step-up unreachable. */
+	LookConfig c;
+	c.peak_hold_s = 10;
+	c.cool_s = 10;
+	c.up_hold_s = 5;
+	LookGovernor g;
+	g.configure(c);
+	CHECK(g.set_ladder(kLadder, 2));
+	g.start();
+	LookSecond heavy;
+	heavy.emu = 1.25f; heavy.draw = 0.2f; heavy.filter = 0.3f; heavy.refreshes = 60; heavy.missed = 12; heavy.parallel = true;
+	for (int i = 0; i < 15; i++) g.second(heavy);
+	g.safe_point(LOOK_SAFE_MENU);
+	CHECK(g.level() > 0);
+	const int lvl_down = g.level();
+	/* Sustained headroom past cool_s + peak_hold_s + up_hold_s should arm pending_ == +1 and step up at LOOK_SAFE_MENU */
+	LookSecond light;
+	light.emu = 0.40f; light.draw = 0.15f; light.filter = 0.15f; light.refreshes = 60; light.missed = 0; light.parallel = true;
+	for (int i = 0; i < 40; i++) g.second(light);
+	CHECK(g.safe_point(LOOK_SAFE_MENU));
+	CHECK(g.level() < lvl_down);
+}

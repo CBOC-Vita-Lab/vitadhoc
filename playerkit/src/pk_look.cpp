@@ -277,13 +277,20 @@ bool LookGovernor::force_rungs(uint32_t rungs, const char *why)
 bool LookGovernor::safe_point(LookSafe kind)
 {
 	if (!started_) start();
-	if (kind == LOOK_SAFE_MENU) clear_window();
-	if (pending_ == -1) { apply_down("sustained misses", false); return true; }
-	if (pending_ == +1) {
-		/* re-check at the moment of the change: the headroom must still be there */
-		if (next_up_rung() >= 0 && fit_run_ >= cfg_.up_hold_s) { apply_up("headroom for the learned cost"); return true; }
-		pending_ = 0;
+	if (pending_ == -1) {
+		if (kind == LOOK_SAFE_MENU) clear_window();
+		apply_down("sustained misses", false);
+		return true;
 	}
+	if (pending_ == +1) {
+		/* re-check at the moment of the change BEFORE clearing the window: the headroom must still be there */
+		const bool can_up = next_up_rung() >= 0 && fit_run_ >= cfg_.up_hold_s;
+		if (kind == LOOK_SAFE_MENU) clear_window();
+		if (can_up) { apply_up("headroom for the learned cost"); return true; }
+		pending_ = 0;
+		return false;
+	}
+	if (kind == LOOK_SAFE_MENU) clear_window();
 	return false;
 }
 

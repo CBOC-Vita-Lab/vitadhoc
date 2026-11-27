@@ -290,6 +290,8 @@ menu.a_number_you_type	A number you type
 menu.a_shortcut_can_be_one_button	A shortcut can be one button or a chord: press them together.
 # context: on-screen text
 menu.a_soft_glow_beside_the_picture	A soft glow beside the picture in place of black bars.
+# context: row label and page title
+menu.achievements	Achievements
 # context: row label
 menu.add_a_cheat	Add a cheat
 # context: row value
@@ -357,6 +359,8 @@ menu.controls_reset_to_the_defaults	Controls reset to the defaults
 # context: toast; %s is the reason (util.write_*)
 menu.controls_save_failed	Could not save the controls: %s
 # context: toast notice
+menu.could_not_change_slot_lock	Could not change slot lock
+# context: toast notice
 menu.could_not_save_the_state_the	Could not save the state: the game could not be captured
 # context: row label
 menu.crt_mask	CRT mask
@@ -364,6 +368,8 @@ menu.crt_mask	CRT mask
 menu.customised	Customised
 # context: row value
 menu.d_pad	D-pad
+# context: row value
+menu.dark	Dark
 # context: on-screen text
 menu.dark_lines_between_the_rows_like	Dark lines between the rows, like a TV. 1 is faint, 10 is strong.
 # context: row value
@@ -470,12 +476,16 @@ menu.left_stick	Left stick
 menu.left_stick_2	Left stick  %d, %d
 # context: on-screen text
 menu.lets_the_rear_touch_panel_s	Lets the rear touch panel's four corners act as buttons you can map.
+# context: row value
+menu.light	Light
 # context: button hint at the bottom
 menu.load	Load
 # context: toast notice
 menu.load_undone	Load undone
 # context: toast notice
 menu.loading_states_is_not_available	Loading states is not available
+# context: button hint at the top
+menu.lock	Lock
 # context: row value
 menu.look_at_the_game_s_memory	Look at the game's memory now
 # context: help line under a row
@@ -582,6 +592,18 @@ menu.put_every_button_stick_and_turbo	Put every button, stick and turbo setting 
 menu.put_this_player_s_buttons_back	Put this player's buttons back to the defaults.
 # context: question box
 menu.quit	Quit
+# context: help line under the Achievements row
+menu.ra.help	This game's RetroAchievements and what you have unlocked.
+# context: achievement row status
+menu.ra.locked	Locked
+# context: row label
+menu.ra.no_achievements	No achievements to show
+# context: achievement points; %u is the point value
+menu.ra.pts	%u pts
+# context: achievement row status
+menu.ra.unlocked	Unlocked
+# context: achievement row status in Hardcore mode
+menu.ra.unlocked_hc	Unlocked (HC)
 # context: row label
 menu.rear_touch_panel	Rear touch panel
 # context: why Play together is greyed
@@ -676,8 +698,14 @@ menu.size_of_the_number	Size of the number
 menu.slot	Slot %d
 # context: toast notice
 menu.slot_deleted	Slot %d deleted
+# context: toast notice
+menu.slot_is_locked_press_l	Slot is locked - press L to unlock
+# context: toast notice
+menu.slot_locked	Slot %d locked
 # context: on-screen text
 menu.slot_of	Slot %d of %d
+# context: toast notice
+menu.slot_unlocked	Slot %d unlocked
 # context: on-screen text
 menu.smoothed_at_four_times_its_size	Smoothed at four times its size. The most detail and work.
 # context: on-screen text
@@ -703,6 +731,8 @@ menu.states.empty	Empty
 # context: question box
 menu.stay	Stay
 # context: row label
+menu.tap_screen_for_menu	Tap screen for menu
+# context: row label
 menu.text_size	Text size
 # context: help line under a row
 menu.text_size_and_high_contrast_for	Text size and high contrast for the menus of the app and the players.
@@ -726,6 +756,8 @@ menu.the_state_could_not_be_loaded	The state could not be loaded: this game or v
 menu.the_state_saved_there_will_be	The state saved there will be replaced by the game as it is now.
 # context: toast notice
 menu.the_undo_could_not_be_applied	The undo could not be applied
+# context: row label
+menu.theme	Theme
 # context: toast notice
 menu.there_is_no_memory_to_search	There is no memory to search in this game
 # context: toast notice
@@ -766,14 +798,22 @@ menu.ui.language_help	Language of the menus of the app and the players. Automati
 menu.ui.large_text	Large text
 # context: value of the Interface link
 menu.ui.normal_text	Normal text
+# context: help line under the Tap screen for menu row
+menu.ui.tap_menu_help	Tap anywhere on the game screen to open the menu.
+# context: help line under the Theme row
+menu.ui.theme_help	Switch between the dark and light menu theme.
 # context: value of the Interface link; %s is Normal text or Large text
 menu.ui.value_contrast	%s, high contrast
+# context: button hint at the top
+menu.undo	Undo
 # context: on-screen text
 menu.undo_last_load	Undo last load
 # context: row value
 menu.unlimited	Unlimited
 # context: row value
 menu.unlimited_smooth	Unlimited Smooth
+# context: button hint at the top
+menu.unlock	Unlock
 # context: help line under a row
 menu.video_filter_help	How the picture is fitted to the screen. Sharp bilinear: exact pixels with softened edges, at any size. Bilinear: soft, every pixel blends into the next.
 # context: row label
@@ -840,8 +880,6 @@ player.european_games_run_at_50_hz	European games run at 50 Hz. Smooth 50 Hz pla
 player.fast_60_hz	Fast 60 Hz
 # context: notice kept for the app; %s is the core's own message (English)
 player.game_not_started_err	This game could not be started: %s
-# context: toast notice
-player.hardcore_mode_the_game_starts_from	Hardcore mode: the game starts from the beginning
 # context: toast
 player.moved_old_states	Moved %d old save states to the new slots
 # context: toast (one state)
@@ -1082,6 +1120,8 @@ states.the_state_could_not_be_written	The state could not be written
 states.the_state_file_is_damaged	The state file is damaged
 # context: on-screen text
 states.the_state_file_is_too_large	The state file is too large
+# context: on-screen text
+states.this_slot_is_locked	This slot is locked
 # context: on-screen text
 util.bad_request	bad request
 # context: on-screen text

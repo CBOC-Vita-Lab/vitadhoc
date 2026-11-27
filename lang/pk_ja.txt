@@ -143,6 +143,7 @@ menu.a_faint_pixel_grid_like_a	携帯機の画面のような薄い画素の格�
 menu.a_number_you_type	入力した数値
 menu.a_shortcut_can_be_one_button	ショートカットは1ボタン、または同時押しにできます。
 menu.a_soft_glow_beside_the_picture	黒帯の代わりに映像の横にやわらかい光を表示します。
+menu.achievements	実績
 menu.add_a_cheat	チートを追加
 menu.all_games	すべてのゲーム
 menu.ambient_glow	アンビエントグロー
@@ -176,10 +177,12 @@ menu.confirm	決定
 menu.controls	操作
 menu.controls_reset_to_the_defaults	操作を初期値に戻しました
 menu.controls_save_failed	操作を保存できませんでした: %s
+menu.could_not_change_slot_lock	スロットのロックを変更できませんでした
 menu.could_not_save_the_state_the	ステートをセーブできませんでした: ゲームの状態を取り込めませんでした
 menu.crt_mask	CRTマスク
 menu.customised	カスタム
 menu.d_pad	方向キー
+menu.dark	ダーク
 menu.dark_lines_between_the_rows_like	テレビのように、行の間に暗い線を入れます。1が薄く、10が濃くなります。
 menu.default	初期値
 menu.delete	削除
@@ -233,9 +236,11 @@ menu.leave_this_game_for_the_game	このゲームを終えてゲーム一覧へ
 menu.left_stick	左スティック
 menu.left_stick_2	左スティック  %d, %d
 menu.lets_the_rear_touch_panel_s	背面タッチパネルの四隅を、割り当て可能なボタンとして使えます。
+menu.light	ライト
 menu.load	ロード
 menu.load_undone	ロードを取り消しました
 menu.loading_states_is_not_available	ステートのロードは使えません
+menu.lock	ロック
 menu.look_at_the_game_s_memory	ゲームのメモリーを今すぐ調べる
 menu.make_this_a_cheat_that_keeps	今の値を保つチートにします。
 menu.map.press_ok_for	OKを押してから、%sにしたいVitaのボタンを押してください。
@@ -289,6 +294,12 @@ menu.ps_tv	PS TV
 menu.put_every_button_stick_and_turbo	すべてのボタン、スティック、連射の設定を初期値に戻します。
 menu.put_this_player_s_buttons_back	このプレイヤーのボタンを初期値に戻します。
 menu.quit	終了
+menu.ra.help	このゲームのRetroAchievementsと解除済みの実績。
+menu.ra.locked	未解除
+menu.ra.no_achievements	表示できる実績がありません
+menu.ra.pts	%u pts
+menu.ra.unlocked	解除済み
+menu.ra.unlocked_hc	解除済み (HC)
 menu.rear_touch_panel	背面タッチパネル
 menu.reason.no_link	この機種では使えません: プレーヤーに通信機能がありません
 menu.reason.unsupported	このプレーヤーでは使えません
@@ -336,7 +347,10 @@ menu.since_the_last_step	前回のステップから
 menu.size_of_the_number	数値のサイズ
 menu.slot	スロット%d
 menu.slot_deleted	スロット%dを削除しました
+menu.slot_is_locked_press_l	スロットはロック中です - Lで解除
+menu.slot_locked	スロット%dをロックしました
 menu.slot_of	スロット%d / %d
+menu.slot_unlocked	スロット%dのロックを解除しました
 menu.smoothed_at_four_times_its_size	4倍に拡大してなめらかに。最も精細で負荷も最大です。
 menu.smoothed_at_three_times_its_size	3倍に拡大してなめらかに。より精細ですが負荷も増えます。
 menu.smoothed_at_twice_the_game_s	ゲームの2倍に拡大してなめらかにし、画面に合わせます。
@@ -349,6 +363,7 @@ menu.state_loaded_from_slot	スロット%dからステートをロードしま�
 menu.state_saved_to_slot	スロット%dにステートをセーブしました
 menu.states.empty	空
 menu.stay	残る
+menu.tap_screen_for_menu	タップでメニュー
 menu.text_size	文字サイズ
 menu.text_size_and_high_contrast_for	アプリとプレーヤーのメニューの文字サイズとハイコントラスト。
 menu.the_cheat_could_not_be_deleted	チートを削除できませんでした
@@ -361,6 +376,7 @@ menu.the_state_could_not_be_deleted	ステートを削除できませんでし�
 menu.the_state_could_not_be_loaded	ステートをロードできませんでした: このゲームまたはバージョンでは読めません
 menu.the_state_saved_there_will_be	そこに保存されたステートは、今のゲームの状態で置き換えられます。
 menu.the_undo_could_not_be_applied	元に戻せませんでした
+menu.theme	テーマ
 menu.there_is_no_memory_to_search	このゲームには検索できるメモリーがありません
 menu.there_is_no_search_to_narrow	絞り込む検索がありません
 menu.this_game	このゲーム
@@ -381,10 +397,14 @@ menu.type_a_whole_number_from_0	0から%uまでの整数を入力 (0xで16進も
 menu.ui.language_help	アプリとプレーヤーのメニューの言語。自動はVita本体の言語に従い、翻訳のない言語では英語になります。
 menu.ui.large_text	大きい文字
 menu.ui.normal_text	標準の文字
+menu.ui.tap_menu_help	ゲーム画面のどこかをタップするとメニューを開きます。
+menu.ui.theme_help	メニューのダークテーマとライトテーマを切り替えます。
 menu.ui.value_contrast	%s、ハイコントラスト
+menu.undo	元に戻す
 menu.undo_last_load	最後のロードを取り消す
 menu.unlimited	無制限
 menu.unlimited_smooth	無制限なめらか
+menu.unlock	解除
 menu.video_filter_help	映像を画面に合わせる方法。シャープバイリニア: 正確な画素で輪郭をやわらげます (どの大きさでも)。バイリニア: ソフト、画素が隣の画素となじみます。
 menu.waiting	待機中...  %d
 menu.what_the_left_stick_does_nothing	左スティックの動作: なし、方向キー、または割り当て可能な専用ボタン。
@@ -418,7 +438,6 @@ player.draws_each_picture_on_its_own	映像を別のスレッドで描画する�
 player.european_games_run_at_50_hz	欧州のゲームは50 Hzで動きます。なめらか50 Hzは本来の速度を保ち映像を整えます: 6回に1回、2フレームを混ぜて表示します。本来の50 Hzは6フレームに1回同じフレームを再表示します。高速60 Hzは60 Hz画面と同じく20％速く動かします。
 player.fast_60_hz	高速60 Hz
 player.game_not_started_err	このゲームを起動できませんでした: %s
-player.hardcore_mode_the_game_starts_from	ハードコアモード: ゲームを最初から始めます
 player.moved_old_states	古いステート%d件を新しいスロットに移しました
 player.moved_one_old_state	古いステート%d件を新しいスロットに移しました
 player.no_game_was_given	ゲームが指定されていません。
@@ -539,6 +558,7 @@ states.the_state_could_not_be_read	メモリーカードからステートを読
 states.the_state_could_not_be_written	ステートを書き込めませんでした
 states.the_state_file_is_damaged	ステートファイルが破損しています
 states.the_state_file_is_too_large	ステートファイルが大きすぎます
+states.this_slot_is_locked	このスロットはロックされています
 util.bad_request	不正なリクエスト
 util.could_not_replace_the_old_file	元のファイルを置き換えられませんでした (元のファイルは残しました)
 util.could_not_write_to_the_memory	メモリーカードに書き込めませんでした (空きがないか書き込み禁止)

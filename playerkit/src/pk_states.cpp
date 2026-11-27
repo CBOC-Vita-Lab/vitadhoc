@@ -18,7 +18,7 @@ std::string StateLayout::states_dir() const
 
 int migrate_to_bucket(const StateLayout &l, int *failed)
 {
-	static const char *const tail[] = { "", ".thumb", ".shot", ".meta", ".p2", ".old" };
+	static const char *const tail[] = { "", ".thumb", ".shot", ".meta", ".p2", ".old", ".lock" };
 	static const char *const rtail[] = { "", ".pt", ".meta", ".thumb", ".shot", ".old" };
 	const std::string base = l.name + l.ext_tag;
 	const std::string dir = l.states_dir(), flat = l.flat_dir();
@@ -55,7 +55,7 @@ int migrate_to_bucket(const StateLayout &l, int *failed)
 
 int adopt_states(const StateLayout &from, const StateLayout &to, int *failed)
 {
-	static const char *const tail[] = { "", ".thumb", ".shot", ".meta", ".p2", ".old" };
+	static const char *const tail[] = { "", ".thumb", ".shot", ".meta", ".p2", ".old", ".lock" };
 	static const char *const rtail[] = { "", ".pt", ".meta", ".thumb", ".shot", ".old" };
 	std::vector<std::string> suffix;
 	for (int s = 0; s < 10; s++)
@@ -106,6 +106,7 @@ const char *state_status_text(StateStatus s, bool en)
 	case ST_DAMAGED: return trl("states.the_state_file_is_damaged", en);
 	case ST_TOO_BIG: return trl("states.the_state_file_is_too_large", en);
 	case ST_WRITE: return trl("states.the_state_could_not_be_written", en);
+	case ST_LOCKED: return trl("states.this_slot_is_locked", en);
 	default: return trl("states.no_such_slot", en);
 	}
 }
@@ -363,7 +364,8 @@ void States::scan_one(Cached &c, const std::string &path, const std::vector<std:
 		c.has_meta = has_name(*names, base + ".meta");
 		c.has_thumb = !resume && has_name(*names, base + ".thumb");
 		c.has_shot = !resume && has_name(*names, base + ".shot");
-		static const char *const leftovers[] = { ".tmp", ".thumb.tmp", ".shot.tmp", ".meta.tmp", ".thumb.old", ".shot.old", ".meta.old" };
+		c.info.locked = !resume && has_name(*names, base + ".lock");
+		static const char *const leftovers[] = { ".tmp", ".thumb.tmp", ".shot.tmp", ".meta.tmp", ".lock.tmp", ".thumb.old", ".shot.old", ".meta.old", ".lock.old" };
 		for (size_t i = 0; i < sizeof leftovers / sizeof leftovers[0]; i++)
 			if (has_name(*names, base + leftovers[i])) c.extra.push_back(base + leftovers[i]);
 	} else {
@@ -372,6 +374,7 @@ void States::scan_one(Cached &c, const std::string &path, const std::vector<std:
 		c.has_meta = file_exists(path + ".meta");
 		c.has_thumb = !resume && file_exists(path + ".thumb");
 		c.has_shot = !resume && file_exists(path + ".shot");
+		c.info.locked = !resume && file_exists(path + ".lock");
 	}
 	if (!c.has_main && c.has_old) {
 		/* a write cut between its two renames: the .old is the last good copy, put it back */
@@ -416,6 +419,8 @@ void States::rescan()
 	rsm_ = r;
 	rsm_pt_ = pt;
 	rsm_pt_known_ = false;
+	undo_disk_probed_ = false;
+	undo_disk_have_ = false;
 	scanned_ = true;
 }
 
@@ -501,6 +506,10 @@ SaveReport States::commit(const StateJob &j)
 		before = entry(j.slot);
 		pt_had = rsm_pt_; pt_known = rsm_pt_known_; pt_text = rsm_pt_text_;
 	}
+	if (!resume && before.info.locked) {
+		rep.status = ST_LOCKED;
+		return rep;
+	}
 	/* 1. the old note is emptied (in place) so it can never describe the new state: an empty note means
 	 *    "not checked", a stale one would refuse a good state after a power cut between 2 and 3. */
 	if (before.has_meta) fs().write_all(path + ".meta", (const uint8_t *) "", 0);
@@ -583,6 +592,11 @@ SaveReport States::save(int slot, const uint8_t *data, size_t n, const Frame &fr
 		r.status = ST_BAD_SLOT;
 		return r;
 	}
+	if (is_locked(slot)) {
+		SaveReport r;
+		r.status = ST_LOCKED;
+		return r;
+	}
 	return commit(prepare(slot, data, n, frame, play_seconds));
 }
 
@@ -622,6 +636,7 @@ bool States::remove(int slot)
 	ensure_scanned();
 	Cached c;
 	{ SpinGuard g(lk_); c = slot_[slot - 1]; }
+	if (c.info.locked) return false;
 	std::string p = l_.slot_path(slot);
 	bool ok = true;
 	if (c.has_main) ok = file_remove(p) && ok;
@@ -633,6 +648,36 @@ bool States::remove(int slot)
 	SpinGuard g(lk_);
 	if (ok) slot_[slot - 1] = Cached();
 	return ok;
+}
+
+bool States::set_lock(int slot, bool locked)
+{
+	if (slot < 1 || slot > STATE_SLOTS) return false;
+	ensure_scanned();
+	{
+		SpinGuard g(lk_);
+		if (locked && !slot_[slot - 1].info.present && !slot_[slot - 1].info.locked) return false;
+	}
+	const std::string lp = l_.slot_path(slot) + ".lock";
+	if (locked) {
+		ensure_dirs();
+		if (atomic_write(lp, (const uint8_t *) "locked\n", 7, EXISTS_UNKNOWN) != W_OK) return false;
+	} else {
+		file_remove(lp);
+		file_remove(lp + ".old");
+		if (file_exists(lp)) return false;
+	}
+	SpinGuard g(lk_);
+	slot_[slot - 1].info.locked = locked;
+	return true;
+}
+
+bool States::is_locked(int slot)
+{
+	if (slot < 1 || slot > STATE_SLOTS) return false;
+	ensure_scanned();
+	SpinGuard g(lk_);
+	return slot_[slot - 1].info.locked;
 }
 
 bool States::read_thumb(int slot, std::vector<uint16_t> &px, int *w, int *h)
@@ -741,24 +786,79 @@ bool States::resume_due(uint64_t now_ms, uint64_t interval_ms) const
 bool States::undo_store(const uint8_t *data, size_t n)
 {
 	if (!data || !n) return false;
-	undo_.assign(data, data + n);
-	undo_have_ = true;
+	{
+		SpinGuard g(lk_);
+		undo_.assign(data, data + n);
+		undo_have_ = true;
+		undo_disk_probed_ = true;
+		undo_disk_have_ = false;
+	}
+	ensure_dirs();
+	const bool ok = atomic_write(l_.undo_path(), data, n, EXISTS_UNKNOWN) == W_OK;
+	if (ok) {
+		SpinGuard g(lk_);
+		undo_disk_have_ = true;
+	}
 	return true;
 }
 
 StateStatus States::undo_fetch(std::vector<uint8_t> &out) const
 {
-	if (!undo_have_) return ST_EMPTY;
-	out = undo_;
+	{
+		SpinGuard g(lk_);
+		if (undo_have_) {
+			out = undo_;
+			return ST_OK;
+		}
+	}
+	const std::string up = l_.undo_path();
+	if (!file_exists(up)) {
+		SpinGuard g(lk_);
+		undo_disk_probed_ = true;
+		undo_disk_have_ = false;
+		return ST_EMPTY;
+	}
+	std::vector<uint8_t> disk;
+	if (!file_read(up, disk, 32u << 20) || disk.empty()) return ST_READ;
+	{
+		SpinGuard g(lk_);
+		if (!undo_have_) {
+			undo_.swap(disk);
+			undo_have_ = true;
+		}
+		undo_disk_probed_ = true;
+		undo_disk_have_ = true;
+		out = undo_;
+	}
 	return ST_OK;
 }
 
-bool States::undo_available() const { return undo_have_; }
+bool States::undo_available() const
+{
+	{
+		SpinGuard g(lk_);
+		if (undo_have_) return true;
+		if (undo_disk_probed_) return undo_disk_have_;
+	}
+	uint64_t sz = 0;
+	const bool on_disk = file_exists(l_.undo_path(), &sz) && sz > 0;
+	SpinGuard g(lk_);
+	undo_disk_probed_ = true;
+	undo_disk_have_ = on_disk;
+	return undo_have_ || undo_disk_have_;
+}
 
 void States::undo_clear()
 {
-	undo_.clear();
-	undo_have_ = false;
+	{
+		SpinGuard g(lk_);
+		undo_.clear();
+		undo_have_ = false;
+		undo_disk_probed_ = true;
+		undo_disk_have_ = false;
+	}
+	file_remove(l_.undo_path());
+	file_remove(l_.undo_path() + ".old");
 }
 
 bool States::save_scene(const Frame &frame)

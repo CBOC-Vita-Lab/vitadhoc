@@ -117,8 +117,14 @@ public:
 		return true;
 	}
 	int64_t play_seconds() { return play_s; }
-	void list_cheats(std::vector<pk::CheatItem> &out) { out = cheat_list; }
+	void list_cheats(std::vector<pk::CheatItem> &out) { list_cheats_calls++; out = cheat_list; }
 	void set_cheat(int i, bool on) { cheat_sets.push_back(std::make_pair(i, on)); if (i >= 0 && i < (int) cheat_list.size()) cheat_list[(size_t) i].on = on; }
+	int list_cheats_calls = 0, add_cheat_calls = 0;
+	void add_cheat() { add_cheat_calls++; }
+	bool delete_cheat(int i) { if (i < 0 || i >= (int) cheat_list.size()) return false; cheat_list.erase(cheat_list.begin() + (ptrdiff_t) i); return true; }
+	std::vector<pk::MenuAchievement> achs;
+	std::string ra_summary;
+	void list_achievements(std::vector<pk::MenuAchievement> &out, std::string *summary) { out = achs; if (summary) *summary = ra_summary; }
 	void on_state_touched(int slot) { touched.push_back(slot); }
 	void on_controls_changed(pk::WriteResult) { controls_changed_count++; }
 	/* Search memory: a fake machine of `mem` (addresses 0..), what the menu asked, the codes it made */

@@ -330,3 +330,103 @@ TEST(states_stamp_text)
 	if (oldtz) setenv("TZ", saved.c_str(), 1); else unsetenv("TZ");
 	tzset();
 }
+
+TEST(states_slot_lock_blocks_overwrite_and_delete_and_follows_migrate_adopt)
+{
+	pkh::TempDir td;
+	StateLayout l = layout(td.path);
+	std::vector<uint16_t> px; pkh::make_game_frame(1, px);
+	Frame f(&px[0], 256, 224, 512);
+	std::vector<uint8_t> d1 = blob(1), d2 = blob(2), back;
+	{
+		States st(l);
+		CHECK(!st.is_locked(1));
+		CHECK(!st.set_lock(1, true));                           /* empty slot cannot be locked */
+		CHECK_EQ(st.save(1, &d1[0], d1.size(), f, 12).status, ST_OK);
+		CHECK(st.set_lock(1, true));
+		CHECK(st.is_locked(1));
+		CHECK(st.info(1).locked);
+		CHECK(file_exists(l.slot_path(1) + ".lock"));
+		/* locked slot refuses save, commit, and remove without touching the existing slot */
+		CHECK_EQ(st.save(1, &d2[0], d2.size(), f, 24).status, ST_LOCKED);
+		StateJob j = st.prepare(1, &d2[0], d2.size(), f, 24);
+		CHECK_EQ(st.commit(j).status, ST_LOCKED);
+		CHECK(!st.remove(1));
+		CHECK_EQ(st.load(1, back), ST_OK);
+		CHECK(back == d1);
+		CHECK(!std::string(state_status_text(ST_LOCKED, true)).empty());
+	}
+	/* a fresh States instance picks up the .lock file from disk */
+	{
+		States st2(l);
+		CHECK(st2.is_locked(1));
+		CHECK_EQ(st2.save(1, &d2[0], d2.size(), f, 30).status, ST_LOCKED);
+		CHECK(st2.set_lock(1, false));
+		CHECK(!st2.is_locked(1));
+		CHECK(!file_exists(l.slot_path(1) + ".lock"));
+		CHECK_EQ(st2.save(1, &d2[0], d2.size(), f, 30).status, ST_OK);
+		CHECK(st2.set_lock(1, true));
+	}
+	/* adopt_states copies .lock alongside slot files */
+	StateLayout adopted = layout(td.path);
+	adopted.name = "Example Adopted";
+	int failed = -1;
+	CHECK(adopt_states(l, adopted, &failed) >= 2);
+	CHECK_EQ(failed, 0);
+	CHECK(file_exists(adopted.slot_path(1) + ".lock"));
+	States st_ad(adopted);
+	CHECK(st_ad.is_locked(1));
+	CHECK(!st_ad.remove(1));
+
+	/* migrate_to_bucket moves .lock alongside flat slot files */
+	StateLayout flat = layout(td.path);
+	flat.name = "Flat Locked Game";
+	make_dirs(flat.flat_dir());
+	CHECK(fs().write_all(path_join(flat.flat_dir(), flat.name + ".st0"), &d1[0], d1.size()));
+	CHECK(fs().write_all(path_join(flat.flat_dir(), flat.name + ".st0.lock"), (const uint8_t *) "locked\n", 7));
+	CHECK_EQ(migrate_to_bucket(flat, &failed), 2);
+	CHECK_EQ(failed, 0);
+	CHECK(!file_exists(path_join(flat.flat_dir(), flat.name + ".st0.lock")));
+	CHECK(file_exists(flat.slot_path(1) + ".lock"));
+	States st_mig(flat);
+	CHECK(st_mig.is_locked(1));
+}
+
+TEST(states_undo_persists_across_instances_and_handles_write_failure)
+{
+	pkh::TempDir td;
+	StateLayout l = layout(td.path);
+	std::vector<uint8_t> d = blob(7), back;
+	{
+		States st(l);
+		CHECK(!st.undo_available());
+		CHECK(st.undo_store(&d[0], d.size()));
+		CHECK(file_exists(l.undo_path()));
+		CHECK(st.undo_available());
+	}
+	/* new States instance after close/restart reads l.undo_path() from disk */
+	{
+		States st2(l);
+		CHECK(st2.undo_available());
+		CHECK_EQ(st2.undo_fetch(back), ST_OK);
+		CHECK(back == d);
+		st2.undo_clear();
+		CHECK(!st2.undo_available());
+		CHECK(!file_exists(l.undo_path()));
+	}
+	/* a fresh third instance sees undo was cleared */
+	{
+		States st3(l);
+		CHECK(!st3.undo_available());
+		CHECK_EQ(st3.undo_fetch(back), ST_EMPTY);
+	}
+	/* disk failure still keeps undo in memory */
+	States st4(l);
+	FsOps real = fs();
+	fs().write_all = fail_all_writes;
+	CHECK(st4.undo_store(&d[0], d.size()));
+	fs() = real;
+	CHECK(st4.undo_available());
+	CHECK_EQ(st4.undo_fetch(back), ST_OK);
+	CHECK(back == d);
+}

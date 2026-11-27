@@ -166,6 +166,8 @@ static inline void pk_cs_pass(pk_cs *cs, int op, uint32_t value)
 	for (r = 0; r < cs->nreg; r++)
 	{
 		uint32_t size = cs->reg[r].size, in;
+		uint8_t prev_tail[4];
+		uint32_t prev_tail_n = 0;
 		for (in = 0; in < size; in += PK_CS_CHUNK)
 		{
 			uint32_t want = size - in < PK_CS_CHUNK ? size - in : PK_CS_CHUNK, got, i, rd;
@@ -175,7 +177,18 @@ static inline void pk_cs_pass(pk_cs *cs, int op, uint32_t value)
 				for (i = 0; i < want && !any; i++)
 					any = pk_cs_bit(cs, base + in + i);
 				if (!any)
+				{
+					/* With unaligned searches, the previous chunk may still have live candidates whose
+					 * tail spanned into the head of this skipped chunk: flush those lookahead bytes now
+					 * so relative checks (changed/unchanged/inc/dec) do not compare against stale data. */
+					if (prev_tail_n > 0)
+					{
+						const uint32_t copy_n = prev_tail_n < want ? prev_tail_n : want;
+						memcpy(cs->snap + base + in, prev_tail, copy_n);
+						prev_tail_n = 0;
+					}
 					continue;
+				}
 			}
 			rd = want;
 			if (cs->any)
@@ -222,6 +235,17 @@ static inline void pk_cs_pass(pk_cs *cs, int op, uint32_t value)
 				}
 			}
 			memcpy(cs->snap + base + in, buf, got < want ? got : want);
+			if (cs->any && got > want)
+			{
+				prev_tail_n = got - want;
+				if (prev_tail_n > (uint32_t)sizeof(prev_tail))
+					prev_tail_n = (uint32_t)sizeof(prev_tail);
+				memcpy(prev_tail, buf + want, prev_tail_n);
+			}
+			else
+			{
+				prev_tail_n = 0;
+			}
 		}
 		base += size;
 	}

@@ -196,7 +196,7 @@ struct Link::Impl {
 	uint32_t sid = 0, nonce = 0;
 	uint64_t now = 0;
 	uint64_t t_open = 0, last_rx = 0, last_tx = 0, last_census = 0, last_hello = 0, last_refuse = 0, last_welcome = 0,
-	         last_cack = 0, last_ready = 0, last_start = 0, last_step = 0;
+	         last_cack = 0, last_ready = 0, last_start = 0, last_step = 0, last_progress = 0;
 	LinkStats st;
 	LinkStats census_prev;
 
@@ -439,6 +439,7 @@ struct Link::Impl {
 		       ((uint32_t) (uintptr_t) this * 0x27D4EB2Fu)) | 1u;
 		phase = LP_STATE;
 		t_lock = now;
+		last_progress = now;
 		cstate.assign(nchunks, 0);
 		csent.assign(nchunks, 0);
 		ack_base = acked = 0;
@@ -478,6 +479,7 @@ struct Link::Impl {
 		cstate.assign(nchunks, 0);
 		have = 0;
 		phase = LP_STATE;
+		last_progress = now;
 		note_echo(ts);
 		log("link: joined; receiving the game's state (%u bytes in %u chunks)", cl, nchunks);
 		send_cack(true);
@@ -515,9 +517,11 @@ struct Link::Impl {
 		for (uint32_t i = ack_base; i < base; i++) cstate[i] = 2;
 		if (base > ack_base) ack_base = base;
 		for (unsigned i = 0; i < 64 && base + 1 + i < nchunks; i++) if (mask >> i & 1) cstate[base + 1 + i] = 2;
+		const uint32_t prev_acked = acked;
 		acked = 0;
 		for (uint32_t i = ack_base; i < nchunks && i < ack_base + 4096; i++) if (cstate[i] == 2) acked++;
 		acked += ack_base;
+		if (acked > prev_acked) last_progress = now;
 		st.acks++;
 	}
 
@@ -560,6 +564,7 @@ struct Link::Impl {
 		memcpy(comp.data() + (size_t) idx * CHUNK, r.p + r.i, want);
 		cstate[idx] = 1;
 		have++;
+		last_progress = now;
 		if (have == nchunks) { finish_transfer(); return; }
 		if ((have & 7) == 0) send_cack(true); else send_cack(false);
 	}
@@ -580,6 +585,7 @@ struct Link::Impl {
 		replaced = true;
 		if (m.state_load(m.user, raw.data(), raw.size()) != 0) { log("link: the machine refused the host's state"); fail(LE_START, true); return; }
 		phase = LP_START;
+		last_progress = now;
 		last_ready = 0;
 		send_ready();
 		log("link: the host's state is loaded");
@@ -724,11 +730,10 @@ struct Link::Impl {
 	void adopt_end(uint32_t e)
 	{
 		if (phase != LP_RUN && phase != LP_ENDING) return;
+		if (end_at != NO_END && (int32_t) (e - end_at) <= 0) return;
 		if ((int32_t) (e - cur) < 0 || e - cur > 2000) { log("link: an impossible end frame (%u at %u)", e, cur); fail(LE_PROTO, true); return; }
-		if (end_at == NO_END || (int32_t) (e - end_at) > 0) {
-			end_at = e;
-			final_done = false;
-		}
+		end_at = e;
+		final_done = false;
 		if (phase == LP_RUN) {
 			phase = LP_ENDING;
 			final_t0 = 0;
@@ -837,11 +842,21 @@ struct Link::Impl {
 		}
 		switch (phase) {
 		case LP_STATE:
+			if (last_progress && now - last_progress > 15000000ull) {
+				log("link: state transfer stalled for %u s", (unsigned) ((now - last_progress) / 1000000));
+				fail(LE_PEER_LOST, true);
+				break;
+			}
 			if (cfg.host && cfg.delay <= 0 && echo_sent < 24 && now - last_echo >= 25000) { w->echo_probe(peer); echo_sent++; last_echo = now; }
 			if (cfg.host) send_chunks();
 			else if (now - last_cack >= 100000) send_cack(true);
 			break;
 		case LP_START:
+			if (last_progress && now - last_progress > 15000000ull) {
+				log("link: start handshake stalled for %u s", (unsigned) ((now - last_progress) / 1000000));
+				fail(LE_PEER_LOST, true);
+				break;
+			}
 			if (now - last_ready >= 100000) send_ready();
 			break;
 		case LP_RUN:
@@ -982,7 +997,7 @@ struct Link::Impl {
 	{
 		if (!replaced) return;
 		if (cfg.host) {
-			if (phase != LP_DONE && !raw.empty() && ran) restore_ok = m.state_load(m.user, raw.data(), raw.size()) == 0;
+			if (phase != LP_DONE && err != LE_PEER_LOST && !raw.empty() && ran) restore_ok = m.state_load(m.user, raw.data(), raw.size()) == 0;
 		} else if (own_saved) {
 			restore_ok = m.state_load(m.user, own.data(), own.size()) == 0;
 		}

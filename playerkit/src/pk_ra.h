@@ -57,6 +57,16 @@ struct RaHost {
 	void *ud = 0;
 };
 
+struct RaAchievement {
+	uint32_t id = 0;
+	std::string title;
+	std::string desc;
+	uint32_t points = 0;
+	bool unlocked = false;
+	bool hardcore = false;
+	std::string progress;
+};
+
 class Ra {
 public:
 	Ra();
@@ -99,6 +109,8 @@ public:
 	unsigned total() const { return n_total_; }
 	unsigned frames() const { return frame_; }
 	const std::string &game_title() const { return title_; }
+	const std::string &user() const { return user_; }
+	bool list_achievements(std::vector<RaAchievement> &out) const;
 	bool logged_in() const;
 
 	/* The site's hash of a game: the MD5 of the file (a Super NES file without a 512 byte header); false when too big (64 MB) or empty. */

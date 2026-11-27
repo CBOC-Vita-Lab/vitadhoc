@@ -5,6 +5,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __vita__
+#include <psp2/kernel/threadmgr.h>
+#elif !defined(_WIN32)
+#include <sched.h>
+#endif
 
 namespace pk {
 
@@ -120,7 +125,8 @@ bool Rewind::open(const RewindConfig &c)
 	if (cfg_.interval_max < cfg_.interval_min) cfg_.interval_max = cfg_.interval_min;
 	size_t ents = (size_t) (cfg_.seconds * cfg_.fps / cfg_.interval_min) + 16;
 	if (ents > 65536) ents = 65536;
-	const size_t fixed = 2 * cfg_.state_bytes + ents * sizeof(Ent);
+	const size_t tmp_cap = delta_bound(cfg_.state_bytes);
+	const size_t fixed = 2 * cfg_.state_bytes + tmp_cap + ents * sizeof(Ent);
 	if (cfg_.budget_bytes <= fixed + (128u << 10)) { nomem_ = true; return false; }
 	ring_cap_ = cfg_.budget_bytes - fixed;
 	cur_ = (uint8_t *) malloc(cfg_.state_bytes);
@@ -128,7 +134,7 @@ bool Rewind::open(const RewindConfig &c)
 	ring_ = (uint8_t *) malloc(ring_cap_);
 	if (!cur_ || !pend_ || !ring_) { close(); nomem_ = true; return false; }
 	ents_.assign(ents, Ent());
-	tmp_.assign(delta_bound(cfg_.state_bytes), 0);
+	tmp_.assign(tmp_cap, 0);
 	open_ = true;
 	st_ = RewindStats();
 	st_.on = true;
@@ -251,8 +257,14 @@ void Rewind::wait_idle()
 		int s = pend_state_.load(std::memory_order_acquire);
 		if (s == 0) return;
 		if (s == 1) { pack_pending(); continue; }
-		/* being packed by the helper: it is a matter of a millisecond or two */
+		/* being packed by the helper: yield / nap instead of busy-spinning the core */
+#ifdef __vita__
+		sceKernelDelayThread(100);
+#elif !defined(_WIN32)
+		sched_yield();
+#else
 		for (volatile int spin = 0; spin < 2000; spin = spin + 1) {}
+#endif
 	}
 }
 

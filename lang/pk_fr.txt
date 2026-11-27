@@ -143,6 +143,7 @@ menu.a_faint_pixel_grid_like_a	Une grille de pixels discrète, comme un écran p
 menu.a_number_you_type	Un nombre que tu saisis
 menu.a_shortcut_can_be_one_button	Un raccourci peut être un bouton ou un combo : appuie sur les boutons ensemble.
 menu.a_soft_glow_beside_the_picture	Une lueur douce à côté de l'image, à la place des bandes noires.
+menu.achievements	Succès
 menu.add_a_cheat	Ajouter un code
 menu.all_games	Tous les jeux
 menu.ambient_glow	Lueur d'ambiance
@@ -176,10 +177,12 @@ menu.confirm	Valider
 menu.controls	Commandes
 menu.controls_reset_to_the_defaults	Commandes réinitialisées
 menu.controls_save_failed	Commandes non enregistrées : %s
+menu.could_not_change_slot_lock	Impossible de modifier le verrou de l'emplacement
 menu.could_not_save_the_state_the	État non sauvegardé : le jeu n'a pas pu être capturé
 menu.crt_mask	Masque CRT
 menu.customised	Personnalisé
 menu.d_pad	Croix
+menu.dark	Sombre
 menu.dark_lines_between_the_rows_like	Lignes sombres entre les rangées, comme une TV. 1 : faible, 10 : forte.
 menu.default	Défaut
 menu.delete	Supprimer
@@ -233,9 +236,11 @@ menu.leave_this_game_for_the_game	Quitter ce jeu pour la liste des jeux
 menu.left_stick	Stick gauche
 menu.left_stick_2	Stick gauche  %d, %d
 menu.lets_the_rear_touch_panel_s	Les quatre coins du panneau tactile arrière deviennent des boutons assignables.
+menu.light	Clair
 menu.load	Charger
 menu.load_undone	Chargement annulé
 menu.loading_states_is_not_available	Le chargement d'états est indisponible
+menu.lock	Verrou
 menu.look_at_the_game_s_memory	Regarder la mémoire du jeu maintenant
 menu.make_this_a_cheat_that_keeps	En faire un code qui garde la valeur actuelle.
 menu.map.press_ok_for	Appuie sur OK, puis sur le bouton de la Vita qui doit être %s.
@@ -289,6 +294,12 @@ menu.ps_tv	PS TV
 menu.put_every_button_stick_and_turbo	Remet tous les réglages de boutons, sticks et turbo par défaut.
 menu.put_this_player_s_buttons_back	Remet les boutons de ce joueur par défaut.
 menu.quit	Quitter
+menu.ra.help	Les RetroAchievements de ce jeu et ceux que tu as débloqués.
+menu.ra.locked	Verrouillé
+menu.ra.no_achievements	Aucun succès à afficher
+menu.ra.pts	%u pts
+menu.ra.unlocked	Débloqué
+menu.ra.unlocked_hc	Débloqué (HC)
 menu.rear_touch_panel	Panneau tactile arrière
 menu.reason.no_link	Indisponible pour cette console : le lecteur n'a pas de liaison
 menu.reason.unsupported	Indisponible dans ce lecteur
@@ -336,7 +347,10 @@ menu.since_the_last_step	Depuis la dernière étape
 menu.size_of_the_number	Taille du nombre
 menu.slot	Empl. %d
 menu.slot_deleted	Emplacement %d supprimé
+menu.slot_is_locked_press_l	Emplacement verrouillé - appuie sur L pour déverrouiller
+menu.slot_locked	Emplacement %d verrouillé
 menu.slot_of	Empl. %d sur %d
+menu.slot_unlocked	Emplacement %d déverrouillé
 menu.smoothed_at_four_times_its_size	Lissé à quatre fois sa taille. Le plus de détails et de travail.
 menu.smoothed_at_three_times_its_size	Lissé à trois fois sa taille. Plus de détails, plus de travail.
 menu.smoothed_at_twice_the_game_s	Lissé à deux fois la taille du jeu, puis ajusté.
@@ -349,6 +363,7 @@ menu.state_loaded_from_slot	État chargé depuis l'emplacement %d
 menu.state_saved_to_slot	État sauvegardé dans l'emplacement %d
 menu.states.empty	Vide
 menu.stay	Rester
+menu.tap_screen_for_menu	Toucher pour le menu
 menu.text_size	Taille du texte
 menu.text_size_and_high_contrast_for	Taille du texte et contraste élevé pour les menus de l'app et des lecteurs.
 menu.the_cheat_could_not_be_deleted	Le code n'a pas pu être supprimé
@@ -361,6 +376,7 @@ menu.the_state_could_not_be_deleted	L'état n'a pas pu être supprimé
 menu.the_state_could_not_be_loaded	L'état n'a pas pu être chargé : ce jeu ou cette version ne sait pas le lire
 menu.the_state_saved_there_will_be	L'état sauvegardé là sera remplacé par le jeu tel qu'il est.
 menu.the_undo_could_not_be_applied	L'annulation n'a pas pu être appliquée
+menu.theme	Thème
 menu.there_is_no_memory_to_search	Aucune mémoire à fouiller dans ce jeu
 menu.there_is_no_search_to_narrow	Aucune recherche à affiner
 menu.this_game	Ce jeu
@@ -381,10 +397,14 @@ menu.type_a_whole_number_from_0	Saisis un entier de 0 à %u (ou 0x et hexa)
 menu.ui.language_help	Langue des menus de l'app et des lecteurs. Automatique suit la langue de la Vita ; une langue sans traduction s'affiche en anglais.
 menu.ui.large_text	Grand texte
 menu.ui.normal_text	Texte normal
+menu.ui.tap_menu_help	Touche n'importe où sur l'écran du jeu pour ouvrir le menu.
+menu.ui.theme_help	Bascule entre le thème sombre et le thème clair du menu.
 menu.ui.value_contrast	%s, contraste élevé
+menu.undo	Annuler
 menu.undo_last_load	Annuler le dernier chargement
 menu.unlimited	Illimité
 menu.unlimited_smooth	Illimité fluide
+menu.unlock	Déverr.
 menu.video_filter_help	Comment l'image s'adapte à l'écran. Bilinéaire net : pixels exacts aux bords adoucis, à toute taille. Bilinéaire : doux, chaque pixel se fond dans le suivant.
 menu.waiting	En attente...  %d
 menu.what_the_left_stick_does_nothing	Rôle du stick gauche : rien, la croix, ou ses propres boutons assignables.
@@ -418,7 +438,6 @@ player.draws_each_picture_on_its_own	Dessine chaque image sur son propre thread 
 player.european_games_run_at_50_hz	Les jeux européens tournent à 50 Hz. Le 50 Hz lissé les joue à leur vitesse réelle et égalise l'image : un rafraîchissement sur six mélange deux images. Le vrai 50 Hz répète une image sur six ; le 60 Hz rapide les accélère de 20 % comme sur un écran 60 Hz.
 player.fast_60_hz	60 Hz rapide
 player.game_not_started_err	Ce jeu n'a pas pu être lancé : %s
-player.hardcore_mode_the_game_starts_from	Mode Hardcore : le jeu repart du début
 player.moved_old_states	%d anciens états déplacés vers les nouveaux emplacements
 player.moved_one_old_state	%d ancien état déplacé vers les nouveaux emplacements
 player.no_game_was_given	Aucun jeu fourni.
@@ -539,6 +558,7 @@ states.the_state_could_not_be_read	L'état n'a pas pu être lu depuis la carte m
 states.the_state_could_not_be_written	L'état n'a pas pu être écrit
 states.the_state_file_is_damaged	Le fichier d'état est endommagé
 states.the_state_file_is_too_large	Le fichier d'état est trop gros
+states.this_slot_is_locked	Cet emplacement est verrouillé
 util.bad_request	requête invalide
 util.could_not_replace_the_old_file	ancien fichier non remplacé (il est conservé)
 util.could_not_write_to_the_memory	écriture impossible sur la carte mémoire (pleine ou protégée)

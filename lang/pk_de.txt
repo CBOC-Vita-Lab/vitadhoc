@@ -143,6 +143,7 @@ menu.a_faint_pixel_grid_like_a	Ein dezentes Pixelraster wie bei einem Handheld. 
 menu.a_number_you_type	Eine eingegebene Zahl
 menu.a_shortcut_can_be_one_button	Ein Kurzbefehl kann eine Taste oder eine Kombi sein: gleichzeitig drücken.
 menu.a_soft_glow_beside_the_picture	Sanftes Leuchten neben dem Bild statt schwarzer Balken.
+menu.achievements	Erfolge
 menu.add_a_cheat	Cheat hinzufügen
 menu.all_games	Alle Spiele
 menu.ambient_glow	Umgebungslicht
@@ -176,10 +177,12 @@ menu.confirm	Bestätigen
 menu.controls	Steuerung
 menu.controls_reset_to_the_defaults	Steuerung auf Standard zurückgesetzt
 menu.controls_save_failed	Steuerung ließ sich nicht speichern: %s
+menu.could_not_change_slot_lock	Slot-Sperre konnte nicht geändert werden
 menu.could_not_save_the_state_the	Savestate nicht gespeichert: Das Spiel ließ sich nicht erfassen
 menu.crt_mask	CRT-Maske
 menu.customised	Angepasst
 menu.d_pad	Steuerkreuz
+menu.dark	Dunkel
 menu.dark_lines_between_the_rows_like	Dunkle Linien zwischen den Zeilen wie bei einem TV. 1 schwach, 10 stark.
 menu.default	Standard
 menu.delete	Löschen
@@ -233,9 +236,11 @@ menu.leave_this_game_for_the_game	Dieses Spiel verlassen, zur Spieleliste
 menu.left_stick	Linker Stick
 menu.left_stick_2	Linker Stick  %d, %d
 menu.lets_the_rear_touch_panel_s	Lässt die vier Ecken des Rück-Touchpads als belegbare Tasten wirken.
+menu.light	Hell
 menu.load	Laden
 menu.load_undone	Laden rückgängig
 menu.loading_states_is_not_available	Savestates laden ist nicht verfügbar
+menu.lock	Sperren
 menu.look_at_the_game_s_memory	Spielspeicher jetzt ansehen
 menu.make_this_a_cheat_that_keeps	Daraus einen Cheat machen, der den jetzigen Wert festhält.
 menu.map.press_ok_for	Drücke OK, dann die Vita-Taste für %s.
@@ -289,6 +294,12 @@ menu.ps_tv	PS TV
 menu.put_every_button_stick_and_turbo	Alle Tasten-, Stick- und Turbo-Einstellungen auf Standard zurücksetzen.
 menu.put_this_player_s_buttons_back	Die Tasten dieses Spielers auf Standard zurücksetzen.
 menu.quit	Beenden
+menu.ra.help	Die RetroAchievements dieses Spiels und was du freigeschaltet hast.
+menu.ra.locked	Gesperrt
+menu.ra.no_achievements	Keine Erfolge zum Anzeigen
+menu.ra.pts	%u Pkt.
+menu.ra.unlocked	Freigeschaltet
+menu.ra.unlocked_hc	Freigeschaltet (HC)
 menu.rear_touch_panel	Rück-Touchpad
 menu.reason.no_link	Für diese Konsole nicht verfügbar: Der Player hat keine Verbindung
 menu.reason.unsupported	In diesem Player nicht verfügbar
@@ -336,7 +347,10 @@ menu.since_the_last_step	Seit dem letzten Schritt
 menu.size_of_the_number	Größe der Zahl
 menu.slot	Slot %d
 menu.slot_deleted	Slot %d gelöscht
+menu.slot_is_locked_press_l	Slot ist gesperrt - drücke L zum Entsperren
+menu.slot_locked	Slot %d gesperrt
 menu.slot_of	Slot %d von %d
+menu.slot_unlocked	Slot %d entsperrt
 menu.smoothed_at_four_times_its_size	Geglättet in vierfacher Größe. Am meisten Detail und Aufwand.
 menu.smoothed_at_three_times_its_size	Geglättet in dreifacher Größe. Mehr Detail, mehr Aufwand.
 menu.smoothed_at_twice_the_game_s	Geglättet in doppelter Spielgröße, dann angepasst.
@@ -349,6 +363,7 @@ menu.state_loaded_from_slot	Savestate aus Slot %d geladen
 menu.state_saved_to_slot	Savestate in Slot %d gespeichert
 menu.states.empty	Leer
 menu.stay	Bleiben
+menu.tap_screen_for_menu	Antippen für Menü
 menu.text_size	Textgröße
 menu.text_size_and_high_contrast_for	Textgröße und hoher Kontrast für die Menüs der App und der Player.
 menu.the_cheat_could_not_be_deleted	Der Cheat ließ sich nicht löschen
@@ -361,6 +376,7 @@ menu.the_state_could_not_be_deleted	Der Savestate ließ sich nicht löschen
 menu.the_state_could_not_be_loaded	Der Savestate ließ sich nicht laden: Dieses Spiel oder diese Version kann ihn nicht lesen
 menu.the_state_saved_there_will_be	Der dort gespeicherte Savestate wird durch das Spiel, wie es jetzt ist, ersetzt.
 menu.the_undo_could_not_be_applied	Zurücknehmen nicht möglich
+menu.theme	Design
 menu.there_is_no_memory_to_search	In diesem Spiel gibt es keinen Speicher zum Durchsuchen
 menu.there_is_no_search_to_narrow	Es gibt keine Suche zum Eingrenzen
 menu.this_game	Dieses Spiel
@@ -381,10 +397,14 @@ menu.type_a_whole_number_from_0	Gib eine ganze Zahl von 0 bis %u ein (oder 0x un
 menu.ui.language_help	Sprache der Menüs der App und der Player. Automatisch folgt der Vita-Sprache; eine Sprache ohne Übersetzung zeigt Englisch.
 menu.ui.large_text	Großer Text
 menu.ui.normal_text	Normaler Text
+menu.ui.tap_menu_help	Tippe irgendwo auf den Spielbildschirm, um das Menü zu öffnen.
+menu.ui.theme_help	Zwischen dunklem und hellem Menü-Design wechseln.
 menu.ui.value_contrast	%s, hoher Kontrast
+menu.undo	Rückg.
 menu.undo_last_load	Laden zurücknehmen
 menu.unlimited	Unbegrenzt
 menu.unlimited_smooth	Unbegrenzt flüssig
+menu.unlock	Entsp.
 menu.video_filter_help	Wie das Bild auf den Schirm passt. Sharp bilinear: exakte Pixel mit weichen Kanten, in jeder Größe. Bilinear: weich, jeder Pixel geht in den nächsten über.
 menu.waiting	Warte...  %d
 menu.what_the_left_stick_does_nothing	Was der linke Stick tut: nichts, das Steuerkreuz oder eigene belegbare Tasten.
@@ -418,7 +438,6 @@ player.draws_each_picture_on_its_own	Zeichnet jedes Bild in einem eigenen Thread
 player.european_games_run_at_50_hz	Europäische Spiele laufen mit 50 Hz. Weiches 50 Hz spielt sie im echten Tempo und glättet das Bild: Jeder sechste Refresh zeigt eine Mischung aus zwei Frames. Echtes 50 Hz zeigt jeden sechsten Frame doppelt; Schnelles 60 Hz lässt sie 20 % schneller laufen, wie auf einem 60-Hz-Bildschirm.
 player.fast_60_hz	Schnelles 60 Hz
 player.game_not_started_err	Dieses Spiel ließ sich nicht starten: %s
-player.hardcore_mode_the_game_starts_from	Hardcore-Modus: Das Spiel startet von vorn
 player.moved_old_states	%d alte Savestates in die neuen Slots verschoben
 player.moved_one_old_state	%d alter Savestate in die neuen Slots verschoben
 player.no_game_was_given	Kein Spiel angegeben.
@@ -539,6 +558,7 @@ states.the_state_could_not_be_read	Der Savestate ließ sich nicht von der Speich
 states.the_state_could_not_be_written	Der Savestate ließ sich nicht schreiben
 states.the_state_file_is_damaged	Die Savestate-Datei ist beschädigt
 states.the_state_file_is_too_large	Die Savestate-Datei ist zu groß
+states.this_slot_is_locked	Dieser Slot ist gesperrt
 util.bad_request	ungültige Anfrage
 util.could_not_replace_the_old_file	alte Datei nicht ersetzbar (sie blieb erhalten)
 util.could_not_write_to_the_memory	Schreiben auf die Speicherkarte nicht möglich (voll oder schreibgeschützt)

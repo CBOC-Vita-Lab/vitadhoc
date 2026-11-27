@@ -267,6 +267,8 @@ Profile::Profile()
 Profile profile_defaults(const PadModel &m, bool enter_cross)
 {
 	Profile p;
+	p.stick_left = STICK_MOVE;
+	p.stick_right = STICK_BIND;
 	for (int pl = 0; pl < MAX_PLAYERS; pl++)
 		for (int a = 0; a < m.n; a++)
 			p.bind[pl][a] = enter_cross ? m.btn[a].default_phys : m.btn[a].default_phys_circle;
@@ -578,17 +580,24 @@ void Mapper::menu_closed(const PadSample pads[MAX_PLAYERS])
 	memset(guard_, 0, sizeof guard_);
 }
 
-/* the buttons that make a chord with `btn` */
-static uint32_t chord_partners(const Profile &prof, const PadModel &m, const MapperConfig &c, uint32_t btn)
+/* true when `btn` is actually taking part in an active chord with held/newly-triggered partners */
+static bool chord_spoiled(const Profile &prof, const PadModel &m, const MapperConfig &c,
+                          uint32_t btn, uint32_t raw, uint32_t pad_new)
 {
-	uint32_t r = 0;
+	const uint32_t menu_need = PH_MENU_CHORD & ~btn;
+	if (menu_need && (raw & menu_need) == menu_need) return true;
+	if (c.legacy_chord && m.legacy_chord && btn == PH_START && (raw & (PH_L | PH_R)) == (PH_L | PH_R)) return true;
 	for (int a = ACT_FF; a < ACT_COUNT; a++) {
-		uint32_t b = prof.bind[0][a];
-		if ((b & btn) && (b & ~btn)) r |= b & ~btn;
+		const uint32_t b = prof.bind[0][a];
+		const uint32_t need = b & ~btn;
+		if (!(b & btn) || !need) continue;
+		if ((raw & need) != need) continue;
+		if (a == ACT_FF || a == ACT_REWIND) return true;
+		uint32_t trig = b & ~PH_MENU_CHORD;
+		if (!trig) trig = need;
+		if (pad_new & trig) return true;
 	}
-	r |= PH_MENU_CHORD & ~btn;
-	if (c.legacy_chord && m.legacy_chord && btn == PH_START) r |= PH_L | PH_R;
-	return r;
+	return false;
 }
 
 /* is there a shortcut whose chord strictly contains `chord` and is fully held? (the longer chord wins) */
@@ -663,7 +672,6 @@ void Mapper::update(const PadSample pads[MAX_PLAYERS], uint64_t now_ms, uint32_t
 			static const uint32_t btns[2] = { PH_START, PH_SELECT };
 			for (int i = 0; i < 2; i++) {
 				uint32_t btn = btns[i];
-				uint32_t partners = chord_partners(prof_, m, cfg_, btn);
 				bool down = (g & btn) != 0;
 				bool deliver = false;
 				Guard &gd = guard_[p][i];
@@ -680,7 +688,7 @@ void Mapper::update(const PadSample pads[MAX_PLAYERS], uint64_t now_ms, uint32_t
 					gd.t = 0;
 					/* fall through */
 				case PENDING:
-					if (raw & partners) gd.state = SPOILED;
+					if (chord_spoiled(prof_, m, cfg_, btn, raw, pad_new)) gd.state = SPOILED;
 					else if (!down) { gd.state = TAPPING; gd.t = 0; deliver = true; }
 					else if (++gd.t >= cfg_.guard_wait_frames) { gd.state = PASS; deliver = true; }
 					break;

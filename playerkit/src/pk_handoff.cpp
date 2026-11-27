@@ -87,6 +87,7 @@ struct Handoff::Impl {
 	SpinLock lk;
 	void *gate_sem, *frame_sem, *idle_sem;
 	HandoffFrame pool[POOL];
+	int pool_n;
 	uint8_t *mem;
 	HandoffFrame *freel[POOL];
 	int nfree;
@@ -163,7 +164,11 @@ bool Handoff::init(const HandoffConfig &c, HandoffSys *sys)
 	Impl &m = *p_;
 	m.cfg = c;
 	m.sys = sys;
-	m.mem = (uint8_t *) malloc((size_t) POOL * c.frame_bytes);
+	m.cfg.depth.budget_us = c.refresh_us;
+	m.gov.configure(m.cfg.depth);
+	m.pool_n = m.gov.config().max_depth + 3;
+	if (m.pool_n > POOL) m.pool_n = POOL;
+	m.mem = (uint8_t *) malloc((size_t) m.pool_n * c.frame_bytes);
 	m.gate_sem = sys->sem_create();
 	m.frame_sem = sys->sem_create();
 	m.idle_sem = sys->sem_create();
@@ -176,20 +181,18 @@ bool Handoff::init(const HandoffConfig &c, HandoffSys *sys)
 		p_ = 0;
 		return false;
 	}
-	for (int i = 0; i < POOL; i++) {
+	for (int i = 0; i < m.pool_n; i++) {
 		memset(&m.pool[i], 0, sizeof m.pool[i]);
 		m.pool[i].data = m.mem + (size_t) i * c.frame_bytes;
 		m.pool[i].cap = c.frame_bytes;
 		m.freel[i] = &m.pool[i];
 	}
-	m.nfree = POOL;
+	m.nfree = m.pool_n;
 	m.qhead = m.queued = 0;
 	m.drawing = m.shown = 0;
 	m.enabled = true; m.stop = false;
 	m.half = m.force_drop = false;
 	m.gate_waiting = m.cons_waiting = m.idle_waiting = false;
-	m.cfg.depth.budget_us = c.refresh_us;
-	m.gov.configure(m.cfg.depth);
 	m.depth = m.cfg.adaptive ? m.gov.depth() : m.gov.config().max_depth;
 	m.cost_head = m.cost_n = 0;
 	m.produced = m.shown_n = m.dropped = m.gate_waits = m.gate_timeouts = 0;
@@ -301,6 +304,15 @@ void Handoff::note_emulated(uint32_t n)
 	if (!inited_) return;
 	SpinGuard g(p_->lk);
 	p_->emu_us += (uint64_t) n * p_->cfg.frame_us;
+}
+
+void Handoff::set_frame_us(uint32_t frame_us)
+{
+	if (!inited_ || frame_us == 0) return;
+	SpinGuard g(p_->lk);
+	p_->cfg.frame_us = frame_us;
+	p_->emu_us = 0;
+	p_->base_us = p_->sys->now_us();
 }
 
 void Handoff::set_pace_mode(PaceMode mode)

@@ -375,16 +375,13 @@ enum { XQ_EQ = 960, XQ_BIAS = 6 };           /* 15 and 0.1 of the shader, in 1/6
 static uint16_t g_lq_r[32], g_lq_g[64], g_lq_b[32];     /* luminance in 1/64 */
 static uint16_t g_c12_r[32], g_c12_g[64];                /* a channel as 0..4095 (blue uses the red table) */
 
-static void xbr_tables_init()
-{
-	for (int i = 0; i < 32; i++) { g_lq_r[i] = (uint16_t) (int) ((double) i / 31.0 * 14.352 * 64.0 + 0.5); g_lq_b[i] = (uint16_t) (int) ((double) i / 31.0 * 5.472 * 64.0 + 0.5); g_c12_r[i] = (uint16_t) ((i * 4095 + 15) / 31); }
-	for (int i = 0; i < 64; i++) { g_lq_g[i] = (uint16_t) (int) ((double) i / 63.0 * 28.176 * 64.0 + 0.5); g_c12_g[i] = (uint16_t) ((i * 4095 + 31) / 63); }
-}
-
-static inline unsigned lumq(unsigned v) { return (unsigned) g_lq_r[(v >> 11) & 31] + g_lq_g[(v >> 5) & 63] + g_lq_b[v & 31]; }
-
 /* The four ramps of one sub pixel (scale s, sub pixel sx, sy), per lane, in 1/256: what the shader computes from fract(texCoord * TextureSize). */
 struct SubRamp { int f45i[4], f45[4], f30[4], f60[4]; };
+static SubRamp g_ramps2[4], g_ramps3[9];
+#ifdef PK_SCALE_NEON
+static uint16x8_t g_rc2[4][16], g_rc3[9][16];
+#endif
+
 static void make_ramps(int s, SubRamp *out)
 {
 	const float S = (float) s;
@@ -402,6 +399,32 @@ static void make_ramps(int s, SubRamp *out)
 			}
 		}
 }
+
+static void xbr_tables_init()
+{
+	for (int i = 0; i < 32; i++) { g_lq_r[i] = (uint16_t) (int) ((double) i / 31.0 * 14.352 * 64.0 + 0.5); g_lq_b[i] = (uint16_t) (int) ((double) i / 31.0 * 5.472 * 64.0 + 0.5); g_c12_r[i] = (uint16_t) ((i * 4095 + 15) / 31); }
+	for (int i = 0; i < 64; i++) { g_lq_g[i] = (uint16_t) (int) ((double) i / 63.0 * 28.176 * 64.0 + 0.5); g_c12_g[i] = (uint16_t) ((i * 4095 + 31) / 63); }
+	make_ramps(2, g_ramps2);
+	make_ramps(3, g_ramps3);
+#ifdef PK_SCALE_NEON
+	for (int k = 0; k < 4; k++)
+		for (int l = 0; l < 4; l++) {
+			g_rc2[k][l] = vdupq_n_u16((uint16_t) g_ramps2[k].f30[l]);
+			g_rc2[k][4 + l] = vdupq_n_u16((uint16_t) g_ramps2[k].f60[l]);
+			g_rc2[k][8 + l] = vdupq_n_u16((uint16_t) g_ramps2[k].f45[l]);
+			g_rc2[k][12 + l] = vdupq_n_u16((uint16_t) g_ramps2[k].f45i[l]);
+		}
+	for (int k = 0; k < 9; k++)
+		for (int l = 0; l < 4; l++) {
+			g_rc3[k][l] = vdupq_n_u16((uint16_t) g_ramps3[k].f30[l]);
+			g_rc3[k][4 + l] = vdupq_n_u16((uint16_t) g_ramps3[k].f60[l]);
+			g_rc3[k][8 + l] = vdupq_n_u16((uint16_t) g_ramps3[k].f45[l]);
+			g_rc3[k][12 + l] = vdupq_n_u16((uint16_t) g_ramps3[k].f45i[l]);
+		}
+#endif
+}
+
+static inline unsigned lumq(unsigned v) { return (unsigned) g_lq_r[(v >> 11) & 31] + g_lq_g[(v >> 5) & 63] + g_lq_b[v & 31]; }
 
 /* the float helpers of the literal float transcription below */
 static inline void unpack565(unsigned v, float c[3])
@@ -534,8 +557,7 @@ static inline unsigned xdec_word(const unsigned lane[4])
 template <int s>
 static unsigned xbr_rows(const uint16_t *src, int w, int h, int spitch, uint16_t *dst, int dpitch, int y0, int y1, int cx0, int cx1, ScaleScratch &sc)
 {
-	SubRamp ramps[9];
-	make_ramps(s, ramps);
+	const SubRamp *ramps = (s == 2) ? g_ramps2 : g_ramps3;
 	/* the luminance plane of the stripe: two rows above and below, two columns left and right, the border repeated; the stride has room for
 	 * whole vectors of eight past the last pixel */
 	const int nx = cx1 - cx0, lp = ((nx + 7) & ~7) + 4 + 8, lr = y1 - y0 + 4;
@@ -786,16 +808,8 @@ enum { XBR_VEC_MIN = 2 };     /* fewer busy pixels than this in a group of eight
 template <int s>
 static unsigned xbr_rows_neon(const uint16_t *src, int w, int h, int spitch, uint16_t *dst, int dpitch, int y0, int y1, int cx0, int cx1, ScaleScratch &sc)
 {
-	SubRamp ramps[9];
-	make_ramps(s, ramps);
-	uint16x8_t rc[s * s][16];                                   /* per sub pixel: f30[4], f60[4], f45[4], f45i[4], each in every lane */
-	for (int k = 0; k < s * s; k++)
-		for (int l = 0; l < 4; l++) {
-			rc[k][l] = vdupq_n_u16((uint16_t) ramps[k].f30[l]);
-			rc[k][4 + l] = vdupq_n_u16((uint16_t) ramps[k].f60[l]);
-			rc[k][8 + l] = vdupq_n_u16((uint16_t) ramps[k].f45[l]);
-			rc[k][12 + l] = vdupq_n_u16((uint16_t) ramps[k].f45i[l]);
-		}
+	const SubRamp *ramps = (s == 2) ? g_ramps2 : g_ramps3;
+	const uint16x8_t (*rc)[16] = (s == 2) ? g_rc2 : g_rc3;
 	/* the stripe's colour plane and luminance plane: two rows above and below, two columns left and right, the border repeated; the stride
 	 * is a whole number of vectors with room for the loads past the last pixel */
 	const int nx = cx1 - cx0, lp = ((nx + 7) & ~7) + 16, lr = y1 - y0 + 4;
@@ -1106,7 +1120,7 @@ struct ScaleCache::Impl {
 	struct Chunk { int y0, y1, x0, x1; };
 	ScalerKind kind;
 	int w, h, f, ow, nb;
-	bool valid;
+	bool valid, out_valid, direct;
 	uint32_t frame, gen;
 	std::vector<uint16_t> prev, out;
 	std::vector<uint32_t> ver;
@@ -1115,17 +1129,22 @@ struct ScaleCache::Impl {
 	std::vector<Chunk> chunks;
 	const uint16_t *src;
 	int spitch;
+	uint16_t *direct_dst;
+	int direct_pitch;
 	int fail, skip;          /* the shift search found nothing this many times in a row; pictures to go before it looks again */
 	ScaleStats st;
-	Impl() : kind(SC_NONE), w(0), h(0), f(1), ow(0), nb(0), valid(false), frame(0), gen(0), src(0), spitch(0), fail(0), skip(0) { memset(&st, 0, sizeof st); }
+	Impl() : kind(SC_NONE), w(0), h(0), f(1), ow(0), nb(0), valid(false), out_valid(false), direct(false), frame(0), gen(0), src(0), spitch(0), direct_dst(0), direct_pitch(0), fail(0), skip(0) { memset(&st, 0, sizeof st); }
 };
 
 ScaleCache::ScaleCache() : p_(new Impl) {}
 ScaleCache::~ScaleCache() { delete p_; }
-void ScaleCache::reset() { p_->valid = false; p_->chunks.clear(); }
+void ScaleCache::reset() { p_->valid = false; p_->out_valid = false; p_->direct = false; p_->chunks.clear(); }
 int ScaleCache::chunks() const { return (int) p_->chunks.size(); }
 const uint16_t *ScaleCache::out() const { return p_->out.empty() ? 0 : &p_->out[0]; }
 int ScaleCache::out_pitch() const { return p_->ow; }
+const uint16_t *ScaleCache::prev() const { return (p_->valid && !p_->prev.empty()) ? &p_->prev[0] : 0; }
+int ScaleCache::prev_width() const { return p_->valid ? p_->w : 0; }
+int ScaleCache::prev_height() const { return p_->valid ? p_->h : 0; }
 const ScaleStats &ScaleCache::stats() const { return p_->st; }
 
 static inline int pop64(u64 v) { return __builtin_popcountll(v); }
@@ -1212,10 +1231,18 @@ static void shift_scores(const uint16_t *cur, int cp, const uint16_t *prev, int 
 
 int ScaleCache::plan(ScalerKind k, const uint16_t *src, int w, int h, int spitch, bool allow_shift)
 {
+	return plan_into(k, src, w, h, spitch, 0, 0, allow_shift);
+}
+
+int ScaleCache::plan_into(ScalerKind k, const uint16_t *src, int w, int h, int spitch, uint16_t *direct_dst, int direct_pitch, bool allow_shift)
+{
 	Impl &d = *p_;
 	d.chunks.clear();
+	d.direct = false;
+	d.direct_dst = 0;
+	d.direct_pitch = 0;
 	memset(&d.st, 0, sizeof d.st);
-	if (!src || k == SC_NONE || w < 1 || h < 1 || w > 4096 || h > 4096) { d.valid = false; return 0; }
+	if (!src || k == SC_NONE || w < 1 || h < 1 || w > 4096 || h > 4096) { d.valid = false; d.out_valid = false; return 0; }
 	scale_init();
 	const int f = scaler_factor(k), F = k == SC_MMPX2 ? 3 : 2;
 	const int nb = (w + BLK - 1) / BLK;
@@ -1230,23 +1257,29 @@ int ScaleCache::plan(ScalerKind k, const uint16_t *src, int w, int h, int spitch
 		d.gen++;
 		d.fail = d.skip = 0;
 		d.valid = true;
+		d.out_valid = false;
 	}
 	d.src = src; d.spitch = spitch;
 	d.frame++;
 	const uint32_t frame = d.frame;
 	d.st.rows = h; d.st.restarted = restart; d.st.blocks = h * nb;
 	const u64 full = nb >= 64 ? ~(u64) 0 : (((u64) 1 << nb) - 1);
-	const bool usable = nb <= MAXB && !restart;
+	const bool can_cmp = nb <= MAXB && !restart;
+	const bool can_reuse = can_cmp && d.out_valid;
 	u64 *m0 = &d.m0[0], *keep = &d.keep[0], *mv = &d.mv[0];
 	for (int y = 0; y < h; y++) mv[y] = 0;
 	int shape = 0;               /* 0 none, 1 vertical, 2 horizontal */
 	int kk = 0;
-	if (usable) {
+	int kept_est = 0;
+	if (can_cmp) {
 		for (int y = 0; y < h; y++) m0[y] = eq_blocks(src + (size_t) spitch * y, &d.prev[(size_t) w * y], w, nb, 0);
-		int kept = 0;
-		for (int y = 0; y < h; y++) { keep[y] = reusable(m0, 0, y, h, nb, F, 0, true); kept += pop64(keep[y]); }
-		int best = kept;
-		const bool want_search = allow_shift && kept * 10 < h * nb * 7 && h >= 16 && nb >= 4;
+		for (int y = 0; y < h; y++) { keep[y] = reusable(m0, 0, y, h, nb, F, 0, true); kept_est += pop64(keep[y]); }
+	} else {
+		for (int y = 0; y < h; y++) { m0[y] = 0; keep[y] = 0; }
+	}
+	if (can_reuse) {
+		int best = kept_est;
+		const bool want_search = allow_shift && kept_est * 10 < h * nb * 7 && h >= 16 && nb >= 4;
 		if (want_search && d.skip > 0) d.skip--;
 		else if (want_search) {
 			/* a vertical shift of the whole picture */
@@ -1301,12 +1334,44 @@ int ScaleCache::plan(ScalerKind k, const uint16_t *src, int w, int h, int spitch
 				}
 			}
 			/* a picture that changes all over and moves nowhere (a fade, a video) does not pay the search every time */
-			if (best * 100 < kept * 100 + 5 * h * nb) { if (d.fail < 3) d.fail++; d.skip = (1 << d.fail) - 1; } else d.fail = 0;
+			if (best * 100 < kept_est * 100 + 5 * h * nb) { if (d.fail < 3) d.fail++; d.skip = (1 << d.fail) - 1; } else d.fail = 0;
 		}
 	} else {
-		for (int y = 0; y < h; y++) { m0[y] = 0; keep[y] = 0; mv[y] = 0; }
+		for (int y = 0; y < h; y++) { keep[y] = 0; mv[y] = 0; }
 	}
 	if (shape != 2) for (int y = 0; y < h; y++) d.dxr[y] = 0;
+	const int CH = 8;
+	/* Direct-to-texture bypass: when no shift helped and most of the picture must be computed anyway (fades, Mode 7, diagonal scroll,
+	 * full-screen effects, or a restart), scale directly into the GPU texture and skip both d.out and the subsequent blit() copy.
+	 * Keep d.prev up to date so once motion settles (<65% dirty) the cache populates d.out and resumes incremental scaling. */
+	const int dirty_est = (shape == 0 && can_cmp) ? (h * nb - kept_est) : h * nb;
+	const bool want_direct = direct_dst && direct_pitch >= d.ow && shape == 0 && (restart || (dirty_est * 100 >= h * nb * 65));
+	if (want_direct) {
+		d.direct = true;
+		d.direct_dst = direct_dst;
+		d.direct_pitch = direct_pitch;
+		d.out_valid = false;
+		d.gen++;
+		d.st.shift_k = 0;
+		d.st.shape = 0;
+		d.st.computed = h * nb;
+		d.st.shifted = 0;
+		d.st.same = 0;
+		for (int y0 = 0; y0 < h; y0 += CH) {
+			Impl::Chunk c; c.y0 = y0; c.y1 = y0 + CH < h ? y0 + CH : h; c.x0 = 0; c.x1 = w;
+			d.chunks.push_back(c);
+		}
+		for (int y = 0; y < h; y++)
+			if (!can_cmp || m0[y] != full) memcpy(&d.prev[(size_t) w * y], src + (size_t) spitch * y, (size_t) w * 2u);
+		for (int y = 0; y < h; y++) d.pdx[y] = 0;
+		d.st.chunks = (int) d.chunks.size();
+		return (int) d.chunks.size();
+	}
+	if (!d.out_valid) {
+		/* re-entering cached mode after direct bypass: every texture must sync from d.out once */
+		d.gen++;
+		d.out_valid = true;
+	}
 	d.st.shift_k = shape == 1 ? kk : shape == 2 ? 1 : 0;
 	d.st.shape = shape;
 	/* the moves: whole runs of blocks, in an order that never reads what a move has already written */
@@ -1354,26 +1419,41 @@ int ScaleCache::plan(ScalerKind k, const uint16_t *src, int w, int h, int spitch
 			d.ver[y] = frame;
 		}
 	}
-	/* what is left is computed: per stripe of 8 rows, the columns from the first to the last block that is not reusable */
-	const int CH = 8;
+	/* what is left is computed: per stripe of 8 rows, emit disjoint [x0, x1) spans split across clean gaps of >= 2 blocks so that
+	 * horizontal scrolling (where both edges are dirty and the middle is reused) does not collapse into one full-width recompute. */
 	int computed_blocks = 0;
 	for (int y0 = 0; y0 < h; y0 += CH) {
 		const int y1 = y0 + CH < h ? y0 + CH : h;
 		u64 need = 0;
 		for (int y = y0; y < y1; y++) { const u64 n = ~(keep[y] | mv[y]) & full; need |= n; computed_blocks += pop64(n); }
 		if (!need) continue;
-		Impl::Chunk c; c.y0 = y0; c.y1 = y1; c.x0 = 0; c.x1 = w;
 		if (nb <= MAXB) {
-			const int bl = __builtin_ctzll(need), bh = 63 - __builtin_clzll(need);
-			c.x0 = bl * BLK; c.x1 = (bh + 1) * BLK < w ? (bh + 1) * BLK : w;
+			u64 rem = need;
+			while (rem) {
+				const int bl = __builtin_ctzll(rem);
+				int bh = bl;
+				while (bh + 1 < nb) {
+					if (rem & ((u64) 1 << (bh + 1))) bh++;
+					else if (bh + 2 < nb && (rem & ((u64) 1 << (bh + 2)))) bh += 2;
+					else break;
+				}
+				const int span = bh - bl + 1;
+				rem &= ~(span >= 64 ? ~(u64) 0 : ((((u64) 1 << span) - 1) << bl));
+				Impl::Chunk c; c.y0 = y0; c.y1 = y1;
+				c.x0 = bl * BLK;
+				c.x1 = (bh + 1) * BLK < w ? (bh + 1) * BLK : w;
+				d.chunks.push_back(c);
+			}
+		} else {
+			Impl::Chunk c; c.y0 = y0; c.y1 = y1; c.x0 = 0; c.x1 = w;
+			d.chunks.push_back(c);
 		}
-		d.chunks.push_back(c);
 		for (int y = y0; y < y1; y++) if (~(keep[y] | mv[y]) & full) d.ver[y] = frame;
 	}
 	d.st.computed = computed_blocks; d.st.shifted = moved; d.st.same = kept_blocks;
 	/* the kept picture is now this one; the shift of each row is the next picture's first guess */
 	for (int y = 0; y < h; y++)
-		if (!usable || m0[y] != full) memcpy(&d.prev[(size_t) w * y], src + (size_t) spitch * y, (size_t) w * 2u);
+		if (!can_cmp || m0[y] != full) memcpy(&d.prev[(size_t) w * y], src + (size_t) spitch * y, (size_t) w * 2u);
 	for (int y = 0; y < h; y++) d.pdx[y] = d.dxr[y];
 	d.st.chunks = (int) d.chunks.size();
 	return (int) d.chunks.size();
@@ -1384,13 +1464,19 @@ unsigned ScaleCache::run_chunk(int i, ScaleScratch &sc)
 	Impl &d = *p_;
 	if (i < 0 || i >= (int) d.chunks.size()) return 0;
 	const Impl::Chunk &c = d.chunks[i];
-	return scale_rect(d.kind, d.src, d.w, d.h, d.spitch, &d.out[0], d.ow, c.y0, c.y1, c.x0, c.x1, sc);
+	uint16_t *dst = d.direct ? d.direct_dst : &d.out[0];
+	const int dp = d.direct ? d.direct_pitch : d.ow;
+	return scale_rect(d.kind, d.src, d.w, d.h, d.spitch, dst, dp, c.y0, c.y1, c.x0, c.x1, sc);
 }
 
 int ScaleCache::blit(uint16_t *dst, int dpitch, TexSync &t)
 {
 	Impl &d = *p_;
 	if (!d.valid || !dst || dpitch < d.ow) return 0;
+	if (d.direct) {
+		t.epoch = 0; t.gen = 0;   /* written directly into dst; not synced with d.out */
+		return d.h;
+	}
 	const bool all = t.gen != d.gen;
 	int rows = 0, y = 0;
 	while (y < d.h) {
@@ -1411,8 +1497,7 @@ int ScaleCache::blit(uint16_t *dst, int dpitch, TexSync &t)
 void xbr_reference_int(const uint16_t *src, int w, int h, int spitch, int scale, uint16_t *dst, int dpitch)
 {
 	scale_init();
-	SubRamp ramps[9];
-	make_ramps(scale, ramps);
+	const SubRamp *ramps = (scale == 2) ? g_ramps2 : g_ramps3;
 	for (int oy = 0; oy < h * scale; oy++)
 		for (int ox = 0; ox < w * scale; ox++) {
 			const int px_ = ox / scale, py_ = oy / scale;

@@ -314,7 +314,7 @@ TEST(cores_plan_3core_snes_is_todays_layout)
 	CHECK(!p.core3);
 	CHECK_EQ(p.n, 6);
 	SLOT(p, R_EMU_MAIN, 0, CORE_U0, 0x60, 0x60);
-	SLOT(p, R_RENDER, 0, CORE_U1, 0x60, 0x60);
+	SLOT(p, R_RENDER, 0, CORE_U1, 0x58, 0x58);
 	SLOT(p, R_APU, 0, CORE_U2, 0x60, 0x60);
 	SLOT(p, R_AUDIO_OUT, 0, CORE_U2, 0x40, 0x40);
 	SLOT(p, R_DRAW, 0, CORE_U1, 0x60, 0x60);
@@ -329,7 +329,7 @@ TEST(cores_plan_snes_player_helpers_beside_the_composer)
 	for (int c3 = 0; c3 < 2; c3++) {
 		const Plan p = make_plan(snes_player_req(), c3 != 0);
 		SLOT(p, R_EMU_MAIN, 0, CORE_U0, 0x60, 0x60);
-		SLOT(p, R_RENDER, 0, CORE_U1, 0x60, 0x60);
+		SLOT(p, R_RENDER, 0, CORE_U1, 0x58, 0x58);
 		SLOT(p, R_APU, 0, CORE_U2, 0x60, 0x60);
 		SLOT(p, R_UPSCALE, 0, CORE_U0, 0xA0, 0xA0);
 		SLOT(p, R_UPSCALE, 1, CORE_U2, 0xA0, 0xA0);
@@ -368,7 +368,7 @@ TEST(cores_plan_4core_snes)
 	const Plan p = make_plan(snes_req(), true);
 	CHECK(p.core3);
 	SLOT(p, R_EMU_MAIN, 0, CORE_U0, 0x60, 0x60);
-	SLOT(p, R_RENDER, 0, CORE_U1, 0x60, 0x60);
+	SLOT(p, R_RENDER, 0, CORE_U1, 0x58, 0x58);
 	SLOT(p, R_APU, 0, CORE_U2, 0x60, 0x60);
 	SLOT(p, R_AUDIO_OUT, 0, CORE_SYS, 0x40, 0x40);
 	SLOT(p, R_DRAW, 0, CORE_SYS, 0x60, 0x60);
@@ -402,7 +402,7 @@ TEST(cores_plan_4core_nes_and_wide)
 	r.with(R_WIDE_COMPOSE);
 	const Plan s = make_plan(r, true);
 	SLOT(s, R_WIDE_COMPOSE, 0, CORE_SYS, 0x68, 0x68);
-	SLOT(s, R_RENDER, 0, CORE_U1, 0x60, 0x60);
+	SLOT(s, R_RENDER, 0, CORE_U1, 0x58, 0x58);
 	SLOT(s, R_APU, 0, CORE_U2, 0x60, 0x60);
 }
 
@@ -435,6 +435,14 @@ TEST(cores_plan_md_player_golden)
 	SLOT(p4, R_UPSCALE, 1, CORE_SYS, 0xA0, 0xA0);
 	SLOT(p4, R_UPSCALE, 2, CORE_U0, 0xA0, 0xA0);
 	CHECK(!p4.find(R_AUDIO_OUT)->spins && !p4.find(R_EMU_MAIN)->on_core3);
+	/* With the VDP thread active on core 1, 4-core moves draw to core 3 so VDP owns core 1 */
+	Request mv = md_req();
+	mv.with(R_RENDER).with(R_APU);
+	const Plan mv4 = make_plan(mv, true);
+	SLOT(mv4, R_RENDER, 0, CORE_U1, 0x58, 0x58);
+	SLOT(mv4, R_APU, 0, CORE_U2, 0x60, 0x60);
+	SLOT(mv4, R_DRAW, 0, CORE_SYS, 0x60, 0x60);
+	SLOT(mv4, R_UPSCALE, 1, CORE_U1, 0xA0, 0xA0);
 }
 
 TEST(cores_plan_invariants_every_role_combination)

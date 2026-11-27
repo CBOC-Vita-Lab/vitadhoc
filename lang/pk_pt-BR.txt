@@ -143,6 +143,7 @@ menu.a_faint_pixel_grid_like_a	Uma grade de pixels discreta, como na tela de um 
 menu.a_number_you_type	Um número que você digita
 menu.a_shortcut_can_be_one_button	Um atalho pode ser um botão ou uma combinação: pressione-os juntos.
 menu.a_soft_glow_beside_the_picture	Um brilho suave ao lado da imagem no lugar das barras pretas.
+menu.achievements	Conquistas
 menu.add_a_cheat	Adicionar cheat
 menu.all_games	Todos os jogos
 menu.ambient_glow	Brilho ambiente
@@ -176,10 +177,12 @@ menu.confirm	Confirmar
 menu.controls	Controles
 menu.controls_reset_to_the_defaults	Controles restaurados ao padrão
 menu.controls_save_failed	Não foi possível salvar os controles: %s
+menu.could_not_change_slot_lock	Não foi possível alterar a trava do slot
 menu.could_not_save_the_state_the	Não foi possível salvar o estado: o jogo não pôde ser capturado
 menu.crt_mask	Máscara CRT
 menu.customised	Personalizado
 menu.d_pad	D-pad
+menu.dark	Escuro
 menu.dark_lines_between_the_rows_like	Linhas escuras entre as fileiras, como numa TV. 1 é leve, 10 é forte.
 menu.default	Padrão
 menu.delete	Apagar
@@ -233,9 +236,11 @@ menu.leave_this_game_for_the_game	Sair deste jogo para a lista de jogos
 menu.left_stick	Analógico esquerdo
 menu.left_stick_2	Analógico esquerdo  %d, %d
 menu.lets_the_rear_touch_panel_s	Deixa os quatro cantos do painel traseiro agirem como botões mapeáveis.
+menu.light	Claro
 menu.load	Carregar
 menu.load_undone	Carga desfeita
 menu.loading_states_is_not_available	Carregar estados não está disponível
+menu.lock	Travar
 menu.look_at_the_game_s_memory	Ver a memória do jogo agora
 menu.make_this_a_cheat_that_keeps	Cria um cheat que mantém o valor atual.
 menu.map.press_ok_for	Pressione OK e depois o botão do Vita que deve ser %s.
@@ -289,6 +294,12 @@ menu.ps_tv	PS TV
 menu.put_every_button_stick_and_turbo	Restaura ao padrão todo botão, analógico e ajuste de turbo.
 menu.put_this_player_s_buttons_back	Restaura ao padrão os botões deste jogador.
 menu.quit	Sair
+menu.ra.help	Os RetroAchievements deste jogo e o que você desbloqueou.
+menu.ra.locked	Bloqueada
+menu.ra.no_achievements	Nenhuma conquista para mostrar
+menu.ra.pts	%u pts
+menu.ra.unlocked	Desbloqueada
+menu.ra.unlocked_hc	Desbloqueada (HC)
 menu.rear_touch_panel	Painel traseiro
 menu.reason.no_link	Indisponível para este console: o player não tem link
 menu.reason.unsupported	Indisponível neste player
@@ -336,7 +347,10 @@ menu.since_the_last_step	Desde a última etapa
 menu.size_of_the_number	Tamanho do número
 menu.slot	Slot %d
 menu.slot_deleted	Slot %d apagado
+menu.slot_is_locked_press_l	O slot está travado - pressione L para destravar
+menu.slot_locked	Slot %d travado
 menu.slot_of	Slot %d de %d
+menu.slot_unlocked	Slot %d destravado
 menu.smoothed_at_four_times_its_size	Suavizado em quatro vezes o tamanho. Mais detalhe e mais trabalho.
 menu.smoothed_at_three_times_its_size	Suavizado em três vezes o tamanho. Mais detalhe, mais trabalho.
 menu.smoothed_at_twice_the_game_s	Suavizado no dobro do tamanho do jogo, depois ajustado.
@@ -349,6 +363,7 @@ menu.state_loaded_from_slot	Estado carregado do slot %d
 menu.state_saved_to_slot	Estado salvo no slot %d
 menu.states.empty	Vazio
 menu.stay	Ficar
+menu.tap_screen_for_menu	Tocar na tela abre o menu
 menu.text_size	Tamanho do texto
 menu.text_size_and_high_contrast_for	Tamanho do texto e alto contraste para os menus do app e dos players.
 menu.the_cheat_could_not_be_deleted	Não foi possível apagar o cheat
@@ -361,6 +376,7 @@ menu.the_state_could_not_be_deleted	Não foi possível apagar o estado
 menu.the_state_could_not_be_loaded	Não foi possível carregar o estado: este jogo ou versão não consegue lê-lo
 menu.the_state_saved_there_will_be	O estado salvo ali será substituído pelo jogo como está agora.
 menu.the_undo_could_not_be_applied	Não foi possível aplicar o desfazer
+menu.theme	Tema
 menu.there_is_no_memory_to_search	Não há memória para buscar neste jogo
 menu.there_is_no_search_to_narrow	Não há busca para reduzir
 menu.this_game	Este jogo
@@ -381,10 +397,14 @@ menu.type_a_whole_number_from_0	Digite um número inteiro de 0 a %u (ou 0x e hex
 menu.ui.language_help	Idioma dos menus do app e dos players. Automático segue o idioma do próprio Vita; um idioma sem tradução mostra inglês.
 menu.ui.large_text	Texto grande
 menu.ui.normal_text	Texto normal
+menu.ui.tap_menu_help	Toque em qualquer ponto da tela do jogo para abrir o menu.
+menu.ui.theme_help	Alterna entre o tema escuro e claro do menu.
 menu.ui.value_contrast	%s, alto contraste
+menu.undo	Desfazer
 menu.undo_last_load	Desfazer última carga
 menu.unlimited	Ilimitado
 menu.unlimited_smooth	Ilimitado suave
+menu.unlock	Destr.
 menu.video_filter_help	Como a imagem se ajusta à tela. Bilinear nítido: pixels exatos com bordas suavizadas, em qualquer tamanho. Bilinear: suave, cada pixel se mistura ao próximo.
 menu.waiting	Aguardando...  %d
 menu.what_the_left_stick_does_nothing	O que o analógico esquerdo faz: nada, o D-pad, ou botões próprios mapeáveis.
@@ -418,7 +438,6 @@ player.draws_each_picture_on_its_own	Desenha cada imagem em uma thread própria,
 player.european_games_run_at_50_hz	Jogos europeus rodam a 50 Hz. O 50 Hz suave os joga na velocidade real e uniformiza a imagem: um refresh em seis mostra a mistura de dois quadros. O 50 Hz real repete um quadro em seis; o 60 Hz rápido os roda 20 % mais rápido, como em uma tela de 60 Hz.
 player.fast_60_hz	60 Hz rápido
 player.game_not_started_err	Não foi possível iniciar este jogo: %s
-player.hardcore_mode_the_game_starts_from	Modo Hardcore: o jogo começa do início
 player.moved_old_states	%d estados antigos movidos para os novos slots
 player.moved_one_old_state	%d estado antigo movido para os novos slots
 player.no_game_was_given	Nenhum jogo foi informado.
@@ -539,6 +558,7 @@ states.the_state_could_not_be_read	Não foi possível ler o estado do cartão de
 states.the_state_could_not_be_written	Não foi possível gravar o estado
 states.the_state_file_is_damaged	O arquivo de estado está danificado
 states.the_state_file_is_too_large	O arquivo de estado é grande demais
+states.this_slot_is_locked	Este slot está travado
 util.bad_request	requisição inválida
 util.could_not_replace_the_old_file	não foi possível substituir o arquivo antigo (foi mantido)
 util.could_not_write_to_the_memory	não foi possível gravar no cartão de memória (cheio ou protegido contra gravação)

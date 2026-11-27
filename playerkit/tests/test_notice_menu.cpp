@@ -1,6 +1,7 @@
 /* Unit tests: pk_notice and pk_menu behaviour. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE). */
 #include "pk_test.h"
 #include "harness.h"
+#include "pk_gfx_soft.h"
 #include "pk_menu.h"
 #include "pk_notice.h"
 
@@ -325,7 +326,11 @@ TEST(menu_state_failures_tell_the_player)
 TEST(menu_touch_targets_are_at_least_80_tall_on_every_page)
 {
 	Fixture f;
-	Menu::PageId pages[] = { Menu::PAGE_TOP, Menu::PAGE_STATES, Menu::PAGE_SETTINGS, Menu::PAGE_PICTURE, Menu::PAGE_CONTROLS, Menu::PAGE_MAPPING, Menu::PAGE_SPEED, Menu::PAGE_CHEATS };
+	f.cfg.caps |= CAP_RA | CAP_SHOT;
+	f.host.achs.resize(1);
+	f.host.achs[0].title = "First Boss";
+	f.menu.configure(f.cfg, &f.host, &f.states);
+	Menu::PageId pages[] = { Menu::PAGE_TOP, Menu::PAGE_STATES, Menu::PAGE_SETTINGS, Menu::PAGE_PICTURE, Menu::PAGE_CONTROLS, Menu::PAGE_MAPPING, Menu::PAGE_SPEED, Menu::PAGE_CHEATS, Menu::PAGE_INTERFACE, Menu::PAGE_RA };
 	for (size_t p = 0; p < sizeof pages / sizeof pages[0]; p++) {
 		f.menu.goto_page(pages[p]);
 		f.menu.update(pkh::idle());
@@ -580,4 +585,142 @@ TEST(menu_unconfigured_parts_are_greyed_not_crashing)
 	}
 	CHECK(true);
 	m.release_textures();
+}
+
+TEST(menu_slot_lock_r_undo_and_overwrite_undo)
+{
+	Fixture f;
+	std::vector<uint8_t> d1(20000, 0), back;
+	d1[0] = 42;
+	std::vector<uint16_t> px; pkh::make_game_frame(0, px);
+	CHECK_EQ(f.states.save(1, d1.data(), d1.size(), Frame(&px[0], 256, 224, 512)).status, ST_OK);
+
+	f.menu.goto_page(Menu::PAGE_STATES);
+	f.menu.select_slot(1);
+	/* L locks slot 1; Square overwrite & Triangle delete are refused while locked */
+	pkh::press(f.menu, PH_L);
+	CHECK(f.states.is_locked(1));
+	f.host.machine = 99;
+	pkh::press(f.menu, PH_SQUARE);
+	CHECK(!f.menu.modal_open());
+	CHECK(f.menu.notices().active());
+	CHECK_EQ(f.states.load(1, back), ST_OK);
+	CHECK_EQ(back[0], 42);
+	pkh::press(f.menu, PH_TRIANGLE);
+	CHECK(!f.menu.modal_open());
+	CHECK(f.states.info(1).present);
+
+	/* Unlock with L, then overwrite slot 1 with machine=99 -> old state (42) goes into undo! */
+	pkh::press(f.menu, PH_L);
+	CHECK(!f.states.is_locked(1));
+	pkh::press(f.menu, PH_SQUARE);
+	CHECK(f.menu.modal_open());
+	pkh::press(f.menu, PH_CROSS);
+	CHECK_EQ(f.states.load(1, back), ST_OK);
+	CHECK_EQ(back[0], 99);
+	CHECK(f.states.undo_available());
+
+	/* PH_SELECT does NOT trigger undo; PH_R DOES undo and restores machine=42 */
+	f.host.machine = 77;
+	pkh::press(f.menu, PH_SELECT);
+	CHECK_EQ(f.host.machine, 77);
+	CHECK(f.menu.is_open());
+	MenuEvent ev = pkh::press(f.menu, PH_R);
+	CHECK_EQ(ev, MENU_RESUME);
+	CHECK_EQ(f.host.machine, 42);
+	CHECK(!f.states.undo_available());
+}
+
+TEST(menu_start_resumes_except_during_modal_or_capture)
+{
+	Fixture f;
+	CHECK(f.menu.is_open());
+	CHECK_EQ(pkh::press(f.menu, PH_START), MENU_RESUME);
+	CHECK(!f.menu.is_open());
+
+	/* In modal, PH_START must not close/bypass the modal */
+	f.menu.open(0);
+	f.menu.update(pkh::idle());
+	f.menu.goto_page(Menu::PAGE_STATES);
+	f.host.machine = 7;
+	pkh::press(f.menu, PH_SQUARE);   /* empty slot 1 saves directly; move to filled slot to open overwrite modal */
+	pkh::press(f.menu, PH_SQUARE);
+	CHECK(f.menu.modal_open());
+	CHECK_EQ(pkh::press(f.menu, PH_START), MENU_NONE);
+	CHECK(f.menu.modal_open());
+	pkh::press(f.menu, PH_CIRCLE);
+	CHECK(!f.menu.modal_open());
+	CHECK_EQ(pkh::press(f.menu, PH_START), MENU_RESUME);
+}
+
+TEST(menu_cheats_triangle_adds_square_deletes_and_caches_active_flag)
+{
+	Fixture f;
+	f.cfg.caps |= CAP_CHEAT_EDIT;
+	f.host.cheat_list[0].on = true;
+	f.menu.configure(f.cfg, &f.host, &f.states);
+	f.menu.open(0);
+	f.menu.update(pkh::idle());
+	const int after_open = f.host.list_cheats_calls;
+	SoftGfx g; Text t(&g);
+	for (int i = 0; i < 8; i++) f.menu.draw(&g, &t);
+	CHECK_EQ(f.host.list_cheats_calls, after_open);       /* draw_top uses cached has_active_cheats_ */
+
+	f.menu.goto_page(Menu::PAGE_CHEATS);
+	pkh::press(f.menu, PH_TRIANGLE);
+	CHECK_EQ(f.host.add_cheat_calls, 1);
+
+	/* Row 0 is "Add a cheat"; move down to cheat 0 and press PH_SQUARE -> opens delete modal */
+	pkh::press(f.menu, PH_DOWN);
+	pkh::press(f.menu, PH_SQUARE);
+	CHECK(f.menu.modal_open());
+	pkh::press(f.menu, PH_CROSS);
+	CHECK_EQ((int) f.host.cheat_list.size(), 1);
+	f.menu.release_textures();
+}
+
+TEST(menu_interface_theme_tap_menu_shot_and_ra_page)
+{
+	Fixture f;
+	f.cfg.caps |= CAP_RA | CAP_SHOT;
+	pk::MenuAchievement a;
+	a.title = "Beat Stage 1";
+	a.desc = "Clear the opening stage.";
+	a.points = 10;
+	a.unlocked = true;
+	a.hardcore = true;
+	f.host.achs.push_back(a);
+	f.host.ra_summary = "1 / 10 (HC)";
+	f.menu.configure(f.cfg, &f.host, &f.states);
+	f.menu.open(0);
+	f.menu.update(pkh::idle());
+
+	/* Interface has Theme (default Dark) and Tap screen for menu (default On) */
+	f.menu.goto_page(Menu::PAGE_INTERFACE);
+	CHECK_EQ(f.menu.value(ROW_UI_THEME), 0);
+	CHECK_EQ(f.menu.value(ROW_UI_TAPMENU), 1);
+	pkh::press(f.menu, PH_DOWN); pkh::press(f.menu, PH_DOWN);
+	pkh::press(f.menu, PH_RIGHT);
+	CHECK_EQ(f.menu.value(ROW_UI_THEME), 1);
+	pkh::press(f.menu, PH_DOWN);
+	pkh::press(f.menu, PH_LEFT);
+	CHECK_EQ(f.menu.value(ROW_UI_TAPMENU), 0);
+
+	/* Mapping offers Screenshot when CAP_SHOT is set */
+	f.menu.goto_page(Menu::PAGE_MAPPING);
+	bool saw_shot = false;
+	for (int i = 0; i < f.menu.row_count(); i++)
+		if (f.menu.row_label(i) == "Screenshot") saw_shot = true;
+	CHECK(saw_shot);
+
+	/* Settings -> Achievements (PAGE_RA) renders game achievements cleanly */
+	f.menu.goto_page(Menu::PAGE_SETTINGS);
+	bool saw_ra = false;
+	for (int i = 0; i < f.menu.row_count(); i++)
+		if (f.menu.row_label(i) == "Achievements") { saw_ra = true; CHECK_STR(f.menu.row_value_text(i), "1 / 10 (HC)"); }
+	CHECK(saw_ra);
+	f.menu.goto_page(Menu::PAGE_RA);
+	CHECK_EQ(f.menu.row_count(), 1);
+	CHECK_STR(f.menu.row_label(0), "Beat Stage 1");
+	CHECK(f.menu.row_value_text(0).find("10 pts") != std::string::npos);
 }

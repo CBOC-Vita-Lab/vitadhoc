@@ -631,3 +631,63 @@ TEST(link_an_old_peer_without_the_same_framing_is_just_noise)
 	CHECK(r.a.frame() >= 100);
 	CHECK(r.a.stats().bad >= 4);
 }
+
+TEST(link_state_transfer_and_start_stall_timeout_even_with_keepalives)
+{
+	/* Drop all T_CHUNK (4) after the first burst so keepalives/welcome keep heard_age fresh,
+	 * yet LP_STATE makes zero forward progress for > 15s and must fail instead of hanging forever. */
+	{
+		Rig r;
+		r.ma.s.assign(200000, 0x5A);
+		for (size_t i = 0; i < r.ma.s.size(); i++) r.ma.s[i] = (uint8_t) (i * 131 + 17);
+		r.net.dir[0].lat = r.net.dir[1].lat = 5000;
+		bool saw_state = false;
+		r.net.mutate = [&](int, std::vector<uint8_t> &b) {
+			if (b.size() >= 12 && b[4] == 4) { saw_state = true; return false; } /* drop T_CHUNK */
+			return true;
+		};
+		CHECK(r.open());
+		r.run(22000000ull, [&]() { return r.a.over() && r.b.over(); });
+		CHECK(saw_state);
+		CHECK(r.a.over() && r.b.over());
+		CHECK(r.a.error() == pk::LE_PEER_LOST || r.b.error() == pk::LE_PEER_LOST);
+	}
+	/* Drop T_START (7) so guest reaches LP_START while keepalives keep link alive: LP_START must time out in ~15s. */
+	{
+		Rig r;
+		r.net.dir[0].lat = r.net.dir[1].lat = 5000;
+		r.net.mutate = [&](int, std::vector<uint8_t> &b) {
+			if (b.size() >= 12 && b[4] == 7) return false; /* drop T_START */
+			return true;
+		};
+		CHECK(r.open());
+		r.run(22000000ull, [&]() { return r.a.over() && r.b.over(); });
+		CHECK(r.a.over() && r.b.over());
+		CHECK(r.b.phase() == pk::LP_FAILED);
+		CHECK_EQ(r.b.error(), pk::LE_PEER_LOST);
+	}
+}
+
+TEST(link_host_preserves_live_state_on_peer_lost_while_guest_rolls_back)
+{
+	Rig r;
+	r.net.dir[0].lat = r.net.dir[1].lat = 5000;
+	const uint32_t host_start_crc = r.ma.crc();
+	const uint32_t guest_own_crc = r.mb.crc();
+	CHECK(r.open());
+	r.run_frames(200, 30000000);
+	const uint32_t live_crc = r.ma.crc();
+	CHECK(live_crc != host_start_crc);
+	CHECK(r.mb.crc() != guest_own_crc);
+	r.net.io_dead[1] = true;
+	r.stepping[1] = false;
+	r.run(30000000, [&]() { return r.a.over(); });
+	CHECK_EQ(r.a.error(), pk::LE_PEER_LOST);
+	const uint32_t crc_before_close = r.ma.crc();
+	CHECK(crc_before_close != host_start_crc);
+	r.a.close();
+	r.b.close();
+	CHECK_EQ(r.ma.crc(), crc_before_close);   /* Host kept live co-op progress (not rolled back to start) */
+	CHECK(r.b.restored_ok());
+	CHECK_EQ(r.mb.crc(), guest_own_crc);      /* Guest rolled back cleanly */
+}

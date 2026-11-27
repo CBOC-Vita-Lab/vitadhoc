@@ -116,7 +116,11 @@ struct RaCb {
 		if (result == RC_INVALID_CREDENTIALS || result == RC_EXPIRED_TOKEN || result == RC_ACCESS_DENIED) {
 			/* The app's token is no longer good. The file is the app's: it is not touched. */
 			r->retry_login_ = false;
-			r->token_.clear();
+			wipe(r->token_);
+			r->game_hardcore_ = false;
+			r->hardcore_ = false;
+			r->game_state_ = -1;
+			rc_client_set_hardcore_enabled(client, 0);
 			r->toast("RetroAchievements: please sign in again in VitAdhoc's Settings", NOTICE_ERROR);
 			return;
 		}
@@ -510,5 +514,32 @@ void Ra::reset()
 
 bool Ra::hardcore_active() const { return game_on_ && game_hardcore_ && game_state_ >= 0 && game_state_ == 1; }
 bool Ra::hardcore_pending() const { return game_on_ && game_hardcore_ && game_state_ == 0; }
+
+bool Ra::list_achievements(std::vector<RaAchievement> &out) const
+{
+	out.clear();
+	if (!rc_ || !game_on_ || game_state_ != 1) return false;
+	rc_client_achievement_list_t *list = rc_client_create_achievement_list(
+		rc_, RC_CLIENT_ACHIEVEMENT_CATEGORY_CORE, RC_CLIENT_ACHIEVEMENT_LIST_GROUPING_PROGRESS);
+	if (!list) return false;
+	for (uint32_t b = 0; b < list->num_buckets; b++) {
+		const rc_client_achievement_bucket_t &bk = list->buckets[b];
+		for (uint32_t i = 0; i < bk.num_achievements; i++) {
+			const rc_client_achievement_t *a = bk.achievements[i];
+			if (!a) continue;
+			RaAchievement item;
+			item.id = a->id;
+			item.title = a->title ? a->title : "";
+			item.desc = a->description ? a->description : "";
+			item.points = a->points;
+			item.unlocked = (a->state == RC_CLIENT_ACHIEVEMENT_STATE_UNLOCKED) || (a->unlocked != 0);
+			item.hardcore = (a->unlocked & RC_CLIENT_ACHIEVEMENT_UNLOCKED_HARDCORE) != 0;
+			item.progress = a->measured_progress;
+			out.push_back(item);
+		}
+	}
+	rc_client_destroy_achievement_list(list);
+	return true;
+}
 
 }  // namespace pk

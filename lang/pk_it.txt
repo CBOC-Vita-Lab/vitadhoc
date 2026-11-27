@@ -143,6 +143,7 @@ menu.a_faint_pixel_grid_like_a	Una griglia di pixel tenue, come lo schermo di un
 menu.a_number_you_type	Un numero a tua scelta
 menu.a_shortcut_can_be_one_button	Una scorciatoia può essere un tasto o una combinazione: premili insieme.
 menu.a_soft_glow_beside_the_picture	Un alone morbido accanto all'immagine al posto delle barre nere.
+menu.achievements	Obiettivi
 menu.add_a_cheat	Aggiungi un trucco
 menu.all_games	Tutti i giochi
 menu.ambient_glow	Alone ambientale
@@ -176,10 +177,12 @@ menu.confirm	Conferma
 menu.controls	Comandi
 menu.controls_reset_to_the_defaults	Comandi riportati ai predefiniti
 menu.controls_save_failed	Impossibile salvare i comandi: %s
+menu.could_not_change_slot_lock	Impossibile cambiare il blocco dello slot
 menu.could_not_save_the_state_the	Impossibile salvare lo stato: il gioco non è stato catturato
 menu.crt_mask	Maschera CRT
 menu.customised	Personalizzato
 menu.d_pad	Croce direzionale
+menu.dark	Scuro
 menu.dark_lines_between_the_rows_like	Linee scure tra le righe, come una TV. 1 tenue, 10 forte.
 menu.default	Predefinito
 menu.delete	Elimina
@@ -233,9 +236,11 @@ menu.leave_this_game_for_the_game	Lascia il gioco e vai all'elenco giochi
 menu.left_stick	Stick sinistro
 menu.left_stick_2	Stick sinistro  %d, %d
 menu.lets_the_rear_touch_panel_s	Gli angoli del pannello touch posteriore fungono da tasti assegnabili.
+menu.light	Chiaro
 menu.load	Carica
 menu.load_undone	Caricamento annullato
 menu.loading_states_is_not_available	Il caricamento degli stati non è disponibile
+menu.lock	Blocca
 menu.look_at_the_game_s_memory	Guarda ora la memoria del gioco
 menu.make_this_a_cheat_that_keeps	Fanne un trucco che mantiene il valore attuale.
 menu.map.press_ok_for	Premi OK, poi il tasto della Vita che deve essere %s.
@@ -289,6 +294,12 @@ menu.ps_tv	PS TV
 menu.put_every_button_stick_and_turbo	Riporta ogni impostazione di tasti, stick e turbo al predefinito.
 menu.put_this_player_s_buttons_back	Riporta i tasti di questo giocatore al predefinito.
 menu.quit	Esci
+menu.ra.help	I RetroAchievements di questo gioco e quelli che hai sbloccato.
+menu.ra.locked	Bloccato
+menu.ra.no_achievements	Nessun obiettivo da mostrare
+menu.ra.pts	%u pt
+menu.ra.unlocked	Sbloccato
+menu.ra.unlocked_hc	Sbloccato (HC)
 menu.rear_touch_panel	Pannello touch posteriore
 menu.reason.no_link	Non disponibile per questa console: il player non ha il link
 menu.reason.unsupported	Non disponibile in questo player
@@ -336,7 +347,10 @@ menu.since_the_last_step	Dall'ultimo passo
 menu.size_of_the_number	Dimensione del numero
 menu.slot	Slot %d
 menu.slot_deleted	Slot %d eliminato
+menu.slot_is_locked_press_l	Lo slot è bloccato - premi L per sbloccarlo
+menu.slot_locked	Slot %d bloccato
 menu.slot_of	Slot %d di %d
+menu.slot_unlocked	Slot %d sbloccato
 menu.smoothed_at_four_times_its_size	Levigato a quattro volte la dimensione. Il massimo dettaglio e lavoro.
 menu.smoothed_at_three_times_its_size	Levigato a tre volte la dimensione. Più dettaglio, più lavoro.
 menu.smoothed_at_twice_the_game_s	Levigato al doppio del gioco, poi adattato.
@@ -349,6 +363,7 @@ menu.state_loaded_from_slot	Stato caricato dallo slot %d
 menu.state_saved_to_slot	Stato salvato nello slot %d
 menu.states.empty	Vuoto
 menu.stay	Resta
+menu.tap_screen_for_menu	Tocca lo schermo per il menu
 menu.text_size	Dimensione testo
 menu.text_size_and_high_contrast_for	Dimensione testo e contrasto alto per i menu dell'app e dei player.
 menu.the_cheat_could_not_be_deleted	Impossibile eliminare il trucco
@@ -361,6 +376,7 @@ menu.the_state_could_not_be_deleted	Impossibile eliminare lo stato
 menu.the_state_could_not_be_loaded	Impossibile caricare lo stato: questo gioco o versione non lo legge
 menu.the_state_saved_there_will_be	Lo stato salvato lì sarà sostituito dal gioco com'è ora.
 menu.the_undo_could_not_be_applied	Impossibile applicare l'annullamento
+menu.theme	Tema
 menu.there_is_no_memory_to_search	Nessuna memoria da cercare in questo gioco
 menu.there_is_no_search_to_narrow	Nessuna ricerca da ridurre
 menu.this_game	Questo gioco
@@ -381,10 +397,14 @@ menu.type_a_whole_number_from_0	Scrivi un intero da 0 a %u (o 0x ed esadecimale)
 menu.ui.language_help	Lingua dei menu dell'app e dei player. Automatica segue la lingua della Vita; una lingua senza traduzione mostra l'inglese.
 menu.ui.large_text	Testo grande
 menu.ui.normal_text	Testo normale
+menu.ui.tap_menu_help	Tocca un punto qualsiasi dello schermo di gioco per aprire il menu.
+menu.ui.theme_help	Cambia tra il tema del menu scuro e chiaro.
 menu.ui.value_contrast	%s, contrasto alto
+menu.undo	Annulla
 menu.undo_last_load	Annulla ultimo caricamento
 menu.unlimited	Illimitata
 menu.unlimited_smooth	Illimitata fluida
+menu.unlock	Sblocca
 menu.video_filter_help	Come l'immagine si adatta allo schermo. Bilineare nitido: pixel esatti con bordi ammorbiditi, a qualsiasi dimensione. Bilineare: morbido, ogni pixel si fonde con il successivo.
 menu.waiting	In attesa...  %d
 menu.what_the_left_stick_does_nothing	Cosa fa lo stick sinistro: niente, la croce direzionale, o tasti propri assegnabili.
@@ -418,7 +438,6 @@ player.draws_each_picture_on_its_own	Disegna ogni immagine su un thread proprio,
 player.european_games_run_at_50_hz	I giochi europei girano a 50 Hz. 50 Hz fluido li fa girare alla velocità reale e uniforma l'immagine: un aggiornamento su sei mostra un misto di due frame. 50 Hz reale mostra di nuovo un frame su sei; 60 Hz rapido li fa andare il 20 % più veloci, come su uno schermo a 60 Hz.
 player.fast_60_hz	60 Hz rapido
 player.game_not_started_err	Impossibile avviare questo gioco: %s
-player.hardcore_mode_the_game_starts_from	Modalità Hardcore: il gioco riparte dall'inizio
 player.moved_old_states	Spostati %d vecchi stati nei nuovi slot
 player.moved_one_old_state	Spostato %d vecchio stato nei nuovi slot
 player.no_game_was_given	Nessun gioco indicato.
@@ -539,6 +558,7 @@ states.the_state_could_not_be_read	Impossibile leggere lo stato dalla scheda di 
 states.the_state_could_not_be_written	Impossibile scrivere lo stato
 states.the_state_file_is_damaged	Il file dello stato è danneggiato
 states.the_state_file_is_too_large	Il file dello stato è troppo grande
+states.this_slot_is_locked	Questo slot è bloccato
 util.bad_request	richiesta non valida
 util.could_not_replace_the_old_file	impossibile sostituire il vecchio file (è stato mantenuto)
 util.could_not_write_to_the_memory	impossibile scrivere sulla scheda di memoria (piena o protetta da scrittura)

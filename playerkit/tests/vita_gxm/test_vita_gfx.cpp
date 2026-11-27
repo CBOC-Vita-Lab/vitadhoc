@@ -26,25 +26,39 @@ static double contrast(double l1, double l2) { if (l1 < l2) { double t = l1; l1 
 struct Rig {
 	pkh::TempDir tmp;
 	pkh::MockHost host;
+	StateLayout lay;
+	States states;
 	Menu menu;
 	Rig(uint32_t accent)
+		: lay(make_layout(tmp.path)), states(lay)
 	{
 		MenuConfig cfg;
 		cfg.game_name = "Super Example World (USA)";
 		cfg.console_label = "Super Nintendo";
-		cfg.caps = CAP_ALL_BASIC | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_CHEATS;
+		cfg.caps = CAP_ALL_BASIC | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_CHEATS | CAP_CHEAT_EDIT | CAP_RA | CAP_SHOT;
 		cfg.accent = accent;
 		cfg.exit_label = "Exit";
 		cfg.play_together_reason = "Not available for Super NES: the player is a separate program and has no link";
 		cfg.unsupported_reason = "Not available for Super NES";
-		menu.configure(cfg, &host, 0);
+		pk::CheatItem c1, c2; c1.name = "Infinite lives"; c1.on = true; c2.name = "Moon jump";
+		host.cheat_list.push_back(c1); host.cheat_list.push_back(c2);
+		pk::MenuAchievement ach; ach.title = "Stage 1 Clear"; ach.desc = "Complete Stage 1"; ach.points = 10; ach.unlocked = true; ach.hardcore = true;
+		host.achs.push_back(ach);
+		host.ra_summary = "1 / 1 (HC)";
+		std::vector<uint8_t> d(1024, 1); std::vector<uint16_t> px; pkh::make_game_frame(0, px);
+		states.save(1, d.data(), d.size(), Frame(&px[0], 256, 224, 512));
+		states.save(2, d.data(), d.size(), Frame(&px[0], 256, 224, 512));
+		states.set_lock(1, true);
+		states.undo_store(d.data(), d.size());
+		menu.configure(cfg, &host, &states);
 		menu.open(0);
 		for (int t = 0; t < 300; t += 16) menu.update(pkh::idle(16));
 	}
-	void page(int p) { menu.goto_page((Menu::PageId) p); for (int t = 0; t < 300; t += 16) menu.update(pkh::idle(16)); }
+	static StateLayout make_layout(const std::string &r) { StateLayout l; l.root = r; l.console = "snes"; l.name = "Super Example World (USA)"; return l; }
+	void page(int p) { menu.goto_page((Menu::PageId) p); if (p == Menu::PAGE_STATES) menu.select_slot(2); for (int t = 0; t < 300; t += 16) menu.update(pkh::idle(16)); }
 };
 
-static const int kPages[] = { Menu::PAGE_TOP, Menu::PAGE_SETTINGS, Menu::PAGE_PICTURE, Menu::PAGE_SPEED };
+static const int kPages[] = { Menu::PAGE_TOP, Menu::PAGE_STATES, Menu::PAGE_SETTINGS, Menu::PAGE_PICTURE, Menu::PAGE_SPEED, Menu::PAGE_INTERFACE, Menu::PAGE_CHEATS, Menu::PAGE_RA };
 static const uint32_t kAccents[] = { 0x7B6CFF, 0x4FC3F7, 0xE8604C, 0x2EE6A6, 0xFF4FA3, 0xFFB020 };   /* the console accents and the Neon Link family */
 
 /* 1. plain text through the console path: glyphs must be coverage, not boxes */
@@ -85,35 +99,40 @@ static void text_is_not_boxes()
 	EXPECT(fakegxm::bad_calls() == 0);
 }
 
-/* 2. the real menu, every page, every accent: contrast of every text quad against what is behind it */
+/* 2. the real menu, every page, every accent, Dark & Light themes: contrast of every text quad against what is behind it */
 static void menu_contrast()
 {
 	double worst = 99;
-	for (size_t a = 0; a < sizeof kAccents / sizeof *kAccents; a++)
-		for (size_t p = 0; p < sizeof kPages / sizeof *kPages; p++) {
-			fakegxm::reset();
-			fakegxm::clear(0xFF301810);
-			VitaGfx g;
-			Text t(&g);
-			Rig r(kAccents[a]);
-			if (kPages[p] != Menu::PAGE_TOP) r.page(kPages[p]);
-			r.menu.draw(&g, &t);
-			const std::vector<fakegxm::TexDraw> &d = fakegxm::tex_draws();
-			EXPECT(d.size() > 20);
-			for (size_t i = 0; i < d.size(); i++) {
-				if ((d[i].tint >> 24) == 0) continue;
-				/* the ink as it lands on the panel (a faded text blends toward it) */
-				double al = (double) (d[i].tint >> 24) / 255.0;
-				double eff = d[i].ink_lum * al + d[i].bg_lum * (1 - al);
-				double cr = contrast(eff, d[i].bg_lum);
-				if (al > 0.6 && cr < worst) worst = cr;
-				if (al > 0.6 && cr < 4.5) fprintf(stderr, "  low contrast %.2f: page %d accent %06X tint %08X at %.0f,%.0f bg lum %.3f\n", cr, kPages[p], kAccents[a], d[i].tint, d[i].dx, d[i].dy, d[i].bg_lum);
-				EXPECT(!(al > 0.6 && cr < 4.5));
+	for (int theme = 0; theme < 2; theme++)
+		for (size_t a = 0; a < sizeof kAccents / sizeof *kAccents; a++)
+			for (size_t p = 0; p < sizeof kPages / sizeof *kPages; p++) {
+				fakegxm::reset();
+				fakegxm::clear(0xFF301810);
+				VitaGfx g;
+				Text t(&g);
+				Rig r(kAccents[a]);
+				r.menu.set_value(ROW_UI_THEME, theme);
+				if (kPages[p] != Menu::PAGE_TOP) r.page(kPages[p]);
+				if (kPages[p] == Menu::PAGE_CHEATS) { pkh::press(r.menu, PH_DOWN); r.menu.update(pkh::idle(16)); }
+				r.menu.draw(&g, &t);
+				const std::vector<fakegxm::TexDraw> &d = fakegxm::tex_draws();
+				EXPECT(d.size() > 20);
+				for (size_t i = 0; i < d.size(); i++) {
+					if ((d[i].tint >> 24) == 0) continue;
+					if (d[i].format != SCE_GXM_TEXTURE_FORMAT_U8_R111) continue;       /* ignore RGB565 state thumbnails/shots */
+					if (kPages[p] == Menu::PAGE_STATES && d[i].dx < 456 && d[i].dy >= 508) continue;   /* clipped below list view_h */
+					/* the ink as it lands on the panel (a faded text blends toward it) */
+					double al = (double) (d[i].tint >> 24) / 255.0;
+					double eff = d[i].ink_lum * al + d[i].bg_lum * (1 - al);
+					double cr = contrast(eff, d[i].bg_lum);
+					if (al > 0.6 && cr < worst) worst = cr;
+					if (al > 0.6 && cr < 4.5) fprintf(stderr, "  low contrast %.2f: theme %d page %d accent %06X tint %08X at %.0f,%.0f bg lum %.3f\n", cr, theme, kPages[p], kAccents[a], d[i].tint, d[i].dx, d[i].dy, d[i].bg_lum);
+					EXPECT(!(al > 0.6 && cr < 4.5));
+				}
+				r.menu.release_textures();
+				EXPECT(fakegxm::bad_calls() == 0);
 			}
-			r.menu.release_textures();
-			EXPECT(fakegxm::bad_calls() == 0);
-		}
-	printf("vita_gxm: worst text contrast over %d pages x %d accents: %.2f:1\n", (int) (sizeof kPages / sizeof *kPages), (int) (sizeof kAccents / sizeof *kAccents), worst);
+	printf("vita_gxm: worst text contrast over %d pages x %d accents x 2 themes: %.2f:1\n", (int) (sizeof kPages / sizeof *kPages), (int) (sizeof kAccents / sizeof *kAccents), worst);
 }
 
 /* 3. the console path and the software path agree on what the menu looks like */

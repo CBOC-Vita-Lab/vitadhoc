@@ -257,12 +257,18 @@ TEST(ra_not_processed_while_linked)
 TEST(ra_refused_token_asks_for_a_new_sign_in_and_never_writes)
 {
 	Rig r;
-	r.write_account(false, true, "stale-token");
+	r.write_account(true, true, "stale-token");
 	const std::string before = r.account_bytes();
 	CHECK(r.boot());
+	CHECK(r.ra.hardcore_setting());
 	CHECK(r.spin([&] { return r.srv.count("login2") >= 1; }, false));
 	for (int i = 0; i < 20; i++) { r.ra.pump(); usleep(5000); }
 	CHECK(!r.ra.logged_in());
+	CHECK(!r.ra.hardcore_setting());
+	CHECK(!r.ra.hardcore_active());
+	CHECK(!r.ra.hardcore_pending());
+	CHECK(!r.ra.hardcore_blocks());
+	CHECK_EQ(r.ra.game_state(), -1);
 	std::vector<std::string> t = r.toasts();
 	CHECK(Rig::has(t, "sign in again"));
 	CHECK_STR(r.account_bytes(), before);
@@ -272,6 +278,32 @@ TEST(ra_refused_token_asks_for_a_new_sign_in_and_never_writes)
 	r.ra.game_begin(rom, sizeof rom, RA_MEGA_DRIVE);
 	for (int i = 0; i < 20; i++) { r.ra.frame(false); r.ra.pump(); }
 	CHECK_EQ(r.srv.count("achievementsets"), 0);
+	CHECK(!r.ra.hardcore_blocks());
+}
+
+TEST(ra_user_and_list_achievements_return_game_achievements)
+{
+	Rig r;
+	r.write_account(true);
+	CHECK(r.boot());
+	CHECK_STR(r.ra.user(), "ra_tester");
+	CHECK(r.spin([&] { return r.ra.logged_in(); }, false));
+	CHECK(r.game());
+	std::vector<RaAchievement> achs;
+	CHECK(r.ra.list_achievements(achs));
+	CHECK_EQ(achs.size(), 2);
+	CHECK_EQ(achs[0].id, 1001u);
+	CHECK_STR(achs[0].title, "First Press");
+	CHECK_EQ(achs[0].points, 5u);
+	CHECK(!achs[0].unlocked);
+	for (int i = 0; i < 5; i++) r.ra.frame(false);
+	r.mem.b[0] = 1;
+	CHECK(r.spin([&] { return r.srv.count("awardachievement") >= 1; }));
+	CHECK(r.ra.list_achievements(achs));
+	bool saw_unlocked = false;
+	for (size_t i = 0; i < achs.size(); i++)
+		if (achs[i].id == 1001u && achs[i].unlocked && achs[i].hardcore) saw_unlocked = true;
+	CHECK(saw_unlocked);
 }
 
 TEST(ra_indicators_off_hides_the_line)

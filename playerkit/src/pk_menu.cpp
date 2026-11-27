@@ -11,9 +11,29 @@ namespace pk {
 
 namespace {
 
-/* the main app's colours (0xRRGGBB) */
+/* the main app's colours (0xRRGGBB): Dark and Light palettes */
 const uint32_t C_BG = 0x060914, C_TEXT = 0xF5F7FC, C_TEXT2 = 0xA7B0C6, C_TEXT3 = 0x8F99B3, C_INK = 0x0A0F1F,
                C_SHEET = 0x0D1428, C_RED = 0xFF6B6B, C_PLATE = 0x1C2646;
+const uint32_t L_BG = 0xE6ECF4, L_TEXT = 0x141D2E, L_TEXT2 = 0x334155, L_TEXT3 = 0x475569, L_INK = 0xF8FAFC,
+               L_SHEET = 0xF6F8FC, L_RED = 0xB91C1C, L_PLATE = 0xFFFFFF;
+
+float srgb_lum(uint32_t rgb)
+{
+	auto lin = [](int c) { float v = (float) c / 255.0f; return v * v; };
+	return 0.2126f * lin((int) ((rgb >> 16) & 255)) + 0.7152f * lin((int) ((rgb >> 8) & 255)) + 0.0722f * lin((int) (rgb & 255));
+}
+
+float contrast_ratio(uint32_t a, uint32_t b)
+{
+	float la = srgb_lum(a), lb = srgb_lum(b);
+	if (la < lb) { float t = la; la = lb; lb = t; }
+	return (la + 0.05f) / (lb + 0.05f);
+}
+
+uint32_t best_ink(uint32_t bg_rgb)
+{
+	return contrast_ratio(C_INK, bg_rgb) >= contrast_ratio(0xFFFFFF, bg_rgb) ? C_INK : 0xFFFFFF;
+}
 
 /* layout, native pixels */
 const float PANEL_X = 20, PANEL_Y = 96, PANEL_W = 920, PANEL_H = 432;
@@ -42,10 +62,10 @@ uint32_t mix_rgb(uint32_t a, uint32_t b, float t)
 
 Menu::Menu()
 	: host_(0), states_(0), mapper_(0), store_(0), model_(0), profile_(0), open_(false), page_(PAGE_TOP), cursor_(0), slot_(1),
-	  nav_player_(0), modal_(M_NONE), modal_arg_(0), scroll_(0), scroll_target_(0), age_ms_(0), map_player_(0), prev_buttons_(0),
+	  nav_player_(0), modal_(M_NONE), modal_arg_(0), has_active_cheats_(false), scroll_(0), scroll_target_(0), age_ms_(0), map_player_(0), prev_buttons_(0),
 	  ignore_mask_(0), first_update_(true), t_down_(false), t_region_(-1), t_x0_(0), t_y0_(0), t_x_(0), t_y_(0), t_scroll0_(0),
 	  t_scrolling_(false), t_slider_(false), flash_ms_(0), have_flash_(false), shot_w_(0), shot_h_(0), shot_slot_(0), undo_avail_(false),
-	  gfx_(0), shot_tex_(0), tex_dirty_(false), bt_hold_ms_(0), bt_touch_ms_(0), cap_action_(-1), cap_ms_(0), cap_window_ms_(0), cap_bits_(0), pending_(MENU_NONE)
+	  gfx_(0), shot_tex_(0), thumbs_dirty_(false), shot_dirty_(false), bt_hold_ms_(0), bt_touch_ms_(0), cap_action_(-1), cap_ms_(0), cap_window_ms_(0), cap_bits_(0), pending_(MENU_NONE)
 {
 	memset(&cs_, 0, sizeof cs_);
 	lang_serial_ = i18n_serial();
@@ -61,6 +81,8 @@ Menu::Menu()
 	vals_[ROW_PIC_SCANLINES] = vals_[ROW_PIC_GRID] = 0;
 	vals_[ROW_PIC_GLOW] = 5;
 	vals_[ROW_SPD_SOUND] = 1;
+	vals_[ROW_UI_THEME] = 0;
+	vals_[ROW_UI_TAPMENU] = 1;
 }
 
 Menu::~Menu() { release_textures(); pk_cs_free(&cs_); }
@@ -71,7 +93,8 @@ void Menu::release_textures()
 		for (int i = 0; i < STATE_SLOTS; i++) if (thumb_tex_[i]) { gfx_->tex_free(thumb_tex_[i]); thumb_tex_[i] = 0; }
 		if (shot_tex_) { gfx_->tex_free(shot_tex_); shot_tex_ = 0; }
 	}
-	tex_dirty_ = true;
+	thumbs_dirty_ = true;
+	shot_dirty_ = true;
 }
 
 void Menu::configure(const MenuConfig &c, MenuHost *host, States *states)
@@ -127,6 +150,7 @@ void Menu::refresh()
 {
 	if (!open_) return;
 	if (page_ == PAGE_STATES) refresh_slots();
+	refresh_cheats();
 	build_rows();
 	clamp_cursor();
 	ensure_visible();
@@ -149,21 +173,57 @@ void Menu::set_row_note(int id, const std::string &reason)
 	if (id >= 0 && id < ROW_COUNT) { notes_[id] = reason; if (open_) build_rows(); }
 }
 
+bool Menu::is_light() const { return vals_[ROW_UI_THEME] == 1 && vals_[ROW_UI_CONTRAST] == 0; }
+uint32_t Menu::c_bg(int a) const { return col(is_light() ? L_BG : C_BG, a); }
+uint32_t Menu::c_text(int a) const { return col(is_light() ? L_TEXT : C_TEXT, a); }
+uint32_t Menu::c_text2(int a) const { return col(is_light() ? L_TEXT2 : C_TEXT2, a); }
+uint32_t Menu::c_text3(int a) const { return col(is_light() ? L_TEXT3 : C_TEXT3, a); }
+uint32_t Menu::c_ink(int a) const { return col(is_light() ? L_INK : C_INK, a); }
+uint32_t Menu::c_sheet(int a) const { return col(is_light() ? L_SHEET : C_SHEET, a); }
+uint32_t Menu::c_plate(int a) const { return col(is_light() ? L_PLATE : C_PLATE, a); }
+uint32_t Menu::c_red(int a) const { return col(is_light() ? L_RED : C_RED, a); }
+uint32_t Menu::c_glass(int a) const { return col(is_light() ? 0x0F172A : 0xFFFFFF, a); }
+
 uint32_t Menu::accent(int a) const { return PK_HEX(cfg_.accent, a); }
-/* the accent as TEXT on the sheet: lightened toward white until it reads at 4.5:1 (a dark accent, like the SNES violet, was 3.4:1) */
+/* the accent as TEXT on the sheet: lightened (Dark) or darkened (Light) until it reads at 4.9:1 */
 uint32_t Menu::accent_text() const
 {
-	auto lin = [](int c) { float v = (float) c / 255.0f; return v * v; };       /* gamma 2 stands in for sRGB's 2.4: no libm powf (it changed the console link layout) */
-	auto lum = [&](uint32_t rgb) { return 0.2126f * lin((int) ((rgb >> 16) & 255)) + 0.7152f * lin((int) ((rgb >> 8) & 255)) + 0.0722f * lin((int) (rgb & 255)); };
-	const float lb = lum(C_SHEET) + 0.03f;      /* the sheet is 92% opaque: a bright game shows through a little */
+	if (is_light()) {
+		const float lb = srgb_lum(L_SHEET) - 0.03f;
+		uint32_t c = cfg_.accent;
+		for (int i = 0; i <= 20; i++) {
+			c = mix_rgb(cfg_.accent, C_INK, (float) i * 0.05f);
+			if ((lb + 0.05f) / (srgb_lum(c) + 0.05f) >= 4.9f) break;
+		}
+		return col(c);
+	}
+	const float lb = srgb_lum(C_SHEET) + 0.03f;      /* the sheet is 92% opaque: a bright game shows through a little */
 	uint32_t c = cfg_.accent;
 	for (int i = 0; i <= 20; i++) {
 		c = mix_rgb(cfg_.accent, 0xFFFFFF, (float) i * 0.05f);
-		if ((lum(c) + 0.05f) / (lb + 0.05f) >= 4.9f) break;
+		if ((srgb_lum(c) + 0.05f) / (lb + 0.05f) >= 4.9f) break;
 	}
 	return col(c);
 }
-uint32_t Menu::accent_deep() const { return col(mix_rgb(cfg_.accent, C_INK, 0.5f)); }
+uint32_t Menu::accent_deep() const
+{
+	if (is_light()) {
+		const float lb = srgb_lum(L_TEXT);
+		uint32_t c = mix_rgb(cfg_.accent, 0xFFFFFF, 0.35f);
+		for (int i = 7; i <= 20; i++) {
+			c = mix_rgb(cfg_.accent, 0xFFFFFF, (float) i * 0.05f);
+			if ((srgb_lum(c) + 0.05f) / (lb + 0.05f) >= 4.9f) break;
+		}
+		return col(c);
+	}
+	const float lb = srgb_lum(C_TEXT);
+	uint32_t c = mix_rgb(cfg_.accent, C_INK, 0.5f);
+	for (int i = 10; i <= 20; i++) {
+		c = mix_rgb(cfg_.accent, C_INK, (float) i * 0.05f);
+		if ((lb + 0.05f) / (srgb_lum(c) + 0.05f) >= 4.9f) break;
+	}
+	return col(c);
+}
 
 void Menu::notify(const std::string &text, NoticeKind k) { notices_.push(text, k); }
 
@@ -192,6 +252,7 @@ void Menu::open(int nav_player)
 	pending_ = MENU_NONE;
 	map_player_ = 0;
 	refresh_slots();
+	refresh_cheats();
 	build_rows();
 	layout();
 }
@@ -200,7 +261,13 @@ void Menu::goto_page(PageId p)
 {
 	stack_.clear();
 	cursor_stack_.clear();
-	if (p == PAGE_PICTURE || p == PAGE_CONTROLS || p == PAGE_SPEED) { stack_.push_back(PAGE_TOP); cursor_stack_.push_back(CARD_SETTINGS); stack_.push_back(PAGE_SETTINGS); cursor_stack_.push_back(0); }
+	if (p == PAGE_PICTURE || p == PAGE_CONTROLS || p == PAGE_SPEED || p == PAGE_INTERFACE || p == PAGE_RA) {
+		stack_.push_back(PAGE_TOP);
+		cursor_stack_.push_back(CARD_SETTINGS);
+		stack_.push_back(PAGE_SETTINGS);
+		int si = p == PAGE_PICTURE ? 0 : p == PAGE_CONTROLS ? 1 : p == PAGE_SPEED ? 2 : p == PAGE_INTERFACE ? 3 : 4;
+		cursor_stack_.push_back(si);
+	}
 	else if (p == PAGE_MAPPING) { stack_.push_back(PAGE_TOP); cursor_stack_.push_back(CARD_SETTINGS); stack_.push_back(PAGE_SETTINGS); cursor_stack_.push_back(1); stack_.push_back(PAGE_CONTROLS); cursor_stack_.push_back(3); }
 	else if (p == PAGE_CHEAT_SEARCH) { stack_.push_back(PAGE_TOP); cursor_stack_.push_back(CARD_CHEATS); stack_.push_back(PAGE_CHEATS); cursor_stack_.push_back(0); }
 	else if (p != PAGE_TOP) { stack_.push_back(PAGE_TOP); cursor_stack_.push_back(p == PAGE_STATES ? CARD_STATES : p == PAGE_CHEATS ? CARD_CHEATS : CARD_SETTINGS); }
@@ -295,6 +362,8 @@ static const char *help_for(int id)
 	case ROW_PIC_SCREEN: return tr("menu.which_vita_screen_this_is_oled");
 	case ROW_UI_TEXT: return tr("menu.bigger_text_in_the_menus_of");
 	case ROW_UI_CONTRAST: return tr("menu.brighter_text_and_clearer_edges_in");
+	case ROW_UI_THEME: return tr("menu.ui.theme_help");
+	case ROW_UI_TAPMENU: return tr("menu.ui.tap_menu_help");
 	case ROW_UI_LANGUAGE: return tr("menu.ui.language_help");
 	case ROW_PIC_APPLY: return tr("menu.keep_these_picture_settings_for_every");
 	case ROW_CTL_STICK_L: return tr("menu.what_the_left_stick_does_nothing");
@@ -411,6 +480,23 @@ void Menu::build_rows()
 		r.value_text = vals_[ROW_UI_CONTRAST] ? trf("menu.ui.value_contrast", tr(vals_[ROW_UI_TEXT] ? "menu.ui.large_text" : "menu.ui.normal_text")) : std::string(tr(vals_[ROW_UI_TEXT] ? "menu.ui.large_text" : "menu.ui.normal_text"));
 		r.help = tr("menu.text_size_and_high_contrast_for");
 		rows_.push_back(r);
+		if (cfg_.caps & CAP_RA) {
+			r.enabled = true; r.reason.clear(); r.value_text.clear();
+			r.tag = PAGE_RA;
+			r.label = tr("menu.achievements");
+			std::vector<MenuAchievement> achs;
+			std::string sum;
+			if (host_) host_->list_achievements(achs, &sum);
+			if (!sum.empty()) {
+				r.value_text = sum;
+			} else if (!achs.empty()) {
+				int unlocked = 0;
+				for (size_t i = 0; i < achs.size(); i++) if (achs[i].unlocked) unlocked++;
+				r.value_text = strf("%d / %d", unlocked, (int) achs.size());
+			}
+			r.help = tr("menu.ra.help");
+			rows_.push_back(r);
+		}
 		break;
 	}
 	case PAGE_PICTURE:
@@ -431,12 +517,46 @@ void Menu::build_rows()
 		break;
 	case PAGE_INTERFACE: {
 		const char *const kText[] = { tr("menu.normal"), tr("menu.large") };
+		const char *const kTheme[] = { tr("menu.dark"), tr("menu.light") };
 		b.choice(ROW_UI_TEXT, tr("menu.text_size"), kText, 2, 0, vals_[ROW_UI_TEXT]);
 		b.choice(ROW_UI_CONTRAST, tr("menu.high_contrast"), kOnOff, 2, 0, vals_[ROW_UI_CONTRAST]);
+		b.choice(ROW_UI_THEME, tr("menu.theme"), kTheme, 2, 0, vals_[ROW_UI_THEME]);
+		b.choice(ROW_UI_TAPMENU, tr("menu.tap_screen_for_menu"), kOnOff, 2, 0, vals_[ROW_UI_TAPMENU]);
 		{
 			const char *kLang[LANG_CHOICES];
 			for (int i = 0; i < LANG_CHOICES; i++) kLang[i] = i == LANG_AUTO ? tr("lang.auto") : kLangNative[i];
 			b.choice(ROW_UI_LANGUAGE, tr("menu.language"), kLang, LANG_CHOICES, 0, vals_[ROW_UI_LANGUAGE]);
+		}
+		break;
+	}
+	case PAGE_RA: {
+		ra_achs_.clear();
+		ra_summary_.clear();
+		if (host_ && (cfg_.caps & CAP_RA)) host_->list_achievements(ra_achs_, &ra_summary_);
+		if (ra_achs_.empty()) {
+			Row r;
+			r.kind = K_INFO; r.enabled = false;
+			r.label = tr("menu.ra.no_achievements");
+			r.value_text = ra_summary_;
+			r.help = tr("menu.ra.help");
+			rows_.push_back(r);
+			break;
+		}
+		for (size_t i = 0; i < ra_achs_.size(); i++) {
+			const MenuAchievement &a = ra_achs_[i];
+			Row r;
+			r.kind = K_INFO; r.enabled = true;
+			r.label = a.title;
+			std::string pts = strf(tr("menu.ra.pts"), (unsigned) a.points);
+			if (a.unlocked) {
+				r.value_text = std::string(tr(a.hardcore ? "menu.ra.unlocked_hc" : "menu.ra.unlocked")) + " - " + pts;
+			} else if (!a.progress.empty()) {
+				r.value_text = a.progress + " - " + pts;
+			} else {
+				r.value_text = std::string(tr("menu.ra.locked")) + " - " + pts;
+			}
+			r.help = a.desc;
+			rows_.push_back(r);
 		}
 		break;
 	}
@@ -492,7 +612,7 @@ void Menu::build_rows()
 			rows_.push_back(r);
 		}
 		if (map_player_ == 0) {
-			static const int extra[] = { ACT_TURBO_A, ACT_TURBO_B, ACT_FF, ACT_QSAVE, ACT_QLOAD, ACT_REWIND };
+			static const int extra[] = { ACT_TURBO_A, ACT_TURBO_B, ACT_FF, ACT_QSAVE, ACT_QLOAD, ACT_SHOT, ACT_REWIND };
 			for (size_t i = 0; i < sizeof extra / sizeof extra[0]; i++) {
 				int a = extra[i];
 				if (a == ACT_TURBO_A && model_->turbo_a < 0) continue;
@@ -504,6 +624,7 @@ void Menu::build_rows()
 				if (a == ACT_FF && !(cfg_.caps & CAP_FF)) continue;
 				if (a == ACT_REWIND && !(cfg_.caps & CAP_REWIND)) continue;
 				if ((a == ACT_QSAVE || a == ACT_QLOAD) && !(cfg_.caps & CAP_STATES)) continue;
+				if (a == ACT_SHOT && !(cfg_.caps & CAP_SHOT)) continue;
 				if ((a == ACT_TURBO_A || a == ACT_TURBO_B) && !(cfg_.caps & CAP_TURBO)) continue;
 				rows_.push_back(r);
 			}
@@ -530,8 +651,7 @@ void Menu::build_rows()
 		b.choice(ROW_SPD_REWIND, tr("menu.rewind"), kOnOff, 2, CAP_REWIND, vals_[ROW_SPD_REWIND]);
 		break;
 	case PAGE_CHEATS: {
-		cheats_.clear();
-		if (host_ && (cfg_.caps & CAP_CHEATS)) host_->list_cheats(cheats_);
+		refresh_cheats();
 		if ((cfg_.caps & CAP_CHEATS) && (cfg_.caps & CAP_CHEAT_EDIT)) {
 			Row r;
 			r.id = ID_CHEAT_ADD; r.kind = K_ACTION; r.label = tr("menu.add_a_cheat"); r.enabled = true;
@@ -753,6 +873,8 @@ void Menu::apply_value(Row &r, int v)
 			if (v != 0 && host_ && host_->cheats_refused()) { notify(host_->cheats_refused(), NOTICE_ERROR); r.value = 0; cheats_[(size_t) r.tag].on = false; return; }
 			cheats_[(size_t) r.tag].on = v != 0;
 			if (host_) host_->set_cheat(r.tag, v != 0);
+			has_active_cheats_ = false;
+			for (size_t k = 0; k < cheats_.size(); k++) if (cheats_[k].on) { has_active_cheats_ = true; break; }
 		}
 		return;
 	}
@@ -948,7 +1070,19 @@ void Menu::refresh_slots()
 		}
 		undo_avail_ = (cfg_.caps & CAP_UNDO) && states_->undo_available();
 	}
-	tex_dirty_ = true;
+	thumbs_dirty_ = true;
+	shot_dirty_ = true;
+}
+
+void Menu::refresh_cheats()
+{
+	cheats_.clear();
+	has_active_cheats_ = false;
+	if (host_ && (cfg_.caps & CAP_CHEATS)) {
+		host_->list_cheats(cheats_);
+		for (size_t i = 0; i < cheats_.size(); i++)
+			if (cheats_[i].on) { has_active_cheats_ = true; break; }
+	}
 }
 
 void Menu::select_slot(int slot)
@@ -960,12 +1094,16 @@ void Menu::select_slot(int slot)
 	shot_w_ = shot_h_ = 0;
 	shot_slot_ = 0;
 	if (states_ && slots_[slot - 1].present && !pending_slot_[slot - 1].on && states_->read_shot(slot, shot_px_, &shot_w_, &shot_h_)) shot_slot_ = slot;
-	tex_dirty_ = true;
+	shot_dirty_ = true;
 	ensure_visible();
 }
 
 void Menu::request_save(int slot)
 {
+	if (slot >= 1 && slot <= STATE_SLOTS && slots_[slot - 1].locked) {
+		notify(tr("menu.slot_is_locked_press_l"), NOTICE_INFO);
+		return;
+	}
 	if (slots_[slot - 1].present) open_modal(M_OVERWRITE, slot);
 	else do_save(slot);
 }
@@ -973,8 +1111,19 @@ void Menu::request_save(int slot)
 void Menu::do_save(int slot)
 {
 	if (!states_ || !host_) { notify(tr("menu.saving_states_is_not_available"), NOTICE_ERROR); return; }
+	if (states_->is_locked(slot)) {
+		notify(tr("menu.slot_is_locked_press_l"), NOTICE_INFO);
+		return;
+	}
 	std::vector<uint8_t> data;
 	if (!host_->capture_state(data) || data.empty()) { notify(tr("menu.could_not_save_the_state_the"), NOTICE_ERROR); return; }
+	if ((cfg_.caps & CAP_UNDO) && (pending_slot_[slot - 1].on || states_->info(slot).present)) {
+		host_->wait_state_writes();
+		if (states_->info(slot).present) {
+			std::vector<uint8_t> prev;
+			if (states_->load(slot, prev) == ST_OK && !prev.empty()) states_->undo_store(prev.data(), prev.size());
+		}
+	}
 	Frame f;
 	host_->current_frame(&f);
 	StateJob job = states_->prepare(slot, data.data(), data.size(), f, host_->play_seconds());
@@ -1041,6 +1190,11 @@ void Menu::do_undo()
 void Menu::do_delete(int slot)
 {
 	if (!states_) return;
+	if (states_->is_locked(slot)) {
+		notify(tr("menu.slot_is_locked_press_l"), NOTICE_INFO);
+		refresh_slots();
+		return;
+	}
 	if (host_) host_->wait_state_writes();
 	if (states_->remove(slot)) {
 		if (host_) host_->on_state_touched(slot);
@@ -1336,7 +1490,9 @@ void Menu::tap(const Region &r, float x)
 			break;
 		case BTN_SAVE: request_save(slot_); break;
 		case BTN_DELETE:
-			if (slots_[slot_ - 1].present) open_modal(M_DELETE, slot_); else notify(tr("menu.no_saved_state_in_this_slot"), NOTICE_INFO);
+			if (slots_[slot_ - 1].locked) notify(tr("menu.slot_is_locked_press_l"), NOTICE_INFO);
+			else if (slots_[slot_ - 1].present) open_modal(M_DELETE, slot_);
+			else notify(tr("menu.no_saved_state_in_this_slot"), NOTICE_INFO);
 			break;
 		case BTN_UNDO: do_undo(); break;
 		}
@@ -1422,7 +1578,7 @@ void Menu::pad_update(const MenuInput &in)
 	cur &= ~ignore_mask_;
 	uint32_t edge = cur & ~prev_buttons_;
 	const uint32_t dirs[4] = { PH_UP, PH_DOWN, PH_LEFT, PH_RIGHT };
-	uint32_t fire = edge & (PH_CROSS | PH_CIRCLE | PH_SQUARE | PH_TRIANGLE | PH_SELECT);
+	uint32_t fire = edge & (PH_CROSS | PH_CIRCLE | PH_SQUARE | PH_TRIANGLE | PH_L | PH_R | PH_START | PH_SELECT);
 	for (int k = 0; k < 4; k++) {
 		if (edge & dirs[k]) { fire |= dirs[k]; rep_ms_[k] = 0; }
 		else if (cur & dirs[k]) {
@@ -1440,6 +1596,7 @@ void Menu::pad_update(const MenuInput &in)
 		else if (fire & cancel) modal_answer(false);
 		return;
 	}
+	if (fire & PH_START) { pending_ = MENU_RESUME; return; }
 
 	if (page_ == PAGE_TOP) {
 		if (fire & (PH_LEFT | PH_UP)) cursor_ = step_card(cursor_, -1);
@@ -1452,17 +1609,47 @@ void Menu::pad_update(const MenuInput &in)
 		if (fire & PH_UP) select_slot((slot_ + STATE_SLOTS - 2) % STATE_SLOTS + 1);
 		if (fire & PH_DOWN) select_slot(slot_ % STATE_SLOTS + 1);
 		bool filled = slots_[slot_ - 1].present;
+		if (fire & PH_L) {
+			if (states_ && (filled || slots_[slot_ - 1].locked)) {
+				if (host_) host_->wait_state_writes();
+				const bool want = !slots_[slot_ - 1].locked;
+				if (states_->set_lock(slot_, want)) {
+					refresh_slots();
+					select_slot(slot_);
+					notify(want ? strf(tr("menu.slot_locked"), slot_)
+					            : strf(tr("menu.slot_unlocked"), slot_), NOTICE_INFO);
+				} else {
+					notify(tr("menu.could_not_change_slot_lock"), NOTICE_ERROR);
+				}
+			} else {
+				notify(tr("menu.no_saved_state_in_this_slot"), NOTICE_INFO);
+			}
+			return;
+		}
+		if (fire & PH_R) {
+			if (undo_avail_) do_undo();
+			else notify(tr("menu.nothing_to_undo"), NOTICE_INFO);
+			return;
+		}
 		if (fire & enter) { if (filled) do_load(slot_); else request_save(slot_); }
 		if (fire & PH_SQUARE) request_save(slot_);
-		if (fire & PH_TRIANGLE) { if (filled) open_modal(M_DELETE, slot_); }
-		if ((fire & PH_SELECT) && undo_avail_) do_undo();
+		if (fire & PH_TRIANGLE) {
+			if (slots_[slot_ - 1].locked) notify(tr("menu.slot_is_locked_press_l"), NOTICE_INFO);
+			else if (filled) open_modal(M_DELETE, slot_);
+		}
 		if (fire & cancel) back();
 		return;
 	}
-	if (page_ == PAGE_CHEATS && (fire & PH_TRIANGLE) && (cfg_.caps & CAP_CHEAT_EDIT) && cursor_ >= 0 && cursor_ < (int) rows_.size() &&
-	    rows_[(size_t) cursor_].kind == K_CHOICE) {
-		open_modal(M_CHEAT_DELETE, rows_[(size_t) cursor_].tag);
-		return;
+	if (page_ == PAGE_CHEATS && (cfg_.caps & CAP_CHEAT_EDIT)) {
+		if (fire & PH_TRIANGLE) {
+			if (host_ && host_->cheats_refused()) notify(host_->cheats_refused(), NOTICE_ERROR);
+			else if (host_) host_->add_cheat();
+			return;
+		}
+		if ((fire & PH_SQUARE) && cursor_ >= 0 && cursor_ < (int) rows_.size() && rows_[(size_t) cursor_].kind == K_CHOICE) {
+			open_modal(M_CHEAT_DELETE, rows_[(size_t) cursor_].tag);
+			return;
+		}
 	}
 	if (fire & PH_UP) { if (!rows_.empty()) cursor_ = (cursor_ + (int) rows_.size() - 1) % (int) rows_.size(); ensure_visible(); }
 	if (fire & PH_DOWN) { if (!rows_.empty()) cursor_ = (cursor_ + 1) % (int) rows_.size(); ensure_visible(); }
@@ -1512,22 +1699,32 @@ MenuEvent Menu::update(const MenuInput &in)
 
 /* ---- drawing ------------------------------------------------------------------------------ */
 
+void Menu::prepare_textures(Gfx *g)
+{
+	if (!open_ || !g) return;
+	upload_textures(g);
+}
+
 void Menu::upload_textures(Gfx *g)
 {
 	gfx_ = g;
-	if (!tex_dirty_) return;
-	tex_dirty_ = false;
-	for (int i = 0; i < STATE_SLOTS; i++) {
-		if (thumb_tex_[i]) { g->tex_free(thumb_tex_[i]); thumb_tex_[i] = 0; }
-		if (!thumb_px_[i].empty()) {
-			thumb_tex_[i] = g->tex_create(THUMB_W, THUMB_H, TEX_RGB565);
-			if (thumb_tex_[i]) g->tex_update(thumb_tex_[i], &thumb_px_[i][0], THUMB_W * 2);
+	if (thumbs_dirty_) {
+		thumbs_dirty_ = false;
+		for (int i = 0; i < STATE_SLOTS; i++) {
+			if (thumb_tex_[i]) { g->tex_free(thumb_tex_[i]); thumb_tex_[i] = 0; }
+			if (!thumb_px_[i].empty()) {
+				thumb_tex_[i] = g->tex_create(THUMB_W, THUMB_H, TEX_RGB565);
+				if (thumb_tex_[i]) g->tex_update(thumb_tex_[i], &thumb_px_[i][0], THUMB_W * 2);
+			}
 		}
 	}
-	if (shot_tex_) { g->tex_free(shot_tex_); shot_tex_ = 0; }
-	if (!shot_px_.empty() && shot_w_ > 0) {
-		shot_tex_ = g->tex_create(shot_w_, shot_h_, TEX_RGB565);
-		if (shot_tex_) g->tex_update(shot_tex_, &shot_px_[0], shot_w_ * 2);
+	if (shot_dirty_) {
+		shot_dirty_ = false;
+		if (shot_tex_) { g->tex_free(shot_tex_); shot_tex_ = 0; }
+		if (!shot_px_.empty() && shot_w_ > 0) {
+			shot_tex_ = g->tex_create(shot_w_, shot_h_, TEX_RGB565);
+			if (shot_tex_) g->tex_update(shot_tex_, &shot_px_[0], shot_w_ * 2);
+		}
 	}
 }
 
@@ -1535,10 +1732,10 @@ void Menu::draw_backdrop(Gfx *g)
 {
 	float e = clampf((float) age_ms_ / SHEET_MS, 0, 1);
 	if (page_ == PAGE_TOP) {
-		g->fill_rect(0, 0, 960, 544, col(C_BG, (int) (110 * e)));
-		g->gradient_v(0, 0, 960, 120, col(C_BG, (int) (200 * e)), col(C_BG, 0));
+		g->fill_rect(0, 0, 960, 544, is_light() ? c_bg((int) (175 * e)) : c_bg((int) (110 * e)));
+		g->gradient_v(0, 0, 960, 120, is_light() ? c_bg((int) (235 * e)) : c_bg((int) (200 * e)), c_bg(0));
 	} else {
-		g->fill_rect(0, 0, 960, 544, col(C_BG, 190));
+		g->fill_rect(0, 0, 960, 544, is_light() ? c_bg(215) : c_bg(190));
 	}
 }
 
@@ -1561,46 +1758,60 @@ static void draw_box_label(Text *t, int face, float cx, float top, float h, floa
 	t->draw_center(face, cx, y0 + lh, t->fit(face, s.substr(best + 1), max_w).c_str(), color);
 }
 
-static void hint(Gfx *g, Text *t, float *xr, int glyph, const char *label, uint32_t ink_unused)
-{
-	(void) ink_unused;
-	const std::string lb = t->fit(F_BODY, label, 210);      /* a long word in another language ends in "..." */
-	float w = t->width(F_BODY, lb.c_str());
-	float x = *xr - w;
-	t->draw(F_BODY, x, 47 - t->line_h(F_BODY) * 0.5f, lb.c_str(), col(C_TEXT2));
-	draw_button_glyph(g, glyph, x - 20, 47, 28, col(C_INK), col(C_TEXT2));
-	*xr = x - 20 - 14 - 22;
-}
-
 void Menu::draw_hints(Gfx *g, Text *t)
 {
 	float xr = 924;
 	struct Left { float *dst, *src; ~Left() { *dst = *src - 20; } } left_guard = { &hints_left_, &xr };      /* where the hints end on the left (the title keeps clear of it) */
 	hints_left_ = 960;
+	const uint32_t text2 = c_text2(), ink = c_ink();
+	auto hint_btn = [&](int glyph, const char *label, float maxw, float gap) {
+		const std::string lb = t->fit(F_BODY, label, maxw);
+		float w = t->width(F_BODY, lb.c_str());
+		float x = xr - w;
+		t->draw(F_BODY, x, 47 - t->line_h(F_BODY) * 0.5f, lb.c_str(), text2);
+		draw_button_glyph(g, glyph, x - 20, 47, 28, ink, text2);
+		xr = x - 20 - 14 - gap;
+	};
+	auto hint_sh = [&](const char *sh, const char *label, float maxw, float gap) {
+		const std::string lb = t->fit(F_BODY, label, maxw);
+		float w = t->width(F_BODY, lb.c_str());
+		float x = xr - w;
+		t->draw(F_BODY, x, 47 - t->line_h(F_BODY) * 0.5f, lb.c_str(), text2);
+		float bx = x - 24;
+		g->fill_rrect(bx - 16, 47 - 12, 32, 24, 8, text2);
+		t->draw_center(F_CAPTION, bx, 47 - t->line_h(F_CAPTION) * 0.5f, sh, ink);
+		xr = bx - 16 - gap;
+	};
 	int ge = cfg_.enter_is_cross ? GLYPH_CROSS : GLYPH_CIRCLE, gc = cfg_.enter_is_cross ? GLYPH_CIRCLE : GLYPH_CROSS;
 	if (modal_ == M_CAPTURE || modal_ == M_BTNTEST) return;   /* any button is the answer / being tested: no hints */
 	if (modal_ != M_NONE) {
-		hint(g, t, &xr, gc, tr("menu.cancel"), 0);
-		hint(g, t, &xr, ge, tr("menu.confirm"), 0);
+		hint_btn(gc, tr("menu.cancel"), 210, 22);
+		hint_btn(ge, tr("menu.confirm"), 210, 22);
 		return;
 	}
 	if (page_ == PAGE_TOP) {
-		hint(g, t, &xr, gc, tr("menu.resume"), 0);
-		hint(g, t, &xr, ge, tr("menu.select"), 0);
+		hint_btn(gc, tr("menu.resume"), 210, 22);
+		hint_btn(ge, tr("menu.select"), 210, 22);
 		return;
 	}
 	if (page_ == PAGE_STATES) {
-		hint(g, t, &xr, gc, tr("menu.back"), 0);
-		hint(g, t, &xr, GLYPH_SQUARE, tr("menu.save_here"), 0);
-		hint(g, t, &xr, GLYPH_TRIANGLE, tr("menu.delete"), 0);
-		hint(g, t, &xr, ge, slots_[slot_ - 1].present ? tr("menu.load") : tr("menu.save"), 0);
+		if (undo_avail_) hint_sh("R", tr("menu.undo"), 100, 14);
+		hint_sh("L", tr(slots_[slot_ - 1].locked ? "menu.unlock" : "menu.lock"), 110, 14);
+		hint_btn(gc, tr("menu.back"), 110, 14);
+		hint_btn(GLYPH_SQUARE, tr("menu.save"), 110, 14);
+		hint_btn(GLYPH_TRIANGLE, tr("menu.delete"), 110, 14);
+		hint_btn(ge, slots_[slot_ - 1].present ? tr("menu.load") : tr("menu.save"), 110, 14);
 		return;
 	}
-	hint(g, t, &xr, gc, tr("menu.back"), 0);
-	if (page_ == PAGE_CHEATS && (cfg_.caps & CAP_CHEAT_EDIT) && cursor_ >= 0 && cursor_ < (int) rows_.size() && rows_[(size_t) cursor_].kind == K_CHOICE)
-		hint(g, t, &xr, GLYPH_TRIANGLE, tr("menu.delete"), 0);
+	hint_btn(gc, tr("menu.back"), 210, 22);
+	if (page_ == PAGE_CHEATS && (cfg_.caps & CAP_CHEAT_EDIT)) {
+		hint_btn(GLYPH_TRIANGLE, tr("menu.add_a_cheat"), 160, 18);
+		if (cursor_ >= 0 && cursor_ < (int) rows_.size() && rows_[(size_t) cursor_].kind == K_CHOICE)
+			hint_btn(GLYPH_SQUARE, tr("menu.delete"), 160, 18);
+	}
+	if (page_ == PAGE_RA) return;
 	bool act = cursor_ >= 0 && cursor_ < (int) rows_.size() && (rows_[(size_t) cursor_].kind == K_ACTION || rows_[(size_t) cursor_].kind == K_LINK);
-	hint(g, t, &xr, ge, act ? tr("menu.select") : tr("menu.change"), 0);
+	hint_btn(ge, act ? tr("menu.select") : tr("menu.change"), 210, 22);
 }
 
 void Menu::draw_header(Gfx *g, Text *t, const char *title, const char *sub)
@@ -1610,9 +1821,9 @@ void Menu::draw_header(Gfx *g, Text *t, const char *title, const char *sub)
 	const float up = pct > 100 ? (float) (t->line_h(F_TITLE) + t->line_h(F_CAPTION) - (t->line_h(F_TITLE) + t->line_h(F_CAPTION)) * 100 / pct) : 0.0f;
 	const float ty = 22 - up;
 	const float room = std::max(120.0f, hints_left_ - 44 - 16);      /* the title and the hints share the top line */
-	t->draw(F_TITLE, 44, ty, t->fit(F_TITLE, title, room).c_str(), col(C_TEXT));
+	t->draw(F_TITLE, 44, ty, t->fit(F_TITLE, title, room).c_str(), c_text());
 	std::string s = t->fit(F_CAPTION, sub, std::min(560.0f, room));
-	t->draw(F_CAPTION, 46, ty + t->line_h(F_TITLE) + 0, s.c_str(), col(C_TEXT2));
+	t->draw(F_CAPTION, 46, ty + t->line_h(F_TITLE) + 0, s.c_str(), c_text2());
 	(void) g;
 }
 
@@ -1621,27 +1832,28 @@ void Menu::draw_top(Gfx *g, Text *t)
 	float e0 = clampf((float) age_ms_ / SHEET_MS, 0, 1);
 	float e = 1.0f - (1.0f - e0) * (1.0f - e0) * (1.0f - e0);
 	int a = (int) (255 * e);
+	draw_hints(g, t);
 	/* the game's name and console, top left */
 	{
 		std::string title = cfg_.game_name;
 		size_t par = title.find(" (");
 		if (par != std::string::npos && par > 0) title = title.substr(0, par);
-		title = t->fit(F_SUB, title, std::min(640.0f, hints_left_ - 44 - 16));
-		t->draw(F_SUB, 44, 22, title.c_str(), col(C_TEXT, a));
-		t->draw(F_CAPTION, 46, 22 + t->line_h(F_SUB) + 2, cfg_.console_label.c_str(), col(C_TEXT2, a));
+		title = t->fit(F_SUB, title, std::min(640.0f, std::max(120.0f, hints_left_ - 44 - 16)));
+		t->draw(F_SUB, 44, 22, title.c_str(), c_text(a));
+		t->draw(F_CAPTION, 46, 22 + t->line_h(F_SUB) + 2, cfg_.console_label.c_str(), c_text2(a));
 	}
 	float y0 = PK_SCREEN_H - SHEET_H * e;
-	g->fill_rrect(14, y0 + 6, PK_SCREEN_W - 28, SHEET_H + 40, 30, col(0x000000, 60));
-	g->fill_rrect(20, y0, PK_SCREEN_W - 40, SHEET_H + 40, 30, col(C_SHEET, 236));
-	g->fill_rect(40, y0 + 1, PK_SCREEN_W - 80, 1, col(0xFFFFFF, 26));
+	g->fill_rrect(14, y0 + 6, PK_SCREEN_W - 28, SHEET_H + 40, 30, col(0x000000, is_light() ? 32 : 60));
+	g->fill_rrect(20, y0, PK_SCREEN_W - 40, SHEET_H + 40, 30, c_sheet(is_light() ? 246 : 236));
+	g->fill_rect(40, y0 + 1, PK_SCREEN_W - 80, 1, c_glass(26));
 
 	std::string line = card_help(cursor_);
 	const char *const labels[CARD_COUNT] = { tr("menu.resume"), tr("menu.save_states"), tr("menu.play_together"), tr("menu.cheats"), tr("menu.settings"), tr("menu.reset_game"), tr("menu.game_list"), tr("menu.exit") };
 	std::string cl = cursor_ == CARD_EXIT ? exit_label() : std::string(labels[cursor_]);
-	t->draw(F_LABEL, 52, y0 + 26, cl.c_str(), col(C_TEXT));
+	t->draw(F_LABEL, 52, y0 + 26, cl.c_str(), c_text());
 	std::string fit = t->fit(F_BODY, line, PK_SCREEN_W - 52 - 52 - t->width(F_LABEL, cl.c_str()) - 16);
 	std::string why;
-	t->draw(F_BODY, 52 + t->width(F_LABEL, cl.c_str()) + 16, y0 + 26, fit.c_str(), card_enabled(cursor_, &why) ? col(C_TEXT2) : col(C_TEXT3));
+	t->draw(F_BODY, 52 + t->width(F_LABEL, cl.c_str()) + 16, y0 + 26, fit.c_str(), card_enabled(cursor_, &why) ? c_text2() : c_text3());
 
 	static const int icons[CARD_COUNT] = { ICON_PLAY, ICON_LAYERS, ICON_PEOPLE, ICON_SPARK, ICON_GEAR, ICON_RESET, ICON_GRID, ICON_POWER };
 	const int nvis = visible_card_count();
@@ -1650,77 +1862,77 @@ void Menu::draw_top(Gfx *g, Text *t)
 		if (!card_visible(i)) continue;
 		bool on = i == cursor_, enabled = card_enabled(i, 0);
 		float y = y0 + 78 - (on ? 6.0f : 0.0f);
-		uint32_t ink = on ? col(C_INK) : enabled ? col(C_TEXT) : col(C_TEXT3);
-		uint32_t lc = on ? col(C_INK) : enabled ? col(C_TEXT2) : col(C_TEXT3);
+		uint32_t ink = on ? c_ink() : enabled ? c_text() : c_text3();
+		uint32_t lc = on ? c_ink() : enabled ? c_text2() : c_text3();
 		if (on) {
-			g->fill_rrect(x - 4, y - 4, CARD_W + 8, CARD_H + 8, 24, col(0xFFFFFF, 40));
-			g->fill_rrect(x, y, CARD_W, CARD_H, 20, col(C_TEXT));
+			g->fill_rrect(x - 4, y - 4, CARD_W + 8, CARD_H + 8, 24, c_glass(40));
+			g->fill_rrect(x, y, CARD_W, CARD_H, 20, c_text());
 		} else {
-			g->fill_rrect(x, y, CARD_W, CARD_H, 20, col(0xFFFFFF, 30));
+			g->fill_rrect(x, y, CARD_W, CARD_H, 20, c_glass(is_light() ? 22 : 30));
 		}
 		std::string lb = (i == CARD_EXIT) ? exit_label() : std::string(labels[i]);
 		size_t sp = lb.find(' ');
+		const float lh = t->line_h(F_CAPTION);
 		if (t->width(F_CAPTION, lb.c_str()) > CARD_W - 12 && sp != std::string::npos) {
-			draw_icon(g, icons[i], x + CARD_W * 0.5f, y + 36, 36, ink);
-			t->draw_center(F_CAPTION, x + CARD_W * 0.5f, y + 62, t->fit(F_CAPTION, lb.substr(0, sp), CARD_W - 8).c_str(), lc);
-			t->draw_center(F_CAPTION, x + CARD_W * 0.5f, y + 86, t->fit(F_CAPTION, lb.substr(sp + 1), CARD_W - 8).c_str(), lc);
+			const float y1 = std::min(y + 62.0f, y + CARD_H - 6.0f - 2.0f * lh);
+			const float y2 = y1 + lh;
+			draw_icon(g, icons[i], x + CARD_W * 0.5f, y + (y1 - y) * 0.54f, 34, ink);
+			t->draw_center(F_CAPTION, x + CARD_W * 0.5f, y1, t->fit(F_CAPTION, lb.substr(0, sp), CARD_W - 8).c_str(), lc);
+			t->draw_center(F_CAPTION, x + CARD_W * 0.5f, y2, t->fit(F_CAPTION, lb.substr(sp + 1), CARD_W - 8).c_str(), lc);
 		} else {
 			draw_icon(g, icons[i], x + CARD_W * 0.5f, y + 42, 38, ink);
 			t->draw_center(F_CAPTION, x + CARD_W * 0.5f, y + 76, t->fit(F_CAPTION, lb, CARD_W - 8).c_str(), lc);
 		}
 		/* a dot where something is going on */
-		if (i == CARD_STATES && enabled && used_slots_ > 0) g->fill_circle(x + CARD_W - 16, y + 16, 5, on ? col(C_INK) : accent(255));
-		if (i == CARD_CHEATS && enabled) {
-			std::vector<CheatItem> ch;
-			bool any = false;
-			if (host_) { host_->list_cheats(ch); for (size_t k = 0; k < ch.size(); k++) any = any || ch[k].on; }
-			if (any) g->fill_circle(x + CARD_W - 16, y + 16, 5, on ? col(C_INK) : accent(255));
-		}
+		if (i == CARD_STATES && enabled && used_slots_ > 0) g->fill_circle(x + CARD_W - 16, y + 16, 5, on ? c_ink() : accent(255));
+		if (i == CARD_CHEATS && enabled && has_active_cheats_) g->fill_circle(x + CARD_W - 16, y + 16, 5, on ? c_ink() : accent(255));
 		x += CARD_W + CARD_GAP;
 	}
-	draw_hints(g, t);
 }
 
 void Menu::draw_rows(Gfx *g, Text *t)
 {
 	const char *title = page_ == PAGE_SETTINGS ? tr("menu.settings") : page_ == PAGE_PICTURE ? tr("menu.picture") : page_ == PAGE_CONTROLS ? tr("menu.controls") :
-	                    page_ == PAGE_MAPPING ? tr("menu.button_mapping") : page_ == PAGE_SPEED ? tr("menu.speed") : page_ == PAGE_CHEAT_SEARCH ? tr("menu.search_memory") : page_ == PAGE_INTERFACE ? tr("menu.interface") : tr("menu.cheats");
-	std::string sub = cfg_.game_name;
+	                    page_ == PAGE_MAPPING ? tr("menu.button_mapping") : page_ == PAGE_SPEED ? tr("menu.speed") : page_ == PAGE_CHEAT_SEARCH ? tr("menu.search_memory") : page_ == PAGE_INTERFACE ? tr("menu.interface") : page_ == PAGE_RA ? tr("menu.achievements") : tr("menu.cheats");
+	std::string sub = (page_ == PAGE_RA && !ra_summary_.empty()) ? ra_summary_ : cfg_.game_name;
+	const bool light = is_light();
 	draw_hints(g, t);
 	draw_header(g, t, title, sub.c_str());
-	g->fill_rrect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 30, col(C_SHEET, 236));
+	g->fill_rrect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 30, c_sheet(light ? 246 : 236));
 	g->clip(VX - 8, VY, VW + 16, view_h());
 	for (size_t i = 0; i < rows_.size(); i++) {
 		const Row &r = rows_[i];
 		float y = VY + (float) i * PITCH - scroll_;
 		if (y + RH < VY - 2 || y > VY + view_h() + 2) continue;
 		bool sel = (int) i == cursor_;
-		uint32_t ink = !r.enabled ? (sel ? col(C_INK, 200) : col(C_TEXT3)) : sel ? col(C_INK) : col(C_TEXT);
-		if (sel) g->fill_rrect(VX, y, VW, RH, 20, col(C_TEXT, r.enabled ? 255 : 150));
-		else g->fill_rrect(VX, y, VW, RH, 20, col(0xFFFFFF, r.enabled ? 30 : 16));
+		uint32_t ink = !r.enabled ? (sel ? c_ink(200) : c_text3()) : sel ? c_ink() : c_text();
+		if (sel) g->fill_rrect(VX, y, VW, RH, 20, c_text(r.enabled ? 255 : 150));
+		else g->fill_rrect(VX, y, VW, RH, 20, c_glass(light ? (r.enabled ? 20 : 12) : (r.enabled ? 30 : 16)));
 		float ly = y + (RH - t->line_h(F_LABEL)) * 0.5f;
 		float rx = VX + VW;
-		float lab_w = (r.kind == K_CHOICE || r.kind == K_SLIDER) ? VW - 380 - 40 : VW - 60;
+		float lab_w = (r.kind == K_CHOICE || r.kind == K_SLIDER) ? VW - 380 - 40 : (r.kind == K_INFO && !r.value_text.empty()) ? VW - 260 : VW - 60;
 		if (!r.enabled && !r.reason.empty()) lab_w = 330;
 		bool del = page_ == PAGE_CHEATS && (cfg_.caps & CAP_CHEAT_EDIT) && r.kind == K_CHOICE;
 		if (del) lab_w -= 140;
 		std::string lab = t->fit(F_LABEL, r.label, lab_w);
 		if (del) {
 			float dx = VX + VW - 380 - 132;
-			g->fill_rrect(dx, y + 12, 120, RH - 24, 16, sel ? col(C_INK, 30) : col(0xFFFFFF, 22));
-			t->draw_center(F_BODY, dx + 60, y + (RH - t->line_h(F_BODY)) * 0.5f, t->fit(F_BODY, tr("menu.delete"), 108).c_str(), col(C_RED));
+			g->fill_rrect(dx, y + 12, 120, RH - 24, 16, sel ? col(0xB91C1C) : light ? col(0xB91C1C, 22) : col(0xFFFFFF, 22));
+			t->draw_center(F_BODY, dx + 60, y + (RH - t->line_h(F_BODY)) * 0.5f, t->fit(F_BODY, tr("menu.delete"), 108).c_str(), sel ? col(0xFFFFFF) : light ? col(0x991B1B) : col(0xFFB2B2));
 		}
 		t->draw(F_LABEL, VX + 28, ly, lab.c_str(), ink);
-		uint32_t vcol = !r.enabled ? col(C_TEXT3) : sel ? accent_deep() : accent_text();
+		uint32_t vcol = !r.enabled ? c_text3() : sel ? accent_deep() : accent_text();
 		if (!r.enabled) {
 			if (!r.reason.empty()) {
 				std::string rs = t->fit(F_BODY, r.reason, 440);
-				t->draw_right(F_BODY, rx - 28, y + (RH - t->line_h(F_BODY)) * 0.5f, rs.c_str(), sel ? col(C_INK, 200) : col(C_TEXT3));
+				t->draw_right(F_BODY, rx - 28, y + (RH - t->line_h(F_BODY)) * 0.5f, rs.c_str(), sel ? c_ink(200) : c_text3());
+			} else if (r.kind == K_INFO && !r.value_text.empty()) {
+				t->draw_right(F_BODY, rx - 28, y + (RH - t->line_h(F_BODY)) * 0.5f, t->fit(F_BODY, r.value_text, 300).c_str(), sel ? c_ink(200) : c_text3());
 			}
 			continue;
 		}
 		if (r.kind == K_CHOICE || r.kind == K_SLIDER) {
-			uint32_t arrow = sel ? col(C_INK, 200) : col(C_TEXT2);
+			uint32_t arrow = sel ? c_ink(200) : c_text2();
 			draw_icon(g, ICON_CHEVRON_L, rx - 380 + 36, y + RH * 0.5f, 24, arrow);
 			draw_icon(g, ICON_CHEVRON_R, rx - 36, y + RH * 0.5f, 24, arrow);
 			if (r.kind == K_CHOICE) {
@@ -1728,18 +1940,18 @@ void Menu::draw_rows(Gfx *g, Text *t)
 				t->draw_center(F_LABEL, rx - 308 + 118, ly, v.c_str(), vcol);
 			} else {
 				float tx = rx - 308 + 12, tw = 160, ty = y + RH * 0.5f;
-				g->fill_rrect(tx, ty - 3, tw, 6, 3, sel ? col(C_INK, 40) : col(0xFFFFFF, 40));
+				g->fill_rrect(tx, ty - 3, tw, 6, 3, sel ? c_ink(40) : c_glass(40));
 				float frac = (float) (r.value - r.vmin) / (float) (r.vmax - r.vmin);
 				if (frac > 0) g->fill_rrect(tx, ty - 3, std::max(6.0f, tw * frac), 6, 3, vcol);
-				g->fill_circle(tx + tw * frac, ty, 9, sel ? accent_deep() : col(C_TEXT));
+				g->fill_circle(tx + tw * frac, ty, 9, sel ? accent_deep() : c_text());
 				t->draw_right(F_LABEL, rx - 72 - 6, ly, row_value_text((int) i).c_str(), vcol);
 			}
-		} else if (r.kind == K_LINK || r.kind == K_ACTION) {
+		} else if (r.kind == K_LINK || r.kind == K_ACTION || r.kind == K_INFO) {
 			if (!r.value_text.empty()) {
 				std::string v = t->fit(F_BODY, r.value_text, 430);
-				t->draw_right(F_BODY, rx - 60, y + (RH - t->line_h(F_BODY)) * 0.5f, v.c_str(), vcol);
+				t->draw_right(F_BODY, rx - (r.kind == K_INFO ? 28.0f : 60.0f), y + (RH - t->line_h(F_BODY)) * 0.5f, v.c_str(), vcol);
 			}
-			if (r.kind == K_LINK) draw_icon(g, ICON_CHEVRON_R, rx - 32, y + RH * 0.5f, 24, sel ? col(C_INK, 200) : col(C_TEXT2));
+			if (r.kind == K_LINK) draw_icon(g, ICON_CHEVRON_R, rx - 32, y + RH * 0.5f, 24, sel ? c_ink(200) : c_text2());
 		}
 	}
 	g->clip_off();
@@ -1747,36 +1959,41 @@ void Menu::draw_rows(Gfx *g, Text *t)
 	if (content_h() > view_h() + 1) {
 		float th = view_h() * view_h() / content_h();
 		float ty = VY + (view_h() - th) * (scroll_ / (content_h() - view_h()));
-		g->fill_rrect(PANEL_X + PANEL_W - 14, ty, 4, th, 2, col(0xFFFFFF, 70));
+		g->fill_rrect(PANEL_X + PANEL_W - 14, ty, 4, th, 2, c_glass(70));
 	}
 	/* the help line of the focused row */
-	g->fill_rect(PANEL_X + 24, HELP_Y - 8, PANEL_W - 48, 1, col(0xFFFFFF, 26));
+	g->fill_rect(PANEL_X + 24, HELP_Y - 8, PANEL_W - 48, 1, c_glass(26));
 	if (cursor_ >= 0 && cursor_ < (int) rows_.size() && !notices_.active()) {     /* a notice takes the help line's place */
 		const Row &r = rows_[(size_t) cursor_];
 		std::string help = r.enabled || r.reason.empty() ? r.help : r.reason;
-		t->wrap(F_BODY, 56, HELP_Y + 2, 830, 2, 4, help, col(C_TEXT2));
+		t->wrap(F_BODY, 56, HELP_Y + 2, 830, 2, 4, help, c_text2());
 	}
 }
 
 void Menu::draw_states(Gfx *g, Text *t)
 {
+	const bool light = is_light();
 	draw_hints(g, t);
 	draw_header(g, t, tr("menu.save_states"), cfg_.game_name.c_str());
-	g->fill_rrect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 30, col(C_SHEET, 236));
+	g->fill_rrect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 30, c_sheet(light ? 246 : 236));
 	g->clip(VX - 8, VY, 432, view_h());
 	for (int i = 0; i < STATE_SLOTS; i++) {
 		float y = VY + i * PITCH - scroll_;
 		if (y + RH < VY - 2 || y > VY + view_h() + 2) continue;
 		bool sel = i + 1 == slot_;
-		if (sel) g->fill_rrect(VX, y, 420, RH, 20, col(C_TEXT));
-		else g->fill_rrect(VX, y, 420, RH, 20, col(0xFFFFFF, 30));
+		if (sel) g->fill_rrect(VX, y, 420, RH, 20, c_text());
+		else g->fill_rrect(VX, y, 420, RH, 20, c_glass(light ? 20 : 30));
 		const float tw = 90, th = 59;
 		float tx = VX + 12, ty = y + (RH - th) * 0.5f;
 		if (thumb_tex_[i]) g->tex_draw(thumb_tex_[i], 0, 0, THUMB_W, THUMB_H, tx, ty, tw, th, col(0xFFFFFF), true);
-		else g->fill_rrect(tx, ty, tw, th, 8, sel ? col(C_INK, 30) : col(0xFFFFFF, 26));
-		uint32_t ink = sel ? col(C_INK) : col(C_TEXT);
-		uint32_t dim = sel ? col(C_INK, 225) : col(C_TEXT2);
-		t->draw(F_LABEL, tx + tw + 16, y + 10, strf(tr("menu.slot"), i + 1).c_str(), ink);
+		else g->fill_rrect(tx, ty, tw, th, 8, sel ? c_ink(30) : c_glass(26));
+		uint32_t ink = sel ? c_ink() : c_text();
+		uint32_t dim = sel ? c_ink(225) : c_text2();
+		const float lw_max = slots_[i].locked ? (420 - 12 - tw - 16 - 78) : (420 - 12 - tw - 16 - 12);
+		t->draw(F_LABEL, tx + tw + 16, y + 10, t->fit(F_LABEL, strf(tr("menu.slot"), i + 1), lw_max).c_str(), ink);
+		if (slots_[i].locked) {
+			t->draw_right(F_CAPTION, VX + 420 - 14, y + 12, "[LOCK]", sel ? accent_deep() : accent_text());
+		}
 		std::string st = slots_[i].present ? stamp_text(slots_[i].saved) : tr("menu.states.empty");
 		if (slots_[i].present && st.empty()) st = tr("menu.saved");
 		t->draw(F_BODY, tx + tw + 16, y + 8 + t->line_h(F_LABEL), t->fit(F_BODY, st, 420 - 12 - tw - 16 - 12).c_str(), dim);
@@ -1785,12 +2002,13 @@ void Menu::draw_states(Gfx *g, Text *t)
 	if (content_h() > view_h() + 1) {
 		float th = view_h() * view_h() / content_h();
 		float ty = VY + (view_h() - th) * (scroll_ / (content_h() - view_h()));
-		g->fill_rrect(VX + 428, ty, 4, th, 2, col(0xFFFFFF, 70));
+		g->fill_rrect(VX + 428, ty, 4, th, 2, c_glass(70));
 	}
 	/* the picture of the selected slot */
 	const float px = 476, py = 108, pw = 448, ph = 170;
-	g->fill_rrect(px, py, pw, ph, 18, col(0x000000, 110));
+	g->fill_rrect(px, py, pw, ph, 18, light ? c_glass(24) : col(0x000000, 110));
 	bool filled = slots_[slot_ - 1].present;
+	bool locked = slots_[slot_ - 1].locked;
 	if (filled && shot_tex_ && shot_w_ > 0) {
 		float s = std::min(pw / shot_w_, ph / shot_h_);
 		float dw = shot_w_ * s, dh = shot_h_ * s;
@@ -1799,9 +2017,10 @@ void Menu::draw_states(Gfx *g, Text *t)
 		float dw = THUMB_W * 3.0f, dh = THUMB_H * 3.0f;
 		g->tex_draw(thumb_tex_[slot_ - 1], 0, 0, THUMB_W, THUMB_H, px + (pw - dw) * 0.5f, py + (ph - dh) * 0.5f, dw, dh, col(0xFFFFFF), true);
 	} else {
-		t->draw_center(F_SUB, px + pw * 0.5f, py + ph * 0.5f - t->line_h(F_SUB) * 0.5f, filled ? tr("menu.no_picture") : tr("menu.empty_slot"), col(C_TEXT3));
+		t->draw_center(F_SUB, px + pw * 0.5f, py + ph * 0.5f - t->line_h(F_SUB) * 0.5f, filled ? tr("menu.no_picture") : tr("menu.empty_slot"), c_text3());
 	}
 	std::string cap = strf(tr("menu.slot_of"), slot_, (int) STATE_SLOTS), cap2;
+	if (locked) cap += "  [LOCK]";
 	if (filled) {
 		std::string st = stamp_text(slots_[slot_ - 1].saved);
 		if (!st.empty()) cap += "  -  " + st;
@@ -1810,37 +2029,41 @@ void Menu::draw_states(Gfx *g, Text *t)
 			cap2 = s >= 3600 ? strf(tr("menu.h_m_played"), (long long) (s / 3600), (long long) (s / 60 % 60)) : strf(tr("menu.min_played"), (long long) (s / 60));
 		}
 	} else cap += std::string("  -  ") + tr("menu.states.empty");
-	t->draw(F_BODY, px + 6, py + ph + 2, t->fit(F_BODY, cap, 440).c_str(), col(C_TEXT2));
-	if (!cap2.empty()) t->draw(F_BODY, px + 6, py + ph + 2 + t->line_h(F_BODY), t->fit(F_BODY, cap2, 440).c_str(), col(C_TEXT3));
+	t->draw(F_BODY, px + 6, py + ph + 2, t->fit(F_BODY, cap, 440).c_str(), c_text2());
+	if (!cap2.empty()) t->draw(F_BODY, px + 6, py + ph + 2 + t->line_h(F_BODY), t->fit(F_BODY, cap2, 440).c_str(), c_text3());
 	/* the buttons */
 	struct { const char *label; int id; bool ok; bool primary; } bt[3] = {
-		{ tr("menu.load"), BTN_LOAD, filled, true }, { tr("menu.save_here"), BTN_SAVE, true, false }, { tr("menu.delete"), BTN_DELETE, filled, false } };
+		{ tr("menu.load"), BTN_LOAD, filled, true }, { tr("menu.save_here"), BTN_SAVE, !locked, false }, { tr("menu.delete"), BTN_DELETE, filled && !locked, false } };
 	for (int i = 0; i < 3; i++) {
 		float bx = 476 + i * 154.0f;
 		bool pr = bt[i].primary && bt[i].ok;
-		g->fill_rrect(bx, 348, 140, 80, 20, pr ? accent(255) : col(0xFFFFFF, bt[i].ok ? 36 : 16));
-		uint32_t ink = !bt[i].ok ? col(C_TEXT3) : pr ? col(C_INK) : (bt[i].id == BTN_DELETE ? col(C_RED) : col(C_TEXT));
+		g->fill_rrect(bx, 348, 140, 80, 20, pr ? accent(255) : c_glass(bt[i].ok ? (light ? 24 : 36) : 14));
+		uint32_t ink = !bt[i].ok ? c_text3() : pr ? col(best_ink(cfg_.accent)) : (bt[i].id == BTN_DELETE ? col(light ? 0x991B1B : 0xFFB2B2) : c_text());
 		draw_box_label(t, F_LABEL, bx + 70, 348, 80, 124, bt[i].label, ink);
 	}
 	if (undo_avail_) {
-		g->fill_rrect(476, 436, 448, 80, 20, col(0xFFFFFF, 36));
-		draw_icon(g, ICON_RESET, 476 + 56, 476, 30, col(C_TEXT));
-		t->draw(F_LABEL, 476 + 92, 436 + (80 - t->line_h(F_LABEL)) * 0.5f, t->fit(F_LABEL, tr("menu.undo_last_load"), 448 - 92 - 20).c_str(), col(C_TEXT));
+		g->fill_rrect(476, 436, 448, 80, 20, c_glass(light ? 24 : 36));
+		draw_icon(g, ICON_RESET, 476 + 56, 476, 30, c_text());
+		t->draw(F_LABEL, 476 + 92, 436 + (80 - t->line_h(F_LABEL)) * 0.5f, t->fit(F_LABEL, tr("menu.undo_last_load"), 448 - 92 - 20).c_str(), c_text());
 	}
 }
 
 void Menu::draw_btntest(Gfx *g, Text *t)
 {
-	g->fill_rect(0, 0, 960, 544, col(C_BG, 255));   /* (opaque: the page behind showed through the rows) */
-	t->draw(F_TITLE, 44, 22, tr("menu.button_test"), col(C_TEXT));
-	t->draw(F_CAPTION, 46, 22 + t->line_h(F_TITLE), cfg_.game_name.empty() ? cfg_.console_label.c_str() : cfg_.game_name.c_str(), col(C_TEXT2));
-	const float RH2 = 30, PITCH2 = 34, W = 424, Y0 = 108;
+	const bool light = is_light();
+	g->fill_rect(0, 0, 960, 544, c_bg(255));   /* (opaquefullscreen page) */
+	const int pct = t->pct();
+	const float up = pct > 100 ? (float) (t->line_h(F_TITLE) + t->line_h(F_CAPTION) - (t->line_h(F_TITLE) + t->line_h(F_CAPTION)) * 100 / pct) : 0.0f;
+	const float ty = 22 - up;
+	t->draw(F_TITLE, 44, ty, tr("menu.button_test"), c_text());
+	t->draw(F_CAPTION, 46, ty + t->line_h(F_TITLE), cfg_.game_name.empty() ? cfg_.console_label.c_str() : cfg_.game_name.c_str(), c_text2());
+	const float RH2 = 28, PITCH2 = 32, W = 424, Y0 = 98;
 	struct Line { std::string name, text; bool lit; };
 	std::vector<Line> left, right;
 	const bool ec = cfg_.enter_is_cross;
 	for (int i = 0; i < 12; i++) left.push_back({ phys_label(1u << i, ec), bt_actions(1u << i), (bt_pad_.buttons & (1u << i)) != 0 });
 	{
-		int sl = profile_ ? profile_->stick_left : STICK_MOVE, sr = profile_ ? profile_->stick_right : STICK_OFF;
+		int sl = profile_ ? profile_->stick_left : STICK_MOVE, sr = profile_ ? profile_->stick_right : STICK_BIND;
 		int on = profile_ ? profile_->stick_on : 72;
 		auto words = [&](int mode, uint32_t dirs) -> std::string {
 			if (mode == STICK_OFF) return tr("menu.not_used");
@@ -1861,36 +2084,38 @@ void Menu::draw_btntest(Gfx *g, Text *t)
 			right.push_back({ phys_label(bit, ec), a, (bt_pad_.back & (1u << k)) != 0 });
 		}
 	}
+	const uint32_t lit_ink = col(best_ink(cfg_.accent));
 	for (int col_i = 0; col_i < 2; col_i++) {
 		const std::vector<Line> &v = col_i ? right : left;
 		float x = col_i ? 492 : 44;
 		for (size_t i = 0; i < v.size(); i++) {
 			float y = Y0 + (float) i * PITCH2;
-			g->fill_rrect(x, y, W, RH2, 15, v[i].lit ? accent(255) : col(0xFFFFFF, 26));
-			uint32_t ink = v[i].lit ? col(C_INK) : col(C_TEXT);
+			g->fill_rrect(x, y, W, RH2, 14, v[i].lit ? accent(255) : c_glass(light ? 20 : 26));
+			uint32_t ink = v[i].lit ? lit_ink : c_text();
 			float ty = y + (RH2 - t->line_h(F_BODY)) * 0.5f;
 			std::string nm = t->fit(F_BODY, v[i].name, 300);   /* ("Rear touch: bottom right" whole) */
 			t->draw(F_BODY, x + 14, ty, nm.c_str(), ink);
 			std::string tx = t->fit(F_BODY, v[i].text, W - 14 - 14 - t->width(F_BODY, nm.c_str()) - 12);
-			t->draw_right(F_BODY, x + W - 14, ty, tx.c_str(), v[i].lit ? col(C_INK, 200) : col(C_TEXT2));
+			t->draw_right(F_BODY, x + W - 14, ty, tx.c_str(), v[i].lit ? col(best_ink(cfg_.accent), 220) : c_text2());
 		}
 	}
 	/* the leaving bar and the one line that says how to leave */
 	if (bt_hold_ms_ > 0 || bt_touch_ms_ > 0) {
 		float w = 300.0f * std::max((float) std::min(bt_hold_ms_, 500) / 500.0f, (float) std::min(bt_touch_ms_, 1000) / 1000.0f);
-		g->fill_rrect(330, 500, 300, 6, 3, col(0xFFFFFF, 40));
-		g->fill_rrect(330, 500, w, 6, 3, accent(255));
+		g->fill_rrect(330, 496, 300, 6, 3, c_glass(40));
+		g->fill_rrect(330, 496, w, 6, 3, accent(255));
 	}
-	t->draw_center(F_BODY, 480, 512, tr("menu.to_leave_hold_start_select_or"), col(C_TEXT2));
+	t->draw_center(F_BODY, 480, 508, tr("menu.to_leave_hold_start_select_or"), c_text2());
 }
 
 void Menu::draw_modal(Gfx *g, Text *t)
 {
 	if (modal_ == M_BTNTEST) { draw_btntest(g, t); return; }
-	g->fill_rect(0, 0, 960, 544, col(C_BG, 150));
+	const bool light = is_light();
+	g->fill_rect(0, 0, 960, 544, c_bg(light ? 170 : 150));
 	float cx = 200, cy = modal_ == M_CAPTURE ? 150 : 170, cw = 560, ch = modal_ == M_CAPTURE ? 336 : 254;
-	g->fill_rrect(cx - 6, cy + 6, cw + 12, ch + 12, 34, col(0x000000, 90));
-	g->fill_rrect(cx, cy, cw, ch, 30, col(C_PLATE, 250));
+	g->fill_rrect(cx - 6, cy + 6, cw + 12, ch + 12, 34, col(0x000000, light ? 40 : 90));
+	g->fill_rrect(cx, cy, cw, ch, 30, c_plate(250));
 	std::string title, body, yes, no;
 	switch (modal_) {
 	case M_OVERWRITE: title = strf(tr("menu.overwrite_slot"), modal_arg_); body = tr("menu.the_state_saved_there_will_be"); yes = tr("menu.overwrite"); no = tr("menu.keep"); break;
@@ -1912,8 +2137,8 @@ void Menu::draw_modal(Gfx *g, Text *t)
 		break;
 	}
 	}
-	t->draw(F_SUB, cx + 32, cy + 28, t->fit(F_SUB, title, cw - 64).c_str(), col(C_TEXT));
-	t->wrap(F_BODY, cx + 32, cy + 28 + t->line_h(F_SUB) + 12, cw - 64, 2, 4, body, col(C_TEXT2));
+	t->draw(F_SUB, cx + 32, cy + 28, t->fit(F_SUB, title, cw - 64).c_str(), c_text());
+	t->wrap(F_BODY, cx + 32, cy + 28 + t->line_h(F_SUB) + 12, cw - 64, 2, 4, body, c_text2());
 	float by = cy + (modal_ == M_CAPTURE ? 216 : 150);
 	if (modal_ == M_CAPTURE) {
 		int secs = (cap_ms_ + 999) / 1000;
@@ -1921,11 +2146,13 @@ void Menu::draw_modal(Gfx *g, Text *t)
 		std::string w = cap_bits_ ? phys_label(cap_bits_, cfg_.enter_is_cross) : strf(tr("menu.waiting"), secs);
 		t->draw_center(F_SUB, cx + cw * 0.5f, cy + 150, w.c_str(), accent_text());
 	}
-	g->fill_rrect(cx + 24, by, 250, 80, 22, modal_ == M_CAPTURE ? col(0xFFFFFF, 40) : (modal_ == M_DELETE || modal_ == M_CHEAT_DELETE || modal_ == M_RESET || modal_ == M_LIST || modal_ == M_EXIT ? col(C_RED) : accent(255)));
-	uint32_t yink = (modal_ == M_CAPTURE) ? col(C_TEXT) : col(C_INK);
+	const bool danger = modal_ == M_DELETE || modal_ == M_CHEAT_DELETE || modal_ == M_RESET || modal_ == M_LIST || modal_ == M_EXIT;
+	const uint32_t ybg_rgb = danger ? (light ? L_RED : C_RED) : cfg_.accent;
+	g->fill_rrect(cx + 24, by, 250, 80, 22, modal_ == M_CAPTURE ? c_glass(light ? 24 : 40) : col(ybg_rgb));
+	uint32_t yink = (modal_ == M_CAPTURE) ? c_text() : col(best_ink(ybg_rgb));
 	draw_box_label(t, F_LABEL, cx + 24 + 125, by, 80, 226, yes, yink);
-	g->fill_rrect(cx + cw - 24 - 250, by, 250, 80, 22, col(0xFFFFFF, 40));
-	draw_box_label(t, F_LABEL, cx + cw - 24 - 125, by, 80, 226, no, col(C_TEXT));
+	g->fill_rrect(cx + cw - 24 - 250, by, 250, 80, 22, c_glass(light ? 24 : 40));
+	draw_box_label(t, F_LABEL, cx + cw - 24 - 125, by, 80, 226, no, c_text());
 }
 
 void Menu::draw_overlays(Gfx *g)
@@ -1935,14 +2162,14 @@ void Menu::draw_overlays(Gfx *g)
 		const Region &r = regions_[(size_t) t_region_];
 		if (r.kind != REGION_OUTSIDE && r.kind != REGION_SLIDER && t_x_ >= r.x && t_x_ < r.x + r.w && t_y_ >= r.y && t_y_ < r.y + r.h) {
 			g->clip(r.x, r.y, r.w, r.h + 0.0f);
-			g->fill_rrect(r.vx, r.vy, r.vw, r.vh, r.radius, col(0xFFFFFF, 48));
+			g->fill_rrect(r.vx, r.vy, r.vw, r.vh, r.radius, c_glass(is_light() ? 32 : 48));
 			g->clip_off();
 		}
 	}
 	/* the flash after a tap */
 	if (have_flash_ && flash_ms_ > 0) {
-		int a = 60 * flash_ms_ / 170;
-		g->fill_rrect(flash_.vx, flash_.vy, flash_.vw, flash_.vh, flash_.radius, col(0xFFFFFF, a));
+		int a = (is_light() ? 40 : 60) * flash_ms_ / 170;
+		g->fill_rrect(flash_.vx, flash_.vy, flash_.vw, flash_.vh, flash_.radius, c_glass(a));
 	}
 }
 
@@ -1952,6 +2179,10 @@ void Menu::draw(Gfx *g, Text *t)
 	t->set_look(pk_text_pct(vals_[ROW_UI_TEXT] != 0), vals_[ROW_UI_CONTRAST] != 0);      /* Interface: Text size, High contrast */
 	t->frame();      /* (the glyph atlases: a frame has passed) */
 	upload_textures(g);
+	if (modal_ == M_BTNTEST) {
+		draw_btntest(g, t);
+		return;
+	}
 	draw_backdrop(g);
 	if (page_ == PAGE_TOP) draw_top(g, t);
 	else if (page_ == PAGE_STATES) draw_states(g, t);

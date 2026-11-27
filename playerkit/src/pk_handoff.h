@@ -150,6 +150,8 @@ public:
 	void abandon(HandoffFrame *f);         /* give it back unused */
 	/* n emulated frames just ran (all of them, drawn or not): feeds the emulated-vs-wall counter */
 	void note_emulated(uint32_t n);
+	/* update the nominal emulated frame period (e.g. NTSC/PAL region change) without tearing down the mailbox */
+	void set_frame_us(uint32_t frame_us);
 	/* the pace mode now in force (call each pass): half = newest wins, nothing waits */
 	void set_pace_mode(PaceMode m);
 	/* fast-forward and rewind: nothing waits, newest wins */

@@ -75,6 +75,7 @@ enum StateStatus {
 	ST_DAMAGED,        /* the file does not match what was saved (size or CRC) */
 	ST_TOO_BIG,
 	ST_WRITE,          /* could not write (see write_rc) */
+	ST_LOCKED,         /* the slot is locked against overwrite or delete */
 	ST_BAD_SLOT
 };
 const char *state_status_text(StateStatus s, bool en = false);      /* en: the English text whatever the language (log lines) */
@@ -89,11 +90,12 @@ struct SaveReport {
 
 struct SlotInfo {
 	bool present;
+	bool locked;
 	uint64_t size;
 	int64_t saved;          /* Unix seconds (the .meta's, else the file's) */
 	int64_t play_seconds;   /* from the .meta, -1 when unknown */
 	bool has_thumb;
-	SlotInfo() : present(false), size(0), saved(0), play_seconds(-1), has_thumb(false) {}
+	SlotInfo() : present(false), locked(false), size(0), saved(0), play_seconds(-1), has_thumb(false) {}
 };
 
 /* "3 Oct 2026, 14:32" (local time), the main app's stamp. "" for 0. */
@@ -153,6 +155,8 @@ public:
 	SaveReport save(int slot, const uint8_t *data, size_t n, const Frame &frame, int64_t play_seconds = -1);
 	StateStatus load(int slot, std::vector<uint8_t> &out);
 	bool remove(int slot);
+	bool set_lock(int slot, bool locked);
+	bool is_locked(int slot);
 	bool read_thumb(int slot, std::vector<uint16_t> &rgb565, int *w, int *h);
 	bool read_shot(int slot, std::vector<uint16_t> &rgb565, int *w, int *h);
 
@@ -168,7 +172,7 @@ public:
 	bool resume_due(uint64_t now_ms, uint64_t interval_ms = 60000) const;
 	void resume_mark(uint64_t now_ms) { last_resume_ms_ = now_ms; have_resume_mark_ = true; }
 
-	/* one level of undo for a state load, kept in memory for the session (no file) */
+	/* one level of undo for a state load or overwrite, persisted to l_.undo_path() with an in-memory cache */
 	bool undo_store(const uint8_t *data, size_t n);
 	StateStatus undo_fetch(std::vector<uint8_t> &out) const;
 	bool undo_available() const;
@@ -188,15 +192,17 @@ private:
 		bool shot_loaded = false;
 	};
 	StateLayout l_;
-	SpinLock lk_;
+	mutable SpinLock lk_;
 	bool scanned_ = false, dirs_ok_ = false, scene_dir_ok_ = false;
 	Cached slot_[STATE_SLOTS];
 	Cached rsm_;
 	bool rsm_pt_ = false;
 	std::string rsm_pt_text_;
 	bool rsm_pt_known_ = false;
-	std::vector<uint8_t> undo_;
-	bool undo_have_ = false;
+	mutable std::vector<uint8_t> undo_;
+	mutable bool undo_have_ = false;
+	mutable bool undo_disk_probed_ = false;
+	mutable bool undo_disk_have_ = false;
 	uint64_t last_resume_ms_ = 0;
 	bool have_resume_mark_ = false;
 	void ensure_scanned();

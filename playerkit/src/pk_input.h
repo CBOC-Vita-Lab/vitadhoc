@@ -94,12 +94,12 @@ inline bool action_is_game(const PadModel &m, int a) { return a >= 0 && a < m.n;
 inline bool action_is_turbo(int a) { return a == ACT_TURBO_A || a == ACT_TURBO_B; }
 inline bool action_is_shortcut(int a) { return a >= ACT_FF && a < ACT_COUNT; }
 
-enum StickMode { STICK_OFF = 0, STICK_MOVE, STICK_CUSTOM };   /* MOVE: a second d-pad; CUSTOM: its directions are bindable inputs */
+enum StickMode { STICK_OFF = 0, STICK_MOVE, STICK_CUSTOM, STICK_BIND = STICK_CUSTOM };   /* MOVE: a second d-pad; CUSTOM/BIND: its directions are bindable inputs */
 const char *stick_mode_name(int m);
 
 struct Profile {
 	int stick_left = STICK_MOVE;
-	int stick_right = STICK_OFF;
+	int stick_right = STICK_BIND;
 	bool back_touch = false;             /* the rear panel's four zones as inputs (player 1) */
 	int stick_on = 72, stick_off = 52;   /* a direction engages this far from centre (of 128) and lets go below stick_off */
 	uint32_t bind[MAX_PLAYERS][ACT_COUNT];

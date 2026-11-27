@@ -470,10 +470,24 @@ void fe_lpl_rom_key(const char *full_path, fe_lpl_rom *out)
                                                   : out->hb;
 }
 
+enum { K_NONE = 0, K_ITEMS, K_PATH, K_CRC };
+enum { LPL_FMT_WAIT = 0, LPL_FMT_JSON = 1, LPL_FMT_TEXT6 = 2 };
+
+#define LPL_ARC_CAP 16384u
+typedef struct
+{
+   unsigned hp, hb;
+   unsigned arc_hp, arc_hb, arc_hs;
+   unsigned char used;
+} lpl_arc_ent;
+
+static lpl_arc_ent g_lpl_arc[LPL_ARC_CAP];
+
 void fe_lpl_clear(fe_lpl_set *s)
 {
    s->nlist = s->nitem = 0;
    s->open = 0;
+   memset(g_lpl_arc, 0, sizeof(g_lpl_arc));
 }
 
 int fe_lpl_begin(fe_lpl_set *s, const char *name)
@@ -498,11 +512,73 @@ int fe_lpl_begin(fe_lpl_set *s, const char *name)
    s->have_str = s->key = s->saw_items = s->bad = 0;
    s->bytes = 0;
    s->str_n = s->path_n = 0;
-   s->want = 0;
+   s->path[0] = s->crc[0] = '\0';
+   s->want = LPL_FMT_WAIT;
    return 0;
 }
 
-enum { K_NONE = 0, K_ITEMS, K_PATH, K_CRC };
+static void arc_put(unsigned hp, unsigned hb, const char *norm)
+{
+   const char *p, *arc_base;
+   size_t arc_len, base_len, ext_len;
+   unsigned idx, arc_hp, arc_hb, arc_hs;
+
+   for (p = norm; *p; p++)
+   {
+      if (*p == '#' && ((p - norm > 4 && !memcmp(p - 4, ".zip", 4)) ||
+                        (p - norm > 3 && !memcmp(p - 3, ".7z", 3))))
+         break;
+   }
+   if (!*p)
+      return;
+   ext_len = (p - norm > 4 && !memcmp(p - 4, ".zip", 4)) ? 4u : 3u;
+   arc_len = (size_t)(p - norm);
+   arc_base = norm;
+   {
+      const char *q;
+      for (q = norm; q < p; q++)
+         if (*q == '/' || *q == ':')
+            arc_base = q + 1;
+   }
+   base_len = (size_t)(p - arc_base);
+   if (base_len <= ext_len)
+      return;
+   arc_hp = fnv(norm, arc_len, 0);
+   arc_hb = fnv(arc_base, base_len, 0);
+   arc_hs = fnv(arc_base, base_len - ext_len, 0);
+   idx = (hp ^ (hb * 2654435761u)) & (LPL_ARC_CAP - 1u);
+   for (base_len = 0; base_len < LPL_ARC_CAP; base_len++)
+   {
+      lpl_arc_ent *e = &g_lpl_arc[idx];
+      if (!e->used || (e->hp == hp && e->hb == hb))
+      {
+         e->used = 1;
+         e->hp = hp;
+         e->hb = hb;
+         e->arc_hp = arc_hp;
+         e->arc_hb = arc_hb;
+         e->arc_hs = arc_hs;
+         return;
+      }
+      idx = (idx + 1u) & (LPL_ARC_CAP - 1u);
+   }
+}
+
+static const lpl_arc_ent *arc_get(unsigned hp, unsigned hb)
+{
+   unsigned idx = (hp ^ (hb * 2654435761u)) & (LPL_ARC_CAP - 1u);
+   unsigned probe;
+   for (probe = 0; probe < LPL_ARC_CAP; probe++)
+   {
+      const lpl_arc_ent *e = &g_lpl_arc[idx];
+      if (!e->used)
+         return NULL;
+      if (e->hp == hp && e->hb == hb)
+         return e;
+      idx = (idx + 1u) & (LPL_ARC_CAP - 1u);
+   }
+   return NULL;
+}
 
 static void put_utf8(fe_lpl_set *s, unsigned cp)
 {
@@ -546,6 +622,7 @@ static void item_emit(fe_lpl_set *s)
    it = &s->item[s->nitem++];
    it->hp = fnv(norm, strlen(norm), 0);
    it->hb = fnv(b, strlen(b), 0);
+   arc_put(it->hp, it->hb, norm);
    /* "AABBCCDD|crc" -- "DETECT" and anything else is no checksum */
    for (i = 0, v = 0; s->crc[i] && i < 8; i++)
    {
@@ -642,6 +719,50 @@ static void structural(fe_lpl_set *s, char ch)
    }
 }
 
+static void lpl6_line(fe_lpl_set *s)
+{
+   s->str[s->str_n] = '\0';
+   switch (s->depth)
+   {
+   case 0:
+      if (s->str_n == 0)
+         break;
+      if (!strchr(s->str, '/') && !strchr(s->str, '\\') &&
+          !strchr(s->str, ':') && !strchr(s->str, '.') &&
+          !strchr(s->str, '#'))
+      {
+         s->bad = 1;
+         break;
+      }
+      memcpy(s->path, s->str, s->str_n + 1);
+      s->path_n = s->str_n;
+      s->crc[0] = '\0';
+      s->depth = 1;
+      break;
+   case 1:
+   case 2:
+   case 3:
+      s->depth++;
+      break;
+   case 4:
+      snprintf(s->crc, sizeof(s->crc), "%.39s", s->str);
+      s->depth = 5;
+      break;
+   case 5:
+      item_emit(s);
+      s->saw_items = 1;
+      s->path_n = 0;
+      s->path[0] = '\0';
+      s->crc[0] = '\0';
+      s->depth = 0;
+      break;
+   default:
+      s->bad = 1;
+      break;
+   }
+   s->str_n = 0;
+}
+
 void fe_lpl_feed(fe_lpl_set *s, const char *buf, size_t len)
 {
    size_t i;
@@ -658,6 +779,71 @@ void fe_lpl_feed(fe_lpl_set *s, const char *buf, size_t len)
    for (i = 0; i < len && !s->bad; i++)
    {
       unsigned char ch = (unsigned char)buf[i];
+      if (s->want == LPL_FMT_WAIT)
+      {
+         if (s->uni_n == 0 && ch == 0xEF)
+         {
+            s->uni_n = 1;
+            continue;
+         }
+         if (s->uni_n == 1)
+         {
+            if (ch == 0xBB)
+            {
+               s->uni_n = 2;
+               continue;
+            }
+            s->want = LPL_FMT_TEXT6;
+            s->uni_n = 0;
+            s->str[s->str_n++] = (char)0xEF;
+         }
+         else if (s->uni_n == 2)
+         {
+            if (ch == 0xBF)
+            {
+               s->uni_n = 0;
+               continue;
+            }
+            s->want = LPL_FMT_TEXT6;
+            s->uni_n = 0;
+            s->str[s->str_n++] = (char)0xEF;
+            s->str[s->str_n++] = (char)0xBB;
+         }
+         if (s->want == LPL_FMT_WAIT)
+         {
+            if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n')
+               continue;
+            if (ch == '{')
+            {
+               s->want = LPL_FMT_JSON;
+               s->uni_n = 0;
+            }
+            else if (ch == '[')
+            {
+               s->want = LPL_FMT_JSON;
+               s->bad = 1;
+               break;
+            }
+            else
+            {
+               s->want = LPL_FMT_TEXT6;
+               s->depth = 0;
+               s->str_n = 0;
+               s->path_n = 0;
+               s->crc[0] = '\0';
+            }
+         }
+      }
+      if (s->want == LPL_FMT_TEXT6)
+      {
+         if (ch == '\r')
+            continue;
+         if (ch == '\n')
+            lpl6_line(s);
+         else if (s->str_n < sizeof(s->str) - 1)
+            s->str[s->str_n++] = (char)ch;
+         continue;
+      }
       if (s->in_str)
       {
          if (s->uni_n)
@@ -718,9 +904,19 @@ void fe_lpl_feed(fe_lpl_set *s, const char *buf, size_t len)
 int fe_lpl_end(fe_lpl_set *s)
 {
    fe_lpl_list *l = &s->list[s->nlist];
-   /* a file read only up to the cap stops anywhere, inside a string too */
-   int ok = s->open && !s->bad && s->saw_items &&
-            (l->cut || (!s->in_str && s->depth == 0));
+   int ok;
+   if (s->want == LPL_FMT_TEXT6)
+   {
+      if (s->str_n > 0)
+         lpl6_line(s);
+      ok = s->open && !s->bad && s->saw_items && (l->cut || s->depth == 0);
+   }
+   else
+   {
+      /* a file read only up to the cap stops anywhere, inside a string too */
+      ok = s->open && !s->bad && s->saw_items &&
+           (l->cut || (!s->in_str && s->depth == 0));
+   }
    s->open = 0;
    if (!ok)
    {
@@ -830,10 +1026,16 @@ unsigned fe_lpl_match(const fe_lpl_set *s, int list, const fe_lpl_rom *roms,
    for (i = l->first; i < l->first + l->n; i++)
    {
       const fe_lpl_item *it = &s->item[i];
+      const lpl_arc_ent *arc;
       unsigned h;
       if (mark(g_kp, n, it->hp))
          continue;
       if (mark(g_kb, n, it->hb))
+         continue;
+      arc = arc_get(it->hp, it->hb);
+      if (arc && (mark(g_kp, n, arc->arc_hp) ||
+                  mark(g_kb, n, arc->arc_hb) ||
+                  mark(g_ks, n, arc->arc_hs)))
          continue;
       if (it->crc && crc_name && (h = crc_name(it->crc, ctx)) != 0)
          mark(g_ks, n, h);

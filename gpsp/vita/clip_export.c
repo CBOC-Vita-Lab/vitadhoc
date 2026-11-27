@@ -70,7 +70,7 @@ static void job_main(void *arg)
     * frame's ticks (a frame's own are how long it waited for it).  The time
     * is summed in microseconds and cut into whole milliseconds, so the clip
     * does not drift from the game's real length. */
-   while (!X.stop)
+   while (!CX_LOAD(X.stop))
    {
       pix = clip_next(X.p, &ticks, &ended);
       if (!pix)
@@ -93,7 +93,7 @@ static void job_main(void *arg)
       have_held = 1;
       held_ticks = ticks;
    }
-   if (X.stop || !ended || !have_held)
+   if (CX_LOAD(X.stop) || !ended || !have_held)
       goto done;
    {
       /* the last picture stays as long as it was shown for: one kept frame */
@@ -150,7 +150,7 @@ int clip_export_start(const char *path, unsigned us_per_tick, int sync_ok)
       return CLIPX_FAIL;
    snprintf(X.path, sizeof(X.path), "%s", path);
    snprintf(X.tmp, sizeof(X.tmp), "%s.tmp", path);
-   X.stop = 0;
+   CX_STORE(X.stop, 0);
    X.ok = 0;
    X.frames = X.bytes = 0;
    CX_STORE(X.state, 1);
@@ -195,6 +195,7 @@ void clip_export_stop(uint32_t timeout_us)
 {
    if (CX_LOAD(X.state) == 0)
       return;
-   X.stop = 1;
-   (void)plat_job_join(timeout_us);
+   CX_STORE(X.stop, 1);
+   if (plat_job_join(timeout_us))
+      CX_STORE(X.state, 0);
 }

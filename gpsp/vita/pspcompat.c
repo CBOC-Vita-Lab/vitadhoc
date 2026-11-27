@@ -248,7 +248,7 @@ int pspcompat_enter_is_circle(void)
 static int g_pad2_menu;
 void pspcompat_pad2_menu(int on) { g_pad2_menu = on ? 1 : 0; }
 
-unsigned pspcompat_pad(void)
+static unsigned vita_pad_read(int apply_swap)
 {
    static int analog_on;
    unsigned btn;
@@ -266,8 +266,8 @@ unsigned pspcompat_pad(void)
    /* Plain PeekBufferPositive reports the Vita's L and R -- and a PS TV
     * pad's L1/R1 -- as LTRIGGER/RTRIGGER, the PSP's shoulder bits. */
    btn = pad.buttons & 0xF3F9u;
-   if (g_pc_face_swap && ((btn & PSP_CTRL_CROSS) != 0) !=
-                         ((btn & PSP_CTRL_CIRCLE) != 0))
+   if (apply_swap && g_pc_face_swap && ((btn & PSP_CTRL_CROSS) != 0) !=
+                                       ((btn & PSP_CTRL_CIRCLE) != 0))
       btn ^= PSP_CTRL_CROSS | PSP_CTRL_CIRCLE;
    btn |= stick_bits(pad.lx, pad.ly);
    if (g_pad2_menu)
@@ -278,6 +278,16 @@ unsigned pspcompat_pad(void)
          btn |= (q.buttons & 0xF3F9u) | stick_bits(q.lx, q.ly);
    }
    return btn;
+}
+
+unsigned pspcompat_pad(void)
+{
+   return vita_pad_read(1);
+}
+
+unsigned pspcompat_pad_raw(void)
+{
+   return vita_pad_read(0);
 }
 
 void pspcompat_host_pad(unsigned (*fn)(void)) { (void)fn; }
@@ -743,6 +753,15 @@ unsigned pspcompat_pad(void)
       b |= (q.buttons & 0xF3F9u) | stick_bits(q.lx, q.ly);
    return b;
 }
+
+unsigned pspcompat_pad_raw(void)
+{
+   plat_pad p;
+   if (g_pad_fn)
+      return g_pad_fn() & 0xF3F9u;
+   plat_pad_read_raw(&p);
+   return (p.buttons & 0xF3F9u) | stick_bits(p.lx, p.ly);
+}
 #else
 static unsigned g_clock_us = 1000000u;
 
@@ -770,6 +789,11 @@ unsigned pspcompat_pad(void)
 {
    (void)stick_bits;
    return g_pad_fn ? (g_pad_fn() & 0xF3F9u) : 0u;
+}
+
+unsigned pspcompat_pad_raw(void)
+{
+   return pspcompat_pad();
 }
 #endif /* PSPCOMPAT_PLAT */
 

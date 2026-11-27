@@ -253,8 +253,9 @@ static ui_action screen_cheats_page(unsigned edges, unsigned pad)
    }
    else if (suspended && (edges & (PSP_CTRL_CROSS | PSP_CTRL_TRIANGLE |
                               PSP_CTRL_SQUARE)))
-      snprintf(g_ch.note, sizeof(g_ch.note), tr("cheats.cheats_are_off_while_linked_to")
-);
+      snprintf(g_ch.note, sizeof(g_ch.note), "%s", suspended == 2
+               ? tr("cheats.cheats_are_off_in_hardcore_mode")
+               : tr("cheats.cheats_are_off_while_linked_to"));
    else if ((edges & PSP_CTRL_CROSS) && sel)
    {
       if (!sel->usable)
@@ -900,6 +901,7 @@ static int cs_setup(void)
 {
    static const pk_cs_region gba[] = { { 0, 0x48000 } };      /* IWRAM, EWRAM  */
    static const pk_cs_region gb[] = { { 0xC000, 0x2000 }, { 0xFF80, 0x7F } };
+   static const pk_cs_region gbc[] = { { 0xC000, 0x2000 }, { 0x10000, 0x6000 }, { 0xFF80, 0x7F } };
    static const pk_cs_region nes[] = { { 0, 0x800 } };
    static const pk_cs_region ws[] = { { 0, 0x10000 } };
    pk_cs_free(&g_cs.cs);
@@ -909,8 +911,10 @@ static int cs_setup(void)
       pk_cs_init(&g_cs.cs, cs_read, NULL, PK_CS_GBA, PK_CS_LE, gba, 1);
       break;
    case FE_CONSOLE_GB:
-   case FE_CONSOLE_GBC:
       pk_cs_init(&g_cs.cs, cs_read, NULL, PK_CS_GB, PK_CS_LE, gb, 2);
+      break;
+   case FE_CONSOLE_GBC:
+      pk_cs_init(&g_cs.cs, cs_read, NULL, PK_CS_GB, PK_CS_LE, gbc, 3);
       break;
    case FE_CONSOLE_NES:
       pk_cs_init(&g_cs.cs, cs_read, NULL, PK_CS_NES, PK_CS_LE, nes, 1);
@@ -1001,13 +1005,51 @@ static void cs_step(int op, uint32_t v)
       cs_note(tr(n == 1 ? "cheats.result_one" : "cheats.result_many"), (int)n);
 }
 
+static int cs_make_code(const pk_cs *cs, uint32_t addr, uint32_t v,
+                        char *out, size_t cap)
+{
+   if (cs->kind == PK_CS_GB && addr + (uint32_t)cs->width > 0x10000u)
+   {
+      const int w = cs->width;
+      char t[32];
+      size_t len = 0;
+      int k;
+      if (!w || cap < 2)
+         return 0;
+      out[0] = '\0';
+      for (k = 0; k < w; k++)
+      {
+         unsigned b = pk_cs_vbyte(cs, v, w, k);
+         uint32_t a = addr + (uint32_t)k;
+         if (a >= 0x10000u && a < 0x16000u)
+         {
+            /* GBC WRAM banks 2-7 (RA map 0x10000..0x15FFF) -> GameShark 92..97 at D000..DFFF. */
+            unsigned bank = 2u + ((a - 0x10000u) >> 12);
+            unsigned gs_hi = 0xD0u | ((a >> 8) & 0x0Fu);
+            snprintf(t, sizeof(t), "%s9%u%02X%02X%02X", k ? "+" : "", bank, b,
+                     (unsigned)(a & 0xFFu), gs_hi);
+         }
+         else
+            snprintf(t, sizeof(t), "%s%s%02X%02X%02X", k ? "+" : "",
+                     a >= 0xD000u && a < 0xE000u ? "91" : "01", b,
+                     (unsigned)(a & 0xFFu), (unsigned)((a >> 8) & 0xFFu));
+         if (len + strlen(t) + 1 > cap)
+            return 0;
+         strcpy(out + len, t);
+         len += strlen(t);
+      }
+      return (int)len;
+   }
+   return pk_cs_code(cs, addr, v, out, cap);
+}
+
 static void cs_add(int i)
 {
    char code[160], at[24], name[CHEATS_NAME_CAP];
    int rc;
    if (i < 0 || i >= g_cs.nres)
       return;
-   if (!pk_cs_code(&g_cs.cs, g_cs.addr[i], g_cs.val[i], code, sizeof(code)))
+   if (!cs_make_code(&g_cs.cs, g_cs.addr[i], g_cs.val[i], code, sizeof(code)))
    {
       cs_note(tr("cheats.this_place_cannot_be_made_into"));
       return;

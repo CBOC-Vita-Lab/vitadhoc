@@ -70,12 +70,18 @@ void xbrz_c_scale_rect_to(int factor, const uint32_t *src, int w, int h,
 
 /* ---- 565 -> RGBA8 --------------------------------------------------------- */
 
-static uint32_t g_lut[2][65536];       /* [bgr][565] */
+static uint32_t (*g_lut)[65536];       /* [bgr][565], allocated lazily */
 static int g_lut_ready;
 
-static void lut_build(void)
+static int lut_build(void)
 {
    unsigned v;
+   if (!g_lut)
+   {
+      g_lut = (uint32_t (*)[65536])malloc(2u * 65536u * sizeof(uint32_t));
+      if (!g_lut)
+         return 0;
+   }
    for (v = 0; v < 65536; v++)
    {
       unsigned hi = (v >> 11) & 31, g6 = (v >> 5) & 63, lo = v & 31;
@@ -85,8 +91,8 @@ static void lut_build(void)
       g_lut[0][v] = 0xFF000000u | (l8 << 16) | (g8 << 8) | h8;
       g_lut[1][v] = 0xFF000000u | (h8 << 16) | (g8 << 8) | l8;
    }
-   xbrz_c_init();
    g_lut_ready = 1;
+   return 1;
 }
 
 /* Scale2x / Scale3x, rows [y0, y1) and columns [x0, x1) of a tightly packed
@@ -152,7 +158,7 @@ static void epx_rows(const uint16_t *src, int w, int h, int f, int bgr,
 
 /* ---- columns of a stripe --------------------------------------------------- */
 
-#define UP_MAX_W 320
+#define UP_MAX_W 448
 #define UP_WORDS (UP_MAX_W / 32)
 
 typedef struct { uint32_t b[UP_WORDS]; } colmask;
@@ -341,6 +347,7 @@ typedef struct
    int next, done;             /* atomics: stripes claimed, finished      */
    int state;                  /* atomic: ST_*                            */
    int inside;                 /* atomic: threads looking at the job      */
+   int waiting;                /* atomic: slot_wait_to awaiting done sema */
    int dead;                   /* atomic: a helper never let go (teardown gave up); no more jobs, textures stay */
    int scaled_px;              /* atomic: source pixels this job scaled   */
 
@@ -575,6 +582,11 @@ static void job_finish(up_slot *S)
    A_STORE(S->state, ST_DONE);
 }
 
+static void slot_done_init(void);
+static void slot_done_term(void);
+static void slot_done_signal(int si);
+static int  slot_done_wait(int si, unsigned rem_us);
+
 /* One stripe of slot `si`, if there is one to do.
  *
  * `inside` is how upscale_submit knows nobody is still looking at the job
@@ -600,7 +612,10 @@ static int claim_and_run(int si)
          ran = 1;
       }
    }
-   A_ADD(S->inside, -1);
+   if (__atomic_sub_fetch(&S->inside, 1, __ATOMIC_SEQ_CST) == 0 &&
+       A_LOAD(S->state) != ST_BUSY &&
+       __atomic_exchange_n(&S->waiting, 0, __ATOMIC_SEQ_CST))
+      slot_done_signal(si);
    return ran;
 }
 
@@ -631,6 +646,54 @@ static volatile int g_pool_quit;
 #include <psp2/kernel/threadmgr.h>
 
 static SceUID g_th[UP_HELPERS], g_go[UP_HELPERS];
+static SceUID g_done_sem[UPSCALE_SLOTS];
+static int g_done_sem_ok[UPSCALE_SLOTS];
+
+static void slot_done_init(void)
+{
+   int i;
+   for (i = 0; i < UPSCALE_SLOTS; i++)
+      if (!g_done_sem_ok[i])
+      {
+         g_done_sem[i] = sceKernelCreateSema("gbadhoc_up_done", 0, 0, 1, NULL);
+         g_done_sem_ok[i] = g_done_sem[i] >= 0;
+      }
+}
+
+static void slot_done_term(void)
+{
+   int i;
+   for (i = 0; i < UPSCALE_SLOTS; i++)
+      if (g_done_sem_ok[i])
+      {
+         sceKernelDeleteSema(g_done_sem[i]);
+         g_done_sem[i] = -1;
+         g_done_sem_ok[i] = 0;
+      }
+}
+
+static void slot_done_signal(int si)
+{
+   if (si >= 0 && si < UPSCALE_SLOTS && g_done_sem_ok[si])
+      sceKernelSignalSema(g_done_sem[si], 1);
+}
+
+static int slot_done_wait(int si, unsigned rem_us)
+{
+   SceUInt t;
+   if (si < 0 || si >= UPSCALE_SLOTS || !g_done_sem_ok[si])
+      return 0;
+   t = rem_us ? (SceUInt)rem_us : 1u;
+   sceKernelWaitSema(g_done_sem[si], 1, &t);
+   return 1;
+}
+
+static void slot_done_drain(int si)
+{
+   if (si >= 0 && si < UPSCALE_SLOTS && g_done_sem_ok[si])
+      while (sceKernelPollSema(g_done_sem[si], 1) >= 0)
+         ;
+}
 
 static int helper_entry(SceSize args, void *argp)
 {
@@ -656,6 +719,7 @@ static void pool_start(void)
    g_pool = 0;
    g_async = 1;
    A_STORE(g_wd_up2, -1);
+   slot_done_init();
    for (i = 0; i < UP_HELPERS; i++)
    {
       if (i == 2 && !core4_on_core3(C4_UPSCALE, 2))
@@ -734,6 +798,55 @@ int upscale_thread_ids(int *ids, int max)
 static pthread_t g_th[UP_HELPERS];
 static host_sem_t g_go[UP_HELPERS];
 static int g_idx[UP_HELPERS];
+static host_sem_t g_done_sem[UPSCALE_SLOTS];
+static int g_done_sem_ok[UPSCALE_SLOTS];
+
+static void slot_done_init(void)
+{
+   int i;
+   for (i = 0; i < UPSCALE_SLOTS; i++)
+      if (!g_done_sem_ok[i])
+         g_done_sem_ok[i] = host_sem_init(&g_done_sem[i], 0) == 0;
+}
+
+static void slot_done_term(void)
+{
+   int i;
+   for (i = 0; i < UPSCALE_SLOTS; i++)
+      if (g_done_sem_ok[i])
+      {
+         host_sem_destroy(&g_done_sem[i]);
+         g_done_sem_ok[i] = 0;
+      }
+}
+
+static void slot_done_signal(int si)
+{
+   if (si >= 0 && si < UPSCALE_SLOTS && g_done_sem_ok[si])
+      host_sem_post(&g_done_sem[si]);
+}
+
+static int slot_done_wait(int si, unsigned rem_us)
+{
+   struct timespec ts;
+   uint64_t ns;
+   if (si < 0 || si >= UPSCALE_SLOTS || !g_done_sem_ok[si])
+      return 0;
+   clock_gettime(CLOCK_REALTIME, &ts);
+   ns = (uint64_t)ts.tv_nsec + (uint64_t)(rem_us ? rem_us : 1u) * 1000u;
+   ts.tv_sec += (time_t)(ns / 1000000000ull);
+   ts.tv_nsec = (long)(ns % 1000000000ull);
+   while (host_sem_timedwait(&g_done_sem[si], &ts) != 0 && errno == EINTR)
+      ;
+   return 1;
+}
+
+static void slot_done_drain(int si)
+{
+   if (si >= 0 && si < UPSCALE_SLOTS && g_done_sem_ok[si])
+      while (host_sem_trywait(&g_done_sem[si]) == 0)
+         ;
+}
 
 static void *helper_entry(void *p)
 {
@@ -765,6 +878,7 @@ static void pool_start(void)
       g_async = 0;
       return;
    }
+   slot_done_init();
    for (i = 0; i < UP_HELPERS; i++)
    {
       if (i == 2 && !core4_on_core3(C4_UPSCALE, 2))
@@ -977,8 +1091,8 @@ const char *upscale_gov_note(void)
 int upscale_factor(int slot, int kind, unsigned w, unsigned h, int dw)
 {
    int f, fmax = kind == UPSCALE_XBRZ ? 4 : kind == UPSCALE_SCALE ? 3 : 0;
-   if (slot < 0 || slot >= UPSCALE_SLOTS || !fmax || !w || !h || dw <= 0 ||
-       g_quality == 1)
+   if (slot < 0 || slot >= UPSCALE_SLOTS || !fmax || !w || !h ||
+       w > UP_MAX_W || h > UP_MAX_H || dw <= 0 || g_quality == 1)
       return 0;
    /* The whole factor AT OR ABOVE the size on screen (a twentieth of
     * tolerance): "fit" is 3.4 times, and a picture scaled four times and
@@ -1071,13 +1185,28 @@ static int slot_wait_to(up_slot *S, unsigned us)
       ;
    while (A_LOAD(S->state) == ST_BUSY || A_LOAD(S->inside))
    {
-      if (wall_us() - t0 >= us)
+      const unsigned elapsed = wall_us() - t0;
+      if (elapsed >= us)
       {
+         A_STORE(S->waiting, 0);
+         slot_done_drain(si);
          A_ADD(g_wait_timeouts, 1);
          return 0;
       }
-      nap();
+      A_STORE(S->waiting, 1);
+      if (A_LOAD(S->state) != ST_BUSY && !A_LOAD(S->inside))
+      {
+         A_STORE(S->waiting, 0);
+         break;
+      }
+      if (!slot_done_wait(si, us - elapsed))
+      {
+         A_STORE(S->waiting, 0);
+         nap();
+      }
    }
+   A_STORE(S->waiting, 0);
+   slot_done_drain(si);
    return 1;
 }
 
@@ -1319,8 +1448,8 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
       upscale_gov_miss();
       return 0;
    }
-   if (!g_lut_ready)
-      lut_build();
+   if (!g_lut_ready && !lut_build())
+      return -1;
    if (g_pool < 0)
       pool_start();
    /* A helper may still be on its way out of the job before this one
@@ -1468,10 +1597,13 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
          if (g_slide_mode == 1)
          {
             const long bo = (long)dy * fj * (long)(fj * w) + (long)dx * fj;
-            if (so > 0)
-               memmove(S->src32 + so, S->src32, (npx - (size_t)so) * 4);
-            else
-               memmove(S->src32, S->src32 - so, (npx - (size_t)-so) * 4);
+            if (kind == UPSCALE_XBRZ && !mm)
+            {
+               if (so > 0)
+                  memmove(S->src32 + so, S->src32, (npx - (size_t)so) * 4);
+               else
+                  memmove(S->src32, S->src32 - so, (npx - (size_t)-so) * 4);
+            }
             const size_t nb = npx * (size_t)fj * (size_t)fj;
             if (bo > 0)
                memmove(S->big + bo, S->big, (nb - (size_t)bo) * 4);
@@ -1485,10 +1617,13 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
          }
          else
          {
-            if (so > 0)
-               UP_MEMMOVE(S->src32 + so, S->src32, (npx - (size_t)so) * 4);
-            else
-               UP_MEMMOVE(S->src32, S->src32 - so, (npx - (size_t)-so) * 4);
+            if (kind == UPSCALE_XBRZ && !mm)
+            {
+               if (so > 0)
+                  UP_MEMMOVE(S->src32 + so, S->src32, (npx - (size_t)so) * 4);
+               else
+                  UP_MEMMOVE(S->src32, S->src32 - so, (npx - (size_t)-so) * 4);
+            }
             /* the old pixel (x - dx, y - dy) is where the new (x, y) is */
             S->rox = (int)(((long)S->rox - dx + (long)w * 8) % (long)w);
             S->roy = (int)(((long)S->roy - dy + (long)h * 8) % (long)h);
@@ -1529,9 +1664,10 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
       }
       up_lap(&tp, PP_MARK);
    }
-   if (kind == UPSCALE_XBRZ)
+   if (kind == UPSCALE_XBRZ && !mm)
    {
       const uint32_t *lut = g_lut[bgr];
+      xbrz_c_init();
       for (y = 0; y < h; y++)
          if (cm_any(&rowm[y]))
          {
@@ -1713,8 +1849,6 @@ void upscale_xbrz_dist(int mode)
       slot_wait(&g_slot[i]);
       g_slot[i].kind = UPSCALE_NONE;     /* what `big` holds was made the other way */
    }
-   if (!g_lut_ready)
-      lut_build();
    xbrz_c_dist_mode(mode);
    g_xbrz_dist = mode;
 }
@@ -1741,8 +1875,8 @@ void upscale_bench(const uint16_t *src, unsigned w, unsigned h,
       line[0] = '\0';
    if (!src || !w || !h || h > UP_MAX_H || pitch < w || !line || !cap)
       return;
-   if (!g_lut_ready)
-      lut_build();
+   if (!g_lut_ready && !lut_build())
+      return;
    for (i = 0; i < UPSCALE_SLOTS; i++)
       slot_wait(&g_slot[i]);             /* the comparison is switched below */
    cur = (uint16_t *)malloc((size_t)w * h * sizeof(uint16_t));
@@ -1793,6 +1927,10 @@ void upscale_shutdown(void)
    g_pool_quit = 0;
    if (!clean)
       return; /* a helper may still touch the buffers: leak them, never free */
+   slot_done_term();
+   free(g_lut);
+   g_lut = NULL;
+   g_lut_ready = 0;
    for (i = 0; i < UPSCALE_SLOTS; i++)
    {
       free(g_slot[i].cur);

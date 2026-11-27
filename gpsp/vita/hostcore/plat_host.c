@@ -1363,14 +1363,23 @@ static pthread_t job_thread;
 static int job_on;
 static void (*job_fn)(void *);
 static void *job_arg;
-static volatile int job_ended;
+static int job_ended;
 
 static void *job_main_thread(void *p)
 {
    (void)p;
    job_fn(job_arg);
-   job_ended = 1;
+   __atomic_store_n(&job_ended, 1, __ATOMIC_RELEASE);
    return NULL;
+}
+
+int plat_job_busy(void)
+{
+   if (!job_on)
+      return 0;
+   if (!__atomic_load_n(&job_ended, __ATOMIC_ACQUIRE))
+      return 1;
+   return !plat_job_join(0);
 }
 
 int plat_job_start(void (*fn)(void *), void *arg)
@@ -1379,7 +1388,7 @@ int plat_job_start(void (*fn)(void *), void *arg)
       return -1;
    job_fn = fn;
    job_arg = arg;
-   job_ended = 0;
+   __atomic_store_n(&job_ended, 0, __ATOMIC_RELEASE);
    if (pthread_create(&job_thread, NULL, job_main_thread, NULL) != 0)
       return -1;
    job_on = 1;
@@ -1391,12 +1400,12 @@ int plat_job_join(uint32_t timeout_us)
    uint32_t waited = 0;
    if (!job_on)
       return 1;
-   while (!job_ended && waited < timeout_us)
+   while (!__atomic_load_n(&job_ended, __ATOMIC_ACQUIRE) && waited < timeout_us)
    {
       usleep(10000);
       waited += 10000;
    }
-   if (!job_ended)
+   if (!__atomic_load_n(&job_ended, __ATOMIC_ACQUIRE))
       return 0;                          /* still running: left as it is */
    pthread_join(job_thread, NULL);
    job_on = 0;
@@ -1599,6 +1608,11 @@ void plat_pad_read(plat_pad *pad)
 {
    pad_at(pad, 0);
    face_swap_pad(pad);
+}
+
+void plat_pad_read_raw(plat_pad *pad)
+{
+   pad_at(pad, 0);
 }
 
 /* The second controller: there from the start when the script names it

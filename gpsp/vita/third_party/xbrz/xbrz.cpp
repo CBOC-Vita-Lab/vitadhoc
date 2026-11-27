@@ -16,6 +16,7 @@
 #include "xbrz.h"
 #include <cmath>
 #include <cassert>
+#include <cstdlib>
 #include <algorithm>
 #include <limits>
 
@@ -213,8 +214,7 @@ xreal distYCbCr(uint32_t pix1, uint32_t pix2, xreal lumaWeight)
    2.2 MB, each bucket centred on such a multiple.  Built once by
    xbrz::init(). */
 enum { DIST_R = 65, DIST_G = 129, DIST_B = 65 };
-static float g_dist565[DIST_R * DIST_G * DIST_B];
-static bool  g_dist565_ready;
+static float *g_dist565;
 
 /* GBAdhoc: two more ways to the same number, because a 2.2 MB table read at
    random is hard on a Cortex-A9's caches and only a console can say what
@@ -226,8 +226,8 @@ static bool  g_dist565_ready;
    The three agree to within a fraction of a level; which is in use never
    changes while a picture is being scaled (xbrz::setDistMode). */
 enum { DIST5 = 63 };
-static uint16_t g_dist555[DIST5 * DIST5 * DIST5];
-static int      g_dist_mode;
+static uint16_t *g_dist555;
+static int       g_dist_mode;
 
 static inline xreal distYCbCr555(int r_diff, int g_diff, int b_diff)
 {
@@ -256,7 +256,7 @@ struct DistYCbCrBuffer
 	{
 		if (pix1 == pix2)
 			return 0;
-		if (g_dist_mode == 1)
+		if (g_dist_mode == 1 && g_dist555)
 		{
 			const int r5 = static_cast<int>(getRed  (pix1) >> 3) - (getRed  (pix2) >> 3);
 			const int g5 = static_cast<int>(getGreen(pix1) >> 3) - (getGreen(pix2) >> 3);
@@ -267,17 +267,61 @@ struct DistYCbCrBuffer
 		const int r_diff = static_cast<int>(getRed  (pix1)) - getRed  (pix2);
 		const int g_diff = static_cast<int>(getGreen(pix1)) - getGreen(pix2);
 		const int b_diff = static_cast<int>(getBlue (pix1)) - getBlue (pix2);
-		if (g_dist_mode == 2)
+		if (g_dist_mode == 2 || !g_dist565)
 			return distYCbCr555(r_diff, g_diff, b_diff);
 		return g_dist565[((r_diff + 260) >> 3) * (DIST_G * DIST_B) +
 		                 ((g_diff + 258) >> 2) * DIST_B +
 		                 ((b_diff + 260) >> 3)];
 	}
 
-	static void build()
+	static void ensure(int mode)
 	{
-		if (g_dist565_ready)
+		if (mode == 2)
 			return;
+		if (mode == 1)
+		{
+			if (__atomic_load_n(&g_dist555, __ATOMIC_ACQUIRE))
+				return;
+			uint16_t* t = static_cast<uint16_t*>(std::malloc(sizeof(uint16_t) * DIST5 * DIST5 * DIST5));
+			if (!t)
+				return;
+			/* the compact table: a 5-bit step is 255/31 of an 8-bit one */
+			const double step = 255.0 / 31.0;
+			const double k_b = 0.0593;
+			const double k_r = 0.2627;
+			const double k_g = 1 - k_b - k_r;
+			const double scale_b = 0.5 / (1 - k_b);
+			const double scale_r = 0.5 / (1 - k_r);
+			for (int ri = 0; ri < DIST5; ++ri)
+				for (int gi = 0; gi < DIST5; ++gi)
+					for (int bi = 0; bi < DIST5; ++bi)
+					{
+						const double r_diff = (ri - 31) * step;
+						const double g_diff = (gi - 31) * step;
+						const double b_diff = (bi - 31) * step;
+
+						const double y   = k_r * r_diff + k_g * g_diff + k_b * b_diff;
+						const double c_b = scale_b * (b_diff - y);
+						const double c_r = scale_r * (r_diff - y);
+
+						t[(ri * DIST5 + gi) * DIST5 + bi] =
+							static_cast<uint16_t>(std::sqrt(y * y + c_b * c_b + c_r * c_r) * 64 + 0.5);
+					}
+			uint16_t* expected = nullptr;
+			if (!__atomic_compare_exchange_n(&g_dist555, &expected, t, false, __ATOMIC_RELEASE, __ATOMIC_ACQUIRE))
+				std::free(t);
+			return;
+		}
+		if (__atomic_load_n(&g_dist565, __ATOMIC_ACQUIRE))
+			return;
+		float* t = static_cast<float*>(std::malloc(sizeof(float) * DIST_R * DIST_G * DIST_B));
+		if (!t)
+			return;
+		const double k_b = 0.0593; //ITU-R BT.2020 conversion
+		const double k_r = 0.2627; //
+		const double k_g = 1 - k_b - k_r;
+		const double scale_b = 0.5 / (1 - k_b);
+		const double scale_r = 0.5 / (1 - k_r);
 		for (int ri = 0; ri < DIST_R; ++ri)
 			for (int gi = 0; gi < DIST_G; ++gi)
 				for (int bi = 0; bi < DIST_B; ++bi)
@@ -286,45 +330,21 @@ struct DistYCbCrBuffer
 					const double g_diff = (gi - 64) * 4;
 					const double b_diff = (bi - 32) * 8;
 
-					const double k_b = 0.0593; //ITU-R BT.2020 conversion
-					const double k_r = 0.2627; //
-					const double k_g = 1 - k_b - k_r;
-
-					const double scale_b = 0.5 / (1 - k_b);
-					const double scale_r = 0.5 / (1 - k_r);
-
 					const double y   = k_r * r_diff + k_g * g_diff + k_b * b_diff;
 					const double c_b = scale_b * (b_diff - y);
 					const double c_r = scale_r * (r_diff - y);
 
-					g_dist565[ri * (DIST_G * DIST_B) + gi * DIST_B + bi] =
+					t[ri * (DIST_G * DIST_B) + gi * DIST_B + bi] =
 						static_cast<float>(std::sqrt(y * y + c_b * c_b + c_r * c_r));
 				}
-		/* the compact table: a 5-bit step is 255/31 of an 8-bit one */
-		for (int ri = 0; ri < DIST5; ++ri)
-			for (int gi = 0; gi < DIST5; ++gi)
-				for (int bi = 0; bi < DIST5; ++bi)
-				{
-					const double step = 255.0 / 31.0;
-					const double r_diff = (ri - 31) * step;
-					const double g_diff = (gi - 31) * step;
-					const double b_diff = (bi - 31) * step;
+		float* expected = nullptr;
+		if (!__atomic_compare_exchange_n(&g_dist565, &expected, t, false, __ATOMIC_RELEASE, __ATOMIC_ACQUIRE))
+			std::free(t);
+	}
 
-					const double k_b = 0.0593;
-					const double k_r = 0.2627;
-					const double k_g = 1 - k_b - k_r;
-
-					const double scale_b = 0.5 / (1 - k_b);
-					const double scale_r = 0.5 / (1 - k_r);
-
-					const double y   = k_r * r_diff + k_g * g_diff + k_b * b_diff;
-					const double c_b = scale_b * (b_diff - y);
-					const double c_r = scale_r * (r_diff - y);
-
-					g_dist555[(ri * DIST5 + gi) * DIST5 + bi] =
-						static_cast<uint16_t>(std::sqrt(y * y + c_b * c_b + c_r * c_r) * 64 + 0.5);
-				}
-		g_dist565_ready = true;
+	static void build()
+	{
+		ensure(__atomic_load_n(&g_dist_mode, __ATOMIC_ACQUIRE));
 	}
 };
 
@@ -1188,6 +1208,7 @@ struct ColorGradientARGB
 
 void xbrz::scale(size_t factor, const uint32_t* src, uint32_t* trg, int srcWidth, int srcHeight, ColorFormat colFmt, const xbrz::ScalerCfg& cfg, int yFirst, int yLast)
 {
+	DistYCbCrBuffer::ensure(__atomic_load_n(&g_dist_mode, __ATOMIC_ACQUIRE));
 	switch (colFmt)
 	{
 		case ColorFormat::ARGB:
@@ -1228,6 +1249,7 @@ void xbrz::scale(size_t factor, const uint32_t* src, uint32_t* trg, int srcWidth
 
 bool xbrz::equalColorTest(uint32_t col1, uint32_t col2, ColorFormat colFmt, xreal luminanceWeight, xreal equalColorTolerance)
 {
+	DistYCbCrBuffer::ensure(__atomic_load_n(&g_dist_mode, __ATOMIC_ACQUIRE));
 	switch (colFmt)
 	{
 		case ColorFormat::ARGB:
@@ -1325,6 +1347,7 @@ void xbrz::scaleRect(size_t factor, const uint32_t* src, uint32_t* trg, int srcW
                      uint32_t* trgAt, int trgPitch)
 {
 	const xbrz::ScalerCfg cfg;
+	DistYCbCrBuffer::ensure(__atomic_load_n(&g_dist_mode, __ATOMIC_ACQUIRE));
 	switch (factor)
 	{
 		case 2:
@@ -1338,5 +1361,5 @@ void xbrz::scaleRect(size_t factor, const uint32_t* src, uint32_t* trg, int srcW
 
 void xbrz::setDistMode(int mode)
 {
-	g_dist_mode = mode >= 0 && mode <= 2 ? mode : 0;
+	__atomic_store_n(&g_dist_mode, mode >= 0 && mode <= 2 ? mode : 0, __ATOMIC_RELEASE);
 }

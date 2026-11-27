@@ -134,7 +134,11 @@ static unsigned tch_hint_button(const char *s, int len)
 {
    static const struct { const char *word; unsigned btn; } w[] = {
       { "START", PSP_CTRL_START }, { "SELECT", PSP_CTRL_SELECT },
-      { "L/R", PSP_CTRL_RTRIGGER }, { "Left", PSP_CTRL_LEFT },
+      { "L/R", PSP_CTRL_RTRIGGER },
+      { "Left", PSP_CTRL_LEFT }, { "Links", PSP_CTRL_LEFT },
+      { "Izquierda", PSP_CTRL_LEFT }, { "Gauche", PSP_CTRL_LEFT },
+      { "Sinistra", PSP_CTRL_LEFT }, { "Esquerda", PSP_CTRL_LEFT },
+      { "\xE5\xB7\xA6", PSP_CTRL_LEFT }, /* 左 */
       { "L", PSP_CTRL_LTRIGGER }, { "R", PSP_CTRL_RTRIGGER },
    };
    unsigned i;
@@ -152,7 +156,10 @@ static unsigned tch_hint_button(const char *s, int len)
    {
       int n = (int)strlen(w[i].word);
       if (len > n && !strncmp(s, w[i].word, (size_t)n) &&
-          (s[n] == ' ' || s[n] == ':'))
+          (s[n] == ' ' || s[n] == ':' ||
+           (len > n + 2 && (unsigned char)s[n] == 0xEF &&
+            (unsigned char)s[n + 1] == 0xBC &&
+            (unsigned char)s[n + 2] == 0x9A)))
          return w[i].btn;
    }
    return 0;

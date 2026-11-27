@@ -180,6 +180,10 @@ bool on_draw_thread()
 #endif
 }
 
+#ifdef __vita__
+int core4_prio(int role, int index, int dflt);
+#endif
+
 }  // namespace
 
 extern "C" int ho_start(uint32_t frame_us, size_t extra_bytes, ho_draw_fn draw,
@@ -208,11 +212,18 @@ extern "C" int ho_start(uint32_t frame_us, size_t extra_bytes, ho_draw_fn draw,
    g_enabled = 1;
 #ifdef __vita__
    {
-      const int core = draw_core >= 0 && draw_core <= 2 ? draw_core : 1;
-      const int prio = draw_prio > 0x40 && draw_prio < 0xF0 ? draw_prio : 0x60;
-      const unsigned mask = core == 0 ? SCE_KERNEL_CPU_MASK_USER_0
-                          : core == 2 ? SCE_KERNEL_CPU_MASK_USER_2
-                                      : SCE_KERNEL_CPU_MASK_USER_1;
+      const int core_ovr = draw_core >= 0 && draw_core <= 2;
+      const int prio_ovr = draw_prio >= 0x40 && draw_prio < 0xF0;
+      const unsigned mask = core_ovr
+         ? (draw_core == 0 ? SCE_KERNEL_CPU_MASK_USER_0
+          : draw_core == 2 ? SCE_KERNEL_CPU_MASK_USER_2
+                           : SCE_KERNEL_CPU_MASK_USER_1)
+         : core4_mask(C4_DRAW, 0, SCE_KERNEL_CPU_MASK_USER_1);
+      const int prio = prio_ovr ? draw_prio : core4_prio(C4_DRAW, 0, 0x60);
+      const int core = mask == SCE_KERNEL_CPU_MASK_SYSTEM ? 3
+                     : mask == SCE_KERNEL_CPU_MASK_USER_0 ? 0
+                     : mask == SCE_KERNEL_CPU_MASK_USER_2 ? 2
+                     : mask == SCE_KERNEL_CPU_MASK_USER_1 ? 1 : -1;
       g_draw_tid = -1;
       g_thid = sceKernelCreateThread("gbadhoc_draw", draw_entry, prio, 0x20000,
                                      0, (int)mask, NULL);
@@ -232,9 +243,13 @@ extern "C" int ho_start(uint32_t frame_us, size_t extra_bytes, ho_draw_fn draw,
       /* the thread says who it is before anything is committed: wait */
       while (g_draw_tid < 0)
          sceKernelDelayThread(100);
+      core4_set_thread(C4_DRAW, 0, core_ovr ? -1 : (int)g_thid);
       plat_thread_watch("draw", g_thid);
       g_threaded = 1;
-      snprintf(g_where, sizeof(g_where), "core %d prio 0x%x", core, prio);
+      if (core >= 0)
+         snprintf(g_where, sizeof(g_where), "core %d prio 0x%x", core, prio);
+      else
+         snprintf(g_where, sizeof(g_where), "mask 0x%x prio 0x%x", mask, prio);
    }
 #else
    (void)draw_core; (void)draw_prio;
@@ -275,6 +290,7 @@ extern "C" void ho_stop(void)
       sceKernelDeleteThread(g_thid);
       g_thid = -1;
       g_draw_tid = -1;
+      core4_set_thread(C4_DRAW, 0, -1);
    }
 #else
    if (g_have_th)
@@ -469,9 +485,17 @@ alignas(pk::Cores) unsigned char g_c4_mem[sizeof(pk::Cores)];
 pk::Cores *g_c4;
 pk::Plan g_c4plan;
 struct C4Thread { int role, index, thid; };
-C4Thread g_c4thr[8];
+C4Thread g_c4thr[16];
 int g_c4n;
 unsigned g_c4_lost_events;
+
+#ifdef __vita__
+int core4_prio(int role, int index, int dflt)
+{
+   const pk::Slot *s = g_c4 ? g_c4plan.find((pk::Role)role, index) : NULL;
+   return s && s->prio >= pk::PRIO_HIGHEST && s->prio <= pk::PRIO_LOWEST ? s->prio : dflt;
+}
+#endif
 
 void c4_log(void *, const char *line) { fe_evt("%s", line); }
 
@@ -479,7 +503,7 @@ pk::Request c4_request(void)
 {
    pk::Request rq(pk::CP_APP);
    rq.with(pk::R_EMU_MAIN).with(pk::R_RENDER).with(pk::R_UPSCALE)
-     .with(pk::R_AUDIO_OUT).with(pk::R_WRITER).with(pk::R_NET_IO);
+     .with(pk::R_DRAW).with(pk::R_AUDIO_OUT).with(pk::R_WRITER).with(pk::R_NET_IO);
    rq.upscale_n = 3;
    return rq;
 }
@@ -500,6 +524,8 @@ void c4_reapply(const char *why)
       if (!n || !o || n->mask == o->mask)
          continue;
 #ifdef __vita__
+      if (g_c4thr[i].thid < 0)
+         continue;
       {
          const int rc = pk::apply_slot(g_c4thr[i].thid, *n);
          fe_evt("cores: moved role %d.%d back to mask %x rc=%08x (%s)",
@@ -551,7 +577,7 @@ extern "C" int core4_on_core3(int role, int index)
 }
 
 /* One watchdog slot per role/index: a restart reuses it. */
-static int g_c4wd[8][4];
+static int g_c4wd[pk::R_COUNT][4];
 static bool g_c4wd_init;
 
 extern "C" int core4_wd_add(const char *name, int role, int index)
@@ -564,7 +590,7 @@ extern "C" int core4_wd_add(const char *name, int role, int index)
       memset(g_c4wd, -1, sizeof(g_c4wd));
       g_c4wd_init = true;
    }
-   if (role < 0 || role >= 8 || index < 0 || index >= 4)
+   if (role < 0 || role >= pk::R_COUNT || index < 0 || index >= 4)
       return -1;
    w = g_c4wd[role][index];
    if (w < 0)

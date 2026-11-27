@@ -4,7 +4,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
+
+#ifdef __vita__
+#include <psp2/kernel/threadmgr.h>
+#include <psp2/kernel/processmgr.h>
+#elif defined(__unix__) || defined(__APPLE__)
+#include <pthread.h>
+#endif
 
 #include "save_sync.h"
 #include "fe_evt.h"
@@ -23,6 +31,56 @@ static int  g_on = 1;
 static char g_ctx_rom[SS_PATH], g_ctx_save[SS_PATH];
 static int  g_ctx_kind = -1;
 static char g_late_note[160];
+
+#ifdef __vita__
+static SceKernelLwMutexWork g_ss_mx __attribute__((aligned(8)));
+static int g_ss_mx_gate;
+
+static int ss_lock_init(void)
+{
+   int s = __atomic_load_n(&g_ss_mx_gate, __ATOMIC_ACQUIRE), zero = 0;
+   if (s == 2)
+      return 1;
+   if (s == 3)
+      return 0;
+   if (s == 0 && __atomic_compare_exchange_n(&g_ss_mx_gate, &zero, 1, 0,
+                                             __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+   {
+#ifdef SCE_KERNEL_LW_MUTEX_ATTR_TH_PRIO
+      int rc = sceKernelCreateLwMutex(&g_ss_mx, "save_sync",
+                                      SCE_KERNEL_LW_MUTEX_ATTR_TH_PRIO, 0, NULL);
+#else
+      int rc = sceKernelCreateLwMutex(&g_ss_mx, "save_sync", 0, 0, NULL);
+#endif
+      __atomic_store_n(&g_ss_mx_gate, rc >= 0 ? 2 : 3, __ATOMIC_RELEASE);
+      return rc >= 0;
+   }
+   while (__atomic_load_n(&g_ss_mx_gate, __ATOMIC_ACQUIRE) == 1)
+      sceKernelDelayThread(100);
+   return __atomic_load_n(&g_ss_mx_gate, __ATOMIC_ACQUIRE) == 2;
+}
+
+static void ss_lock(void)
+{
+   if (ss_lock_init())
+      (void)sceKernelLockLwMutex(&g_ss_mx, 1, NULL);
+}
+
+static void ss_unlock(void)
+{
+   if (__atomic_load_n(&g_ss_mx_gate, __ATOMIC_ACQUIRE) == 2)
+      (void)sceKernelUnlockLwMutex(&g_ss_mx, 1);
+}
+#elif defined(__unix__) || defined(__APPLE__)
+static pthread_mutex_t g_ss_mx = PTHREAD_MUTEX_INITIALIZER;
+static void ss_lock(void)   { (void)pthread_mutex_lock(&g_ss_mx); }
+static void ss_unlock(void) { (void)pthread_mutex_unlock(&g_ss_mx); }
+#else
+static void ss_lock(void)   { }
+static void ss_unlock(void) { }
+#endif
+
+static int is_dir(const char *p);
 
 typedef struct
 {
@@ -47,21 +105,45 @@ typedef struct
 
 void save_sync_init(const char *app_root)
 {
+   ss_lock();
    snprintf(g_root, sizeof(g_root), "%s", app_root ? app_root : "");
    snprintf(g_rec_path, sizeof(g_rec_path), "%s/saves-sync.txt", g_root);
 #ifdef __vita__
-   snprintf(g_ra, sizeof(g_ra), "ux0:data/retroarch/savefiles");
-   snprintf(g_racfg, sizeof(g_racfg), "ux0:data/retroarch/retroarch.cfg");
+   if (!is_dir("ux0:data/retroarch") && is_dir("uma0:data/retroarch"))
+   {
+      snprintf(g_ra, sizeof(g_ra), "uma0:data/retroarch/savefiles");
+      snprintf(g_racfg, sizeof(g_racfg), "uma0:data/retroarch/retroarch.cfg");
+   }
+   else
+   {
+      snprintf(g_ra, sizeof(g_ra), "ux0:data/retroarch/savefiles");
+      snprintf(g_racfg, sizeof(g_racfg), "ux0:data/retroarch/retroarch.cfg");
+   }
 #else
    snprintf(g_ra, sizeof(g_ra), "%s/retroarch/savefiles", g_root);
    snprintf(g_racfg, sizeof(g_racfg), "%s/retroarch/retroarch.cfg", g_root);
 #endif
    g_ctx_kind = -1;
    g_ctx_rom[0] = g_ctx_save[0] = g_late_note[0] = 0;
+   ss_unlock();
 }
 
-void save_sync_set_enabled(int on) { g_on = on ? 1 : 0; }
-int  save_sync_enabled(void) { return g_on; }
+void save_sync_set_enabled(int on)
+{
+   ss_lock();
+   g_on = on ? 1 : 0;
+   ss_unlock();
+}
+
+int save_sync_enabled(void)
+{
+   int on;
+   ss_lock();
+   on = g_on;
+   ss_unlock();
+   return on;
+}
+
 const char *save_sync_ra_dir(void) { return g_ra; }
 
 /* ---- small file helpers ---- */
@@ -106,7 +188,7 @@ static int crc_file(const char *p, uint32_t *crc, long *size)
 /* tmp -> dest, keeping the old dest as dest.old until the new one is in */
 static int promote(const char *tmp, const char *dest)
 {
-   char old[SS_PATH + 8];
+   char old[SS_PATH * 2 + 16];
    struct stat st;
    int had = stat(dest, &st) == 0;
    if (snprintf(old, sizeof(old), "%s.old", dest) >= (int)sizeof(old))
@@ -324,7 +406,7 @@ static int rec_parse(char *line, ss_rec *r)
 static int rec_get(const char *save, ss_rec *r)
 {
    FILE *f = fopen(g_rec_path, "rb");
-   static char line[SS_LINE];
+   char line[SS_LINE];
    int found = 0;
    if (!f)
       return 0;
@@ -345,7 +427,7 @@ static int rec_get(const char *save, ss_rec *r)
 /* Replace (or add) the record for r->save: copy the file line by line. */
 static int rec_put(const ss_rec *r)
 {
-   static char line[SS_LINE], copy[SS_LINE];
+   char line[SS_LINE], copy[SS_LINE];
    char tmp[SS_PATH + 32];
    FILE *in = fopen(g_rec_path, "rb"), *out;
    int ok = 1;
@@ -390,12 +472,17 @@ static int rec_put(const ss_rec *r)
  * and `to` stays as it was. */
 static int copy_over(const char *from, const char *to, uint32_t crc)
 {
-   char tmp[SS_PATH + 16];
+   char tmp[SS_PATH * 2 + 16];
    unsigned char b[SS_CHUNK];
-   FILE *in = fopen(from, "rb"), *out;
+   FILE *in, *out;
    size_t n;
    int ok = 1;
-   snprintf(tmp, sizeof(tmp), "%s.import", to);
+   if (snprintf(tmp, sizeof(tmp), "%s.import", to) >= (int)sizeof(tmp))
+   {
+      err_text("destination path too long");
+      return -1;
+   }
+   in = fopen(from, "rb");
    errno = in ? 0 : errno;
    out = in ? fopen(tmp, "wb") : NULL;
    if (!in || !out)
@@ -435,7 +522,7 @@ static int copy_over(const char *from, const char *to, uint32_t crc)
  * trailer may follow (RetroArch/mGBA: 131072 + 16 and so on). */
 static long core_len(long size)
 {
-   static const long base[] = { 131072, 65536, 32768, 8192, 2048, 512 };
+   static const long base[] = { 131072, 65536, 32768, 16384, 8192, 2048, 512 };
    unsigned i;
    for (i = 0; i < sizeof(base) / sizeof(base[0]); i++)
       if (size >= base[i] && size - base[i] <= 64)
@@ -576,7 +663,7 @@ static int sync_out(ss_rec *r, long ours_len)
 
 /* ---- the hooks ---- */
 
-void save_sync_link(const char *save_path, const char *src_path)
+static void save_sync_link_locked(const char *save_path, const char *src_path)
 {
    ss_rec r;
    memset(&r, 0, sizeof(r));
@@ -593,7 +680,14 @@ void save_sync_link(const char *save_path, const char *src_path)
              save_path, src_path, r.src_size, (unsigned)r.src_crc);
 }
 
-void save_sync_game_start(const char *save_path, char *note, size_t cap)
+void save_sync_link(const char *save_path, const char *src_path)
+{
+   ss_lock();
+   save_sync_link_locked(save_path, src_path);
+   ss_unlock();
+}
+
+static void save_sync_game_start_locked(const char *save_path, char *note, size_t cap)
 {
    ss_rec r;
    long ours_size = 0, ours_mtime = 0;
@@ -744,6 +838,13 @@ void save_sync_game_start(const char *save_path, char *note, size_t cap)
             note_fail(note, cap, "RetroArch's save could not be backed up");
       }
    }
+}
+
+void save_sync_game_start(const char *save_path, char *note, size_t cap)
+{
+   ss_lock();
+   save_sync_game_start_locked(save_path, note, cap);
+   ss_unlock();
 }
 
 /* ======================================================================
@@ -969,10 +1070,29 @@ static int find_foreign(const char *skip, const char *rom_dir, const char *stem,
    return 0;
 }
 
+/* Returns "GBA", "GB", or "GBC" if a sibling ROM beside `rom_path` would
+ * share `<stem>.sav`, else NULL. */
+static const char *gb_sav_owner(const char *rom_path, const char *rom_dir,
+                                const char *stem)
+{
+   static const struct { const char *ext, *tag; } sibs[] = {
+      { ".gba", "GBA" }, { ".gb", "GB" }, { ".gbc", "GBC" }
+   };
+   char p[SS_PATH * 2];
+   size_t i;
+   for (i = 0; i < sizeof(sibs) / sizeof(sibs[0]); i++)
+   {
+      if (snprintf(p, sizeof(p), "%s%s%s", rom_dir, stem, sibs[i].ext) < (int)sizeof(p) &&
+          exists(p) && (!rom_path || strcasecmp(p, rom_path) != 0))
+         return sibs[i].tag;
+   }
+   return NULL;
+}
+
 /* Where a NEW plain copy goes.  Returns a short name of the rule used. */
-static const char *pick_target(const char *save_path, const char *rom_dir,
-                               const char *stem, int kind, const ra_cfg *cfg,
-                               char *out, size_t cap)
+static const char *pick_target(const char *save_path, const char *rom_path,
+                               const char *rom_dir, const char *stem, int kind,
+                               const ra_cfg *cfg, char *out, size_t cap)
 {
    char base[SS_PATH + 48], ra_root[SS_PATH + 48];
    const char *rule;
@@ -1012,13 +1132,13 @@ static const char *pick_target(const char *save_path, const char *rom_dir,
    {
       /* No RetroArch on the card: the plain .sav beside the game.  A GBA
        * game's save already is that (Game.sav); a Game Boy game's is named
-       * Game.gb.sav, so it gets Game.sav -- unless a GBA game beside it owns
-       * that name.  SNES, NES and WonderSwan saves already are Game.srm. */
+       * Game.gb.sav, so it gets Game.sav -- unless a GBA or sibling GB/GBC
+       * game beside it could collide on that name.  SNES, NES and WonderSwan
+       * saves already are Game.srm. */
       if (kind == 1 || kind == 2)
       {
-         char a[SS_PATH * 2], z[SS_PATH * 2], z7[SS_PATH * 2];
-         if (snprintf(a, sizeof(a), "%s%s.gba", rom_dir, stem) < (int)sizeof(a) &&
-             !exists(a) &&
+         char z[SS_PATH * 2], z7[SS_PATH * 2];
+         if (!gb_sav_owner(rom_path, rom_dir, stem) &&
              snprintf(z, sizeof(z), "%s%s.zip", rom_dir, stem) < (int)sizeof(z) &&
              !exists(z) &&
              snprintf(z7, sizeof(z7), "%s%s.7z", rom_dir, stem) < (int)sizeof(z7) &&
@@ -1091,8 +1211,8 @@ static void export_recover(const char *t)
    }
 }
 
-int save_sync_heal_game(const char *save_path, const char *rom_path, int kind,
-                        char *note, size_t cap)
+static int save_sync_heal_game_locked(const char *save_path, const char *rom_path,
+                                      int kind, char *note, size_t cap)
 {
    ss_rec r;
    ra_cfg cfg;
@@ -1161,7 +1281,7 @@ int save_sync_heal_game(const char *save_path, const char *rom_path, int kind,
    /* an export or a replacement that was cut short last time is put right
     * BEFORE the RetroArch file is looked for: a file waiting as <name>.old is
     * RetroArch's own and goes back where it was, never written over */
-   rule = pick_target(save_path, rom_dir, stem, kind, &cfg, target, sizeof(target));
+   rule = pick_target(save_path, rom_path, rom_dir, stem, kind, &cfg, target, sizeof(target));
    if (strcmp(target, save_path))
       export_recover(target);
    if (find_foreign(save_path, rom_dir, stem, kind, &cfg, found, sizeof(found)))
@@ -1282,6 +1402,16 @@ int save_sync_heal_game(const char *save_path, const char *rom_path, int kind,
    return 1;
 }
 
+int save_sync_heal_game(const char *save_path, const char *rom_path, int kind,
+                        char *note, size_t cap)
+{
+   int rc;
+   ss_lock();
+   rc = save_sync_heal_game_locked(save_path, rom_path, kind, note, cap);
+   ss_unlock();
+   return rc;
+}
+
 /* Files of an older version that are still beside the game although the game's
  * own folder (states/...) has the same file: the migration leaves both
  * alone ("kept"), and the old one would stay in the game folder for good.  A
@@ -1290,7 +1420,7 @@ int save_sync_heal_game(const char *save_path, const char *rom_path, int kind,
  * stays where it is (it is what the game reads).  `old1` / `new1` are the
  * slot-1 state paths, beside the game and in the game's folder.  Returns the
  * number of files moved. */
-int save_sync_tidy_beside_rom(const char *old1, const char *new1)
+static int save_sync_tidy_beside_rom_locked(const char *old1, const char *new1)
 {
    static const char *const tail[] = { "", ".thumb", ".shot", ".p2", ".old" };
    static const char *const rtail[] = { "", ".pt", ".old" };
@@ -1348,33 +1478,51 @@ int save_sync_tidy_beside_rom(const char *old1, const char *new1)
    return moved;
 }
 
+int save_sync_tidy_beside_rom(const char *old1, const char *new1)
+{
+   int moved;
+   ss_lock();
+   moved = save_sync_tidy_beside_rom_locked(old1, new1);
+   ss_unlock();
+   return moved;
+}
+
 void save_sync_set_game(const char *save_path, const char *rom_path, int kind)
 {
+   ss_lock();
    g_late_note[0] = 0;
    if (!save_path || !rom_path)
    {
       g_ctx_kind = -1;
+      ss_unlock();
       return;
    }
    snprintf(g_ctx_save, sizeof(g_ctx_save), "%s", save_path);
    snprintf(g_ctx_rom, sizeof(g_ctx_rom), "%s", rom_path);
    g_ctx_kind = kind;
+   ss_unlock();
 }
 
 int save_sync_take_note(char *note, size_t cap)
 {
+   ss_lock();
    if (!note || !cap || !g_late_note[0])
+   {
+      ss_unlock();
       return 0;
+   }
    snprintf(note, cap, "%s", g_late_note);
    g_late_note[0] = 0;
+   ss_unlock();
    return 1;
 }
 
 /* "Export save for other emulators": the save as a plain file where the
  * player chose, whatever the setting says, after a verified backup of any file
  * it replaces. */
-int save_sync_export_now(const char *save_path, const char *rom_path, int kind,
-                         int dest, char *where, size_t wcap, char *note, size_t cap)
+static int save_sync_export_now_locked(const char *save_path, const char *rom_path,
+                                       int kind, int dest, char *where, size_t wcap,
+                                       char *note, size_t cap)
 {
    ra_cfg cfg;
    char rom_dir[SS_PATH], stem[SS_PATH], target[SS_PATH * 2 + 16];
@@ -1399,13 +1547,14 @@ int save_sync_export_now(const char *save_path, const char *rom_path, int kind,
    ra_cfg_read(&cfg);
    if (dest == SS_DEST_ROM_SAV)
    {
-      char a[SS_PATH * 2];
+      const char *owner;
       if (kind == 0 || kind >= 3)
          snprintf(target, sizeof(target), "%s", save_path);   /* it is that file already */
-      else if (snprintf(a, sizeof(a), "%s%s.gba", rom_dir, stem) < (int)sizeof(a) && exists(a))
+      else if ((owner = gb_sav_owner(rom_path, rom_dir, stem)) != NULL)
       {
          if (note && cap)
-            snprintf(note, cap, "%s.sav belongs to the GBA game of the same name", stem);
+            snprintf(note, cap, "%s.sav belongs to the %s game of the same name",
+                     stem, owner);
          return -1;
       }
       else
@@ -1417,7 +1566,7 @@ int save_sync_export_now(const char *save_path, const char *rom_path, int kind,
       if (find_foreign(save_path, rom_dir, stem, kind, &cfg, found, sizeof(found)))
          snprintf(target, sizeof(target), "%s", found);
       else
-         (void)pick_target(save_path, rom_dir, stem, kind, &cfg, target, sizeof(target));
+         (void)pick_target(save_path, rom_path, rom_dir, stem, kind, &cfg, target, sizeof(target));
    }
    if (where && wcap)
       snprintf(where, wcap, "%s", target);
@@ -1474,7 +1623,18 @@ int save_sync_export_now(const char *save_path, const char *rom_path, int kind,
    return 0;
 }
 
-void app_battery_written(const char *save_path)
+int save_sync_export_now(const char *save_path, const char *rom_path, int kind,
+                         int dest, char *where, size_t wcap, char *note, size_t cap)
+{
+   int rc;
+   ss_lock();
+   rc = save_sync_export_now_locked(save_path, rom_path, kind, dest, where, wcap,
+                                    note, cap);
+   ss_unlock();
+   return rc;
+}
+
+static void app_battery_written_locked(const char *save_path)
 {
    ss_rec r;
    uint32_t crc;
@@ -1501,8 +1661,15 @@ void app_battery_written(const char *save_path)
        !strcmp(g_ctx_save, save_path))
    {
       char n[160];
-      if (save_sync_heal_game(save_path, g_ctx_rom, g_ctx_kind, n, sizeof(n)) == 1 &&
+      if (save_sync_heal_game_locked(save_path, g_ctx_rom, g_ctx_kind, n, sizeof(n)) == 1 &&
           n[0])
          snprintf(g_late_note, sizeof(g_late_note), "%s", n);
    }
+}
+
+void app_battery_written(const char *save_path)
+{
+   ss_lock();
+   app_battery_written_locked(save_path);
+   ss_unlock();
 }

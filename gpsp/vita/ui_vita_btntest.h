@@ -47,10 +47,8 @@ static const char *bt_ws_name(unsigned bit)
    case CTL_RIGHT:    return "X2";
    case CTL_DOWN:     return "X3";
    case CTL_LEFT:     return "X4";
-   case CTL_CIRCLE:
-   case CTL_TRIANGLE: return "A";
-   case CTL_CROSS:
-   case CTL_SQUARE:   return "B";
+   case CTL_CIRCLE:   return "A";
+   case CTL_CROSS:    return "B";
    case CTL_START:    return "Start";
    default:           return NULL;
    }

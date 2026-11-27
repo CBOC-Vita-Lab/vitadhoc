@@ -91,6 +91,10 @@ static unsigned hb_every = HEARTBEAT_INTERVAL;
 
 /* ---------------------------------------------------------------- state -- */
 
+/* ARMv7 SMP-safe acquire/release helpers (GCC/Clang C99/C11 intrinsics). */
+#define FE_LOAD_ACQ(x)     __atomic_load_n(&(x), __ATOMIC_ACQUIRE)
+#define FE_STORE_REL(x, v) __atomic_store_n(&(x), (v), __ATOMIC_RELEASE)
+
 static fe_host_config host;
 static gbcore_t *gb_core;
 /* A machine pair (host.gb_dual_rom): gb_core is then its slot 0. */
@@ -104,6 +108,7 @@ static int gb_family;
  * simply cannot start one. */
 #pragma weak fe_padpair_machines
 #pragma weak fe_padpair_restored
+#pragma weak fe_padpair_keep_host
 /* The GB link session (fe_gblink.h), NULL when none. */
 static int save_recover_bak(const char *path);   /* below, with sram_load */
 static int state_file_exists(const char *path);
@@ -135,8 +140,8 @@ static int gbl_hold;               /* harness: single machine held for a link */
 #ifdef GBA_LINK
 static int gba_cable;
 static int gba_rom_sampled = 1;  /* fe_host_gba_cable_rom_sampled */
-static volatile int gba_sram_hold;
-static volatile int gba_sram_quiescing;
+static int gba_sram_hold;
+static int gba_sram_quiescing;
 static uint8_t *gba_prelink_sram;
 #define GBA_CABLE gba_cable
 #else
@@ -153,8 +158,8 @@ static int gb_save_crc_valid;
 static uint8_t *gb_io_buffer;
 static size_t gb_io_capacity, gb_io_size;
 static uint32_t gb_io_crc;
-static volatile int gb_io_req;       /* 1: gb_io_buffer is the writer's */
-static volatile int gb_io_failed;    /* the writer's last write failed */
+static int gb_io_req;       /* 1: gb_io_buffer is the writer's */
+static int gb_io_failed;    /* the writer's last write failed */
 static const fe_host_io *host_io;    /* defined with the GBA writer below */
 static unsigned frame_count;         /* likewise, with the frame loop */
 static uint32_t gb_seen_crc;         /* cart RAM at the previous check */
@@ -522,23 +527,23 @@ static int gb_save_write(const uint8_t *data, size_t size, uint32_t crc)
  * file from here while it does: that would put two writers on one path. */
 static int gb_io_settle(void)
 {
-   const fe_host_io *io = host_io;
+   const fe_host_io *io = FE_LOAD_ACQ(host_io);
    int spins;
-   for (spins = 0; gb_io_req && io && spins < 4000; spins++)   /* ~4 s */
+   for (spins = 0; FE_LOAD_ACQ(gb_io_req) && io && spins < 4000; spins++)   /* ~4 s */
    {
       io->wake();
       io->yield();
    }
-   if (gb_io_req)
+   if (FE_LOAD_ACQ(gb_io_req))
    {
       fe_evt("gb_sram_sync_timeout");
       return -1;
    }
-   if (gb_io_failed)
+   if (FE_LOAD_ACQ(gb_io_failed))
    {
       /* Its CRC was recorded when it was handed over; the file never got
        * it, so the next write must not be skipped as "unchanged". */
-      gb_io_failed = 0;
+      FE_STORE_REL(gb_io_failed, 0);
       gb_save_crc_valid = 0;
    }
    return 0;
@@ -591,11 +596,11 @@ static int gb_save_flush_periodic(void)
    size_t size;
    uint32_t crc;
    int rc;
-   if (gb_io_req)
+   if (FE_LOAD_ACQ(gb_io_req))
       return 0;                     /* the previous write is still going */
-   if (gb_io_failed)
+   if (FE_LOAD_ACQ(gb_io_failed))
    {
-      gb_io_failed = 0;
+      FE_STORE_REL(gb_io_failed, 0);
       gb_save_crc_valid = 0;
    }
    rc = gb_save_snapshot(0, &size, &crc);
@@ -613,46 +618,46 @@ static int gb_save_flush_periodic(void)
       if (frame_count - gb_dirty_since < GB_SAVE_MAX_DELAY)
          return 0;                  /* still changing: wait for it to settle */
    }
-   gb_dirty_since = 0;
-   if (host_io && size > gb_io_capacity)
    {
-      uint8_t *b = (uint8_t *)realloc(gb_io_buffer, size);
-      if (b)
+      const fe_host_io *io = FE_LOAD_ACQ(host_io);
+      gb_dirty_since = 0;
+      if (io && size > gb_io_capacity)
       {
-         gb_io_buffer = b;
-         gb_io_capacity = size;
+         uint8_t *b = (uint8_t *)realloc(gb_io_buffer, size);
+         if (b)
+         {
+            gb_io_buffer = b;
+            gb_io_capacity = size;
+         }
       }
-   }
-   if (!host_io || size > gb_io_capacity)
-   {
-      /* No writer thread, or no memory for its copy: write here. */
-      if (gb_save_write(gb_save_buffer, size, crc) != 0)
-         return -1;
-      gb_save_crc = crc;
+      if (!io || size > gb_io_capacity)
+      {
+         /* No writer thread, or no memory for its copy: write here. */
+         if (gb_save_write(gb_save_buffer, size, crc) != 0)
+            return -1;
+         gb_save_crc = crc;
+         gb_save_crc_valid = 1;
+         return 1;
+      }
+      memcpy(gb_io_buffer, gb_save_buffer, size);
+      gb_io_size = size;
+      gb_io_crc = crc;
+      gb_save_crc = crc;               /* gb_io_failed undoes this */
       gb_save_crc_valid = 1;
+      FE_STORE_REL(gb_io_req, 1);
+      io->wake();
       return 1;
    }
-   memcpy(gb_io_buffer, gb_save_buffer, size);
-   gb_io_size = size;
-   gb_io_crc = crc;
-   gb_save_crc = crc;               /* gb_io_failed undoes this */
-   gb_save_crc_valid = 1;
-   __asm__ __volatile__("" ::: "memory");
-   gb_io_req = 1;
-   host_io->wake();
-   return 1;
 }
 
 /* Writer thread: the snapshot the emulation thread handed over. */
 static int gb_save_service_io(void)
 {
-   if (!gb_io_req)
+   if (!FE_LOAD_ACQ(gb_io_req))
       return 0;
-   __asm__ __volatile__("" ::: "memory");
    if (gb_save_write(gb_io_buffer, gb_io_size, gb_io_crc) != 0)
-      gb_io_failed = 1;
-   __asm__ __volatile__("" ::: "memory");
-   gb_io_req = 0;
+      FE_STORE_REL(gb_io_failed, 1);
+   FE_STORE_REL(gb_io_req, 0);
    return 1;
 }
 
@@ -1182,9 +1187,9 @@ extern volatile uint32_t backup_write_gen __attribute__((weak));
  * fast-forward forever.  A new save re-arms it. */
 #define SRAM_FF_NUDGE_CAP         300
 
-static volatile uint32_t sram_disk_gen;  /* WRITER: gen whose bytes are on disk */
-static volatile uint32_t sram_scan_gen;  /* WRITER: gen read before its last scan */
-static volatile int sram_scan_gen_valid; /* WRITER: sram_scan_gen is meaningful */
+static uint32_t sram_disk_gen;  /* WRITER: gen whose bytes are on disk */
+static uint32_t sram_scan_gen;  /* WRITER: gen read before its last scan */
+static int sram_scan_gen_valid; /* WRITER: sram_scan_gen is meaningful */
 
 static int      ffn_enabled = 1;         /* harness A/B knob (sram_ff_nudge) */
 static uint32_t ffn_seen_gen;            /* EMU: last gen observed */
@@ -1225,7 +1230,7 @@ static uint64_t ffn_yield_us;            /* EMU: lifetime time asleep */
 
 static uint32_t sram_gen_now(void)
 {
-   return &backup_write_gen ? backup_write_gen : 0u;
+   return &backup_write_gen ? FE_LOAD_ACQ(backup_write_gen) : 0u;
 }
 
 /* Netpacket interface copy — unused in Phase 1, wired in Phase 3/4. */
@@ -1437,6 +1442,14 @@ static int gb_prn_serial(uint8_t outgoing, int internal_clock, uint8_t *received
    return 1;
 }
 
+static int gb_prn_active(void)
+{
+   return gb_prn &&
+          (gb_prn->state != 0 || gb_prn->buf_len != 0 ||
+           gb_prn->rows != 0 || gb_prn->busy_left != 0 ||
+           (gb_prn->status & (GBPRN_ST_BUSY | GBPRN_ST_READY)) != 0);
+}
+
 static void gb_prn_frame(void)
 {
    if (gb_prn)
@@ -1481,13 +1494,16 @@ void fe_host_gb_print_colours(uint32_t rgb[4])
    static const uint32_t grey[4] = { 0xFFFFFF, 0xAAAAAA, 0x555555, 0x000000 };
    for (i = 0; i < 4; i++)
       rgb[i] = grey[i];
-   if (gb_core && gbcore_palette_preview((unsigned)host.gb_palette, pv) >= 0)
+   if (gb_core)
+   {
+      (void)gbcore_palette_preview((unsigned)host.gb_palette, pv);
       for (i = 0; i < 4; i++)
       {
          unsigned v = pv[i], r = v >> 11, g = (v >> 5) & 0x3F, b = v & 0x1F;
          rgb[i] = (((r << 3) | (r >> 2)) << 16) | (((g << 2) | (g >> 4)) << 8) |
                   ((b << 3) | (b >> 2));
       }
+   }
 }
 
 unsigned fe_host_gbcam_present(void)
@@ -1764,7 +1780,7 @@ static int sram_load(void)
    if (!p || !host.save_path)
       return 0;
    battery_load_failed = 1;
-   sram_have_blk = 0;
+   FE_STORE_REL(sram_have_blk, 0);
    if (save_recover_bak(host.save_path) < 0)
       goto failed;
 
@@ -1818,8 +1834,8 @@ static int sram_load(void)
    }
 
    /* Whatever the game has written so far is what was just loaded. */
-   sram_disk_gen = ffn_seen_gen = sram_gen_now();
-   sram_scan_gen_valid = 0;
+   FE_STORE_REL(sram_disk_gen, ffn_seen_gen = sram_gen_now());
+   FE_STORE_REL(sram_scan_gen_valid, 0);
    ffn_pending = 0;
    ffn_asked = 0;
    ffn_gave_up = 0;
@@ -1829,14 +1845,14 @@ static int sram_load(void)
     * exactly a 128 KiB image of what we just loaded — otherwise the first
     * flush must rewrite (and truncate) the whole thing before deltas mean
     * anything. */
-   sram_have_blk = 0;
+   FE_STORE_REL(sram_have_blk, 0);
    if (exact)
    {
       unsigned i;
       for (i = 0; i < SRAM_BLOCKS; i++)
          sram_blk_crc[i] = fe_crc32(0, (const uint8_t *)p + (size_t)i *
                                     SRAM_BLOCK, SRAM_BLOCK);
-      sram_have_blk = 1;
+      FE_STORE_REL(sram_have_blk, 1);
    }
    battery_load_failed = 0;
    return 0;
@@ -2494,7 +2510,7 @@ void *fe_host_battery_mem(size_t *size)
    if (gb_family)
       return NULL;
 #ifdef GBA_LINK
-   if (gba_sram_hold)
+   if (FE_LOAD_ACQ(gba_sram_hold))
       return NULL;      /* a GBA link session owns the battery image */
 #endif
    p = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
@@ -2513,7 +2529,7 @@ void fe_host_battery_changed(void)
    /* The core's own counter: it is what the fast-forward nudge and a rewind
     * buffer watch, and bumping it is what a write by the game does. */
    if (!gb_family && &backup_write_gen)
-      backup_write_gen++;
+      (void)__atomic_add_fetch(&backup_write_gen, 1, __ATOMIC_RELEASE);
 }
 
 /* ---- SRAM persistence (ADR-0020) ----------------------------------------
@@ -2576,12 +2592,12 @@ void fe_host_battery_changed(void)
 #define SBLK_WRITING  2
 
 static FILE    *sram_fp;            /* held open "r+b"; WRITER-owned */
-static volatile unsigned char sram_blk_state[SRAM_BLOCKS];
-static volatile int sram_full_req;  /* whole-image rewrite pending */
+static unsigned char sram_blk_state[SRAM_BLOCKS];
+static int sram_full_req;  /* whole-image rewrite pending */
 /* A delta write failed and its dirty set was discarded (sram_abandon_deltas):
  * the image in memory is NOT on disk and nothing is queued to put it there.
  * Cleared by the whole-image rewrite that makes the disk whole again. */
-static volatile int sram_retry_full;
+static int sram_retry_full;
 
 /* Harness only (sleep_sim_sav, sram_exit_retry): PPSSPP never suspends, so
  * the one thing a real sleep does to the save path -- kill the handle the
@@ -2599,7 +2615,7 @@ static int sram_exit_retry = 1;
 #define SRAM_EXIT_RETRY  1
 #endif
 /* 0 = none, 1 = periodic scan due, 2 = forced (write even if clean). */
-static volatile int sram_scan_req;
+static int sram_scan_req;
 static uint64_t sram_last_scan_us;  /* writer-owned scan cadence */
 
 static const fe_host_io *host_io;   /* NULL = ADR-0020 synchronous path */
@@ -2642,7 +2658,7 @@ static int sram_scan(int force_write);
 
 void fe_host_set_io(const fe_host_io *io)
 {
-   host_io = io;
+   FE_STORE_REL(host_io, io);
    if (io)
    {
       /* Start the writer's scan clock now, so the first sweep lands one
@@ -2656,7 +2672,7 @@ static unsigned sram_pending(void)
 {
    unsigned i, n = 0;
    for (i = 0; i < SRAM_BLOCKS; i++)
-      if (sram_blk_state[i] != SBLK_CLEAN)
+      if (FE_LOAD_ACQ(sram_blk_state[i]) != SBLK_CLEAN)
          n++;
    return n;
 }
@@ -2672,8 +2688,8 @@ static void sram_recover_interrupted_writes(void)
 {
    unsigned i;
    for (i = 0; i < SRAM_BLOCKS; i++)
-      if (sram_blk_state[i] == SBLK_WRITING)
-         sram_blk_state[i] = SBLK_DIRTY;
+      if (FE_LOAD_ACQ(sram_blk_state[i]) == SBLK_WRITING)
+         FE_STORE_REL(sram_blk_state[i], SBLK_DIRTY);
 }
 
 static void sram_close(void)
@@ -2709,11 +2725,11 @@ static void sram_abandon_deltas(const char *why)
    unsigned i;
    fe_log("sram_flush: %s — falling back to a full rewrite", why);
    sram_close();
-   sram_have_blk = 0;
+   FE_STORE_REL(sram_have_blk, 0);
    for (i = 0; i < SRAM_BLOCKS; i++)
-      sram_blk_state[i] = SBLK_CLEAN;
-   sram_full_req = 0;
-   sram_retry_full = 1;
+      FE_STORE_REL(sram_blk_state[i], SBLK_CLEAN);
+   FE_STORE_REL(sram_full_req, 0);
+   FE_STORE_REL(sram_retry_full, 1);
 }
 
 typedef struct
@@ -2781,13 +2797,13 @@ static int sram_drain_full(const uint8_t *p)
    if (slice > sram_run_blk_max)
       sram_run_blk_max = slice;
    for (i = 0; i < SRAM_BLOCKS; i++)
-      sram_blk_state[i] = SBLK_CLEAN;
+      FE_STORE_REL(sram_blk_state[i], SBLK_CLEAN);
    sram_run_bytes += FE_SRAM_SIZE;
    sram_run_blocks = SRAM_BLOCKS;
    sram_run_full = 1;
-   sram_have_blk = 1;
-   sram_full_req = 0;
-   sram_retry_full = 0;
+   FE_STORE_REL(sram_have_blk, 1);
+   FE_STORE_REL(sram_full_req, 0);
+   FE_STORE_REL(sram_retry_full, 0);
    return 0;
 }
 
@@ -2833,7 +2849,7 @@ static int sram_drain(uint32_t budget_us)
     * to patch (first flush of a run, or after an I/O failure).  It happens
     * at most once per run and normally before any session is up — but it is
     * still 128 KiB, so it too runs here, on whichever thread is draining. */
-   if (sram_full_req)
+   if (FE_LOAD_ACQ(sram_full_req))
    {
       if (sram_drain_full(p) != 0)
          return -1;
@@ -2858,12 +2874,14 @@ static int sram_drain(uint32_t budget_us)
       for (i = 0; i < SRAM_BLOCKS; i++)
       {
          uint64_t b0, bd;
-         if (sram_blk_state[i] != SBLK_DIRTY)
-            continue;
+         unsigned char expected = SBLK_DIRTY;
          /* Take the block, then copy it.  Anything the game writes from
           * here on re-raises DIRTY and the compare-and-clear below fails,
           * so the next pass comes back for it. */
-         sram_blk_state[i] = SBLK_WRITING;
+         if (!__atomic_compare_exchange_n(&sram_blk_state[i], &expected,
+                                          SBLK_WRITING, 0,
+                                          __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            continue;
          memcpy(sram_stage, p + (size_t)i * SRAM_BLOCK, SRAM_BLOCK);
 
          b0 = host.time_us ? host.time_us() : 0;
@@ -2882,8 +2900,10 @@ static int sram_drain(uint32_t budget_us)
 
          /* CRC the STAGED bytes — i.e. exactly what is now on disk. */
          sram_blk_crc[i] = fe_crc32(0, sram_stage, SRAM_BLOCK);
-         if (sram_blk_state[i] == SBLK_WRITING)
-            sram_blk_state[i] = SBLK_CLEAN;   /* still ours: it is clean */
+         expected = SBLK_WRITING;
+         (void)__atomic_compare_exchange_n(&sram_blk_state[i], &expected,
+                                           SBLK_CLEAN, 0,
+                                           __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE); /* still ours: it is clean */
          sram_run_bytes += SRAM_BLOCK;
          sram_run_blocks++;
 
@@ -2958,12 +2978,12 @@ delta_done:
 
 /* The writer thread's entry point.  No budget: nothing here is on a frame
  * path, so it drains everything it finds in one pass. */
-static volatile int sram_io_busy;
+static int sram_io_busy;
 static int sram_service_io_body(void)
 {
    uint64_t now = host.time_us ? host.time_us() : 0;
    unsigned before;
-   int req = sram_scan_req;
+   int req = FE_LOAD_ACQ(sram_scan_req);
 
    if (battery_load_failed)
       return 0;
@@ -2994,25 +3014,31 @@ static int sram_service_io_body(void)
           * become the generation that is later published as on disk
           * (review S5).  Whoever releases the hold asks for a scan. */
 #ifdef GBA_LINK
-         int held = gba_sram_hold;
+         int held = FE_LOAD_ACQ(gba_sram_hold);
 #else
          int held = 0;
 #endif
          (void)sram_scan(req == 2);
-         sram_scan_req = 0;      /* clear only after the scan has marked */
+         /* clear only after the scan has marked; preserve newer requests */
+         if (req)
+         {
+            int expected = req;
+            (void)__atomic_compare_exchange_n(&sram_scan_req, &expected, 0, 0,
+                                              __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+         }
 #ifdef GBA_LINK
-         held |= gba_sram_hold;
+         held |= FE_LOAD_ACQ(gba_sram_hold);
 #endif
          if (!held)
          {
-            sram_scan_gen = gen;
-            sram_scan_gen_valid = 1;
+            FE_STORE_REL(sram_scan_gen, gen);
+            FE_STORE_REL(sram_scan_gen_valid, 1);
          }
       }
    }
 
    before = sram_pending();
-   if (sram_full_req || before)
+   if (FE_LOAD_ACQ(sram_full_req) || before)
    {
       sram_run_threaded = 1;
       if (sram_drain(0) != 0)
@@ -3021,9 +3047,9 @@ static int sram_service_io_body(void)
    /* Everything the last scan asked for is on disk, and the on-disk image is
     * a trustworthy baseline (a failed write clears sram_have_blk until a
     * full rewrite succeeds): publish the generation that scan saw. */
-   if (sram_scan_gen_valid && sram_have_blk && !sram_full_req &&
-       !sram_pending())
-      sram_disk_gen = sram_scan_gen;
+   if (FE_LOAD_ACQ(sram_scan_gen_valid) && FE_LOAD_ACQ(sram_have_blk) &&
+       !FE_LOAD_ACQ(sram_full_req) && !sram_pending())
+      FE_STORE_REL(sram_disk_gen, FE_LOAD_ACQ(sram_scan_gen));
    { unsigned after = sram_pending();
      return (int)(before > after ? before - after : 0); }
 }
@@ -3031,9 +3057,9 @@ static int sram_service_io_body(void)
 int fe_host_sram_service_io(void)
 {
    int rc;
-   sram_io_busy = 1;
+   FE_STORE_REL(sram_io_busy, 1);
    rc = sram_service_io_body();
-   sram_io_busy = 0;
+   FE_STORE_REL(sram_io_busy, 0);
    return rc;
 }
 
@@ -3047,11 +3073,12 @@ void fe_host_sram_request_scan(void)
 {
    /* One read: this runs on the power callback's thread, and the main
     * thread clears host_io when it stops the writer (io_thread_stop). */
-   const fe_host_io *io = host_io;
+   const fe_host_io *io = FE_LOAD_ACQ(host_io);
+   int zero = 0;
    if (!io || gb_family || !host.save_path)
       return;
-   if (!sram_scan_req)
-      sram_scan_req = 1;
+   (void)__atomic_compare_exchange_n(&sram_scan_req, &zero, 1, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
    io->wake();
 }
 
@@ -3062,14 +3089,15 @@ void fe_host_sram_ff_nudge_enable(int on)
 
 int fe_host_sram_ff_nudge(int ff_active)
 {
+   const fe_host_io *io = FE_LOAD_ACQ(host_io);
    uint32_t gen, dgen;
    uint64_t now_us;
    int oldest_late, want_scan;
 
-   if (!host_io || gb_family || !&backup_write_gen || !host.save_path)
+   if (!io || gb_family || !&backup_write_gen || !host.save_path)
       return 0;
 
-   gen = backup_write_gen;
+   gen = FE_LOAD_ACQ(backup_write_gen);
    if (gen != ffn_seen_gen)
    {
       now_us = host.time_us ? host.time_us() : 0;
@@ -3097,7 +3125,7 @@ int fe_host_sram_ff_nudge(int ff_active)
    }
    if (!ffn_pending)
       return 0;
-   dgen = sram_disk_gen;
+   dgen = FE_LOAD_ACQ(sram_disk_gen);
    now_us = host.time_us ? host.time_us() : 0;
    if (dgen == gen)
    {
@@ -3130,7 +3158,7 @@ int fe_host_sram_ff_nudge(int ff_active)
    /* A link session owns the battery image and the writer looks at nothing
     * (gba_sram_hold): no request can be served, so none is made and main
     * does not sleep for one.  The release asks for the scan itself. */
-   if (gba_sram_hold)
+   if (FE_LOAD_ACQ(gba_sram_hold))
       return 0;
 #endif
    oldest_late = host.time_us &&
@@ -3187,10 +3215,14 @@ int fe_host_sram_ff_nudge(int ff_active)
     * schedules): ask for a scan now rather than at its 5 s cadence -- once
     * per request, not once per nudge.  Never downgrade a pending forced
     * request. */
-   want_scan = !sram_scan_gen_valid || !sram_have_blk ||
-               (int32_t)(sram_scan_gen - ffn_ask_gen) < 0;
-   if (want_scan && !sram_scan_req)
-      sram_scan_req = 1;
+   want_scan = !FE_LOAD_ACQ(sram_scan_gen_valid) || !FE_LOAD_ACQ(sram_have_blk) ||
+               (int32_t)(FE_LOAD_ACQ(sram_scan_gen) - ffn_ask_gen) < 0;
+   if (want_scan)
+   {
+      int zero = 0;
+      (void)__atomic_compare_exchange_n(&sram_scan_req, &zero, 1, 0,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+   }
    if (!ff_active)
    {
       /* Normal speed: ask, do not wait.  The writer is woken again every
@@ -3198,7 +3230,7 @@ int fe_host_sram_ff_nudge(int ff_active)
        * late write, a write that failed and needs the whole-image
        * rewrite). */
       ffn_next_frame = frame_count + SRAM_FF_SETTLE_FRAMES;
-      host_io->wake();
+      io->wake();
       return 0;
    }
    ffn_next_frame = frame_count + SRAM_FF_NUDGE_EVERY;
@@ -3206,8 +3238,8 @@ int fe_host_sram_ff_nudge(int ff_active)
    ffn_yields++;
    {
       uint64_t t0 = host.time_us ? host.time_us() : 0;
-      host_io->wake();
-      host_io->yield();
+      io->wake();
+      io->yield();
       if (t0)
          ffn_yield_us += host.time_us() - t0;
    }
@@ -3227,9 +3259,9 @@ void fe_host_sram_service(void)
          (void)gb_save_flush_periodic();
       return;
    }
-   if (host_io)
+   if (FE_LOAD_ACQ(host_io))
       return;              /* the writer thread owns the file (ADR-0025) */
-   if (sram_pending() || sram_full_req)
+   if (sram_pending() || FE_LOAD_ACQ(sram_full_req))
       sram_drain(SRAM_FLUSH_BUDGET_US);
 }
 
@@ -3240,6 +3272,7 @@ void fe_host_sram_service(void)
  * file with blocks still pending. */
 static int sram_sync_checked(void)
 {
+   const fe_host_io *io;
    if (battery_load_failed)
       return -1;
    if (gb_family)
@@ -3250,16 +3283,17 @@ static int sram_sync_checked(void)
        * needs no memory-stick write at all. */
       return gb_save_flush(0);
    }
-   if (!host_io)
+   io = FE_LOAD_ACQ(host_io);
+   if (!io)
    {
       /* Synchronous ownership means the async writer has stopped.  Recover
        * its interrupted block before draining; sram_drain deliberately only
        * takes DIRTY blocks, so leaving WRITING here would strand the save. */
       sram_recover_interrupted_writes();
-      if (sram_pending() || sram_full_req)
+      if (sram_pending() || FE_LOAD_ACQ(sram_full_req))
       {
          if (sram_drain(0) != 0)
-            sram_full_req = 1;   /* retry from a whole-image write */
+            FE_STORE_REL(sram_full_req, 1); /* retry from a whole-image write */
       }
       /* A FAILED DELTA WRITE MUST NOT END THE STORY HERE.
        *
@@ -3280,12 +3314,14 @@ static int sram_sync_checked(void)
        * So finish it now, with the rewrite the next scan would have asked
        * for: a fresh open of the path, the whole image.  One attempt; if
        * the stick really is gone there is nothing more to do from here. */
-      if ((sram_retry_full || sram_full_req) && SRAM_EXIT_RETRY)
+      if ((FE_LOAD_ACQ(sram_retry_full) || FE_LOAD_ACQ(sram_full_req)) &&
+          SRAM_EXIT_RETRY)
       {
-         sram_full_req = 1;
+         FE_STORE_REL(sram_full_req, 1);
          (void)sram_drain(0);
       }
-      return sram_pending() || sram_full_req || sram_retry_full ? -1 : 0;
+      return sram_pending() || FE_LOAD_ACQ(sram_full_req) ||
+             FE_LOAD_ACQ(sram_retry_full) ? -1 : 0;
    }
    /* Async: the writer thread owns the file, so we must not touch it — we
     * wake it and YIELD until it is done.  Yielding is load-bearing, not
@@ -3298,19 +3334,20 @@ static int sram_sync_checked(void)
     * then drains synchronously and cannot fail to complete. */
    {
       int spins;
-      host_io->wake();
+      io->wake();
       for (spins = 0; spins < SRAM_SYNC_MAX_SPINS; spins++)
       {
          /* A pending SCAN counts as outstanding work: a forced flush must
           * not return before the scan that decides what to write has even
           * run (ADR-0026). */
-         if (!sram_io_busy && !sram_scan_req && !sram_pending() && !sram_full_req)
-            return sram_retry_full ? -1 : 0;
-         host_io->yield();
+         if (!FE_LOAD_ACQ(sram_io_busy) && !FE_LOAD_ACQ(sram_scan_req) &&
+             !sram_pending() && !FE_LOAD_ACQ(sram_full_req))
+            return FE_LOAD_ACQ(sram_retry_full) ? -1 : 0;
+         io->yield();
       }
    }
    fe_evt("sram_sync_timeout blocks=%u full=%d scan=%d", sram_pending(),
-          sram_full_req, sram_scan_req);
+          FE_LOAD_ACQ(sram_full_req), FE_LOAD_ACQ(sram_scan_req));
    return -1;
 }
 
@@ -3345,7 +3382,7 @@ static int sram_scan(int force_write)
    if (!p || !host.save_path)
       return 0;
 #ifdef GBA_LINK
-   if (gba_sram_hold && !gba_sram_quiescing)
+   if (FE_LOAD_ACQ(gba_sram_hold) && !FE_LOAD_ACQ(gba_sram_quiescing))
       return 0;         /* a GBA link session owns the battery image */
 #endif
 
@@ -3370,7 +3407,7 @@ static int sram_scan(int force_write)
     * the save persisted (review S4).  A failed delta write invalidates the
     * per-block baseline (sram_have_blk): scan on, to schedule the full
     * rewrite that is the only way to re-establish it. */
-   if (!force_write && sram_have_blk)
+   if (!force_write && FE_LOAD_ACQ(sram_have_blk))
    {
       for (i = 0; i < SRAM_BLOCKS; i++)
          if (crc_now[i] != sram_blk_crc[i])
@@ -3383,16 +3420,16 @@ static int sram_scan(int force_write)
    }
 
    sram_run_crc = crc;
-   sram_run_threaded = host_io ? 1 : 0;
+   sram_run_threaded = FE_LOAD_ACQ(host_io) ? 1 : 0;
 
-   if (!sram_have_blk)
+   if (!FE_LOAD_ACQ(sram_have_blk))
    {
       /* No trustworthy on-disk image to patch: one full rewrite.  Requested
        * here, PERFORMED by whoever drains — so with a writer thread even
        * this 128 KiB pass is off the emulation thread. */
-      sram_full_req = 1;
+      FE_STORE_REL(sram_full_req, 1);
       for (i = 0; i < SRAM_BLOCKS; i++)
-         sram_blk_state[i] = SBLK_CLEAN;
+         FE_STORE_REL(sram_blk_state[i], SBLK_CLEAN);
    }
    else
    {
@@ -3401,12 +3438,12 @@ static int sram_scan(int force_write)
        * block that is genuinely clean is already CLEAN. */
       for (i = 0; i < SRAM_BLOCKS; i++)
          if (crc_now[i] != sram_blk_crc[i])
-            sram_blk_state[i] = SBLK_DIRTY;
+            FE_STORE_REL(sram_blk_state[i], SBLK_DIRTY);
       /* force_write means "write even when clean" (round-trip tests), and
        * that contract predates the dirty map — honour it literally. */
       if (force_write && !sram_pending())
          for (i = 0; i < SRAM_BLOCKS; i++)
-            sram_blk_state[i] = SBLK_DIRTY;
+            FE_STORE_REL(sram_blk_state[i], SBLK_DIRTY);
    }
 
    return 1;
@@ -3414,6 +3451,7 @@ static int sram_scan(int force_write)
 
 int fe_host_sram_flush(int force_write)
 {
+   const fe_host_io *io;
    if (battery_load_failed)
       return -1;
    if (gb_family)
@@ -3422,10 +3460,18 @@ int fe_host_sram_flush(int force_write)
     * places the request.  A forced flush additionally waits for the whole
     * cycle — scan, then drain — to finish before returning, which is what
     * exit and the round-trip tests depend on. */
-   if (host_io)
+   io = FE_LOAD_ACQ(host_io);
+   if (io)
    {
-      sram_scan_req = force_write ? 2 : 1;
-      host_io->wake();
+      if (force_write)
+         FE_STORE_REL(sram_scan_req, 2);
+      else
+      {
+         int zero = 0;
+         (void)__atomic_compare_exchange_n(&sram_scan_req, &zero, 1, 0,
+                                           __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+      }
+      io->wake();
       if (force_write)
          fe_host_sram_sync();
       return 1;
@@ -3434,7 +3480,7 @@ int fe_host_sram_flush(int force_write)
    /* Synchronous (desktop, or sram_thread=0): ADR-0020's behaviour exactly.
     * Finish anything already in flight before re-scanning, so a forced
     * flush is always complete when it returns. */
-   if (sram_pending() || sram_full_req)
+   if (sram_pending() || FE_LOAD_ACQ(sram_full_req))
       (void)sram_drain(0);
    if (!sram_scan(force_write))
       return 0;
@@ -4132,34 +4178,38 @@ static int gba_session_mem_body(int up)
  * (gba_cable_start / gba_cable_close) is kept as it was. */
 static int gba_sram_hold_begin(void)
 {
-   int was = gba_sram_hold, rc;
+   int was = FE_LOAD_ACQ(gba_sram_hold), rc;
    if (was)
       return sram_sync_checked();
    /* The emulation thread is parked at its frame boundary. Finish the last
     * pre-link scan and write while its RAM is still live; only this phase
     * permits a scan under the hold. No session machine may start on failure. */
-   gba_sram_hold = 1;
-   gba_sram_quiescing = 1;
-   if (host_io)
-      sram_scan_req = 1;
+   FE_STORE_REL(gba_sram_quiescing, 1);
+   FE_STORE_REL(gba_sram_hold, 1);
+   if (FE_LOAD_ACQ(host_io))
+   {
+      int zero = 0;
+      (void)__atomic_compare_exchange_n(&sram_scan_req, &zero, 1, 0,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+   }
    else
       (void)sram_scan(0);
    rc = sram_sync_checked();
-   gba_sram_quiescing = 0;
+   FE_STORE_REL(gba_sram_quiescing, 0);
    if (rc == 0)
       rc = sram_sync_checked();
    if (rc != 0)
-      gba_sram_hold = was;
+      FE_STORE_REL(gba_sram_hold, was);
    return rc;
 }
 
 static int gba_session_mem(int up)
 {
-   int was = gba_sram_hold, rc;
+   int was = FE_LOAD_ACQ(gba_sram_hold), rc;
    if (gba_sram_hold_begin() != 0)
       return -3;
    rc = gba_session_mem_body(up);
-   gba_sram_hold = was;
+   FE_STORE_REL(gba_sram_hold, was);
    return rc;
 }
 
@@ -4260,7 +4310,7 @@ static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_s
    l.machines = m;
    l.core_mask = host.gba_core_mask;
    l.rom_sampled = gba_rom_sampled;
-   gba_sram_hold = 1;
+   FE_STORE_REL(gba_sram_hold, 1);
    gbl = fe_gblink_create(&p, &l);
    gbl_is_gba = gbl != NULL;
    gbl_ride_set = 0;
@@ -4271,7 +4321,7 @@ static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_s
    if (!gbl)
    {
       fe_evt("gblink_start FAILED reason=create");
-      gba_sram_hold = 0;
+      FE_STORE_REL(gba_sram_hold, 0);
       if (p.bulk_send && host.gb_bulk_enable)
          host.gb_bulk_enable(0);
       return -1;
@@ -4290,7 +4340,7 @@ static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_s
 
 static int gba_cable_start(int is_host, unsigned input_delay, int64_t rtc_seed)
 {
-   int was = gba_sram_hold, rc;
+   int was = FE_LOAD_ACQ(gba_sram_hold), rc;
    if (gbl)
       return -1;
 #ifdef REWIND
@@ -4303,7 +4353,7 @@ static int gba_cable_start(int is_host, unsigned input_delay, int64_t rtc_seed)
    }
    rc = gba_cable_start_body(is_host, input_delay, rtc_seed);
    if (rc != 0)
-      gba_sram_hold = was;
+      FE_STORE_REL(gba_sram_hold, was);
    return rc;
 }
 
@@ -4503,12 +4553,21 @@ static int pad_link_start(int is_host, unsigned input_delay, int64_t rtc_seed)
 static int pad_link_close(void)
 {
    const fe_gblink_machines *v = pad_v;
+   fe_gblink_progress pr;
    int ok, rc = 0, st = fe_gblink_state(gbl);
+   int err = fe_gblink_error(gbl);
+   int keep_host;
    const char *how = "restored";
+
+   fe_gblink_get_progress(gbl, &pr);
+   keep_host = fe_gblink_local_slot(gbl) == 0 && pr.ran &&
+               (err == FE_GBLINK_E_PEER_LOST ||
+                (err == FE_GBLINK_E_PEER_ABORT &&
+                 pr.peer_reason == FE_GBLINK_E_PEER_LOST));
 
    gblink_stats_evt();
    fe_evt("gblink_close state=%d error=%s t_ms=%llu", st,
-          fe_gblink_error_text(fe_gblink_error(gbl)),
+          fe_gblink_error_text(err),
           (unsigned long long)(host.time_us ? host.time_us() / 1000u : 0));
    {
       fe_gblink_stats ss;
@@ -4517,6 +4576,8 @@ static int pad_link_close(void)
              "bad=%u rate=%u", ss.bulk_chunk, ss.bulk_sent, ss.bulk_resent,
              ss.bulk_rx, ss.bulk_dup, ss.bulk_bad, ss.bulk_rate);
    }
+   if (keep_host && fe_padpair_keep_host)
+      fe_padpair_keep_host(v);
    fe_gblink_destroy(gbl);        /* the machines' stop: the own game back */
    gbl = NULL;
    gbl_pad = 0;
@@ -4539,6 +4600,8 @@ static int pad_link_close(void)
    }
    else if (st == FE_GBLINK_DONE)
       how = "live_end";
+   else if (keep_host)
+      how = "carry_on";
    FE_EVT_ONLY(how);
    fe_evt("gblink_resume how=%s rc=%d t_ms=%llu", how, rc,
           (unsigned long long)(host.time_us ? host.time_us() / 1000u : 0));
@@ -4867,9 +4930,9 @@ void fe_host_session_reset(void)
    /* The save writer's requests belong to the game that was just shut down
     * (its flush and sync have run, the writer thread is stopped): a rewrite
     * or scan still flagged must not be carried out on the next game. */
-   sram_full_req = 0;
-   sram_retry_full = 0;
-   sram_scan_req = 0;
+   FE_STORE_REL(sram_full_req, 0);
+   FE_STORE_REL(sram_retry_full, 0);
+   FE_STORE_REL(sram_scan_req, 0);
 }
 
 int fe_host_boot(const fe_host_config *cfg)
@@ -5889,7 +5952,7 @@ static int gba_cable_close(void)
        * the hold is released, below. */
       memcpy(sram, bat, 0x20000);
       if (&backup_write_gen)
-         backup_write_gen++;
+         (void)__atomic_add_fetch(&backup_write_gen, 1, __ATOMIC_RELEASE);
    }
    free(state);
    free(bat);
@@ -5897,7 +5960,7 @@ static int gba_cable_close(void)
    free(gba_prelink_sram);
    gbl_prelink_state = NULL;
    gba_prelink_sram = NULL;
-   gba_sram_hold = 0;
+   FE_STORE_REL(gba_sram_hold, 0);
    fe_host_sram_request_scan();   /* the committed save goes to the stick now */
    FE_EVT_ONLY(how);
    fe_evt("gblink_resume how=%s rc=%d t_ms=%llu", how, rc,
@@ -7537,30 +7600,37 @@ static int rw_denied_now;
 static uint32_t rw_flush_engage_max_us;
 static int rw_flush_help(int engage)
 {
+   const fe_host_io *io = FE_LOAD_ACQ(host_io);
+   uint32_t gen;
    uint64_t t0;
-   if (!host_io || gb_family || !&backup_write_gen || !host.save_path)
+   if (!io || gb_family || !&backup_write_gen || !host.save_path)
       return 0;
-   if (sram_disk_gen == backup_write_gen)
+   gen = FE_LOAD_ACQ(backup_write_gen);
+   if (FE_LOAD_ACQ(sram_disk_gen) == gen)
       return 0;
-   if (!sram_scan_gen_valid || sram_scan_gen != backup_write_gen || !sram_have_blk)
-      if (!sram_scan_req)
-         sram_scan_req = 1;
+   if (!FE_LOAD_ACQ(sram_scan_gen_valid) ||
+       FE_LOAD_ACQ(sram_scan_gen) != gen || !FE_LOAD_ACQ(sram_have_blk))
+   {
+      int zero = 0;
+      (void)__atomic_compare_exchange_n(&sram_scan_req, &zero, 1, 0,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+   }
    t0 = host.time_us ? host.time_us() : 0;
    if (!engage)
    {
       rw_flush_tick_yields++;
-      host_io->wake();
-      host_io->yield();
+      io->wake();
+      io->yield();
       return 1;
    }
    rw_flush_engage_waits++;
    {
       unsigned n = 0;
-      while (sram_disk_gen != backup_write_gen && n++ < 2000 &&
-             (!t0 || host.time_us() - t0 < 250000u))
+      while (FE_LOAD_ACQ(sram_disk_gen) != FE_LOAD_ACQ(backup_write_gen) &&
+             n++ < 2000 && (!t0 || host.time_us() - t0 < 250000u))
       {
-         host_io->wake();
-         host_io->yield();
+         io->wake();
+         io->yield();
       }
    }
    if (t0)
@@ -7569,7 +7639,7 @@ static int rw_flush_help(int engage)
       if (d > rw_flush_engage_max_us)
          rw_flush_engage_max_us = d;
       fe_evt("rewind_flush_wait ms=%u on_disk=%d", (unsigned)(d / 1000u),
-             sram_disk_gen == backup_write_gen);
+             FE_LOAD_ACQ(sram_disk_gen) == FE_LOAD_ACQ(backup_write_gen));
    }
    return 1;
 }
@@ -8213,6 +8283,14 @@ static int gb_ahead_frame(uint32_t pad)
    ahead_mute_video = 0;
    if (r != 0)
       fe_evt("gb_run_frame FAILED frame=%u", frame_count);
+   if (gb_prn_active())
+   {
+      /* A GB Printer transfer started on this real frame: suspend run-ahead
+       * immediately rather than letting the quiet look-ahead frame receive 0xFF. */
+      gb_skip_frame = 1;
+      gb_video_frame(NULL, NULL);
+      return 0;
+   }
    if (gbcore_ahead_save(gb_core, buf, n) != (long)n)
    {
       /* cannot happen (the size was just asked for): the real frame stands, shown as a skipped one */
@@ -8250,7 +8328,8 @@ static int gb_ahead_frame(uint32_t pad)
 
 int fe_host_ahead_possible(void)
 {
-   return gb_core && !ahead_latched_off && !gb_dual && !gbl && !gbl_hold && !gbl_pad && gbcore_ahead_size(gb_core) != 0;
+   return gb_core && !ahead_latched_off && !gb_dual && !gbl && !gbl_hold &&
+          !gbl_pad && !gb_prn_active() && gbcore_ahead_size(gb_core) != 0;
 }
 
 void fe_host_ahead_set(int want)
@@ -8325,8 +8404,8 @@ static void run_frame(void)
          fe_cheats_gb_frame(gb_cheat_poke, gb_core);
 #endif
          gb_prn_frame();              /* once a real frame, run-ahead or not */
-         if (ahead_req && !ahead_latched_off && !gb_skip_frame && !gbl_hold && !gb_local_on &&
-             gb_ahead_frame(pad) == 0)
+         if (ahead_req && !ahead_latched_off && !gb_skip_frame && !gbl_hold &&
+             !gb_local_on && !gb_prn_active() && gb_ahead_frame(pad) == 0)
             ;
          else
          {
@@ -8464,7 +8543,8 @@ static void run_frame(void)
     * owns the scan cadence as well as the writes, so the emulation thread
     * pays exactly nothing for the save path. */
    fe_host_sram_service();
-   if (!host_io && !gb_family && (frame_count % SRAM_CHECK_INTERVAL) == 0)
+   if (!FE_LOAD_ACQ(host_io) && !gb_family &&
+       (frame_count % SRAM_CHECK_INTERVAL) == 0)
       fe_host_sram_flush(0);   /* GB: fe_host_sram_service owns its cadence */
    if ((frame_count % hb_every) == 0)
    {
@@ -8895,13 +8975,13 @@ void fe_host_shutdown(void)
       free(gb_save_buffer);
       gb_save_buffer = NULL;
       gb_save_capacity = 0;
-      if (!gb_io_req)
+      if (!FE_LOAD_ACQ(gb_io_req))
       {
          free(gb_io_buffer);
          gb_io_buffer = NULL;
          gb_io_capacity = 0;
       }
-      gb_io_failed = 0;
+      FE_STORE_REL(gb_io_failed, 0);
       gb_dirty_since = 0;
       gb_save_crc_valid = 0;
       gb_save_file_len = -1;

@@ -122,11 +122,19 @@ const char *plat_app_dir(void)
    return "app0:";
 }
 
+static int hex_nibble(char c)
+{
+   if (c >= '0' && c <= '9') return c - '0';
+   if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+   if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+   return -1;
+}
+
 int plat_launch_param(char *out, size_t cap)
 {
    static char buf[1024];
    const char *p = NULL, *q;
-   size_t n;
+   size_t n, i, o = 0;
 
    if (!out || !cap)
       return -1;
@@ -150,10 +158,34 @@ int plat_launch_param(char *out, size_t cap)
       n--;
    if (!n)
       return -1;
-   if (n >= cap)
-      return -2;                       /* there is one, but it does not fit */
-   memcpy(out, p, n);
-   out[n] = '\0';
+   /* Decode %XX escapes (e.g. RetroFlow paths with %20) without treating '+' as space. */
+   for (i = 0; i < n; i++)
+   {
+      unsigned char ch = (unsigned char)p[i];
+      if (ch == '%' && i + 2 < n)
+      {
+         int hi = hex_nibble(p[i + 1]);
+         int lo = hex_nibble(p[i + 2]);
+         if (hi >= 0 && lo >= 0)
+         {
+            unsigned char val = (unsigned char)((hi << 4) | lo);
+            if (val != 0)
+            {
+               ch = val;
+               i += 2;
+            }
+         }
+      }
+      if (o + 1 >= cap)
+      {
+         out[0] = '\0';
+         return -2;                       /* there is one, but it does not fit */
+      }
+      out[o++] = (char)ch;
+   }
+   if (!o)
+      return -1;
+   out[o] = '\0';
    return 0;
 }
 
@@ -693,24 +725,38 @@ int plat_net_join(uint32_t timeout_us)
 static SceUID g_job_thid = -1;
 static void (*g_job_fn)(void *);
 static void *g_job_arg;
+static int g_job_done;
 
 static int job_entry(SceSize args, void *argp)
 {
    (void)args; (void)argp;
    g_job_fn(g_job_arg);
+   __atomic_store_n(&g_job_done, 1, __ATOMIC_RELEASE);
    return 0;
+}
+
+int plat_job_busy(void)
+{
+   if (g_job_thid < 0)
+      return 0;
+   if (!__atomic_load_n(&g_job_done, __ATOMIC_ACQUIRE))
+      return 1;
+   return !plat_job_join(0);
 }
 
 int plat_job_start(void (*fn)(void *), void *arg)
 {
    if (g_job_thid >= 0)
    {
+      if (!__atomic_load_n(&g_job_done, __ATOMIC_ACQUIRE))
+         return -1;
       /* a finished one may still be there to be collected */
       if (!plat_job_join(1000))
          return -1;
    }
    g_job_fn = fn;
    g_job_arg = arg;
+   __atomic_store_n(&g_job_done, 0, __ATOMIC_RELEASE);
    /* 128 KiB: the deflate's tables are on the heap, its frames are small */
    g_job_thid = sceKernelCreateThread("gbadhoc_job", job_entry, PRIO_BG,
                                       0x20000, 0, 0, NULL);
@@ -865,6 +911,23 @@ void plat_pad_read(plat_pad *pad)
       return;
    }
    pad->buttons = face_buttons(d.buttons);  /* PLAT_BTN_* are SCE_CTRL_* */
+   pad->lx = d.lx;
+   pad->ly = d.ly;
+   pad->rx = d.rx;
+   pad->ry = d.ry;
+}
+
+void plat_pad_read_raw(plat_pad *pad)
+{
+   SceCtrlData d;
+   memset(&d, 0, sizeof(d));
+   if (sceCtrlPeekBufferPositive(0, &d, 1) < 0)
+   {
+      pad->buttons = 0;
+      pad->lx = pad->ly = pad->rx = pad->ry = 128;
+      return;
+   }
+   pad->buttons = d.buttons;
    pad->lx = d.lx;
    pad->ly = d.ly;
    pad->rx = d.rx;
@@ -1077,12 +1140,16 @@ int plat_camera_open(int back)
    }
    memset(&info, 0, sizeof(info));
    info.size = sizeof(info);
-   info.format = SCE_CAMERA_FORMAT_ABGR;
+   info.format = SCE_CAMERA_FORMAT_YUV420_PLANE;
    info.resolution = SCE_CAMERA_RESOLUTION_176_144;
    info.framerate = SCE_CAMERA_FRAMERATE_30_FPS;
-   info.sizeIBase = CAM_W * CAM_H * 4;
+   info.sizeIBase = CAM_W * CAM_H;
+   info.sizeUBase = (CAM_W / 2) * (CAM_H / 2);
+   info.sizeVBase = (CAM_W / 2) * (CAM_H / 2);
    info.pitch = 0;
    info.pIBase = g_cam_buf;
+   info.pUBase = (uint8_t *)g_cam_buf + info.sizeIBase;
+   info.pVBase = (uint8_t *)g_cam_buf + info.sizeIBase + info.sizeUBase;
    rc = sceCameraOpen(back ? SCE_CAMERA_DEVICE_BACK : SCE_CAMERA_DEVICE_FRONT, &info);
    if (rc < 0)
    {
@@ -1109,7 +1176,7 @@ int plat_camera_read(uint8_t *out, int mirror)
    static uint8_t y[CAM_W * CAM_H];
    SceCameraRead rd;
    const uint8_t *p = (const uint8_t *)g_cam_buf;
-   int i, rc;
+   int rc;
    if (g_cam_dev < 0 || !p)
       return -1;
    memset(&rd, 0, sizeof(rd));
@@ -1125,9 +1192,8 @@ int plat_camera_read(uint8_t *out, int mirror)
    }
    g_cam_miss = 0;
    g_cam_got = 1;
-   /* bytes R, G, B, A in memory */
-   for (i = 0; i < CAM_W * CAM_H; i++, p += 4)
-      y[i] = (uint8_t)((p[0] * 77 + p[1] * 150 + p[2] * 29) >> 8);
+   /* YUV420 planar: pIBase starts with CAM_W x CAM_H Y-luma bytes (pitch 0). */
+   sceClibMemcpy(y, p, sizeof(y));
    fe_gbcam_fit(y, CAM_W, CAM_H, CAM_W, mirror, out);
    return 0;
 }

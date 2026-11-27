@@ -32,15 +32,16 @@ static int gbpal_load(int v)
 static char cfg_path[256];
 
 #ifdef VITA
-/* SCREEN, TEXT SIZE and HIGH CONTRAST: one value for every console, the app
- * and both players, so they live in <root>/display.ini (the folder of
- * config.ini) which snes.bin and md.bin read too (playerkit/src/
+/* SCREEN, TEXT SIZE, HIGH CONTRAST, LANGUAGE, THEME and TAP MENU: shared across
+ * every console, the app and both players, so they live in <root>/display.ini
+ * (the folder of config.ini) which snes.bin and md.bin read too (playerkit/src/
  * pk_uiprefs.h is the same file from their side).  screen=auto|oled|lcd|pstv
  * text_size=normal|large  contrast=off|on  language=auto|en|es|fr|de|it|
- * pt-BR|ja|zh-Hans (i18n.h; xx-long is the pseudo-locale of the tests).  Written only when a value
- * changed, with the safe write of fe_ini_set. */
+ * pt-BR|ja|zh-Hans (i18n.h; xx-long is the pseudo-locale of the tests)
+ * theme=dark|light  tap_menu=on|off.  Written only when a value changed, with
+ * the safe write of fe_ini_set. */
 static const char *const ui_screen_tag[4] = { "auto", "oled", "lcd", "pstv" };
-static int g_ui_saved[4] = { -1, -1, -1, -1 };   /* what the file holds */
+static int g_ui_saved[6] = { -1, -1, -1, -1, -1, -1 }; /* what the file holds */
 
 static void ui_path(char *out, size_t n)
 {
@@ -82,7 +83,7 @@ void pcfg_language_apply(void)
 static void ui_prefs_load(void)
 {
    char path[300], v[24];
-   int i;
+   int i, have_theme = 0, have_tap = 0;
    ui_path(path, sizeof(path));
    g_pcfg.screen = 0;
    g_pcfg.text_large = 0;
@@ -98,10 +99,38 @@ static void ui_prefs_load(void)
       g_pcfg.text_large = !strcmp(v, "large") ? 1 : 0;
    if (ui_get_lower(path, "contrast", v, sizeof(v)))
       g_pcfg.contrast = !strcmp(v, "on") || !strcmp(v, "1") ? 1 : 0;
+   if (ui_get_lower(path, "theme", v, sizeof(v)))
+   {
+      if (!strcmp(v, "light") || !strcmp(v, "1"))
+      {
+         g_pcfg.theme = 1;
+         have_theme = 1;
+      }
+      else if (!strcmp(v, "dark") || !strcmp(v, "0"))
+      {
+         g_pcfg.theme = 0;
+         have_theme = 1;
+      }
+   }
+   if (ui_get_lower(path, "tap_menu", v, sizeof(v)))
+   {
+      if (!strcmp(v, "off") || !strcmp(v, "0"))
+      {
+         g_pcfg.tap_menu = 0;
+         have_tap = 1;
+      }
+      else if (!strcmp(v, "on") || !strcmp(v, "1"))
+      {
+         g_pcfg.tap_menu = 1;
+         have_tap = 1;
+      }
+   }
    g_ui_saved[0] = g_pcfg.screen;
    g_ui_saved[1] = g_pcfg.text_large;
    g_ui_saved[2] = g_pcfg.contrast;
    g_ui_saved[3] = g_pcfg.language;
+   g_ui_saved[4] = have_theme ? g_pcfg.theme : 0;
+   g_ui_saved[5] = have_tap ? g_pcfg.tap_menu : 1;
    pcfg_language_apply();
 }
 
@@ -114,18 +143,25 @@ static void ui_prefs_save(void)
    g_pcfg.contrast = g_pcfg.contrast ? 1 : 0;
    if (g_pcfg.language < 0 || g_pcfg.language >= I18N_LANGS)
       g_pcfg.language = I18N_AUTO;
+   g_pcfg.theme = g_pcfg.theme ? 1 : 0;
+   g_pcfg.tap_menu = g_pcfg.tap_menu ? 1 : 0;
    if (g_ui_saved[0] == g_pcfg.screen && g_ui_saved[1] == g_pcfg.text_large &&
-       g_ui_saved[2] == g_pcfg.contrast && g_ui_saved[3] == g_pcfg.language)
+       g_ui_saved[2] == g_pcfg.contrast && g_ui_saved[3] == g_pcfg.language &&
+       g_ui_saved[4] == g_pcfg.theme && g_ui_saved[5] == g_pcfg.tap_menu)
       return;
    ui_path(path, sizeof(path));
    fe_ini_set(path, "screen", ui_screen_tag[g_pcfg.screen]);
    fe_ini_set(path, "text_size", g_pcfg.text_large ? "large" : "normal");
    fe_ini_set(path, "contrast", g_pcfg.contrast ? "on" : "off");
    fe_ini_set(path, "language", i18n_code[g_pcfg.language]);
+   fe_ini_set(path, "theme", g_pcfg.theme ? "light" : "dark");
+   fe_ini_set(path, "tap_menu", g_pcfg.tap_menu ? "on" : "off");
    g_ui_saved[0] = g_pcfg.screen;
    g_ui_saved[1] = g_pcfg.text_large;
    g_ui_saved[2] = g_pcfg.contrast;
    g_ui_saved[3] = g_pcfg.language;
+   g_ui_saved[4] = g_pcfg.theme;
+   g_ui_saved[5] = g_pcfg.tap_menu;
 }
 #endif
 
@@ -304,6 +340,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
       g_pcfg.ff_audio = g_pcfg.ff_audio ? 1 : 0;
    g_pcfg.theme       = (int)fe_ini_get_int(cfg_path, "theme", 0) ? 1 : 0;
 #ifdef VITA
+   g_pcfg.tap_menu    = (int)fe_ini_get_int(cfg_path, "tap_menu", 1) ? 1 : 0;
    ui_prefs_load();
 #endif
    g_pcfg.ui_shell    = (int)fe_ini_get_int(cfg_path, "ui_shell", 0) ? 1 : 0;
@@ -318,8 +355,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.ab_buttons  = (int)fe_ini_get_int(cfg_path, "ab_buttons", -1);
    if (g_pcfg.ab_buttons < -1 || g_pcfg.ab_buttons > 1)
       g_pcfg.ab_buttons = -1;
-   g_pcfg.stick_rewind = (int)fe_ini_get_int(cfg_path, "stick_rewind", 0) ? 1 : 0;
-   g_pcfg.tap_menu = (int)fe_ini_get_int(cfg_path, "tap_menu", 1) ? 1 : 0;
+   g_pcfg.stick_rewind = (int)fe_ini_get_int(cfg_path, "stick_rewind", 1) ? 1 : 0;
    g_pcfg.rear_touch = (int)fe_ini_get_int(cfg_path, "rear_touch", 0) ? 1 : 0;
    g_pcfg.update_check = (int)fe_ini_get_int(cfg_path, "update_check", 1) ? 1 : 0;
    g_pcfg.ws_blend = (int)fe_ini_get_int(cfg_path, "ws_blend", 1) ? 1 : 0;
@@ -352,10 +388,14 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
 #endif
    g_pcfg.rtc_realtime = (int)fe_ini_get_int(cfg_path, "rtc_realtime", 1) ? 1 : 0;
    {
-      /* A value we do not know is OFF: the stick must never start doing
-       * something the player did not ask for. */
+      /* A value we do not know is OFF (or on Vita, d-pad move by default,
+       * off when chosen for a drifting stick). */
       char sv[24];
+#ifdef VITA
+      g_pcfg.stick = CTL_STICK_MOVE;
+#else
       g_pcfg.stick = CTL_STICK_OFF;
+#endif
       if (fe_ini_get(cfg_path, "stick", sv, sizeof(sv)) &&
           ctl_stick_parse(sv, &g_pcfg.stick) != 0)
       {
@@ -879,9 +919,15 @@ void pcfg_save(void)
       /* Written only once changed (or already in the file): a player who
        * never touches the stick keeps the config.ini 3.5.0 wrote. */
       char sv[24];
+#ifdef VITA
+      if (g_pcfg.stick != CTL_STICK_MOVE ||
+          fe_ini_get(cfg_path, "stick", sv, sizeof(sv)))
+         fe_ini_set(cfg_path, "stick", ctl_stick_name(g_pcfg.stick));
+#else
       if (g_pcfg.stick != CTL_STICK_OFF ||
           fe_ini_get(cfg_path, "stick", sv, sizeof(sv)))
          fe_ini_set(cfg_path, "stick", ctl_stick_name(g_pcfg.stick));
+#endif
       if (g_pcfg.stick_warned ||
           fe_ini_get(cfg_path, "stick_warned", sv, sizeof(sv)))
          fe_ini_set_int(cfg_path, "stick_warned", g_pcfg.stick_warned);

@@ -1,6 +1,7 @@
 /* artfetch.c -- see artfetch.h. */
 #include "artfetch.h"
 
+#include <ctype.h>
 #include <stdint.h>
 #include <dirent.h>
 #include <errno.h>
@@ -21,6 +22,7 @@
 #include "gamedb.h"
 #include "plat.h"
 #include "stb_image.h"
+#include "sz_rom.h"
 
 #define AF_NAME_CAP   256
 #define AF_PATH_CAP   600
@@ -626,7 +628,7 @@ static void url_name(const char *s, char *out, size_t cap)
    out[n] = '\0';
 }
 
-enum { GET_OK = 0, GET_MISSING = 1, GET_FAILED = -1 };
+enum { GET_OK = 0, GET_MISSING = 1, GET_FAILED = -1, GET_REDIRECT = 2 };
 
 /* The server's address, looked up once: a pass over a library asks it for
  * thousands of pictures, and each lookup was a DNS query on the console.
@@ -636,41 +638,145 @@ static struct sockaddr_storage g_addr;
 static socklen_t g_addr_len;
 static char g_addr_key[300];
 
-/* GET http://g_host:g_port/<path>.  GET_OK with the body in g_body
- * (*len bytes), GET_MISSING for 404/410, GET_FAILED otherwise (no network,
- * a timeout, anything else). */
-static int http_get(const char *path, size_t *len)
+static void extract_location(const char *hdr, char *loc, size_t cap)
 {
-   char req[1400], port[8], *hdr_end;
+   const char *p = hdr;
+   loc[0] = '\0';
+   while (p && *p)
+   {
+      const char *eol = strstr(p, "\r\n");
+      if (!strncasecmp(p, "location:", 9))
+      {
+         const char *v = p + 9;
+         size_t n;
+         while (*v == ' ' || *v == '\t')
+            v++;
+         n = eol ? (size_t)(eol - v) : strlen(v);
+         while (n > 0 && (v[n - 1] == ' ' || v[n - 1] == '\t'))
+            n--;
+         if (n >= cap)
+            n = cap - 1;
+         memcpy(loc, v, n);
+         loc[n] = '\0';
+         return;
+      }
+      if (!eol)
+         break;
+      p = eol + 2;
+   }
+}
+
+static int apply_redirect(const char *loc, char *host, size_t hcap, int *port,
+                          char *path, size_t pcap)
+{
+   char next_path[1400];
+   if (!loc || !loc[0])
+      return -1;
+   if (!strncasecmp(loc, "https://", 8))
+      return -1;
+   if (!strncasecmp(loc, "http://", 7))
+   {
+      const char *hp = loc + 7;
+      const char *slash = strchr(hp, '/');
+      const char *colon = NULL, *p;
+      size_t hlen;
+      int next_port = 80;
+      const char *hend = slash ? slash : hp + strlen(hp);
+      for (p = hp; p < hend; p++)
+         if (*p == ':')
+            colon = p;
+      hlen = (size_t)((colon ? colon : hend) - hp);
+      if (hlen == 0 || hlen >= hcap)
+         return -1;
+      if (colon)
+      {
+         char *ep = NULL;
+         long pv = strtol(colon + 1, &ep, 10);
+         if (ep != hend || pv <= 0 || pv > 65535)
+            return -1;
+         next_port = (int)pv;
+      }
+      memcpy(host, hp, hlen);
+      host[hlen] = '\0';
+      *port = next_port;
+      snprintf(next_path, sizeof(next_path), "%s", slash ? slash : "/");
+   }
+   else if (loc[0] == '/')
+      snprintf(next_path, sizeof(next_path), "%s", loc);
+   else
+   {
+      const char *slash = strrchr(path, '/');
+      size_t prefix = slash ? (size_t)(slash - path + 1) : 0;
+      size_t llen = strlen(loc);
+      if (prefix)
+      {
+         if (prefix + llen >= sizeof(next_path))
+            return -1;
+         memcpy(next_path, path, prefix);
+         memcpy(next_path + prefix, loc, llen + 1);
+      }
+      else
+      {
+         if (1 + llen >= sizeof(next_path))
+            return -1;
+         next_path[0] = '/';
+         memcpy(next_path + 1, loc, llen + 1);
+      }
+   }
+   if (strlen(next_path) >= pcap)
+      return -1;
+   snprintf(path, pcap, "%s", next_path);
+   return 0;
+}
+
+static int http_get_once(const char *host, int portnum, const char *path,
+                         size_t *len, char *loc, size_t loc_cap)
+{
+   char req[2048], port[8], *hdr_end;
    struct addrinfo hints, *ai = NULL;
+   struct sockaddr_storage sa;
+   socklen_t sa_len = 0;
    struct timeval tv;
    size_t got = 0, body_at = 0, want = (size_t)-1;
    int s = -1, status = 0, chunked = 0, rc = GET_FAILED;
-
+   int primary = !strcmp(host, g_host) && portnum == g_port;
    char key[sizeof(g_addr_key)];
-   snprintf(port, sizeof(port), "%d", g_port);
-   snprintf(key, sizeof(key), "%s:%s", g_host, port);
-   if (!g_addr_len || strcmp(key, g_addr_key))
+
+   loc[0] = '\0';
+   snprintf(port, sizeof(port), "%d", portnum);
+   snprintf(key, sizeof(key), "%s:%s", host, port);
+   if (primary && g_addr_len && !strcmp(key, g_addr_key))
+   {
+      memcpy(&sa, &g_addr, g_addr_len);
+      sa_len = g_addr_len;
+   }
+   else
    {
       memset(&hints, 0, sizeof(hints));
       hints.ai_family = AF_INET;
       hints.ai_socktype = SOCK_STREAM;
-      g_addr_len = 0;
-      if (getaddrinfo(g_host, port, &hints, &ai) != 0 || !ai)
+      if (primary)
+         g_addr_len = 0;
+      if (getaddrinfo(host, port, &hints, &ai) != 0 || !ai)
       {
          if (ai)
             freeaddrinfo(ai);
          return GET_FAILED;
       }
-      if (ai->ai_addrlen <= sizeof(g_addr))
+      if (ai->ai_addrlen <= sizeof(sa))
       {
-         memcpy(&g_addr, ai->ai_addr, ai->ai_addrlen);
-         g_addr_len = (socklen_t)ai->ai_addrlen;
-         snprintf(g_addr_key, sizeof(g_addr_key), "%s", key);
+         memcpy(&sa, ai->ai_addr, ai->ai_addrlen);
+         sa_len = (socklen_t)ai->ai_addrlen;
+         if (primary)
+         {
+            memcpy(&g_addr, &sa, sa_len);
+            g_addr_len = sa_len;
+            snprintf(g_addr_key, sizeof(g_addr_key), "%s", key);
+         }
       }
       freeaddrinfo(ai);
       ai = NULL;
-      if (!g_addr_len)
+      if (!sa_len)
          return GET_FAILED;
    }
    s = socket(AF_INET, SOCK_STREAM, 0);
@@ -680,14 +786,17 @@ static int http_get(const char *path, size_t *len)
    tv.tv_usec = 0;
    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-   if (connect(s, (const struct sockaddr *)&g_addr, g_addr_len) != 0)
+   if (connect(s, (const struct sockaddr *)&sa, sa_len) != 0)
    {
-      g_addr_len = 0;                  /* look it up again next time */
+      if (primary)
+         g_addr_len = 0;                  /* look it up again next time */
       goto out;
    }
-   snprintf(req, sizeof(req),
-            "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: VitAdhoc\r\n"
-            "Accept: image/png\r\nConnection: close\r\n\r\n", path, g_host);
+   if (snprintf(req, sizeof(req),
+                "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: VitAdhoc\r\n"
+                "Accept: image/png\r\nConnection: close\r\n\r\n",
+                path, host) >= (int)sizeof(req))
+      goto out;
    if (send(s, req, strlen(req), 0) != (ssize_t)strlen(req))
       goto out;
    for (;;)
@@ -700,7 +809,8 @@ static int http_get(const char *path, size_t *len)
       r = recv(s, g_body + got, AF_MAX_BYTES - got, 0);
       if (r < 0)
       {
-         g_addr_len = 0;
+         if (primary)
+            g_addr_len = 0;
          goto out;                     /* an error is not the end of it */
       }
       if (r == 0)
@@ -717,6 +827,9 @@ static int http_get(const char *path, size_t *len)
             body_at = (size_t)(hdr_end + 4 - (char *)g_body);
             if (sscanf((char *)g_body, "HTTP/1.%*d %d", &status) != 1)
                goto out;
+            if (status == 301 || status == 302 || status == 303 ||
+                status == 307 || status == 308)
+               extract_location((char *)g_body, loc, loc_cap);
             for (p = (char *)g_body; *p; p++)
                if (*p >= 'A' && *p <= 'Z')
                   *p = (char)(*p - 'A' + 'a');
@@ -732,7 +845,10 @@ static int http_get(const char *path, size_t *len)
       if (body_at && want != (size_t)-1 && got - body_at >= want)
          break;
    }
-   if (status == 404 || status == 410)
+   if (status == 301 || status == 302 || status == 303 ||
+       status == 307 || status == 308)
+      rc = GET_REDIRECT;
+   else if (status == 404 || status == 410)
       rc = GET_MISSING;
    else if (status == 200 && body_at)
    {
@@ -772,6 +888,28 @@ out:
    if (ai)
       freeaddrinfo(ai);
    return rc;
+}
+
+/* GET http://g_host:g_port/<path>, following up to 3 redirects.  GET_OK with
+ * the body in g_body (*len bytes), GET_MISSING for 404/410, GET_FAILED
+ * otherwise (no network, a timeout, anything else). */
+static int http_get(const char *path, size_t *len)
+{
+   char cur_host[sizeof(g_host)], cur_path[1400], loc[1400];
+   int cur_port = g_port, hop;
+   snprintf(cur_host, sizeof(cur_host), "%s", g_host);
+   snprintf(cur_path, sizeof(cur_path), "%s", path);
+   for (hop = 0; hop < 4; hop++)
+   {
+      int rc = http_get_once(cur_host, cur_port, cur_path, len, loc, sizeof(loc));
+      if (rc != GET_REDIRECT)
+         return rc;
+      if (hop == 3 ||
+          apply_redirect(loc, cur_host, sizeof(cur_host), &cur_port,
+                         cur_path, sizeof(cur_path)) != 0)
+         return GET_FAILED;
+   }
+   return GET_FAILED;
 }
 
 /* The thumbnail file for a cover: cache/boxart/<stem>.t2.565, the picture fitted into
@@ -952,13 +1090,16 @@ int artfetch_thumb_rgb(const unsigned char *rgb, int w, int h,
 }
 
 /* 1 when the player has set a cover of their own for this stem
- * (boxart/<stem>.own, written by cover_custom.c): its thumbnail is the
- * whole picture on a square. */
+ * (boxart/<stem>.own or cache/covers/<stem>.own, written by cover_custom.c):
+ * its thumbnail is the whole picture on a square. */
 static int own_cover(const char *stem)
 {
    char path[AF_PATH_CAP + AF_NAME_CAP + 32];
    struct stat st;
    snprintf(path, sizeof(path), "%s/boxart/%s.own", g_root, stem);
+   if (stat(path, &st) == 0)
+      return 1;
+   snprintf(path, sizeof(path), "%s/" ART_THUMB_DIR "/%s.own", g_root, stem);
    return stat(path, &st) == 0;
 }
 
@@ -1093,7 +1234,8 @@ typedef struct
 {
    char stem[AF_NAME_CAP], cand[5 + AF_ALT_MAX][AF_NAME_CAP];
    int ncand, sys[2], nsys, ready, crc_allowed, crc_tried, crc_unavailable;
-   int no_crc;                  /* UNIF: the checksum names nothing */
+   int no_crc;                  /* UNIF / disc: the checksum names nothing */
+   int is_archive;              /* .zip / .7z: inspect inner entry, never raw-hash container */
    int alts_done;               /* the fallback names (artalt.h) are in cand[] */
 } af_candidates;
 
@@ -1101,11 +1243,353 @@ typedef struct
  * its copier header, NES / Famicom Disk System without theirs. */
 static int cart_crc(const af_candidates *a, const char *path, uint32_t *crc)
 {
+   if (a->is_archive)
+      return -1;
    return a->sys[0] == 3 ? gamedb_snes_crc_cancel(path, crc, stop_now)
         : a->sys[0] == 4 || a->sys[0] == 5 ? gamedb_nes_crc_cancel(path, crc, stop_now)
         : a->sys[0] == 8 ? gamedb_md_crc_cancel(path, crc, stop_now)
         : a->sys[0] >= 9 ? gamedb_sms_crc_cancel(path, crc, stop_now)
         : gamedb_file_crc_cancel(path, crc, stop_now);
+}
+
+/* Weak fallback when artfetch.c is compiled standalone without sz_rom.c. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak))
+int sz_rom_peek(const char *path, zip_rom_entry *out,
+                int (*name_console)(const char *, size_t))
+{
+   (void)path;
+   (void)out;
+   (void)name_console;
+   return -1;
+}
+#endif
+
+static uint16_t af_u16le(const unsigned char *p)
+{
+   return (uint16_t)(p[0] | ((unsigned)p[1] << 8));
+}
+
+static uint32_t af_u32le(const unsigned char *p)
+{
+   return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+          ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static int af_ext_sys(const char *ext, int sys[2], int *nsys, int *no_crc)
+{
+   *no_crc = 0;
+   if (!ext)
+      return 0;
+   if (!strcasecmp(ext, ".gba"))
+      { sys[0] = 0; *nsys = 1; return 1; }
+   if (!strcasecmp(ext, ".sfc") || !strcasecmp(ext, ".smc") ||
+       !strcasecmp(ext, ".swc") || !strcasecmp(ext, ".fig"))
+      { sys[0] = 3; *nsys = 1; return 1; }
+   if (!strcasecmp(ext, ".fds"))
+      { sys[0] = 5; *nsys = 1; return 1; }
+   if (!strcasecmp(ext, ".nes") || !strcasecmp(ext, ".unf") ||
+       !strcasecmp(ext, ".unif"))
+   {
+      sys[0] = 4; *nsys = 1;
+      *no_crc = strcasecmp(ext, ".nes") != 0;
+      return 1;
+   }
+   if (!strcasecmp(ext, ".ws") || !strcasecmp(ext, ".pc2"))
+      { sys[0] = 6; sys[1] = 7; *nsys = 2; return 1; }
+   if (!strcasecmp(ext, ".wsc"))
+      { sys[0] = 7; sys[1] = 6; *nsys = 2; return 1; }
+   if (!strcasecmp(ext, ".md") || !strcasecmp(ext, ".gen") ||
+       !strcasecmp(ext, ".smd") || !strcasecmp(ext, ".bin") ||
+       !strcasecmp(ext, ".68k"))
+      { sys[0] = 8; *nsys = 1; return 1; }
+   if (!strcasecmp(ext, ".sms"))
+      { sys[0] = 9; sys[1] = 10; *nsys = 2; return 1; }
+   if (!strcasecmp(ext, ".gg"))
+      { sys[0] = 10; *nsys = 1; return 1; }
+   if (!strcasecmp(ext, ".sg") || !strcasecmp(ext, ".sc"))
+      { sys[0] = 11; *nsys = 1; return 1; }
+   if (!strcasecmp(ext, ".cue") || !strcasecmp(ext, ".chd") ||
+       !strcasecmp(ext, ".iso") || !strcasecmp(ext, ".m3u"))
+      { sys[0] = 12; *nsys = 1; *no_crc = 1; return 1; }
+   if (!strcasecmp(ext, ".gbc"))
+      { sys[0] = 2; sys[1] = 1; *nsys = 2; return 1; }
+   if (!strcasecmp(ext, ".gb") || !strcasecmp(ext, ".sgb"))
+      { sys[0] = 1; sys[1] = 2; *nsys = 2; return 1; }
+   return 0;
+}
+
+static int af_is_disc_track_bin(const char *leaf, const char *ext)
+{
+   const char *tr;
+   if (!ext || strcasecmp(ext, ".bin"))
+      return 0;
+   tr = strstr(leaf, "(Track ");
+   if (tr && tr[7] >= '0' && tr[7] <= '9')
+   {
+      const char *d = tr + 7;
+      while (*d >= '0' && *d <= '9')
+         d++;
+      if (d[0] == ')' && !strcasecmp(d + 1, ".bin"))
+         return 1;
+   }
+   return 0;
+}
+
+static int af_sz_console(const char *name, size_t len)
+{
+   char buf[AF_NAME_CAP];
+   const char *leaf, *ext;
+   int sys[2], nsys = 0, no_crc = 0;
+   size_t i;
+   if (!name || len == 0 || len >= sizeof(buf))
+      return -1;
+   memcpy(buf, name, len);
+   buf[len] = '\0';
+   leaf = buf;
+   for (i = 0; i < len; i++)
+      if (buf[i] == '/' || buf[i] == '\\')
+         leaf = buf + i + 1;
+   if (!leaf[0] || leaf[0] == '.')
+      return -1;
+   ext = strrchr(leaf, '.');
+   if (af_is_disc_track_bin(leaf, ext))
+      return -1;
+   if (!af_ext_sys(ext, sys, &nsys, &no_crc))
+      return -1;
+   /* Avoid returning 6 (which sz_rom_peek treats as Genesis < 16 KiB size check)
+    * unless it actually is Genesis/MD, where a small file can't be a Genesis ROM anyway. */
+   return sys[0] == 8 ? 6 : sys[0] == 6 ? 16 : sys[0];
+}
+
+typedef struct
+{
+   char inner_stem[AF_NAME_CAP];
+   char inner_ext[16];
+   uint32_t crc;
+   int has_crc;
+} af_arc_info;
+
+static int af_peek_zip(FILE *f, af_arc_info *out)
+{
+   long fsz, tail_off, pos;
+   size_t tail_len, i, cd_read;
+   unsigned char *buf, *cd;
+   uint32_t cd_size = 0, cd_off = 0, best_sz = 0;
+   uint16_t entries = 0, e;
+   int eocd = -1, found = 0;
+
+   if (fseek(f, 0, SEEK_END) != 0)
+      return -1;
+   fsz = ftell(f);
+   if (fsz < 22)
+      return -1;
+   tail_len = (size_t)(fsz > 65557L ? 65557L : fsz);
+   tail_off = fsz - (long)tail_len;
+   buf = malloc(tail_len);
+   if (!buf)
+      return -1;
+   if (fseek(f, tail_off, SEEK_SET) != 0 || fread(buf, 1, tail_len, f) != tail_len)
+   {
+      free(buf);
+      return -1;
+   }
+   for (i = tail_len - 22 + 1; i > 0; i--)
+   {
+      size_t k = i - 1;
+      if (buf[k] == 0x50 && buf[k + 1] == 0x4B && buf[k + 2] == 0x05 && buf[k + 3] == 0x06)
+      {
+         uint16_t clen = af_u16le(buf + k + 20);
+         if ((size_t)(k + 22 + clen) == tail_len)
+         {
+            eocd = (int)k;
+            entries = af_u16le(buf + k + 10);
+            cd_size = af_u32le(buf + k + 12);
+            cd_off = af_u32le(buf + k + 16);
+            break;
+         }
+      }
+   }
+   free(buf);
+   if (eocd < 0 || cd_size == 0 || cd_size > (8u << 20) ||
+       (long)cd_off + (long)cd_size > fsz)
+      return -1;
+   cd = malloc(cd_size);
+   if (!cd)
+      return -1;
+   if (fseek(f, (long)cd_off, SEEK_SET) != 0 || fread(cd, 1, cd_size, f) != cd_size)
+   {
+      free(cd);
+      return -1;
+   }
+   pos = 0;
+   cd_read = 0;
+   for (e = 0; e < entries && cd_read + 46 <= cd_size; e++)
+   {
+      const unsigned char *hdr = cd + cd_read;
+      uint16_t nlen, xlen, clen;
+      uint32_t crc, usz;
+      char ename[AF_NAME_CAP];
+      const char *leaf, *ext;
+      int sys[2], nsys, no_crc;
+      size_t copy_n, j;
+
+      if (hdr[0] != 0x50 || hdr[1] != 0x4B || hdr[2] != 0x01 || hdr[3] != 0x02)
+         break;
+      crc = af_u32le(hdr + 16);
+      usz = af_u32le(hdr + 24);
+      nlen = af_u16le(hdr + 28);
+      xlen = af_u16le(hdr + 30);
+      clen = af_u16le(hdr + 32);
+      if (cd_read + 46 + nlen + xlen + clen > cd_size)
+         break;
+      copy_n = nlen < sizeof(ename) - 1 ? nlen : sizeof(ename) - 1;
+      memcpy(ename, hdr + 46, copy_n);
+      ename[copy_n] = '\0';
+      {
+         int is_dir = (nlen > 0 && hdr[46 + nlen - 1] == '/');
+         cd_read += 46 + nlen + xlen + clen;
+
+         if (nlen == 0 || is_dir ||
+             strncmp(ename, "__MACOSX/", 9) == 0)
+            continue;
+      }
+      leaf = ename;
+      for (j = 0; ename[j]; j++)
+         if (ename[j] == '/' || ename[j] == '\\')
+            leaf = ename + j + 1;
+      if (!leaf[0] || leaf[0] == '.')
+         continue;
+      ext = strrchr(leaf, '.');
+      if (af_is_disc_track_bin(leaf, ext) ||
+          !af_ext_sys(ext, sys, &nsys, &no_crc))
+         continue;
+      (void)pos;
+      if (!found || usz > best_sz)
+      {
+         stem_of(leaf, out->inner_stem, sizeof(out->inner_stem));
+         snprintf(out->inner_ext, sizeof(out->inner_ext), "%s", ext);
+         out->crc = crc;
+         out->has_crc = (usz > 0 || crc != 0);
+         best_sz = usz;
+         found = 1;
+      }
+   }
+   free(cd);
+   return found ? 0 : -1;
+}
+
+static int af_peek_archive(const char *path, const char *ext, af_arc_info *out)
+{
+   static const unsigned char SZ_SIG[6] = { '7', 'z', 0xBC, 0xAF, 0x27, 0x1C };
+   unsigned char sig[6];
+   FILE *f;
+   size_t n;
+   int is_sz;
+
+   memset(out, 0, sizeof(*out));
+   if (!path || !path[0])
+      return -1;
+   f = fopen(path, "rb");
+   if (!f)
+      return -1;
+   n = fread(sig, 1, sizeof(sig), f);
+   is_sz = (n == 6 && !memcmp(sig, SZ_SIG, 6)) || (ext && !strcasecmp(ext, ".7z"));
+   if (n == 6 && !memcmp(sig, SZ_SIG, 6))
+      is_sz = 1;
+   else if (n >= 2 && sig[0] == 'P' && sig[1] == 'K')
+      is_sz = 0;
+   if (!is_sz)
+   {
+      int r = af_peek_zip(f, out);
+      fclose(f);
+      return r;
+   }
+   fclose(f);
+   {
+      zip_rom_entry z;
+      const char *leaf, *zext;
+      size_t j;
+      memset(&z, 0, sizeof(z));
+      if (sz_rom_peek(path, &z, af_sz_console) != 0)
+         return -1;
+      leaf = z.name;
+      for (j = 0; z.name[j]; j++)
+         if (z.name[j] == '/' || z.name[j] == '\\')
+            leaf = z.name + j + 1;
+      zext = strrchr(leaf, '.');
+      if (!leaf[0] || !zext)
+         return -1;
+      stem_of(leaf, out->inner_stem, sizeof(out->inner_stem));
+      snprintf(out->inner_ext, sizeof(out->inner_ext), "%s", zext);
+      out->crc = z.crc;
+      out->has_crc = (z.crc != 0);
+      return 0;
+   }
+}
+
+static void cand_add(af_candidates *a, const char *s)
+{
+   int i;
+   if (!s || !s[0] || a->ncand >= 5 + AF_ALT_MAX)
+      return;
+   for (i = 0; i < a->ncand; i++)
+      if (!strcmp(a->cand[i], s))
+         return;
+   snprintf(a->cand[a->ncand++], AF_NAME_CAP, "%s", s);
+}
+
+static int ci_contains(const char *hay, const char *needle)
+{
+   size_t n = strlen(needle), i;
+   if (!n)
+      return 0;
+   for (; *hay; hay++)
+   {
+      for (i = 0; i < n; i++)
+      {
+         if (!hay[i] || tolower((unsigned char)hay[i]) != tolower((unsigned char)needle[i]))
+            break;
+      }
+      if (i == n)
+         return 1;
+   }
+   return 0;
+}
+
+static int af_is_hack_stem(const char *stem, const char *hdr_name)
+{
+   static const char *const MARKS[] = {
+      "[h", "[t+", "[t-", "[b", "[f", "[p", "[o", "hack", "unbound", "kaizo",
+      "redux", "randomiz", "remix", "deluxe", "gaiden", "radical red",
+      "rocket edition", "ash gray", "crystal clear", "dark violet", "glazed",
+      "flora sky", "light platinum", "blaze black", "volt white", "renegade",
+      "inclement", "translation", "english", "patched", "improved",
+      "rebalance", "restoration", "(eng", "(v1.", "(v2.", "(v3.", " v1.",
+      " v2.", " v3.", NULL
+   };
+   int i;
+   char w1[32], w2[32];
+   size_t k;
+
+   for (i = 0; MARKS[i]; i++)
+      if (ci_contains(stem, MARKS[i]))
+         return 1;
+
+   /* Same franchise prefix (e.g. "Pokemon Unbound" vs "Pokemon - FireRed Version")
+    * while gamedb_name_loose missed indicates a different title / hack sharing the base header. */
+   if (hdr_name && hdr_name[0])
+   {
+      for (k = 0; k + 1 < sizeof(w1) && isalpha((unsigned char)stem[k]); k++)
+         w1[k] = (char)tolower((unsigned char)stem[k]);
+      w1[k] = '\0';
+      for (k = 0; k + 1 < sizeof(w2) && isalpha((unsigned char)hdr_name[k]); k++)
+         w2[k] = (char)tolower((unsigned char)hdr_name[k]);
+      w2[k] = '\0';
+      if (strlen(w1) >= 4 && !strcmp(w1, w2))
+         return 1;
+   }
+   return 0;
 }
 
 /* Every name asked for has missed: the same game under the name of another
@@ -1138,82 +1622,76 @@ static int add_alts(af_candidates *a)
 
 static void candidates_init(af_candidates *a, const char *path, const char *name)
 {
+   static const char TAG[13] = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+                                 'I', 'J', 'K', 'L', 'M' };
    const char *ext = strrchr(name, '.');
+   char buf[AF_NAME_CAP];
+   int k;
+
    stem_of(name, a->stem, sizeof(a->stem));
-   if (ext && !strcasecmp(ext, ".gba"))
+   if (ext && (!strcasecmp(ext, ".zip") || !strcasecmp(ext, ".7z")))
    {
-      a->sys[0] = 0;
-      a->nsys = 1;
+      af_arc_info arc;
+      a->is_archive = 1;
+      a->crc_tried = 1;
+      a->crc_allowed = 0;
+      if (af_peek_archive(path, ext, &arc) != 0 ||
+          !af_ext_sys(arc.inner_ext, a->sys, &a->nsys, &a->no_crc))
+      {
+         /* Never fall through to Game Boy or permanently blacklist a .zip/.7z
+          * whose inner ROM could not be inspected right now. */
+         a->nsys = 0;
+         a->crc_unavailable = 1;
+         a->ready = 1;
+         return;
+      }
+      if (gamedb_known_name(a->stem))
+         cand_add(a, a->stem);
+      if (arc.inner_stem[0] && gamedb_known_name(arc.inner_stem))
+         cand_add(a, arc.inner_stem);
+      if (!a->no_crc && arc.has_crc &&
+          gamedb_name_by_crc(arc.crc, buf, AF_NAME_CAP))
+         cand_add(a, buf);
+      if (a->ncand < 2 && arc.inner_stem[0])
+      {
+         for (k = 0; k < a->nsys && a->ncand < 3; k++)
+            if (gamedb_name_loose(TAG[a->sys[k]], arc.inner_stem, buf, AF_NAME_CAP))
+               cand_add(a, buf);
+      }
+      if (a->ncand < 2)
+      {
+         for (k = 0; k < a->nsys && a->ncand < 3; k++)
+            if (gamedb_name_loose(TAG[a->sys[k]], a->stem, buf, AF_NAME_CAP))
+               cand_add(a, buf);
+      }
+      cand_add(a, arc.inner_stem);
+      cand_add(a, a->stem);
+      a->ready = 1;
+      return;
    }
-   else if (ext && (!strcasecmp(ext, ".sfc") || !strcasecmp(ext, ".smc")))
+
+   if (!af_ext_sys(ext, a->sys, &a->nsys, &a->no_crc))
    {
-      a->sys[0] = 3;               /* SNES: by the file's own No-Intro name */
-      a->nsys = 1;
-   }
-   else if (ext && !strcasecmp(ext, ".fds"))
-   {
-      a->sys[0] = 5;               /* Famicom Disk System */
-      a->nsys = 1;
-   }
-   else if (ext && (!strcasecmp(ext, ".nes") || !strcasecmp(ext, ".unf") ||
-                    !strcasecmp(ext, ".unif")))
-   {
-      a->sys[0] = 4;               /* NES: by checksum without the iNES header */
-      a->nsys = 1;
-      a->no_crc = strcasecmp(ext, ".nes") != 0;    /* UNIF: by name only */
-   }
-   else if (ext && (!strcasecmp(ext, ".ws") || !strcasecmp(ext, ".pc2")))
-   {
-      a->sys[0] = 6; a->sys[1] = 7;  /* WonderSwan; a .ws may be a Color game */
-      a->nsys = 2;
-   }
-   else if (ext && !strcasecmp(ext, ".wsc"))
-   {
-      a->sys[0] = 7; a->sys[1] = 6;  /* WonderSwan Color (the whole file's CRC) */
-      a->nsys = 2;
-   }
-   else if (ext && (!strcasecmp(ext, ".md") || !strcasecmp(ext, ".gen") ||
-                    !strcasecmp(ext, ".smd") || !strcasecmp(ext, ".bin") || !strcasecmp(ext, ".68k")))
-   {
-      a->sys[0] = 8;               /* Genesis: the plain ROM's checksum (SMD de-interleaved) */
-      a->nsys = 1;
-   }
-   else if (ext && !strcasecmp(ext, ".sms"))
-   {
-      a->sys[0] = 9; a->sys[1] = 10; /* Master System; some Game Gear games run as .sms */
-      a->nsys = 2;
-   }
-   else if (ext && !strcasecmp(ext, ".gg"))
-   {
-      a->sys[0] = 10;              /* Game Gear */
-      a->nsys = 1;
-   }
-   else if (ext && (!strcasecmp(ext, ".sg") || !strcasecmp(ext, ".sc")))
-   {
-      a->sys[0] = 11;              /* SG-1000 */
-      a->nsys = 1;
-   }
-   else if (ext && (!strcasecmp(ext, ".cue") || !strcasecmp(ext, ".chd") || !strcasecmp(ext, ".iso") || !strcasecmp(ext, ".m3u")))
-   {
-      a->sys[0] = 12;              /* Sega CD: a disc has no cartridge checksum: by its name only */
-      a->nsys = 1;
-      a->no_crc = 1;
-   }
-   else if (ext && !strcasecmp(ext, ".gbc"))
-   {
-      a->sys[0] = 2; a->sys[1] = 1;
-      a->nsys = 2;
-   }
-   else
-   {
-      a->sys[0] = 1; a->sys[1] = 2;
+      a->sys[0] = 1;
+      a->sys[1] = 2;
       a->nsys = 2;
    }
    if (gamedb_known_name(a->stem))
-      memmove(a->cand[a->ncand++], a->stem, strlen(a->stem) + 1);
-   if (a->sys[0] == 0 &&
-       gamedb_name_by_header(path, a->cand[a->ncand], AF_NAME_CAP))
-      a->ncand++;
+      cand_add(a, a->stem);
+   /* Loose No-Intro match before the GBA header so differently named hacks or
+    * shortened filenames resolve properly first. */
+   if (a->ncand < 2)
+   {
+      for (k = 0; k < a->nsys && a->ncand < 3; k++)
+         if (gamedb_name_loose(TAG[a->sys[k]], a->stem, buf, AF_NAME_CAP))
+            cand_add(a, buf);
+   }
+   if (a->sys[0] == 0 && !a->ncand &&
+       gamedb_name_by_header(path, buf, AF_NAME_CAP))
+   {
+      if (!af_is_hack_stem(a->stem, buf))
+         cand_add(a, buf);
+   }
    /* Not a No-Intro file name: the cartridge's checksum names it exactly
     * (any console; SNES without its copier header), read now so it is
     * asked for first */
@@ -1224,27 +1702,12 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
       if (r == 0)
       {
          a->crc_tried = 1;
-         if (gamedb_name_by_crc(crc, a->cand[a->ncand], AF_NAME_CAP))
-            a->ncand++;
+         if (gamedb_name_by_crc(crc, buf, AF_NAME_CAP))
+            cand_add(a, buf);
       }
    }
-   /* A file named loosely ("Act Raiser", "7th Saga", "Pocket Dogs (U)"):
-    * the No-Intro name of the game with that title, for each console the
-    * file may be (gamedb N records) */
-   if (a->ncand < 2)
-   {
-      static const char TAG[13] = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
-                                    'I', 'J', 'K', 'L', 'M' };
-      int k;
-      for (k = 0; k < a->nsys && a->ncand < 3; k++)
-         if (gamedb_name_loose(TAG[a->sys[k]], a->stem, a->cand[a->ncand], AF_NAME_CAP))
-            a->ncand++;
-   }
-   /* the cartridge's checksum, if no name worked: any console now (SNES
-    * without its copier header) */
    a->crc_allowed = !gamedb_known_name(a->stem) && !a->no_crc;
-   if (!a->ncand || strcmp(a->cand[0], a->stem))
-      memmove(a->cand[a->ncand++], a->stem, strlen(a->stem) + 1);
+   cand_add(a, a->stem);
    a->ready = 1;
 }
 

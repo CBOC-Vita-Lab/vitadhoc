@@ -66,6 +66,24 @@ static inline int host_sem_wait(host_sem_t *s)
    return 0;
 }
 
+static inline int host_sem_trywait(host_sem_t *s)
+{
+   int got = 0;
+   pthread_mutex_lock(&s->m);
+   if (s->n)
+   {
+      s->n--;
+      got = 1;
+   }
+   pthread_mutex_unlock(&s->m);
+   if (!got)
+   {
+      errno = EAGAIN;
+      return -1;
+   }
+   return 0;
+}
+
 static inline int host_sem_timedwait(host_sem_t *s, const struct timespec *at)
 {
    int rc = 0;
@@ -97,6 +115,7 @@ static inline int host_sem_init(host_sem_t *s, unsigned value) { return sem_init
 static inline int host_sem_destroy(host_sem_t *s) { return sem_destroy(s); }
 static inline int host_sem_post(host_sem_t *s) { return sem_post(s); }
 static inline int host_sem_wait(host_sem_t *s) { return sem_wait(s); }
+static inline int host_sem_trywait(host_sem_t *s) { return sem_trywait(s); }
 static inline int host_sem_timedwait(host_sem_t *s, const struct timespec *at) { return sem_timedwait(s, at); }
 
 #endif

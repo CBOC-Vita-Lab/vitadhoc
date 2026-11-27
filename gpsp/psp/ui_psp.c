@@ -23,6 +23,9 @@
  * provides on the PSP is listed in vita/ui_host_hooks.h.  Every Vita
  * difference below is an #ifdef VITA; with VITA undefined this file is the
  * PSP's, unchanged. */
+/* Include <dirent.h> before pspcompat.h so VitaSDK <psp2/io/dirent.h>
+ * (pulled in later by ui_vita_online.h) precedes pspcompat.h's macros. */
+#include <dirent.h>
 #define PSPCOMPAT_KERNEL_CALLS   /* Share game data's clock and sleeps */
 #include "pspcompat.h"
 #include <stdlib.h>
@@ -2217,10 +2220,9 @@ static void ov_head(const char *sub, const char *title)
    vid_logo(20, 17, C_TITLE, 255);
    if (title)
       vid_text_hd(20 + VID_LOGO_W + 14, 16, title, C_SEL);
-   g_ov_room_show = title && (!strcmp(title, "WIRELESS") ||
-                              !strcmp(title, "HOST") ||
-                              !strcmp(title, "JOIN") ||
-                              !strcmp(title, "MYSTERY GIFT"));
+   g_ov_room_show = (g_screen == SCR_WIRELESS || g_screen == SCR_HOST ||
+                     g_screen == SCR_JOINASK || g_screen == SCR_SCAN ||
+                     g_screen == SCR_MGIFT);
    ov_cluster();               /* first: line 2 is shared with the room */
    ov_sub(sub);
 }
@@ -2614,10 +2616,10 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_EXPORT,
        /* 1.4: a one-line About: facts, not settings (read-only rows) */
        SET_HDR_ABOUT, SET_ABOUT_UPDATE, SET_ABOUT_CORE4,
-       /* The three plain choices of the controls come before Button mapping,
+       /* The plain choices of the controls come before Button mapping,
         * which stays last (the harness walkers wrap up to it). */
-       SET_HDR_CTL, SET_ABSWAP, SET_STICKRW, SET_SHOTCOMBO, SET_TAPMENU,
-       SET_REARTOUCH, SET_BTNTEST,
+       SET_HDR_CTL, SET_STICK, SET_ABSWAP, SET_STICKRW, SET_SHOTCOMBO,
+       SET_TAPMENU, SET_REARTOUCH, SET_BTNTEST,
        SET_CONTROLS,
        SET_COUNT };
 #define SET_FIRST SET_NAME
@@ -2828,20 +2830,21 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, TR_KEY("settings.check_for_updates") },
    { 0, TR_KEY("settings.extra_cpu_core") },
 #endif
-#ifdef REWIND
+#if !defined(VITA) && defined(REWIND)
    /* Hold the Rewind button (Triangle unless remapped) and the game runs
     * backwards.  Both rows are read when a game is started. */
-   { 0, tr("settings.rewind") },
-   { 0, tr("settings.rewind_length") },
+   { 0, TR_KEY("settings.rewind") },
+   { 0, TR_KEY("settings.rewind_length") },
 #endif
    /* Last, so every row above keeps its position (the harness ui_demo walks
     * this list by count).  X opens the page; it is not a value to cycle. */
    { 1, TR_KEY("settings.controls") },
    /* Above Button mapping, which stays LAST: the harness walkers reach it
     * by wrapping up from the top. */
-#ifndef VITA   /* the Vita's left stick is the d-pad, its right one fixed */
+#ifndef VITA
    { 0, "Thumbstick" },
 #else
+   { 0, "Left stick" },
    { 0, TR_KEY("settings.a_and_b_buttons") },
    { 0, TR_KEY("settings.rewind_with_right_stick") },
    { 0, TR_KEY("settings.screenshot_button_combo") },
@@ -3871,13 +3874,11 @@ static void settings_adjust(int id, int dir)
       fe_evt("rewind_setting on=%d mb=%d", g_pcfg.rewind, g_pcfg.rewind_mb);
       break;
 #endif
-#ifndef VITA
    case SET_STICK:
       /* off -> moves -> custom, live: the main loop reads it every frame. */
       g_pcfg.stick = (g_pcfg.stick + 3 + (dir < 0 ? -1 : 1)) % 3;
       fe_evt("ctl_stick mode=%s", ctl_stick_name(g_pcfg.stick));
       break;
-#endif
    case SET_GBPAL:
    {
       /* Applies to a running GB game at once (and to the next boot); an
@@ -4483,6 +4484,12 @@ static const char *set_help(int id)
                              ? tr("settings.help.drawn_on_a_second_core_heavy")
 
                              : tr("settings.help.off_try_this_if_the_picture");
+   case SET_STICK:
+      return g_pcfg.stick == CTL_STICK_OFF
+         ? "Left stick is off."
+         : g_pcfg.stick == CTL_STICK_CUSTOM
+         ? "Left stick is bindable in Button mapping."
+         : tr("btntest.left_stick_moves_like_the_d");
    case SET_ABSWAP:
       return g_pcfg.ab_buttons < 0
          ? tr("settings.help.follows_the_vita_s_own_enter")
@@ -5297,7 +5304,7 @@ static ui_action screen_settings_page(unsigned edges)
       }
 #endif
 #ifdef VITA
-      case SET_ABSWAP:
+   case SET_ABSWAP:
       {
          char v[40];
          snprintf(v, sizeof(v), "%s%s",
@@ -5575,14 +5582,18 @@ static ui_action screen_settings_page(unsigned edges)
          break;
       }
 #endif
-#ifndef VITA
       case SET_STICK:
          set_item(y, g_cursor == i, 1, tr(set_rows[i].label),
+#ifdef VITA
+             g_pcfg.stick == CTL_STICK_MOVE ? "D-pad" :
+             g_pcfg.stick == CTL_STICK_CUSTOM ? "Custom"
+                                              : tr("settings.value.off"));
+#else
              g_pcfg.stick == CTL_STICK_MOVE ? "moves (as the d-pad)" :
              g_pcfg.stick == CTL_STICK_CUSTOM ? "custom (see Button mapping)"
                                               : "off");
-         break;
 #endif
+         break;
       case SET_GBPAL:
       {
          int gp = g_pcfg.gb_palette < fe_host_gb_palette_count()
@@ -6043,10 +6054,10 @@ static void ctl_capture_plate(void)
    }
    /* "O cancel" is not offered: O is a legal answer (A is on O by
     * default), so capture ends on any press or on the timeout. */
-   snprintf(t, sizeof(t), tr("ui.cancels_in_5_s"), ask, in->label);
+   snprintf(t, sizeof(t), tr("ui.cancels_in_5_s"), ask, tr(in->label));
    {
       int x = (VID_SCR_W - vid_text_w(t)) / 2;
-      snprintf(t, sizeof(t), tr("ui.cancels_in_s"), ask, in->label,
+      snprintf(t, sizeof(t), tr("ui.cancels_in_s"), ask, tr(in->label),
                secs);
       vid_text(x, OV_PLATE_Y + 2, t, C_SEL);
    }
@@ -7931,7 +7942,7 @@ static int state_delete(const char *slot1_path, unsigned slot)
    /* A leftover replacement backup must not resurrect a deleted slot. */
    {
       char old[PSP_FILE_PATH_CAP + 4];
-      snprintf(old, sizeof(old), tr("ui.old"), st);
+      snprintf(old, sizeof(old), "%s.old", st);
       (void)sceIoRemove(old);
       if (sceIoGetstat(old, &sst) >= 0)
          return -1;
@@ -8008,7 +8019,7 @@ static void ov_slots_stat_io(void)
    g_ov_used = 0;
    {
       char u[PSP_FILE_PATH_CAP + 8];
-      snprintf(u, sizeof(u), tr("ui.undo"), g_state_base);
+      snprintf(u, sizeof(u), "%s.undo", g_state_base);
       g_ov_undo_load = g_state_base[0] && sceIoGetstat(u, &st) >= 0;
    }
    for (i = 0; i < PSP_STATE_SLOT_COUNT; i++)
@@ -8022,15 +8033,15 @@ static void ov_slots_stat_io(void)
          continue;
       {
          char side[PSP_FILE_PATH_CAP + 8];
-         snprintf(side, sizeof(side), tr("ui.lock"), path);
+         snprintf(side, sizeof(side), "%s.lock", path);
          g_ov_lock[i] = sceIoGetstat(side, &st) >= 0;
-         snprintf(side, sizeof(side), tr("ui.bak"), path);
+         snprintf(side, sizeof(side), "%s.bak", path);
          g_ov_bak[i] = sceIoGetstat(side, &st) >= 0;
       }
       if (sceIoGetstat(path, &st) < 0)
       {
          char old[PSP_FILE_PATH_CAP + 4];
-         snprintf(old, sizeof(old), tr("ui.old"), path);
+         snprintf(old, sizeof(old), "%s.old", path);
          if (sceIoGetstat(old, &st) < 0) continue;
       }
       g_ov_slot[i] = 1;
@@ -9964,7 +9975,7 @@ static int rom_has_sav(int idx)
             g_pcfg.console == FE_CONSOLE_NES ||
             g_pcfg.console == FE_CONSOLE_WSWAN ||
             ui_console_is_sega(g_pcfg.console))   /* Game.srm */
-         ? snprintf(sav, sizeof(sav), tr("ui.srm"),
+         ? snprintf(sav, sizeof(sav), "%.*s.srm",
                     (int)ui_rom_stem_length(rom), rom)
          : snprintf(sav, sizeof(sav), "%s.sav", rom);
 #else
@@ -10015,6 +10026,7 @@ static const char *rom_pool_add(const char *s, size_t len)
 #ifdef VITA
 static void rom_side_add(int c, const char *rel, const char *file,
                          unsigned size);
+static void rom_side_prune_m3u(const char *dir, int start);
 #endif
 
 /* `rel` is "" at the top level, otherwise a path under roms/ with no leading
@@ -10143,31 +10155,17 @@ static unsigned m3u_path_hash(const char *path)
    return (unsigned)fe_crc32(0, low, i) | 1u;
 }
 
-static void m3u_hide_dir(const char *dir)
+static void m3u_add_file(const char *dir, const char *name)
 {
    static char list[PK_M3U_MAX_DISCS][PK_M3U_PATH];
-   SceIoDirent e;
-   SceUID d = sceIoDopen(dir);
-   if (d < 0)
-      return;
-   memset(&e, 0, sizeof(e));
-   while (sceIoDread(d, &e) > 0)
+   char full[PK_M3U_PATH];
+   int fl = snprintf(full, sizeof(full), "%s/%s", dir, name);
+   if (fl > 0 && fl < (int)sizeof(full))
    {
-      if (e.d_name[0] != '.' && pk_m3u_is_list(e.d_name) &&
-          !(e.d_stat.st_mode & 0x1000) && !(e.d_stat.st_attr & 0x0010))
-      {
-         char full[PK_M3U_PATH];
-         int fl = snprintf(full, sizeof(full), "%s/%s", dir, e.d_name);
-         if (fl > 0 && fl < (int)sizeof(full))
-         {
-            int nd = pk_m3u_load(full, list, PK_M3U_MAX_DISCS, NULL, NULL), i;
-            for (i = 0; i < nd && g_m3u_hide_n < M3U_HIDE_MAX; i++)
-               g_m3u_hide[g_m3u_hide_n++] = m3u_path_hash(list[i]);
-         }
-      }
-      memset(&e, 0, sizeof(e));
+      int nd = pk_m3u_load(full, list, PK_M3U_MAX_DISCS, NULL, NULL), i;
+      for (i = 0; i < nd && g_m3u_hide_n < M3U_HIDE_MAX; i++)
+         g_m3u_hide[g_m3u_hide_n++] = m3u_path_hash(list[i]);
    }
-   sceIoDclose(d);
 }
 
 static int m3u_hidden(const char *dir, const char *name)
@@ -10187,6 +10185,25 @@ static int m3u_hidden(const char *dir, const char *name)
          return 1;
    return 0;
 }
+
+static void rom_prune_m3u_entries(const char *dir, rom_entry *entries,
+                                  int start, int *count, int *found)
+{
+   int i, w = start;
+   for (i = start; i < *count; i++)
+      if (pk_m3u_is_disc(entries[i].base) && m3u_hidden(dir, entries[i].base))
+      {
+         if (*found > 0)
+            (*found)--;
+      }
+      else
+      {
+         entries[w] = entries[i];
+         entries[w].scan_order = (unsigned short)w;
+         w++;
+      }
+   *count = w;
+}
 #endif
 
 static void rom_scan_dir(const char *rel, int depth, int *n,
@@ -10194,7 +10211,10 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
 {
 #ifdef VITA
    const int hide_base = g_m3u_hide_n;
-   int m3u_read = 0;            /* this folder's .m3u files read (m3u_hide_dir) */
+   const int n_start = *n;
+   const int side_start = g_side[FE_CONSOLE_SCD].n;
+   char **subs = NULL;
+   int nsubs = 0, capsubs = 0, i;
 #endif
    char dir[PSP_FILE_PATH_CAP];
    SceUID d;
@@ -10252,6 +10272,9 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
                         !strcasecmp(ent.d_name + nl - 4, ".srm")) &&
              savset_put(savset_hash(dir, strlen(dir), ent.d_name)) != 0)
             g_savset_full = 1;   /* full: no answers from it, stat instead */
+         if ((console == FE_CONSOLE_SCD || g_side[FE_CONSOLE_SCD].on) &&
+             ent.d_name[0] != '.' && pk_m3u_is_list(ent.d_name))
+            m3u_add_file(dir, ent.d_name);
       }
 #endif
 #ifdef VITA
@@ -10275,6 +10298,7 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
 #define ROM_MATCH(nm, c) (zipc >= 0 ? zipc == (int)(c) \
                                     : rom_gb_match(dir, (nm), (c)) && \
                                       (!ui_name_is_bin(nm) || rom_bin_ok(dir, (nm))))
+      int match = 0;
 #endif
 
       if (is_dir)
@@ -10298,45 +10322,57 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
             else
             {
 #ifdef VITA
-               /* (an .m3u here may name discs in the folder below) */
-               if (!m3u_read && (console == FE_CONSOLE_SCD || g_side[FE_CONSOLE_SCD].on))
+               /* Defer recursing until this folder's single pass finishes so any
+                * .m3u in this folder is already in g_m3u_hide for subdirs. */
+               if (nsubs >= capsubs)
                {
-                  m3u_hide_dir(dir);
-                  m3u_read = 1;
+                  int ncap = capsubs ? capsubs * 2 : 16;
+                  char **grown = (char **)realloc(subs, (size_t)ncap * sizeof(char *));
+                  if (grown)
+                  {
+                     subs = grown;
+                     capsubs = ncap;
+                  }
                }
-#endif
+               if (nsubs < capsubs)
+               {
+                  char *copy = (char *)malloc((size_t)sub_len + 1);
+                  if (copy)
+                  {
+                     memcpy(copy, sub, (size_t)sub_len + 1);
+                     subs[nsubs++] = copy;
+                  }
+               }
+#else
                rom_scan_dir(sub, depth - 1, n, console);
+#endif
             }
          }
       }
 #ifdef VITA
-      /* (a disc an .m3u names: the .m3u is the game).  The folder's .m3u
-       * files are read when its first disc or subfolder is met, not before
-       * every folder: a folder of cartridges is read once, as it always was
-       * (a second read of a large folder on a slow card took as long again,
-       * with no frame drawn and CIRCLE unheard) */
+      /* (a disc an .m3u names: the .m3u is the game).  Checked here when an
+       * .m3u was already seen, and pruned once after the single pass if an .m3u
+       * appeared later in the same directory. */
       else if ((console == FE_CONSOLE_SCD || g_side[FE_CONSOLE_SCD].on) &&
                pk_m3u_is_disc(ent.d_name) &&
-               (m3u_read || (m3u_hide_dir(dir), m3u_read = 1)) &&
                g_m3u_hide_n && m3u_hidden(dir, ent.d_name))
       {
       }
-      /* (another console's game: into its own list, rom_side_add) */
-      else if (ent.d_name[0] != '.' && !ROM_MATCH(ent.d_name, console))
+      /* A hidden file is not a game.  On a card a Mac has written, every
+       * Game.gba comes with a ._Game.gba of 4 KB beside it (AppleDouble). */
+      else if (ent.d_name[0] != '.' && !(match = ROM_MATCH(ent.d_name, console)))
       {
+         /* (another console's game: into its own list, rom_side_add) */
          int c;
          for (c = 0; c < FE_CONSOLE_COUNT; c++)
-            if (g_side[c].on && ROM_MATCH(ent.d_name, (fe_console_t)c))
+            if (c != (int)console && g_side[c].on &&
+                ROM_MATCH(ent.d_name, (fe_console_t)c))
             {
                rom_side_add(c, rel, ent.d_name, (unsigned)ent.d_stat.st_size);
                break;
             }
       }
-      /* A hidden file is not a game.  On a card a Mac has written, every
-       * Game.gba comes with a ._Game.gba of 4 KB beside it (AppleDouble:
-       * the resource fork and Finder tags), which would be listed as a game
-       * that cannot start. */
-      else if (ent.d_name[0] != '.' && ROM_MATCH(ent.d_name, console))
+      else if (ent.d_name[0] != '.' && match)
 #undef ROM_MATCH
 #else
       else if (ui_rom_matches_console(ent.d_name, console))
@@ -10392,6 +10428,20 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
 #endif
    sceIoDclose(d);
 #ifdef VITA
+   if (g_m3u_hide_n > hide_base)
+   {
+      if (console == FE_CONSOLE_SCD)
+         rom_prune_m3u_entries(dir, g_roms, n_start, n, &g_rom_found);
+      if (g_side[FE_CONSOLE_SCD].on)
+         rom_side_prune_m3u(dir, side_start);
+   }
+   for (i = 0; i < nsubs; i++)
+   {
+      if (!g_scan_stop)
+         rom_scan_dir(subs[i], depth - 1, n, console);
+      free(subs[i]);
+   }
+   free(subs);
    g_m3u_hide_n = hide_base;
 #endif
 }
@@ -10561,6 +10611,14 @@ static void rom_side_add(int c, const char *rel, const char *file,
       e->scan_order = (unsigned short)g_side[c].n;
       g_side[c].n++;
    }
+}
+
+static void rom_side_prune_m3u(const char *dir, int start)
+{
+   rom_cache *sc = &g_rom_cache[FE_CONSOLE_SCD];
+   rom_prune_m3u_entries(dir, sc->entries, start,
+                         &g_side[FE_CONSOLE_SCD].n,
+                         &g_side[FE_CONSOLE_SCD].found);
 }
 
 /* The walk is over: each other console's list, sorted, is its cache (when
@@ -11796,7 +11854,7 @@ static void names_prepare(int n_scan)
                     (unsigned)browser_tab() * 17u +
                     (unsigned)scope_count(n_scan) * 53u +
                     name_hash(g_find);
-   static unsigned short tab[2048];    /* open addressing: rom + 1, 0 free */
+   static unsigned short tab[4096];    /* open addressing: rom + 1, 0 free */
    static char names[BROWSER_MAX][64];
    if (stamp == g_name_stamp)
       return;
@@ -11810,7 +11868,7 @@ static void names_prepare(int n_scan)
       if (rom < 0 || rom >= BROWSER_MAX)
          continue;
       rom_display_name(&g_roms[rom], names[rom], sizeof(names[rom]), 1);
-      h = name_hash(names[rom]) & 2047u;
+      h = name_hash(names[rom]) & 4095u;
       for (;;)
       {
          j = (int)tab[h] - 1;
@@ -11826,7 +11884,7 @@ static void names_prepare(int n_scan)
          }
          if (j == rom)
             break;
-         h = (h + 1) & 2047u;
+         h = (h + 1) & 4095u;
       }
    }
 }
@@ -12839,7 +12897,7 @@ static int browser_rom_has_state(const char *rom_dir, int rom_idx)
       if (!g_browser_state_exists[slot - 1])
       {
          char old[PSP_FILE_PATH_CAP + 4];
-         if (path[0] && snprintf(old, sizeof(old), tr("ui.old"), path) < (int)sizeof(old))
+         if (path[0] && snprintf(old, sizeof(old), "%s.old", path) < (int)sizeof(old))
             g_browser_state_exists[slot - 1] = sceIoGetstat(old, &st) >= 0;
       }
       any |= g_browser_state_exists[slot - 1];
@@ -13438,13 +13496,19 @@ static int browser_settings(void)
       sceCtrlPeekBufferPositive(&pd, 1);
       pad = ui_demo_running() ? demo_pad() : pd.Buttons;
 #ifdef VITA
-      /* Button mapping takes the rear panel's corners here as it does in a
-       * game: while Rear touch panel is on (no game's own choice out here) */
-      if (g_screen == SCR_CONTROLS && g_cap.on && g_pcfg.rear_touch && !ui_demo_running())
+      /* Button mapping takes the rear panel's corners and Custom left stick
+       * here as it does in a game (no game's own choice out here). */
+      if (g_screen == SCR_CONTROLS && g_cap.on && !ui_demo_running() &&
+          (g_pcfg.rear_touch || g_pcfg.stick == CTL_STICK_CUSTOM))
       {
+         static unsigned stick_cap_state;
          ui_btn_state bs;
          ui_host_btn_read(&bs);
-         pad |= bs.rear & CTL_REAR_ALL;
+         if (g_pcfg.rear_touch)
+            pad |= bs.rear & CTL_REAR_ALL;
+         if (g_pcfg.stick == CTL_STICK_CUSTOM)
+            pad |= ctl_stick_bits(CTL_STICK_CUSTOM, bs.lx, bs.ly,
+                                  &stick_cap_state);
       }
       edges = vita_frame_begin(&pad);
 #else

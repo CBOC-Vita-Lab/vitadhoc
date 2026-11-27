@@ -67,7 +67,7 @@ static inline void sidecar_make_dirs(const char *root)
 {
    static const char *const sub[] = { "states", "states/gba", "states/gb",
                                       "states/gbc", "states/nes", "states/ws", "states/snes", "states/md", "states/sms",
-                                      "states/gg", "states/sg", "cache", "cache/boxart",
+                                      "states/gg", "states/sg", "states/scd", "cache", "cache/boxart",
                                       "cache/titles", "cache/hero" };
    char p[PSP_FILE_PATH_CAP];
    unsigned i;

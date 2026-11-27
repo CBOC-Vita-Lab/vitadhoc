@@ -125,7 +125,8 @@ static inline int gbprn_add_rows(gbprn *p, unsigned n, uint8_t **first)
 
 static inline void gbprn_print(gbprn *p)
 {
-   const unsigned sheets = p->args[0], margin = p->args[1], pal = p->args[2];
+   const unsigned sheets = p->args[0], margin = p->args[1];
+   const unsigned pal = p->args[2] ? p->args[2] : 0xE4u;
    const unsigned before = (margin >> 4) * GBPRN_MARGIN_PX;
    const unsigned after = (margin & 15) * GBPRN_MARGIN_PX;
    const unsigned tiles = p->buf_len / 16, trows = (tiles + 19) / 20;

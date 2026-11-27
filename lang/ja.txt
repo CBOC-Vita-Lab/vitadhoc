@@ -908,12 +908,12 @@ settings.help.busy_moments_skip_a_frame_game	負荷が高いときはフレー�
 settings.help.busy_moments_slow_the_game_and	負荷が高いときはゲームと音が遅くなります。
 settings.help.cannot_write_the_psvshell_profile	PSVshellのプロファイルを書き込めません
 settings.help.choose_just_this_game_to_give	「このゲームのみ」でこのゲーム専用の見た目にできます。
-settings.help.circle_is_a_and_confirms_in	{o}がAで、メニューでは決定になります。{x}がBです。
+settings.help.circle_is_a_and_confirms_in	○がAで、メニューでは決定になります。×がBです。
 settings.help.coloured_stripes_like_a_crt_tube	CRTのような色の縞。少し暗くなります。1が薄く、10が濃い。
 settings.help.colours_exactly_as_the_game_sends	ゲームが出力したままの色。
 settings.help.controller_a_zapper_game_is_played	コントローラー: Zapperゲームをパッドで。次回の起動から。
 settings.help.copy_saves_and_states_from_the	ルーム共有中のVitaからセーブとステートをコピーします。
-settings.help.cross_is_a_and_confirms_in	{x}がAで、メニューでは決定になります。{o}がBです。
+settings.help.cross_is_a_and_confirms_in	×がAで、メニューでは決定になります。○がBです。
 settings.help.dark_lines_between_the_rows_like	テレビのように行間に暗い線。1が薄く、10が濃い。
 settings.help.dark_or_light_menus	メニューを暗くするか明るくするか。
 settings.help.darkens_a_thin_line_under_every	画素の各行の下に細い暗線を入れます。
@@ -1094,10 +1094,10 @@ settings.value.auto	自動
 settings.value.automatic	自動
 settings.value.by_name	名前順
 settings.value.checking_of_have_covers	確認中 %d / %d - カバーあり%d
-settings.value.circle_is_a	{o}がA
+settings.value.circle_is_a	○がA
 settings.value.classic_lcd_tint	昔のLCDの色合い
 settings.value.controller	コントローラー
-settings.value.cross_is_a	{x}がA
+settings.value.cross_is_a	×がA
 settings.value.custom	カスタム
 settings.value.daily	毎日
 settings.value.dark	ダーク

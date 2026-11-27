@@ -40,7 +40,7 @@
  *
  * THE FILE (all little-endian):
  *    0   "VCL1"
- *    4   u16 width, u16 height                  (at most 256 x 224)
+ *    4   u16 width, u16 height                  (at most 256 x 240)
  *    8   u32 frames
  *   12   u32 microseconds per tick              (a tick is one core frame)
  *   16   u32 bytes of frame data
@@ -66,7 +66,7 @@ extern "C" {
 #endif
 
 #define CLIP_W_MAX     256
-#define CLIP_H_MAX     224
+#define CLIP_H_MAX     240
 #define CLIP_TICKS     600     /* what a clip keeps: 10 s of core frames   */
 #define CLIP_TICKS_MIN 180     /* a shorter recording leaves the old clip  */
 #define CLIP_HISTORY_TICKS 1200 /* what the ring keeps to choose from: 20 s */

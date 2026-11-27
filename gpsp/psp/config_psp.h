@@ -769,7 +769,7 @@ const char *pcfg_quality_name(int quality);
 /* How many `color` values a console has (GBA 3, GBC 2, WS 2, NES 2, GB 0). */
 int pcfg_color_modes(int console);
 /* `wide` values of a console (GBA 3, the others 0) and their names. */
-#define PCFG_WIDE_DEF 1
+#define PCFG_WIDE_DEF 3
 /* 1.4: the margins continue the picture's own edges softly (no black bars) */
 #define PCFG_WIDE_FILL_DEF 1
 int pcfg_wide_modes(int console);

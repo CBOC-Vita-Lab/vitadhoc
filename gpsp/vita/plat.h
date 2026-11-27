@@ -191,6 +191,7 @@ int  plat_net_join(uint32_t timeout_us);
  * contract again. */
 int  plat_job_start(void (*fn)(void *), void *arg);
 int  plat_job_join(uint32_t timeout_us);
+int  plat_job_busy(void);
 /* Sleep in REAL time, on a thread other than the frame thread (on the twin
  * plat_sleep_us moves the simulated clock). */
 void plat_thread_sleep_us(uint32_t us);
@@ -268,6 +269,8 @@ typedef struct plat_pad
 } plat_pad;
 
 void plat_pad_read(plat_pad *pad);
+/* Same as plat_pad_read(), without the Cross/Circle face-button swap. */
+void plat_pad_read_raw(plat_pad *pad);
 /* The buttons that were down at ANY moment since the previous call (port 0,
  * PLAT_BTN_* bits, the face swap applied): a tap shorter than the time
  * between two plat_pad_read calls (a slow frame, Steady pacing's two frames

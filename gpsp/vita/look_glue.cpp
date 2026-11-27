@@ -67,8 +67,8 @@ namespace {
  *                  locked 60 first, so this is the start to be corrected.
  *   GB/C  160x144: 3x until measured (4x is 369k px, but nothing has run)
  *   WS    224x144: 3x
- *   NES   256x240: 2x; 3x is 553k px and 720 lines tall, more than the
- *                  544-line panel, so 2x and the GPU's stretch is cleaner too
+ *   NES   424x240: 2x (wide view); 3x exceeds the 544-line panel and the
+ *                  pixel budget, so 2x and the GPU's stretch is cleaner too
  * An unknown console gets 2x.
  *
  * MMPX 2x (mmpx_vita.h) sits between xBRZ 2x and sharp bilinear (the floor):
@@ -86,7 +86,7 @@ const Console k_consoles[] = {
    { "gb", 160, 144, 3, 0 },
    { "gbc", 160, 144, 3, 0 },
    { "ws", 224, 144, 3, 0 },
-   { "nes", 256, 240, 2, 0 },
+   { "nes", 424, 240, 2, 0 },
 };
 /* a console this file does not know (never the GBA's numbers) */
 const Console k_other = { "", 256, 240, 2, 0 };

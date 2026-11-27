@@ -27,6 +27,7 @@
 #include "mmpx_vita.h"
 #include "upscale_vita.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #if (defined(__ARM_NEON) || defined(__ARM_NEON__)) && !defined(MMPX_NO_NEON)
@@ -44,22 +45,39 @@
 static int g_mm_c_only;
 void mmpx_test_c_only(int on) { g_mm_c_only = on; }
 
-static uint16_t g_mm_luma[65536];
-static int g_mm_luma_ready;
+static uint16_t *g_mm_luma;
 
-static void mm_luma_build(void)
+static inline uint16_t mm_luma_calc(uint16_t v)
 {
+   const unsigned r = (v >> 11) & 31, g = (v >> 5) & 63, b = v & 31;
+   const unsigned r8 = (r << 3) | (r >> 2), g8 = (g << 2) | (g >> 4),
+                  b8 = (b << 3) | (b >> 2);
+   /* (the reference multiplies by 256 - alpha, a constant for an opaque
+    * picture: the order of two lumas is the same) */
+   return (uint16_t)(r8 + g8 + b8 + 1);
+}
+
+/* Allocated lazily ONLY when the scalar C fallback actually needs it; the
+ * NEON path computes luma directly in registers and never touches it. */
+static const uint16_t *mm_luma_get(void)
+{
+   uint16_t *t = __atomic_load_n(&g_mm_luma, __ATOMIC_ACQUIRE);
+   uint16_t *expected = NULL;
    unsigned v;
-   for (v = 0; v < 65536; v++)
+   if (t)
+      return t;
+   t = (uint16_t *)malloc(65536u * sizeof(uint16_t));
+   if (!t)
+      return NULL;
+   for (v = 0; v < 65536u; v++)
+      t[v] = mm_luma_calc((uint16_t)v);
+   if (!__atomic_compare_exchange_n(&g_mm_luma, &expected, t, 0,
+                                    __ATOMIC_RELEASE, __ATOMIC_ACQUIRE))
    {
-      const unsigned r = (v >> 11) & 31, g = (v >> 5) & 63, b = v & 31;
-      const unsigned r8 = (r << 3) | (r >> 2), g8 = (g << 2) | (g >> 4),
-                     b8 = (b << 3) | (b >> 2);
-      /* (the reference multiplies by 256 - alpha, a constant for an opaque
-       * picture: the order of two lumas is the same) */
-      g_mm_luma[v] = (uint16_t)(r8 + g8 + b8 + 1);
+      free(t);
+      t = expected;
    }
-   __atomic_store_n(&g_mm_luma_ready, 1, __ATOMIC_RELEASE);
+   return t;
 }
 
 #define MM_EQ3(B, A0, A1, A2) ((((B) ^ (A0)) | ((B) ^ (A1)) | ((B) ^ (A2))) == 0)
@@ -81,12 +99,13 @@ static void mmpx_pixel(const uint16_t *const r[7], int x, uint16_t out[4])
    const uint16_t G = r[4][x - 1], H = r[4][x], I = r[4][x + 1];
    const uint16_t Q = r[3][x - 2], R = r[3][x + 2];
    const uint16_t P = r[1][x], S = r[5][x];
+   const uint16_t *luma = mm_luma_get();
    /* the luma lookups are lazy: only a rule whose cheap tests pass reads one */
-#define Bl g_mm_luma[B]
-#define Dl g_mm_luma[D]
-#define El g_mm_luma[E]
-#define Fl g_mm_luma[F]
-#define Hl g_mm_luma[H]
+#define Bl (luma ? luma[B] : mm_luma_calc(B))
+#define Dl (luma ? luma[D] : mm_luma_calc(D))
+#define El (luma ? luma[E] : mm_luma_calc(E))
+#define Fl (luma ? luma[F] : mm_luma_calc(F))
+#define Hl (luma ? luma[H] : mm_luma_calc(H))
    uint16_t J = E, K = E, L = E, M = E;
 
    /* 1:1 slope rules */
@@ -401,10 +420,6 @@ void mmpx_rect(const uint16_t *src, int w, int h, const uint32_t *lut,
    int ya, xa;
    if (!src || !lut || !at || w < 1 || h < 1)
       return;
-   /* (built by mmpx_set_* before any job runs; two helpers that both get here
-    * first write the same values) */
-   if (!__atomic_load_n(&g_mm_luma_ready, __ATOMIC_ACQUIRE))
-      mm_luma_build();
    for (ya = y0; ya < y1; ya += MM_BAND)
    {
       const int yb = ya + MM_BAND < y1 ? ya + MM_BAND : y1;
@@ -427,16 +442,12 @@ static int g_mm_auto, g_mm_choice;
 void mmpx_set_auto(int on)
 {
    on = on ? 1 : 0;
-   if (on)
-      mm_luma_build();
    __atomic_store_n(&g_mm_auto, on, __ATOMIC_SEQ_CST);
 }
 
 void mmpx_set_choice(int on)
 {
    on = on ? 1 : 0;
-   if (on)
-      mm_luma_build();
    __atomic_store_n(&g_mm_choice, on, __ATOMIC_SEQ_CST);
 }
 

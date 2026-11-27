@@ -274,7 +274,7 @@ static struct
    int      dispatch_cache;   /* dispatch_cache = 0 | 1 (default 1)    */
    int      handoff;          /* smooth_handoff = 0 | 1: this launch's
                                * override of the setting (-1: as set)  */
-   int      draw_core;        /* draw_core = 0..2 (default 1), draw_prio:
+   int      draw_core;        /* draw_core = 0..2 (-1 default), draw_prio:
                                * smooth hand-over's drawing thread     */
    int      draw_prio;
    /* Last: the initializer below is positional, and "" is its default. */
@@ -290,7 +290,7 @@ static struct
                                * (it asks nobody without it) */
    int      update_timeout;   /* update_timeout = ms: the twin's tests */
 } g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, -1, 1, 1,
-           "", 0, 2, 1, 0, 0, 3, 2, 1, 1, 1, 1, 1, -1, 1, 0x60,
+           "", 0, 2, 1, 0, 0, 3, 2, 1, 1, 1, 1, 1, -1, -1, -1,
            "", "", 0, "", 0 };
 
 /* The A/B keys of 1.4's layers, so the owner can run a "1.3 baseline"
@@ -870,6 +870,8 @@ static void snes_ra_save(const char *rom_path, const char *save, char *out,
  * The one written for a start is the only one left on the card. */
 static const char *const k_launch_ids[] = { "snes", "md", "sms", "gg", "sg", "scd" };
 
+static int ab_circle(void);
+
 /* `con` the console (FE_CONSOLE_SNES, or one of the four Sega ones), `game`
  * is what the player runs (the unpacked file of a zip), `save` its battery
  * file, `rom_path` the game as the list knows it; `slot` the shelf's choice
@@ -950,7 +952,7 @@ static int player_launch_write(fe_console_t con, const char *game, const char *s
                 "cpu_mhz=%d\n"
                 "enter_button=%s\n"
                 "tap_menu=%d\n"
-                "language=en\n"
+                "language=%s\n"
                 "start=%s\n"
                 "slot=%d\n"
                 "patch=%s\n"
@@ -961,14 +963,23 @@ static int player_launch_write(fe_console_t con, const char *game, const char *s
                 "%s",
                 g_snes_session, id, game, name, save, g_app_root,
                 g_sw.cpu_fast ? 500 : 444,
-                pspcompat_enter_is_circle() ? "circle" : "cross",
+                ab_circle() ? "circle" : "cross",
                 g_pcfg.tap_menu ? 1 : 0,
+                i18n_code[i18n_current() >= 0 && i18n_current() < I18N_LANGS
+                          ? i18n_current() : 1],
                 slot == PSP_STATE_RESUME ? "continue"
                 : slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? "slot" : "new",
                 slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? slot : 0,
                 patch, pkey, ra, rom_path, (unsigned)now, extra);
    if (n < 0 || (size_t)n >= sizeof(text))
       return -1;
+   if (g_sw.shot_dir[0])
+   {
+      int m = snprintf(text + n, sizeof(text) - (size_t)n, "shot_dir=%s\n", g_sw.shot_dir);
+      if (m < 0 || (size_t)m >= sizeof(text) - (size_t)n)
+         return -1;
+      n += m;
+   }
    if (g_snes_lk)
    {
       /* Two players: snes.bin makes the link again on the same local port (playerkit/FORMATS.md "link.*") */
@@ -1522,7 +1533,8 @@ static unsigned pad_now(void)
 }
 
 /* The WonderSwan takes the Vita's own buttons, not the control map: a corner
- * bound to a game button presses what that button's own key presses there. */
+ * bound to a game button presses what that button's own key presses there.
+ * WonderSwan A is Circle and B is Cross (unlike the Vita's default West A/B). */
 static unsigned ws_rear_keys(unsigned pad)
 {
    unsigned b = 0;
@@ -1533,7 +1545,14 @@ static unsigned ws_rear_keys(unsigned pad)
    {
       unsigned bind = g_pcfg.controls.bind[a];
       if ((bind & CTL_REAR_ALL) && (pad & bind) == bind)
-         b |= ctl_default(a);
+      {
+         if (a == CTL_GAME_A)
+            b |= PSP_CTRL_CIRCLE;
+         else if (a == CTL_GAME_B)
+            b |= PSP_CTRL_CROSS;
+         else
+            b |= ctl_default(a);
+      }
    }
    return b;
 }
@@ -1765,11 +1784,14 @@ static int gbcam_load_file(void)
  * the first capture the game starts, and is let go after CAM_IDLE_FRAMES
  * without another (a camera game sitting in its menus draws nothing from
  * the battery).  A capture that finds it closed uses the last picture. */
-#define CAM_IDLE_FRAMES 120          /* about 2 s */
+#define CAM_IDLE_FRAMES  120         /* about 2 s */
+#define CAM_RETRY_FRAMES 120         /* cooldown after a transient camera error */
 static int      g_cam_lazy;          /* the source is the Vita's camera, open or not */
 static int      g_cam_want;          /* a capture was started since it closed */
 static unsigned g_cam_req;           /* fe_host_gbcam_requests() last seen */
 static unsigned g_cam_last;          /* frame of the last capture start */
+static unsigned g_cam_retry_until;   /* cooldown deadline after transient read error */
+static int      g_cam_retry_wait;    /* 1 while backing off before retrying open */
 
 static void gbcam_game_end(void)
 {
@@ -1781,6 +1803,8 @@ static void gbcam_game_end(void)
    g_cam_game = 0;
    g_cam_have = 0;
    g_cam_mode = -1;
+   g_cam_retry_until = 0;
+   g_cam_retry_wait = 0;
 }
 
 /* The console slept: the camera does not come back by itself.  Let go of it
@@ -1793,6 +1817,8 @@ static void gbcam_resume(void)
       plat_camera_close();
    g_cam_dev = 0;
    g_cam_mode = -1;
+   g_cam_retry_until = 0;
+   g_cam_retry_wait = 0;
    fe_evt("camera_resume");
 }
 
@@ -1828,6 +1854,8 @@ static void gbcam_frame(void)
       g_cam_dev = 0;
       g_cam_mode = mode;
       g_cam_have = 0;
+      g_cam_retry_until = 0;
+      g_cam_retry_wait = 0;
       g_cam_lazy = mode != PCFG_CAM_FILE;
       if (!g_cam_lazy)
       {
@@ -1838,7 +1866,9 @@ static void gbcam_frame(void)
       }
       fe_evt("camera_source mode=%d device=%d file=%d", mode, g_cam_lazy, g_cam_have);
    }
-   if (g_cam_lazy && !g_cam_dev && g_cam_want)
+   if (g_cam_retry_wait && (int)(now - g_cam_retry_until) >= 0)
+      g_cam_retry_wait = 0;
+   if (g_cam_lazy && !g_cam_dev && g_cam_want && !g_cam_retry_wait)
    {
       g_cam_dev = plat_camera_open(g_cam_mode == PCFG_CAM_BACK) == 0;
       if (!g_cam_dev)
@@ -1865,7 +1895,10 @@ static void gbcam_frame(void)
       {
          plat_camera_close();
          g_cam_dev = 0;
-         g_cam_lazy = 0;
+         /* Transient camera error: back off for 2 s instead of disabling the
+          * camera for the whole session. */
+         g_cam_retry_until = now + CAM_RETRY_FRAMES;
+         g_cam_retry_wait = 1;
          toast_now(tr("toast.the_camera_stopped"));
          fe_evt("camera_stopped");
       }
@@ -2432,18 +2465,44 @@ static int patch_prepare(const char *rom_path, char *out, size_t cap,
                        &dlen, &why) != 0)
       goto done;
    {
-      char tmp[APP_PATH_CAP + 8], dir[APP_PATH_CAP];
-      int ok;
+      char tmp[APP_PATH_CAP + 8], old[APP_PATH_CAP + 8], dir[APP_PATH_CAP];
+      int ok, had;
+      struct stat st;
       path_fmt(dir, sizeof(dir), "%s/patched", g_app_root);
       mkdir(dir, 0777);
-      path_fmt(tmp, sizeof(tmp), "%s.tmp", out);
+      if (path_fmt(tmp, sizeof(tmp), "%s.tmp", out) != 0 ||
+          path_fmt(old, sizeof(old), "%s.old", out) != 0)
+         goto done;
       remove(key);                /* no key until the file is whole */
       f = fopen(tmp, "wb");
       ok = f && fwrite(dst, 1, dlen, f) == dlen;
       if (f)
          ok &= fclose(f) == 0;
-      remove(out);
-      ok = ok && rename(tmp, out) == 0;
+      had = 0;
+      if (ok)
+      {
+         had = stat(out, &st) == 0;
+         if (had)
+         {
+            remove(old);
+            if (rename(out, old) != 0)
+               ok = 0;
+         }
+         if (ok)
+         {
+            if (rename(tmp, out) == 0)
+            {
+               if (had)
+                  remove(old);
+            }
+            else
+            {
+               ok = 0;
+               if (had)
+                  rename(old, out);
+            }
+         }
+      }
       if (!ok)
       {
          remove(tmp);
@@ -2543,8 +2602,8 @@ static void read_switches(void)
       g_core4_off = fe_ini_get(ini, "core4", c4, sizeof(c4)) &&
                     (!strncasecmp(c4, "off", 3) || c4[0] == '0');
    }
-   g_sw.draw_core       = (int)fe_ini_get_int(ini, "draw_core", 1);
-   g_sw.draw_prio       = (int)fe_ini_get_int(ini, "draw_prio", 0x60);
+   g_sw.draw_core       = (int)fe_ini_get_int(ini, "draw_core", -1);
+   g_sw.draw_prio       = (int)fe_ini_get_int(ini, "draw_prio", -1);
    /* Image quality Auto's xBRZ over the sharp filter (video_vita.c) */
    vid_set_auto_xbrz((int)fe_ini_get_int(ini, "auto_xbrz", 1));
    g_sw.drc             = (int)fe_ini_get_int(ini, "drc", g_sw.drc);
@@ -2953,11 +3012,15 @@ static int rom_from_launch(char *out, size_t cap)
        !has_ext(out, ".sfc") && !has_ext(out, ".smc") && !has_ext(out, ".nes") &&
        !has_ext(out, ".fds") && !has_ext(out, ".unf") && !has_ext(out, ".unif") &&
        !has_ext(out, ".ws") && !has_ext(out, ".wsc") && !has_ext(out, ".pc2") &&
-       !has_ext(out, ".zip") && !has_ext(out, ".7z"))
+       !has_ext(out, ".md") && !has_ext(out, ".gen") && !has_ext(out, ".smd") &&
+       !has_ext(out, ".bin") && !has_ext(out, ".68k") && !has_ext(out, ".sms") &&
+       !has_ext(out, ".gg") && !has_ext(out, ".sg") && !has_ext(out, ".sc") &&
+       !has_ext(out, ".cue") && !has_ext(out, ".chd") && !has_ext(out, ".iso") &&
+       !has_ext(out, ".m3u") && !has_ext(out, ".zip") && !has_ext(out, ".7z"))
    {
       fe_evt("launch_param refused reason=not_a_game path=\"%s\"", out);
       snprintf(g_launch_note, sizeof(g_launch_note),
-               "%.100s is not a .gba, .gb, .gbc, .sfc, .smc, .nes, .fds, .ws, .wsc, .zip or .7z file.", base_name(out));
+               "%.100s is not a supported game file.", base_name(out));
       return 1;
    }
    if (file_size(out, &size) != 0 || size <= 0)
@@ -3345,10 +3408,14 @@ static void sink_video(const uint16_t *pix, unsigned w, unsigned h,
       g_fps_emu++;
    if (pix)
    {
-      /* A GBA picture wider than the console's is the wide one; of its
-       * margins, what the scale in use has room for is shown. */
-      unsigned m = (h == 160 && w > 240) ? (w - 240) / 2 : 0;
-      unsigned fit = m ? (unsigned)vid_margin_fit(w - 2 * m, h, (int)m) : 0;
+      /* A GBA or NES wide picture is center-cropped to the console's own
+       * columns for g_last (clips, thumbnails, wake shots); g_show keeps
+       * the margins the screen has room for (GBA) or NES wide's 16:9. */
+      unsigned m = (g_game_console == FE_CONSOLE_NES && w > 256) ? (w - 256) / 2
+                 : (g_game_console == FE_CONSOLE_GBA && h == 160 && w > 240)
+                   ? (w - 240) / 2 : 0;
+      unsigned fit = (g_game_console == FE_CONSOLE_NES) ? m
+                   : m ? (unsigned)vid_margin_fit(w - 2 * m, h, (int)m) : 0;
       g_last.pix = pix + m;
       g_last.w = w - 2 * m;
       g_last.h = h;
@@ -4014,12 +4081,28 @@ static void pace_frame(void)
    }
 }
 
-/* How fast the pacer runs the game relative to a real GBA, in millionths:
- * the resampler's starting point (audio_vita.h). */
+/* How fast the pacer runs the game relative to the active console, in
+ * millionths: the resampler's starting point (audio_vita.h). */
 static unsigned pace_speed_x1e6(void)
 {
    if (g_sw.pace_mode == PACE_VSYNC)
-      return (unsigned)((double)plat_refresh_mhz() * 1000000.0 / GBA_FPS_X1000 + 0.5);
+   {
+      double fps_x1000 = GBA_FPS_X1000;
+      if (g_game_console == FE_CONSOLE_NES)
+      {
+         double nf = gbmux_nes_fps();
+         if (nf > 1.0 && nf <= 55.0)
+            return 1000000u;     /* PAL NES: gbcore_mux paces 50.007 Hz to display */
+         if (nf > 55.0)
+            fps_x1000 = nf * 1000.0;
+      }
+      else if (g_game_console == FE_CONSOLE_WSWAN)
+      {
+         /* wscore paces 75.47 Hz to 60000/1001 Hz across each refresh call. */
+         fps_x1000 = 60000.0 * 1000.0 / 1001.0;
+      }
+      return (unsigned)((double)plat_refresh_mhz() * 1000000.0 / fps_x1000 + 0.5);
+   }
    return 1000000u;
 }
 
@@ -4082,20 +4165,35 @@ void app_wide_apply(void)
 int app_snapshot_take(void)
 {
    unsigned w = g_last.w, h = g_last.h, y;
+   const uint16_t *src = g_last.pix;
+   unsigned max_w = g_game_console == FE_CONSOLE_GBA ? 240u : PSP_STATE_SHOT_MAX_W;
+   unsigned max_h = g_game_console == FE_CONSOLE_GBA ? 160u : PSP_STATE_SHOT_MAX_H;
 
-   if (!g_last.pix || !w || !h)
+   if (!src || !w || !h)
       return g_snap_have;         /* keep what there is */
-   if (w > 240) w = 240;
-   if (h > 160) h = 160;
+   if (w > max_w)
+   {
+      src += (w - max_w) / 2;
+      w = max_w;
+   }
+   if (h > max_h)
+   {
+      src += ((h - max_h) / 2) * (g_last.pitch / sizeof(uint16_t));
+      h = max_h;
+   }
    memset(g_snap, 0, sizeof(g_snap));
-   vid_frame_to_psp565(g_snap, SNAP_TEX, g_last.pix, w, h, g_last.pitch);
+   vid_frame_to_psp565(g_snap, SNAP_TEX, src, w, h, g_last.pitch);
    /* The edge texels once more, right and below, as the PSP's snapshot has
     * them: a filtered tap past the picture's edge reads the edge, not
     * black. */
-   for (y = 0; y < h; y++)
-      g_snap[y * SNAP_TEX + w] = g_snap[y * SNAP_TEX + w - 1];
-   memcpy(g_snap + h * SNAP_TEX, g_snap + (h - 1) * SNAP_TEX,
-          (w + 1) * sizeof(uint16_t));
+   if (w < SNAP_TEX)
+   {
+      for (y = 0; y < h; y++)
+         g_snap[y * SNAP_TEX + w] = g_snap[y * SNAP_TEX + w - 1];
+   }
+   if (h < SNAP_TEX)
+      memcpy(g_snap + h * SNAP_TEX, g_snap + (h - 1) * SNAP_TEX,
+             (w < SNAP_TEX ? w + 1 : w) * sizeof(uint16_t));
    /* The renderer keeps a GPU texture per pointer: these bytes changed. */
    vid_tex_invalidate(g_snap, sizeof(g_snap));
    g_snap_w = w;
@@ -4469,7 +4567,7 @@ static void state_loaded(const char *path)
  * pixels, no bars and no OSD -- with the wide view's margins when they are
  * on screen.  (The PSP writes the same frame as a BMP into its log folder;
  * a file a player goes looking for deserves a better name and place.) */
-#define SHOT_MAX_W (PSP_STATE_SHOT_MAX_W + 64)
+#define SHOT_MAX_W 448
 static void screenshot_write(void)
 {
    static unsigned char rgb[SHOT_MAX_W * PSP_STATE_SHOT_MAX_H * 3];
@@ -7015,7 +7113,26 @@ static void game_loop(void)
          }
       }
 
-      pad = pad_now();
+      {
+         static unsigned g_stick_state;
+         memset(&pp, 0, sizeof(pp));
+         pp.lx = pp.ly = pp.rx = pp.ry = 128;
+         plat_pad_read(&pp);
+         pad = pad_now();
+         if (g_pcfg.stick != CTL_STICK_MOVE)
+         {
+            int dx = (int)pp.lx - 128, dy = (int)pp.ly - 128;
+            unsigned sb = 0;
+            if (dx < -PSPCOMPAT_STICK_DEADZONE) sb |= PSP_CTRL_LEFT;
+            if (dx >  PSPCOMPAT_STICK_DEADZONE) sb |= PSP_CTRL_RIGHT;
+            if (dy < -PSPCOMPAT_STICK_DEADZONE) sb |= PSP_CTRL_UP;
+            if (dy >  PSPCOMPAT_STICK_DEADZONE) sb |= PSP_CTRL_DOWN;
+            pad &= ~(sb & ~pp.buttons);
+            if (g_pcfg.stick == CTL_STICK_CUSTOM)
+               pad |= ctl_stick_bits(CTL_STICK_CUSTOM, pp.lx, pp.ly,
+                                     &g_stick_state);
+         }
+      }
       pad_new = pad & ~g_prev_pad;
       g_prev_pad = pad;
       g_app_pad = pad;
@@ -7024,30 +7141,44 @@ static void game_loop(void)
       fired = ctl_shortcuts(&g_pcfg.controls, pad, pad_new);
       g_pad_block &= pad;
       g_pad_block |= chord_took(fired, pad);
-      g_app_keys = ctl_game_mask(&g_pcfg.controls,
-                                 chord_guard(pad & ~g_pad_block, pad));
-      if (g_game_console == FE_CONSOLE_WSWAN)
       {
-         /* The WonderSwan's buttons are the Vita's own.  Held sideways its
-          * A and B are Circle and Cross (Triangle and Square stay Rewind and
-          * Fast-forward); upright the four face buttons are its second
-          * cross, the game's: those shortcuts give way to it there (the
-          * right stick still fast-forwards). */
-         unsigned wb = ui_active() ? 0
-                     : ws_buttons(chord_guard(pad & ~g_pad_block, pad) |
-                                  ws_rear_keys(pad & ~g_pad_block));
-         if (wscore_showing() == WSCORE_SHOW_HORIZONTAL)
-            wb &= ~(WSCORE_SQUARE | WSCORE_TRIANGLE);
-         else
-            fired &= ~(CTL_FIRE_FF_HELD | CTL_FIRE_FF_PRESS | CTL_FIRE_REWIND);
-         wscore_set_buttons(wb);
+         unsigned gpad = chord_guard(pad & ~g_pad_block, pad);
+         g_app_keys = ctl_game_mask(&g_pcfg.controls, gpad);
+         if (g_game_console == FE_CONSOLE_WSWAN)
+         {
+            /* The WonderSwan's buttons are the Vita's own physical face layout
+             * (pspcompat_pad_raw avoids Asian Circle/Cross menu swap).  Held
+             * sideways its A and B are Circle and Cross (Triangle and Square
+             * stay Rewind and Fast-forward); upright the four face buttons are
+             * its second cross, the game's: those shortcuts give way to it
+             * there (the right stick still fast-forwards). */
+            unsigned wb = 0;
+            if (!ui_active())
+            {
+               unsigned raw = pspcompat_pad_raw();
+               unsigned raw_mask = ~g_pad_block;
+               if (ab_circle())
+               {
+                  unsigned fb = g_pad_block & (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE);
+                  if (fb && fb != (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE))
+                     raw_mask ^= PSP_CTRL_CROSS | PSP_CTRL_CIRCLE;
+               }
+               wb = ws_buttons((gpad & ~(PSP_CTRL_CROSS | PSP_CTRL_CIRCLE)) |
+                               (raw & raw_mask & (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE)) |
+                               ws_rear_keys(gpad));
+            }
+            if (wscore_showing() == WSCORE_SHOW_HORIZONTAL)
+               wb &= ~(WSCORE_SQUARE | WSCORE_TRIANGLE);
+            else
+               fired &= ~(CTL_FIRE_FF_HELD | CTL_FIRE_FF_PRESS | CTL_FIRE_REWIND);
+            wscore_set_buttons(wb);
+         }
       }
 
       /* The right stick is no control of a Game Boy: pulled down it is
        * the "button" of a cheat cartridge (the few codes that act only
        * while it is held; cheats_vita.h), flicked sideways it switches
        * which machine of the local link the pad drives. */
-      plat_pad_read(&pp);
       if (g_sw.pad_trace > 0)
       {
          static unsigned raw_was = ~0u, pad_was = ~0u;
@@ -7069,14 +7200,14 @@ static void game_loop(void)
       rs_side = pp.rx < 128 - RSTICK_PUSH || pp.rx > 128 + RSTICK_PUSH;
       rs_flick = rs_side && !g_rs_side && !ui_active();
       g_rs_side = rs_side;
-      /* ...and held to the left it rewinds, once it has been there a tenth
-       * of a second (a thumb that brushes the stick does not undo a jump),
-       * for as long as it stays. */
+      /* ...and held to the left it rewinds (or right fast-forwards) when
+       * Settings > Controls says so, once it has been there a tenth of a
+       * second (a thumb that brushes the stick does not undo a jump). */
       g_rs_left = pp.rx < 128 - RSTICK_PUSH ? g_rs_left + 1 : 0;
       g_rs_right = pp.rx > 128 + RSTICK_PUSH ? g_rs_right + 1 : 0;
-      if (g_rs_right >= RSTICK_REWIND_HOLD)
+      if (g_pcfg.stick_rewind && g_rs_right >= RSTICK_REWIND_HOLD)
          fired |= FIRE_FF_STICK;
-      /* (the stick rewinds only when Settings > Controls says so) */
+      /* (the stick rewinds/FFs only when Settings > Controls says so) */
       rw_want = (fired & CTL_FIRE_REWIND) ||
                 (g_pcfg.stick_rewind && g_rs_left >= RSTICK_REWIND_HOLD);
       if (rw_want)               /* its chord contains fast forward's */

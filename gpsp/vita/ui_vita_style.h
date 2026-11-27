@@ -17,6 +17,7 @@
 #define UI_VITA_STYLE_H
 
 #include "vstyle.h"
+#include "i18n.h"
 
 #define HC_BG       VS_HEX(0x060914, 255)
 #define HC_TEXT     VS_HEX(0xF5F7FC, 255)
@@ -215,7 +216,32 @@ static float hm_hints_w(const int *icons, const char *const *words, int n)
 static void hm_sentence(char *out, size_t cap, const char *s)
 {
    size_t o = 0;
-   int first = 1;
+   int first = 1, word_start = 1;
+   int german = i18n_current() == I18N_DE;
+   int has_lower = 0;
+   const char *p;
+   if (!cap)
+      return;
+   if (german)
+   {
+      for (p = s; *p; )
+      {
+         int n;
+         uint32_t cp = pk_u8_next(p, &n);
+         if (cp >= PK_U8_RAW) { p++; continue; }
+         if (pk_u8_is_latin_letter(cp) && pk_u8_lower(cp) == cp)
+         {
+            has_lower = 1;
+            break;
+         }
+         p += n;
+      }
+      if (has_lower)
+      {
+         snprintf(out, cap, "%s", s);
+         return;
+      }
+   }
    while (*s && o + 1 < cap)
    {
       int n;
@@ -225,12 +251,24 @@ static void hm_sentence(char *out, size_t cap, const char *s)
       if (cp >= PK_U8_RAW)                 /* a stray byte: as it is */
       {
          out[o++] = *s++;
+         word_start = 1;
          continue;
       }
-      if (!first)
-         cp = pk_u8_lower(cp);
-      if (pk_u8_is_latin_letter(cp))
-         first = 0;
+      if (german)
+      {
+         /* German nouns are capitalised: for an ALL-CAPS header do not
+          * lowercase the first letter of any word. */
+         if (!word_start)
+            cp = pk_u8_lower(cp);
+         word_start = !pk_u8_is_latin_letter(cp);
+      }
+      else
+      {
+         if (!first)
+            cp = pk_u8_lower(cp);
+         if (pk_u8_is_latin_letter(cp))
+            first = 0;
+      }
       k = pk_u8_put(cp, b);
       if (o + (size_t)k >= cap)
          break;                            /* no room for the whole character */

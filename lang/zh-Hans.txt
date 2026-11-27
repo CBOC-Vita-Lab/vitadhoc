@@ -317,8 +317,8 @@ home.patched_ups	已打补丁 (UPS)
 home.play	开始游戏
 home.played	游玩时间 %s，%s
 home.played_2	游玩时间 %s
-home.press_select_and_square_on_a	在游戏上按 select 和 square 即可添加。
-home.press_square_on_a_game_to	在游戏上按 square 即可加星标。
+home.press_select_and_square_on_a	在游戏上按 SELECT 和 {sq} 即可添加。
+home.press_square_on_a_game_to	在游戏上按 {sq} 即可加星标。
 home.recent	最近
 home.save_state	%d 个即时存档
 home.save_states	%d 个即时存档
@@ -863,12 +863,12 @@ settings.export_save_for_other_emulators	为其他模拟器导出存档
 settings.extra_cpu_core	额外 CPU 核心
 settings.fast_forward	快进
 settings.fast_link	快速联机
-settings.ff_button_square	快进键 (Square)
+settings.ff_button_square	快进键 ({sq})
 settings.fourth_core	第四核心
 settings.fps_counter	帧率显示
 settings.game_boy_colours	Game Boy 配色
 settings.game_boy_core	Game Boy 核心
-settings.game_boy_printer	Game Boy Printer
+settings.game_boy_printer	Game Boy 打印机
 settings.game_boy_type	Game Boy 类型
 settings.game_folders	游戏文件夹
 settings.game_list	游戏列表
@@ -908,12 +908,12 @@ settings.help.busy_moments_skip_a_frame_game	繁忙时跳过一帧；游戏和�
 settings.help.busy_moments_slow_the_game_and	繁忙时游戏及其声音会变慢。
 settings.help.cannot_write_the_psvshell_profile	无法写入 PSVshell 配置
 settings.help.choose_just_this_game_to_give	选“仅此游戏”可让它拥有自己的外观。
-settings.help.circle_is_a_and_confirms_in	Circle 为 A，在菜单中用于确认。Cross 为 B。
+settings.help.circle_is_a_and_confirms_in	○ 为 A，在菜单中用于确认。× 为 B。
 settings.help.coloured_stripes_like_a_crt_tube	像 CRT 显像管那样的彩色条纹。会让画面略暗。1 为淡，10 为浓。
 settings.help.colours_exactly_as_the_game_sends	颜色与游戏输出完全一致。
 settings.help.controller_a_zapper_game_is_played	手柄：Zapper 游戏用手柄游玩。下次启动游戏时生效。
 settings.help.copy_saves_and_states_from_the	从共享在你房间的 Vita 复制存档和即时存档。
-settings.help.cross_is_a_and_confirms_in	Cross 为 A，在菜单中用于确认。Circle 为 B。
+settings.help.cross_is_a_and_confirms_in	× 为 A，在菜单中用于确认。○ 为 B。
 settings.help.dark_lines_between_the_rows_like	行与行之间的暗线，像电视一样。1 为淡，10 为浓。
 settings.help.dark_or_light_menus	深色或浅色菜单。
 settings.help.darkens_a_thin_line_under_every	在每行像素下方加一条暗细线。
@@ -1094,10 +1094,10 @@ settings.value.auto	自动
 settings.value.automatic	自动
 settings.value.by_name	按名称
 settings.value.checking_of_have_covers	正在检查 %d / %d - %d 个有封面
-settings.value.circle_is_a	Circle 为 A
+settings.value.circle_is_a	○ 为 A
 settings.value.classic_lcd_tint	经典 LCD 色调
 settings.value.controller	手柄
-settings.value.cross_is_a	Cross 为 A
+settings.value.cross_is_a	× 为 A
 settings.value.custom	自定义
 settings.value.daily	每天
 settings.value.dark	深色
@@ -1385,7 +1385,7 @@ toast.gift_received_from_the_phone	已从手机收到礼物
 toast.hardcore_mode_rewind_is_off	硬核模式：倒带已关闭
 toast.hardcore_mode_starting_from_the_save	硬核模式：将从存档开始
 toast.hardcore_mode_states_cannot_be_loaded	硬核模式：无法读取即时存档
-toast.horizontal_circle_a_cross_b	横屏：Circle = A，Cross = B
+toast.horizontal_circle_a_cross_b	横屏：{o} = A，{x} = B
 toast.joined	已加入 %s
 toast.joined_2	%s 加入了 %s
 toast.leaderboard_attempt	排行榜挑战：%s
@@ -1527,7 +1527,7 @@ ui.cheats_2	金手指
 ui.cheats_are_off_during_link_play	联机游玩期间金手指已关闭，结束后恢复。
 ui.cheats_in_the_gbadhoc_folder	GBAdhoc 文件夹中的 cheats/
 ui.choose_a_format_gs1_ar3_gs1raw	请选择格式：GS1:、AR3:、GS1RAW: 或 AR3RAW:
-ui.circle_stop_and_show_what_is	CIRCLE：停止并显示已找到的内容
+ui.circle_stop_and_show_what_is	{o}：停止并显示已找到的内容
 ui.clips_are_off_while_linked	联机时片段功能已关闭。
 ui.continue	继续
 ui.controls	操作

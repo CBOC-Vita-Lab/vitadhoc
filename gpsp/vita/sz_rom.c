@@ -2,6 +2,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+
+#ifdef __vita__
+#include <psp2/kernel/sysmem.h>
+#endif
 
 #include "sz_rom.h"
 
@@ -13,17 +18,81 @@
 #define SZ_HDR_MAX  (16ul << 20)       /* one allocation while reading the header */
 #define SZ_ALLOC_MAX (SZ_ROM_BLOCK_MAX + (1ul << 20))
 
+#ifdef __vita__
+#define SZ_MEMBLOCK_MIN   (2u << 20)
+#define SZ_MEMBLOCK_SLOTS 16
+typedef struct { void *ptr; SceUID uid; } sz_mblk;
+#endif
+
 /* the SDK's allocator with a ceiling: a size a damaged archive makes up is refused, not tried */
-typedef struct { ISzAlloc vt; size_t cap; } sz_alloc;
+typedef struct
+{
+   ISzAlloc vt;
+   size_t cap;
+#ifdef __vita__
+   sz_mblk mblk[SZ_MEMBLOCK_SLOTS];
+#endif
+} sz_alloc;
 
 static void *sz_a(ISzAllocPtr p, size_t size)
 {
-   const sz_alloc *a = (const sz_alloc *)p;
-   return size > a->cap ? NULL : malloc(size ? size : 1);
+   sz_alloc *a = (sz_alloc *)p;
+   if (size > a->cap)
+      return NULL;
+#ifdef __vita__
+   if (size >= SZ_MEMBLOCK_MIN)
+   {
+      int i, slot = -1;
+      for (i = 0; i < SZ_MEMBLOCK_SLOTS; i++)
+         if (!a->mblk[i].ptr)
+         {
+            slot = i;
+            break;
+         }
+      if (slot >= 0)
+      {
+         SceSize aligned = (SceSize)((size + 4095u) & ~4095u);
+         SceUID uid = sceKernelAllocMemBlock("vitadhoc_7z",
+                                             SCE_KERNEL_MEMBLOCK_TYPE_USER_RW,
+                                             aligned, NULL);
+         if (uid >= 0)
+         {
+            void *base = NULL;
+            if (sceKernelGetMemBlockBase(uid, &base) >= 0 && base)
+            {
+               a->mblk[slot].ptr = base;
+               a->mblk[slot].uid = uid;
+               return base;
+            }
+            sceKernelFreeMemBlock(uid);
+         }
+      }
+   }
+#endif
+   return malloc(size ? size : 1);
 }
 static void sz_f(ISzAllocPtr p, void *ptr)
 {
+   if (!ptr)
+      return;
+#ifdef __vita__
+   {
+      sz_alloc *a = (sz_alloc *)p;
+      int i;
+      for (i = 0; i < SZ_MEMBLOCK_SLOTS; i++)
+      {
+         if (a->mblk[i].ptr == ptr)
+         {
+            sceKernelFreeMemBlock(a->mblk[i].uid);
+            a->mblk[i].ptr = NULL;
+            a->mblk[i].uid = -1;
+            return;
+         }
+      }
+   }
+#else
    (void)p;
+#endif
    free(ptr);
 }
 
@@ -264,6 +333,32 @@ int sz_rom_head(const char *path, const zip_rom_entry *e, unsigned char *buf, un
    return rc;
 }
 
+/* Two-step .old atomic replace on Vita FAT32 after tmp is fully written and closed. */
+static int sz_promote(const char *tmp, const char *out_path)
+{
+   char old[608];
+   struct stat st;
+   int had = stat(out_path, &st) == 0;
+   if (snprintf(old, sizeof(old), "%s.old", out_path) >= (int)sizeof(old))
+      return -1;
+   if (had)
+   {
+      remove(old);
+      if (rename(out_path, old) != 0 || stat(out_path, &st) == 0)
+         return -1;
+   }
+   (void)rename(tmp, out_path);
+   if (stat(out_path, &st) != 0)
+   {
+      if (had)
+         (void)rename(old, out_path);
+      return -1;
+   }
+   if (had)
+      remove(old);
+   return 0;
+}
+
 int sz_rom_extract(const char *path, const zip_rom_entry *e, const char *out_path)
 {
    sz_arc a;
@@ -285,8 +380,7 @@ int sz_rom_extract(const char *path, const zip_rom_entry *e, const char *out_pat
          ok = fwrite(blk + off, 1, len, o) == len;
          if (fclose(o) != 0)
             ok = 0;
-         remove(out_path);
-         if (ok && rename(tmp, out_path) == 0)
+         if (ok && sz_promote(tmp, out_path) == 0)
             rc = 0;
          else
             remove(tmp);

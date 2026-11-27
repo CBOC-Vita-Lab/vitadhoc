@@ -546,10 +546,10 @@ static void save_report(void)
    fe_evt("local_save file=%s size=%u crc=%08x ok=%d", L.save_path, L.wr.size,
           (unsigned)fe_crc32(0, L.save_snap, L.wr.size), L.wr.ok);
    if (L.wr.bak < 0)
-      osd_toast(tr("toast.the_second_game_s_old_save"));
+      osd_toast("%s", tr("toast.the_second_game_s_old_save"));
    else if (!L.wr.ok)
-      osd_toast(L.wr.kept ? tr("toast.the_second_game_s_save_could")
-                          : tr("toast.the_second_game_s_save_could_2"));
+      osd_toast("%s", L.wr.kept ? tr("toast.the_second_game_s_save_could")
+                                : tr("toast.the_second_game_s_save_could_2"));
 }
 
 /* app_vita.h: on the I/O worker, from main_vita.c's io_step. */
@@ -1602,7 +1602,7 @@ void link_local_frame(void)
       fe_evt("local_pair_error err=%d",
              L.gb ? local_gb_error() : fe_gbadual_local_error());
       stop_now("error");
-      osd_toast(tr("toast.the_link_between_the_two_games"));
+      osd_toast("%s", tr("toast.the_link_between_the_two_games"));
       return;
    }
    save_service();
@@ -1616,9 +1616,9 @@ void link_local_frame(void)
       if (p2 != L.have2_told)
       {
          L.have2_told = p2;
-         osd_toast(p2 == 2 ? tr("toast.player_2_plays_on_the_touch")
-                   : p2 ? tr("toast.controller_2_drives_the_partner_s")
-                        : tr("toast.one_controller_right_stick_or_tap"));
+         osd_toast("%s", p2 == 2 ? tr("toast.player_2_plays_on_the_touch")
+                         : p2 ? tr("toast.controller_2_drives_the_partner_s")
+                              : tr("toast.one_controller_right_stick_or_tap"));
          fe_evt("local_pad2 on=%d touch=%d", p2 != 0, p2 == 2);
       }
    }
@@ -1763,7 +1763,7 @@ void link_local_state_saved(const char *state_file)
    free(body);
    fe_evt("local_state_save file=%s size=%ld ok=%d", path, n, ok);
    if (!ok)
-      osd_toast(tr("toast.saved_your_game_only_the_second"));
+      osd_toast("%s", tr("toast.saved_your_game_only_the_second"));
 }
 
 void link_local_state_loaded(const char *state_file)
@@ -1823,10 +1823,10 @@ void link_local_state_loaded(const char *state_file)
       int r2 = L.gb ? local_gb_restart(reclone)
                     : fe_gbadual_local_restart(reclone);
       if (!strcmp(why, "other_partner"))
-         osd_toast(tr("toast.that_state_s_second_game_is"));
+         osd_toast("%s", tr("toast.that_state_s_second_game_is"));
       else
-         osd_toast(reclone ? tr("toast.state_loaded_the_second_game_is")
-                           : tr("toast.state_loaded_your_game_only"));
+         osd_toast("%s", reclone ? tr("toast.state_loaded_the_second_game_is")
+                                 : tr("toast.state_loaded_your_game_only"));
       fe_evt("local_state_load file=%s pair=0 why=%s reclone=%d rc=%d",
              state_file ? state_file : "-", why, reclone, r2);
       return;
@@ -2066,7 +2066,7 @@ static int local_gb_start(int clone, const char *partner_rom,
    lc.pad = gb_partner_pad;
    rc = fe_host_gb_local_start(&lc);
    if (fe_host_gb_core_notice_take() == 2)
-      osd_toast(tr("toast.two_cart_play_uses_the_standard_gb_core"));
+      osd_toast("%s", tr("toast.two_cart_play_uses_the_standard_gb_core"));
    /* The machine was shut down and made again around the start, whatever
     * came of it: the frame main_vita.c remembers is gone. */
    app_frame_forget();

@@ -4,7 +4,7 @@
 
 #include "vglyph.h"
 
-#define VG_BUDGET (160 * 1024)     /* a face's atlas, bytes, at most about */
+#define VG_BUDGET (512 * 1024)     /* a face's atlas, bytes, at most about */
 
 struct vglyph_set
 {

@@ -6,7 +6,16 @@
 #include <string.h>
 
 #include "ctl_map.h"
+#ifdef VITA
 #include "i18n.h"
+#else
+#ifndef TR_KEY
+#define TR_KEY(k) (k)
+#endif
+#ifndef tr
+#define tr(k) (k)
+#endif
+#endif
 #include "fe_util.h"
 #include "fe_evt.h"
 
@@ -61,7 +70,7 @@ static const ctl_action_info INFO[CTL_ACTIONS] = {
    { "bind_right",        "Right",          CTL_RIGHT,    RJ_RIGHT,  CTL_F_GAME },
    { "bind_ff",           TR_KEY("ctl.fast_forward"),   CTL_SQUARE,   0,         CTL_F_YIELD },
 #ifdef REWIND
-   { "bind_video",        tr("ctl.video_preset"),   0,            0,         0 },
+   { "bind_video",        TR_KEY("ctl.video_preset"),   0,            0,         0 },
 #else
    { "bind_video",        TR_KEY("ctl.video_preset"),   CTL_TRIANGLE, 0,         0 },
 #endif
@@ -241,11 +250,19 @@ const char *ctl_error_text(int err)
    switch (err)
    {
    case CTL_OK:         return "ok";
+#ifdef VITA
    case CTL_E_ACTION:   return tr("ctl.not_available_in_this_build");
    case CTL_E_BITS:     return tr("ctl.that_button_cannot_be_bound");
    case CTL_E_SINGLE:   return tr("ctl.this_one_takes_a_single_button");
    case CTL_E_RESERVED: return tr("ctl.start_select_is_reserved_for_the");
    case CTL_E_TOO_MANY: return tr("ctl.at_most_4_buttons");
+#else
+   case CTL_E_ACTION:   return "not available in this build";
+   case CTL_E_BITS:     return "that button cannot be bound";
+   case CTL_E_SINGLE:   return "this one takes a single button";
+   case CTL_E_RESERVED: return "START+SELECT is reserved for the menu";
+   case CTL_E_TOO_MANY: return "at most 4 buttons";
+#endif
    default:             return "invalid";
    }
 }
@@ -337,13 +354,35 @@ unsigned ctl_stick_bits(int mode, int lx, int ly, unsigned *state)
 
 unsigned ctl_rear_zones(const int *x, const int *y, int n)
 {
+   /* 12% outer grip inset keeps resting fingers on the Vita 1000 back grips
+    * quiet; ~8% center band avoids quadrant flutter along the crosshair. */
+   enum
+   {
+      REAR_H    = CTL_REAR_Y1 - CTL_REAR_Y0 + 1,
+      INSET_X   = CTL_REAR_W * 12 / 100,
+      INSET_Y   = REAR_H * 12 / 100,
+      DEAD_X    = CTL_REAR_W * 4 / 100,
+      DEAD_Y    = REAR_H * 4 / 100,
+      MID_X     = CTL_REAR_W / 2
+   };
    unsigned z = 0;
    int i;
    if (!x || !y)
       return 0;
    for (i = 0; i < n && i < 4; i++)
    {
-      int left = x[i] < CTL_REAR_W / 2, top = y[i] < CTL_REAR_MID_Y;
+      int px = x[i], py = y[i];
+      int dx, dy, left, top;
+      if (px < INSET_X || px >= CTL_REAR_W - INSET_X ||
+          py < CTL_REAR_Y0 + INSET_Y || py > CTL_REAR_Y1 - INSET_Y)
+         continue;
+      dx = px - MID_X;
+      dy = py - CTL_REAR_MID_Y;
+      if ((dx >= -DEAD_X && dx < DEAD_X) ||
+          (dy >= -DEAD_Y && dy < DEAD_Y))
+         continue;
+      left = px < MID_X;
+      top = py < CTL_REAR_MID_Y;
       z |= top ? (left ? CTL_REAR_TL : CTL_REAR_TR)
                : (left ? CTL_REAR_BL : CTL_REAR_BR);
    }

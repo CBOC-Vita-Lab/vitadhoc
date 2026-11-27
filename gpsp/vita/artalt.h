@@ -55,6 +55,79 @@ static int alt_is_lang(const char *s)
    }
 }
 
+/* Expand GoodTools short region codes in place; returns 1 if changed. */
+static int alt_expand_goodtools(char *r, size_t cap)
+{
+   static const struct { const char *code; const char *full; } map[] = {
+      { "U",   "USA" },
+      { "E",   "Europe" },
+      { "J",   "Japan" },
+      { "W",   "World" },
+      { "JU",  "Japan, USA" },
+      { "UJ",  "Japan, USA" },
+      { "UE",  "USA, Europe" },
+      { "EU",  "USA, Europe" },
+      { "JE",  "Japan, Europe" },
+      { "EJ",  "Japan, Europe" },
+      { "JUE", "World" },
+      { "F",   "France" },
+      { "G",   "Germany" },
+      { "S",   "Spain" },
+      { "I",   "Italy" },
+      { "A",   "Australia" },
+      { "Au",  "Australia" },
+      { "B",   "Brazil" },
+      { "K",   "Korea" },
+      { "C",   "China" },
+      { "Sw",  "Sweden" },
+      { "Nl",  "Netherlands" },
+      { 0, 0 }
+   };
+   int i;
+   for (i = 0; map[i].code; i++)
+      if (!strcmp(r, map[i].code))
+      {
+         snprintf(r, cap, "%s", map[i].full);
+         return 1;
+      }
+   return 0;
+}
+
+/* Strip GoodTools [...] bracket tags from `name` into `out` (collapsing
+ * double spaces and trailing whitespace); returns 1 if anything was stripped. */
+static int alt_strip_brackets(const char *name, char *out, size_t cap)
+{
+   size_t o = 0;
+   const char *p = name;
+   int stripped = 0;
+   if (!cap)
+      return 0;
+   while (*p && o + 1 < cap)
+   {
+      if (*p == '[')
+      {
+         const char *e = strchr(p + 1, ']');
+         if (e)
+         {
+            while (o > 0 && out[o - 1] == ' ')
+               o--;
+            p = e + 1;
+            while (*p == ' ')
+               p++;
+            if (o > 0 && *p && out[o - 1] != ' ')
+               out[o++] = ' ';
+            stripped = 1;
+            continue;
+         }
+      }
+      out[o++] = *p++;
+   }
+   while (o > 0 && out[o - 1] == ' ')
+      o--;
+   out[o] = '\0';
+   return stripped;
+}
+
 /* Split "Title (G1) (G2)" at the first " (" from which only groups follow.
  * Returns the number of groups (0: no tags); g[i] are NUL-terminated copies. */
 #define ALT_GROUPS 8
@@ -75,6 +148,17 @@ static int alt_split(const char *name, char *title, size_t tcap, char g[ALT_GROU
          if (*q == ' ')
          {
             q++;
+            continue;
+         }
+         if (*q == '[')
+         {
+            e = strchr(q, ']');
+            if (!e)
+            {
+               ok = 0;
+               break;
+            }
+            q = e + 1;
             continue;
          }
          if (*q != '(' || n >= ALT_GROUPS)
@@ -178,17 +262,24 @@ static void alt_add(af_alts *o, const char *have[], int nhave, const char *s)
 /* the fallbacks for `name`; `have` are the names already asked for */
 static void alt_names(const char *name, const char *have[], int nhave, af_alts *o)
 {
-   char title[AF_ALT_CAP], spaced[AF_ALT_CAP], g[ALT_GROUPS][64];
+   char clean[AF_ALT_CAP], title[AF_ALT_CAP], spaced[AF_ALT_CAP], g[ALT_GROUPS][64];
    const char *titles[2];
    const char *const *alts;
    char one[AF_ALT_CAP];
-   int ng, nt, t, a, lang;
+   int ng, nt, t, a, lang, stripped;
    const char *dash;
 
    o->n = 0;
-   ng = alt_split(name, title, sizeof(title), g);
+   stripped = alt_strip_brackets(name, clean, sizeof(clean));
+   ng = alt_split(clean, title, sizeof(title), g);
+   if (ng)
+      alt_expand_goodtools(g[0], sizeof(g[0]));
    if (!ng || !alt_is_region(g[0]))
+   {
+      if (!ng && stripped && clean[0])
+         alt_add(o, have, nhave, clean);
       return;
+   }
    lang = ng > 1 && alt_is_lang(g[1]);
    titles[0] = title;
    nt = 1;

@@ -106,13 +106,21 @@ static uint32_t c565(uint16_t c, int alpha)
 
 static const uint16_t *vv_look_lut(void);
 
+/* Called first by every entry point that draws or changes how the picture
+ * is drawn: smooth hand-over (handoff_glue.h) makes the caller wait there
+ * while the drawing thread still has a picture in hand. */
+void (*vid_enter_hook)(void);
+#define VID_ENTER() do { if (vid_enter_hook) vid_enter_hook(); } while (0)
+
 void vid_frame_to_psp565(uint16_t *dst, int dst_stride, const uint16_t *src,
                          unsigned w, unsigned h, size_t pitch_bytes)
 {
    /* In the colours the game is being shown in (vid_set_look): this is the
     * picture behind the menu and on a save state's thumbnail. */
-   const uint16_t *lut = vv_look_lut();
+   const uint16_t *lut;
    unsigned x, y;
+   VID_ENTER();
+   lut = vv_look_lut();
    for (y = 0; y < h; y++)
    {
       const uint16_t *s =
@@ -137,12 +145,6 @@ void vv_frame_need(void)
       g_clear_req = 0;
    }
 }
-
-/* Called first by every entry point that draws or changes how the picture
- * is drawn: smooth hand-over (handoff_glue.h) makes the caller wait there
- * while the drawing thread still has a picture in hand. */
-void (*vid_enter_hook)(void);
-#define VID_ENTER() do { if (vid_enter_hook) vid_enter_hook(); } while (0)
 
 void vid_init(void)
 {
@@ -174,8 +176,8 @@ float vid_text_advance_dev(int hd, int *worst_char, float *mean_abs)
    return vv_text_worst_dev(hd, worst_char, mean_abs);
 }
 
-void vid_set_vsync(int on) { vb_set_vsync(on); }
-void vid_set_common_dialog(int on) { vb_set_common_dialog(on); }
+void vid_set_vsync(int on) { VID_ENTER(); vb_set_vsync(on); }
+void vid_set_common_dialog(int on) { VID_ENTER(); vb_set_common_dialog(on); }
 
 /* ---- scale / filter ----------------------------------------------------- */
 
@@ -483,6 +485,7 @@ static int g_tex_cpu = 0;
 
 void vid_set_tex_mem(int cpu_written)
 {
+   VID_ENTER();
    g_tex_cpu = cpu_written ? 1 : 0;
 }
 
@@ -608,6 +611,7 @@ void vid_tex_invalidate(const void *p, size_t bytes)
    int i;
    if (!p)
       return;
+   VID_ENTER();
    g_tex_gen++;                    /* stage_tex: re-upload what it holds */
    for (i = 0; i < TC_MAX; i++)
    {
@@ -833,6 +837,7 @@ void vid_shot_rows(int y0, const void *src, int rows)
 {
    if (y0 < 0 || rows <= 0 || y0 + rows > SHOT_TEX_H || !src)
       return;
+   VID_ENTER();
    memcpy(g_shot + (size_t)y0 * SHOT_TEX_W, src,
           (size_t)rows * SHOT_TEX_W * sizeof(uint16_t));
    vid_tex_invalidate(g_shot, sizeof(g_shot));
@@ -884,6 +889,7 @@ static int g_amb_level = 5;
 
 void vid_ambient_strength(int level)
 {
+   VID_ENTER();
    g_amb_level = level < 0 ? 0 : level > 10 ? 10 : level;
 }
 
@@ -896,6 +902,7 @@ static unsigned amb_level_scale(unsigned v)
 
 void vid_ambient_fallback(uint16_t rgb565)
 {
+   VID_ENTER();
    g_amb_shade = rgb565;
    g_amb_have_shade = 1;
 }
@@ -904,6 +911,7 @@ int vid_ambient_source(void) { return g_amb_src; }
 
 void vid_ambient_resnap(void)
 {
+   VID_ENTER();
    if (g_amb_src == AMB_SRC_SNAP || (g_amb_src == AMB_SRC_NONE &&
                                      g_amb_snap_done))
    {
@@ -916,6 +924,7 @@ void vid_ambient_resnap(void)
 
 void vid_ambient_drop(void)
 {
+   VID_ENTER();
    if (g_amb_src == AMB_SRC_ART)
       g_amb_src = AMB_SRC_NONE;
 }
@@ -1110,7 +1119,9 @@ int vid_ambient_bake_art(const uint16_t *src, int stride, int w, int h,
                          int precomposed)
 {
    unsigned t0 = pspcompat_time_us(), us;
-   int rc = amb_bake(src, stride, w, h, 4, 0, 0, 0);
+   int rc;
+   VID_ENTER();
+   rc = amb_bake(src, stride, w, h, 4, 0, 0, 0);
    us = pspcompat_time_us() - t0;
    g_amb_src = rc == 0 ? AMB_SRC_ART : AMB_SRC_NONE;
    g_amb_scrim = precomposed ? AMB_SCRIM_HERO : AMB_SCRIM_BOXART;
@@ -1123,7 +1134,9 @@ int vid_ambient_bake_art(const uint16_t *src, int stride, int w, int h,
 int vid_ambient_bake_cover(const uint16_t *src, int stride, int w, int h)
 {
    unsigned t0 = pspcompat_time_us(), us;
-   int rc = amb_bake(src, stride, w, h, 4, 0, 0, AMB_COVER_BLUR_PASSES);
+   int rc;
+   VID_ENTER();
+   rc = amb_bake(src, stride, w, h, 4, 0, 0, AMB_COVER_BLUR_PASSES);
    us = pspcompat_time_us() - t0;
    g_amb_src = rc == 0 ? AMB_SRC_ART : AMB_SRC_NONE;
    g_amb_scrim = AMB_SCRIM_BOXART;
@@ -1215,13 +1228,14 @@ static void backdrop_draw(int covers)
  *   LCD grid         sharp bilinear (or nearest), then a grid texture over
  *                    the picture: see lcd_tex().
  *
- * The render target is 960 x 640 -- GBA at k = 4, the largest prescale any
- * mode asks for (fit and stretch are both 3.4x tall) -- and is taken on the
- * first sharp frame.  Without it sharp falls back to bilinear.
+ * The render target is 1344 x 720 -- enough for NES / NES Wide (448 * 3)
+ * and vertical WonderSwan (224 * 3 = 672) at k = 3, and GBA Wide (282 * 4)
+ * at k = 4 -- and is taken on the first sharp frame.  Without it sharp falls
+ * back to bilinear.
  * ======================================================================== */
 
-#define SHARP_RT_W 1152        /* the wide picture's 282 columns, 4 times */
-#define SHARP_RT_H 640
+#define SHARP_RT_W 1344        /* 448 * 3: NES Wide and GBA Wide 4x */
+#define SHARP_RT_H 720         /* 240 * 3: NES and vertical WonderSwan */
 
 enum { PIC_NEAREST = 0, PIC_LINEAR = 1, PIC_SHARP = 2 };
 
@@ -1283,6 +1297,7 @@ static int     g_lcd_built_scan = -1, g_lcd_built_grid = -1;
 
 void vid_set_overlays(int scan, int grid)
 {
+   VID_ENTER();
    g_scan_lvl = scan < 0 ? 0 : scan > 10 ? 10 : scan;
    g_grid_lvl = grid < 0 ? 0 : grid > 10 ? 10 : grid;
 }
@@ -1388,6 +1403,7 @@ static unsigned g_crt_fail;
 
 void vid_set_crt(int strength)
 {
+   VID_ENTER();
    g_crt_lvl = strength < 0 ? 0 : strength > 10 ? 10 : strength;
 }
 int vid_overlay_crt(void) { return g_crt_lvl; }
@@ -1460,6 +1476,7 @@ static unsigned g_gx_samples, g_gx_avg, g_gx_max;
 
 void vid_set_gpu_time(int on)
 {
+   VID_ENTER();
    g_gx_always = on ? 1 : 0;
    vb_gpu_time(on ? -1 : 0);
 }
@@ -1606,32 +1623,64 @@ static unsigned  g_look_w[2], g_look_h[2];   /* the frame in prev; 0 = none */
  *   WonderSwan  its TFT reflective LCD: blacks a little lifted, colour 90 %
  *   NTSC TV     a television's composite decode: colour 90 %, a 1.1 curve
  *               (darker mid-tones than a modern panel), blacks untouched */
+static unsigned cc_quant_flat(float x, float curve, float lift,
+                              const float *thr, int maxv)
+{
+   int k;
+   if (x <= 0.0f)
+      return (unsigned)(lift * (float)maxv + 0.5f);
+   if (x >= 1.0f)
+      return (unsigned)maxv;
+   k = (int)((lift + (1.0f - lift) * x) * (float)maxv + 0.5f);
+   if (k > maxv)
+      k = maxv;
+   while (k > 0 && x < thr[k - 1])
+      k--;
+   while (k < maxv && x >= thr[k])
+      k++;
+   if ((k > 0 && x - thr[k - 1] < 1e-4f) ||
+       (k < maxv && thr[k] - x < 1e-4f))
+      return (unsigned)((lift + (1.0f - lift) * powf(x, curve)) *
+                        (float)maxv + 0.5f);
+   return (unsigned)k;
+}
+
 static void cc_build_flat(int mode)
 {
    const float sat   = 0.90f;
    const float curve = mode == VID_COLOR_WS ? 1.08f : 1.10f;
    const float lift  = mode == VID_COLOR_WS ? 0.03f : 0.0f;
+   const float inv_c = 1.0f / curve;
+   float thr5[31], thr6[63], div31[32], div63[64];
    unsigned v;
+   int k;
    if (!g_cc)
       g_cc = (uint16_t *)malloc(65536 * sizeof(uint16_t));
    if (!g_cc)
       return;
+   for (k = 0; k < 31; k++)
+   {
+      float u = (((float)k + 0.5f) / 31.0f - lift) / (1.0f - lift);
+      thr5[k] = u <= 0.0f ? -1.0f : powf(u, inv_c);
+   }
+   for (k = 0; k < 63; k++)
+   {
+      float u = (((float)k + 0.5f) / 63.0f - lift) / (1.0f - lift);
+      thr6[k] = u <= 0.0f ? -1.0f : powf(u, inv_c);
+   }
+   for (k = 0; k < 32; k++)
+      div31[k] = (float)k / 31.0f;
+   for (k = 0; k < 64; k++)
+      div63[k] = (float)k / 63.0f;
    for (v = 0; v < 65536; v++)
    {
-      float c[3] = { (float)(v >> 11) / 31.0f, (float)((v >> 5) & 63) / 63.0f,
-                     (float)(v & 31) / 31.0f };
-      const float y = 0.299f * c[0] + 0.587f * c[1] + 0.114f * c[2];
-      unsigned o[3];
-      int i;
-      for (i = 0; i < 3; i++)
-      {
-         float x = y + (c[i] - y) * sat;
-         if (x < 0.0f) x = 0.0f;
-         if (x > 1.0f) x = 1.0f;
-         x = lift + (1.0f - lift) * powf(x, curve);
-         o[i] = (unsigned)(x * (i == 1 ? 63.0f : 31.0f) + 0.5f);
-      }
-      g_cc[v] = (uint16_t)((o[0] << 11) | (o[1] << 5) | o[2]);
+      const float c0 = div31[v >> 11], c1 = div63[(v >> 5) & 63],
+                  c2 = div31[v & 31];
+      const float y = 0.299f * c0 + 0.587f * c1 + 0.114f * c2;
+      const unsigned r = cc_quant_flat(y + (c0 - y) * sat, curve, lift, thr5, 31);
+      const unsigned g = cc_quant_flat(y + (c1 - y) * sat, curve, lift, thr6, 63);
+      const unsigned b = cc_quant_flat(y + (c2 - y) * sat, curve, lift, thr5, 31);
+      g_cc[v] = (uint16_t)((r << 11) | (g << 5) | b);
    }
    g_cc_mode = mode;
 }
@@ -1891,6 +1940,7 @@ static void up_drop(int slot)
 void vid_pair_forget(void)
 {
    int i;
+   VID_ENTER();
    g_look_w[0] = g_look_w[1] = 0;
    for (i = 0; i < 2 && i < UPSCALE_SLOTS; i++)
       if (g_upt[i].t[0] || g_upt[i].t[1])
@@ -2089,6 +2139,7 @@ int vid_set_overlay(const char *png_path)
    int w = 0, h = 0, ch = 0;
    FILE *f;
 
+   VID_ENTER();
    if (png_path && png_path[0] && g_ovl_tex && !strcmp(png_path, g_ovl_path))
       return 0;                              /* the one already up */
    if (g_ovl_tex)

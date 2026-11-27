@@ -576,7 +576,7 @@ int cover_game_picture(const char *stem, const char *shot_dir,
       int slot;
       if (n > 1 && state1[n - 1] == '0')
          for (slot = 0; slot <= 9; slot++)
-            if (snprintf(p, sizeof(p), tr("cover.shot"), (int)(n - 1), state1,
+            if (snprintf(p, sizeof(p), "%.*s%d.shot", (int)(n - 1), state1,
                          slot) < (int)sizeof(p))
                consider(p, &t, best, sizeof(best), &found);
    }
@@ -643,7 +643,9 @@ static void rom_ext_off(char *key)
    static const char *const rom[] = { ".gba", ".gbc", ".gb", ".sgb", ".sfc",
                                       ".smc", ".swc", ".fig", ".nes", ".fds",
                                       ".unif", ".unf", ".ws", ".wsc", ".pc2",
-                                      ".zip", ".7z" };
+                                      ".md", ".gen", ".smd", ".bin", ".68k",
+                                      ".sms", ".gg", ".sg", ".sc", ".cue",
+                                      ".chd", ".iso", ".m3u", ".zip", ".7z" };
    size_t n = strlen(key), e;
    unsigned i;
    for (i = 0; i < sizeof(rom) / sizeof(rom[0]); i++)

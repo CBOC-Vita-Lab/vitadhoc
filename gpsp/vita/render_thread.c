@@ -60,6 +60,9 @@ static u8 g_shadow[1024 * 96] __attribute__((aligned(64)));
 #endif
 /* Two pictures: the one shown stays whole while the next is drawn. */
 static u16 g_out[2][RT_PITCH * (160 + 1)] __attribute__((aligned(64)));
+static u16 g_wide_out[(RT_PITCH + 2 * WIDE_MARGIN_MAX) * 160] __attribute__((aligned(64)));
+static int g_wide_valid;
+static unsigned g_wide_margin;
 static int g_cur;                     /* g_out[] the thread draws next     */
 
 static int g_mode;                    /* the mode in force (RT_*)           */
@@ -305,6 +308,11 @@ void rt_frame_begin(int mode)
     * core drew itself, line by line) */
    if (!g_ready || (wide_margin && wide_selftest))
       mode = RT_OFF;
+   if (!mode || !wide_margin || wide_margin != g_wide_margin)
+   {
+      g_wide_valid = 0;
+      g_wide_margin = mode ? wide_margin : 0;
+   }
    if (mode == g_mode)
       return;
    /* The renderer that takes over has not seen the objects move: its
@@ -382,6 +390,25 @@ void gpsp_visible_done_hook(void)
    rt_post();
 }
 
+static const uint16_t *rt_stale_return(const uint16_t *pix, int mode,
+                                       int allow_compose)
+{
+   if (!pix || mode != RT_ON)
+      return pix;
+   if (wide_margin && wide_pixels && pix == wide_pixels)
+   {
+      if (g_wide_valid)
+         return g_wide_out;
+      if (allow_compose && g_drawn)
+      {
+         wide_compose(g_out[g_last]);
+         return pix;
+      }
+      return NULL;
+   }
+   return g_out[g_last];
+}
+
 const uint16_t *rt_frame_end(const uint16_t *pix)
 {
    const u16 *out;
@@ -400,14 +427,14 @@ const uint16_t *rt_frame_end(const uint16_t *pix)
       if (rt_collect(RT_WAIT_US))
          g_late = 0;
       g_stale++;
-      return pix && mode == RT_ON ? g_out[g_last] : pix;
+      return rt_stale_return(pix, mode, 0);
    }
    if (!rt_collect(RT_WAIT_US))
    {
       g_late = 1;
       g_stale++;
       g_wait_us += pspcompat_time_us() - t0;
-      return pix && mode == RT_ON ? g_out[g_last] : pix;
+      return rt_stale_return(pix, mode, 1);
    }
    dt = pspcompat_time_us() - t0;
    g_wait_us += dt;
@@ -450,6 +477,8 @@ const uint16_t *rt_frame_end(const uint16_t *pix)
    if (wide_margin && wide_pixels && pix == wide_pixels)
    {
       wide_compose(out);
+      memcpy(g_wide_out, wide_pixels, sizeof(g_wide_out));
+      g_wide_valid = 1;
       return pix;
    }
    /* (anything else the core hands over -- a post-processing pass of its

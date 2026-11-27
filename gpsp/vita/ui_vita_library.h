@@ -95,6 +95,102 @@ static int lib_name_cmp(const void *a, const void *b)
    return strcasecmp((const char *)a, (const char *)b);
 }
 
+static int lib_ci_sub(const char *hay, const char *needle)
+{
+   size_t n = strlen(needle), i;
+   if (!n)
+      return 0;
+   for (; *hay; hay++)
+   {
+      for (i = 0; i < n; i++)
+      {
+         int c1 = (unsigned char)hay[i];
+         int c2 = (unsigned char)needle[i];
+         if (!c1)
+            return 0;
+         if (c1 >= 'A' && c1 <= 'Z') c1 += 'a' - 'A';
+         if (c2 >= 'A' && c2 <= 'Z') c2 += 'a' - 'A';
+         if (c1 != c2)
+            break;
+      }
+      if (i == n)
+         return 1;
+   }
+   return 0;
+}
+
+static int lib_skip_playlist_name(const char *stem)
+{
+   static const char *const UNSUP[] = {
+      "mame", "fbneo", "fb alpha", "finalburn", "final burn", "arcade",
+      "neo geo", "neo-geo", "cps1", "cps2", "cps3", "cps-1", "cps-2", "cps-3",
+      "playstation", "ps1", "psx", "psp", "nintendo 64", "n64",
+      "nintendo ds", "nds", "nintendo 3ds", "gamecube", "wii",
+      "virtual boy", "pokemon mini", "saturn", "dreamcast", "sega - 32x",
+      "sega 32x", "atari", "pc engine", "turbografx", "pc-fx", "coleco",
+      "vectrex", "intellivision", "odyssey", "commodore", "amiga", "amstrad",
+      "msx", "ms-dos", "dosbox", "scummvm", "sinclair", "zx spectrum",
+      "x68000", "sharp - x1", "tic-80", "pico-8", "lutro", "3do", "jaguar",
+      "lynx", "cd-i", "doom", "quake", "daphne", "n-gage", "watara",
+      "hartung", "easyrpg", "rpg maker", "supervision", NULL
+   };
+   int i;
+   for (i = 0; UNSUP[i]; i++)
+      if (lib_ci_sub(stem, UNSUP[i]))
+         return 1;
+   return 0;
+}
+
+static int lib_playlist_has_supported(const char *path)
+{
+   static const char *const SUP_EXT[] = {
+      ".gba", ".gbc", ".gb", ".sgb", ".sfc", ".smc", ".swc", ".fig",
+      ".nes", ".fds", ".unif", ".unf", ".ws", ".wsc", ".pc2",
+      ".md", ".gen", ".smd", ".bin", ".68k", ".sms", ".gg", ".sg", ".sc",
+      ".cue", ".chd", ".iso", ".m3u", NULL
+   };
+   static const char *const UNSUP_CORE[] = {
+      "mame", "fbneo", "finalburn", "pcsx", "swanstation", "beetle psx",
+      "mupen", "parallel", "desmume", "melonds", "ppsspp", "flycast",
+      "yabause", "kronos", "beetle saturn", "stella", "prosystem", "handy",
+      "beetle pce", "bluemsx", "vice", "puae", "dosbox", "scummvm", "prboom",
+      NULL
+   };
+   FILE *f = fopen(path, "rb");
+   char buf[1024];
+   size_t total = 0;
+   int has_sup = 0, has_arc = 0, unsup_core = 0;
+   int i;
+   if (!f)
+      return 0;
+   while (total < (256u << 10) && fgets(buf, sizeof(buf), f))
+   {
+      total += strlen(buf);
+      for (i = 0; SUP_EXT[i]; i++)
+         if (lib_ci_sub(buf, SUP_EXT[i]))
+         {
+            has_sup = 1;
+            break;
+         }
+      if (has_sup)
+         break;
+      if (lib_ci_sub(buf, ".zip") || lib_ci_sub(buf, ".7z"))
+         has_arc = 1;
+      for (i = 0; UNSUP_CORE[i]; i++)
+         if (lib_ci_sub(buf, UNSUP_CORE[i]))
+         {
+            unsup_core = 1;
+            break;
+         }
+   }
+   fclose(f);
+   if (has_sup)
+      return 1;
+   if (has_arc && !unsup_core)
+      return 1;
+   return 0;
+}
+
 /* The folders RetroArch and Emu4Vita++ keep their .lpl files in. */
 static int lib_playlist_dirs(char dirs[][PSP_FILE_PATH_CAP], int cap)
 {
@@ -102,7 +198,9 @@ static int lib_playlist_dirs(char dirs[][PSP_FILE_PATH_CAP], int cap)
 #ifdef __vita__
    static const char *const D[] = {
       "ux0:data/retroarch/playlists", "uma0:data/retroarch/playlists",
+      "imc0:data/retroarch/playlists", "ur0:data/retroarch/playlists",
       "ux0:data/EMU4VITAPLUS/playlists", "uma0:data/EMU4VITAPLUS/playlists",
+      "imc0:data/EMU4VITAPLUS/playlists",
    };
    for (; n < (int)(sizeof(D) / sizeof(D[0])) && n < cap; n++)
       snprintf(dirs[n], PSP_FILE_PATH_CAP, "%s", D[n]);
@@ -121,9 +219,9 @@ static int lib_playlist_dirs(char dirs[][PSP_FILE_PATH_CAP], int cap)
  * again).  Never opened for writing. */
 static void lib_playlists_read(void)
 {
-   static char dirs[4][PSP_FILE_PATH_CAP];
-   static char names[24][64];
-   int nd = lib_playlist_dirs(dirs, 4), d;
+   static char dirs[8][PSP_FILE_PATH_CAP];
+   static char names[128][64];
+   int nd = lib_playlist_dirs(dirs, 8), d;
    fe_lpl_clear(&g_lpl);
    for (d = 0; d < nd; d++)
    {
@@ -133,7 +231,7 @@ static void lib_playlists_read(void)
       if (fd < 0)
          continue;
       memset(&ent, 0, sizeof(ent));
-      while (nn < 24 && sceIoDread(fd, &ent) > 0)
+      while (nn < 128 && sceIoDread(fd, &ent) > 0)
       {
          size_t nl = strlen(ent.d_name);
          int is_dir = (ent.d_stat.st_mode & 0x1000) != 0 ||
@@ -145,13 +243,15 @@ static void lib_playlists_read(void)
       }
       sceIoDclose(fd);
       qsort(names, (size_t)nn, sizeof(names[0]), lib_name_cmp);
-      for (i = 0; i < nn; i++)
+      for (i = 0; i < nn && g_lpl.nlist < FE_LPL_MAX; i++)
       {
          char path[PSP_FILE_PATH_CAP], stem[64];
          unsigned k;
          int dup = 0, rc;
          snprintf(stem, sizeof(stem), "%s", names[i]);
          stem[strlen(stem) - 4] = '\0';
+         if (lib_skip_playlist_name(stem))
+            continue;
          for (k = 0; k < g_lpl.nlist; k++)
             if (!strcasecmp(g_lpl.list[k].name, stem))
                dup = 1;
@@ -160,7 +260,11 @@ static void lib_playlists_read(void)
          if (snprintf(path, sizeof(path), "%s/%s", dirs[d], names[i]) >=
              (int)sizeof(path))
             continue;
+         if (!lib_playlist_has_supported(path))
+            continue;
          rc = fe_lpl_load(&g_lpl, path, stem);
+         if (rc == 0 && g_lpl.nlist > 0)
+            g_lpl.nlist--;
          fe_evt("playlist_load file=%s items=%d", names[i], rc);
       }
    }

@@ -81,6 +81,8 @@ void     pspcompat_wait_vblank(void);
 /* Buttons held now, PSP bit layout, left stick folded into the d-pad.  A
  * main loop can use this for its own menu input too. */
 unsigned pspcompat_pad(void);
+/* Same physical layout without applying g_pc_face_swap. */
+unsigned pspcompat_pad_raw(void);
 /* 1 = pspcompat_pad() also answers for the SECOND controller (plat.h
  * plat_pad_read2), so with two players either one drives the menu and its
  * pages; 0 (the start) = the first pad alone. */

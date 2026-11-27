@@ -534,7 +534,7 @@ STEPS = [
     # the private games (frame, audio and save hashes; video_identity.py)
     Step("video-identity", "GBA renderer: vector kernels vs -DVIDEO_KERNELS_SCALAR on private games (GATE_GBA_ROMS)",
          "make -C gpsp/vita/hostcore ARCH=x86 -j{jobs} B=build/x86-scalar "
-         "CORE_ARCH_FLAGS='-fomit-frame-pointer -ffast-math -DVIDEO_KERNELS_SCALAR' && "
+         "CORE_ARCH_FLAGS='-fomit-frame-pointer -fno-math-errno -DVIDEO_KERNELS_SCALAR' && "
          "python3 gpsp/tools/tests/video_identity.py --a gpsp/vita/hostcore/build/x86/gbadhoc_host "
          "--b gpsp/vita/hostcore/build/x86-scalar/gbadhoc_host --rom-dir \"$GATE_GBA_ROMS\"",
          "full", APP_TAGS | {"app"}, inputs=["gpsp/"], deps=["build-hostcore-x86"], requires=PIL,

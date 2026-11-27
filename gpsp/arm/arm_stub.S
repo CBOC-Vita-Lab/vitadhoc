@@ -172,6 +172,23 @@ _##symbol:
   bl function                                                                ;\
   ldmia sp!, { call_c_saved_regs }                                           ;\
 
+@ Look up guest PC from host LR via arm_lookup_mem_pc (cold slow/BIOS paths).
+@ Both helpers push an even register count (6 regs = 24B) to keep 8-byte SP
+@ alignment and preserve reg_x0 (r3), reg_cycles (r12), and host lr.
+#define call_lookup_mem_pc_to_reg_pc()                                       ;\
+  stmdb sp!, { r0, r1, r2, r3, r12, lr }                                     ;\
+  mov r0, lr                                                                 ;\
+  bl arm_lookup_mem_pc                                                       ;\
+  str r0, [reg_base, #REG_PC]                                                ;\
+  ldmia sp!, { r0, r1, r2, r3, r12, lr }
+
+#define call_lookup_mem_pc_to_r1()                                           ;\
+  stmdb sp!, { r0, r2, r3, r4, r12, lr }                                     ;\
+  mov r0, lr                                                                 ;\
+  bl arm_lookup_mem_pc                                                       ;\
+  mov r1, r0                                                                 ;\
+  ldmia sp!, { r0, r2, r3, r4, r12, lr }
+
 
 @ GBA_LINK (gbalink_core.c): the link cable time-stamps a SIOCNT / RCNT write
 @ with the cycle it happened at, read back by lk_io_now() from
@@ -644,8 +661,8 @@ return_to_main:
 @ r0: address
 @ r1: value
 @
-@ The instruction at LR is not an inst but a u32 data that contains the PC
-@ Used for SMC. That's why return is essentially `pc = lr + 4`
+@ Fast paths return directly via `bx lr` (no inline PC literal after blx).
+@ Cold slow/IO/SMC paths look up the guest PC from host lr via arm_lookup_mem_pc.
 
 #if __ARM_ARCH >= 7
 #define execute_store_ram_stubs(store_type, str_op, load_op)                 ;\
@@ -660,7 +677,6 @@ ext_store_iwram_u##store_type:                                             ;\
   sub.w r2, r2, #0x8000                   /* r2 = iwram smc base           */;\
   load_op r1, [r0, r2]                    /* r1 = SMC sentinel             */;\
   cbnz r1, 1f                             /* if non-zero, perform smc write*/;\
-  add.w lr, lr, #4                        /* skip inline PC                */;\
   bx lr                                   /* return to ARM (lr[0]==0)      */;\
 1:                                                                         ;\
   save_flags()                            /* save live flags before ARM    */;\
@@ -676,7 +692,6 @@ ext_store_ewram_u##store_type:                                             ;\
   add.w r2, r2, #0x40000                  /* r2 = ewram smc base           */;\
   load_op r1, [r0, r2]                    /* r1 = SMC sentinel             */;\
   cbnz r1, 2f                             /* if non-zero, perform smc write*/;\
-  add.w lr, lr, #4                        /* skip inline PC                */;\
   bx lr                                   /* return to ARM (lr[0]==0)      */;\
 2:                                                                         ;\
   save_flags()                            /* save live flags before ARM    */;\
@@ -697,7 +712,7 @@ ext_store_iwram_u##store_type:                                             ;\
   cmp r1, #0                              /* Check value, should be zero   */;\
   bne 3f                                  /* if so perform smc write       */;\
   restore_flags()                                                          ;\
-  add pc, lr, #4                          /* return                        */;\
+  bx lr                                   /* return                        */;\
                                                                            ;\
 ext_store_ewram_u##store_type:                                             ;\
   save_flags()                                                             ;\
@@ -709,32 +724,30 @@ ext_store_ewram_u##store_type:                                             ;\
   cmp r1, #0                              /* Check value, should be zero   */;\
   bne 3f                                  /* if so perform smc write       */;\
   restore_flags()                                                          ;\
-  add pc, lr, #4                          /* return                        */
+  bx lr                                   /* return                        */
 #endif
 
 #define execute_store_builder(store_type, str_op, str_op16, load_op)         ;\
                                                                              ;\
 ext_store_u##store_type:                                                     ;\
   save_flags()                                                               ;\
-  ldr r2, [lr]                            /* load PC                       */;\
-  str r2, [reg_base, #REG_PC]             /* write out PC                  */;\
+  call_lookup_mem_pc_to_reg_pc()          /* REG_PC = guest PC for lr      */;\
   store_align_##store_type()                                                 ;\
   call_c_function(write_memory##store_type)                                  ;\
   restore_flags()                                                            ;\
-  add pc, lr, #4                          /* return                        */;\
+  bx lr                                   /* return                        */;\
                                                                              ;\
 ext_io_store_u##store_type:                                                  ;\
   save_flags()                                                               ;\
   link_io_snapshot()                      /* GBA_LINK: when it was written */;\
-  ldr r2, [lr]                            /* load PC                       */;\
-  str r2, [reg_base, #REG_PC]             /* write out PC                  */;\
+  call_lookup_mem_pc_to_reg_pc()          /* REG_PC = guest PC for lr      */;\
                                                                              ;\
   call_c_function(write_io_register##store_type)                             ;\
                                                                              ;\
   cmp r0, #0                                                                 ;\
   bne write_epilogue                      /* handle additional write stuff */;\
   restore_flags()                                                            ;\
-  add pc, lr, #4                          /* return                        */;\
+  bx lr                                   /* return                        */;\
                                                                              ;\
 execute_store_ram_stubs(store_type, str_op, load_op)                         ;\
                                                                              ;\
@@ -746,7 +759,7 @@ ext_store_vram_u##store_type:                                                ;\
   add r2, reg_base, #VRAM_OFF             /* r2 = vram base                */;\
   str_op16 r1, [r0, r2]                   /* store data                    */;\
   mark_vram_page()                        /* vram_clean[page] = 0          */;\
-  add pc, lr, #4                          /* return                        */;\
+  bx lr                                   /* return                        */;\
                                                                              ;\
 ext_store_oam_ram_u##store_type:                                             ;\
   mask_addr_bus16_##store_type(10)        /* Mask to mirror memory (+align)*/;\
@@ -754,17 +767,18 @@ ext_store_oam_ram_u##store_type:                                             ;\
   add r2, reg_base, #OAM_RAM_OFF          /* r2 = oam ram base             */;\
   str_op16 r1, [r0, r2]                   /* store data                    */;\
   str r2, [reg_base, #OAM_UPDATED]        /* write non zero to signal      */;\
-  add pc, lr, #4                          /* return                        */;\
+  bx lr                                   /* return                        */;\
                                                                              ;\
 3: /* Flush RAM cache and "resume" execution via re-compile */               ;\
-  ldr r0, [lr]                            /* load PC                       */;\
+  mov r0, lr                                                                 ;\
+  call_c_function(arm_lookup_mem_pc)      /* r0 = guest PC (before flush)  */;\
   str r0, [reg_base, #REG_PC]             /* write out PC                  */;\
   call_c_function(flush_translation_cache_ram_smc)                           ;\
   b resume_pc                             /* continue execution            */;\
 
 @ for ignored areas, just return
 ext_store_ignore:
-  add pc, lr, #4                          @ return
+  bx lr                                   @ return
 
 #define store_lookup_table(store_type)                                       ;\
   .word ext_store_ignore                  /*   -1: ignore, for > 0x0F      */;\
@@ -809,10 +823,9 @@ ext_store_palette_u16:
   strh r2, [r0, r1]                       // Converted value write (r2)
   mov r2, #1
   str r2, [reg_base, #REG_PAL_UPDATED]
-  add pc, lr, #4                          // return
+  bx lr                                   // return
 
 ext_store_palette_u32_safe:
-  sub lr, lr, #4
 ext_store_palette_u32:
   mask_addr_32(10)                        // Accesses are always 16 bit
   add r2, reg_base, #PAL_RAM_OFF          // r2 = palette base
@@ -838,7 +851,7 @@ ext_store_palette_u32:
   mov r2, #1
   str r2, [reg_base, #REG_PAL_UPDATED]
 
-  add pc, lr, #4                          // return
+  bx lr                                   // return
 
 
 @ This is a store that is executed in a strm case (so no SMC checks in-between)
@@ -1015,28 +1028,18 @@ lookup_pc:
   ldr r0, [r2, r0, lsr #(32 - mirrorbits)]
 #endif
 
-#if __ARM_ARCH >= 7
 #define execute_load_bios_stub(load_type)                                    ;\
-.syntax unified                                                            ;\
-.thumb                                                                     ;\
-.align 2                                                                   ;\
-.thumb_func                                                                ;\
 ld_bios_##load_type:                      /* BIOS area, need to verify PC  */;\
-  ldr r1, [lr]                            /* r1 = PC                       */;\
-  lsr.w r2, r1, #15                       /* r2 = High addr bits from PC   */;\
-  cbnz r2, 1f                             /* Jump to slow handler          */;\
-  ldr.w r2, [reg_base, #RDMAP_OFF]        /* r2 = read_mem[0]              */;\
-  exec_ld_op_##load_type(15)              /* Clear upper bits (15 LSB)     */;\
-  add.w lr, lr, #4                                                           ;\
-  bx lr                                                                      ;\
-1:                                                                         ;\
   save_flags()                                                               ;\
-  adr r2, 10f                                                                ;\
-  bx r2                                                                      ;\
-.arm                                                                       ;\
-.syntax divided                                                            ;\
-.align 2
+  call_lookup_mem_pc_to_r1()              /* r1 = guest PC                 */;\
+  movs r2, r1, lsr #15                    /* r2 = High addr bits from PC   */;\
+  bne 10f                                 /* Jump to slow handler          */;\
+  ldr r2, [reg_base, #RDMAP_OFF]          /* r2 = read_mem[0]              */;\
+  exec_ld_op_##load_type(15)              /* Clear upper bits (15 LSB)     */;\
+  restore_flags()                                                            ;\
+  bx lr
 
+#if __ARM_ARCH >= 7
 #define execute_load_rdmap_slow_stub(load_type)                              ;\
 .syntax unified                                                            ;\
 .thumb                                                                     ;\
@@ -1048,7 +1051,6 @@ ld_rdmap_slow_##load_type:                                                 ;\
   ldr.w r2, [r2, r1, lsl #2]              /* r2 = base addr                */;\
   cbz r2, 2f                              /* Page miss, go slow            */;\
   exec_ld_op_##load_type(15)              /* Pages are 32KB big            */;\
-  add.w lr, lr, #4                                                           ;\
   bx lr                                                                      ;\
 2:                                                                         ;\
   save_flags()                                                               ;\
@@ -1058,18 +1060,6 @@ ld_rdmap_slow_##load_type:                                                 ;\
 .syntax divided                                                            ;\
 .align 2
 #else
-#define execute_load_bios_stub(load_type)                                    ;\
-ld_bios_##load_type:                      /* BIOS area, need to verify PC  */;\
-  save_flags()                                                               ;\
-  ldr r1, [lr]                            /* r1 = PC                       */;\
-  mov r2, r1, lsr #15                     /* r2 = High addr bits from PC   */;\
-  cmp r2, #0                                                                 ;\
-  bne 10f                                 /* Jump to slow handler          */;\
-  ldr r2, [reg_base, #RDMAP_OFF]          /* r2 = read_mem[0]              */;\
-  exec_ld_op_##load_type(15)              /* Clear upper bits (15 LSB)     */;\
-  restore_flags()                                                            ;\
-  add pc, lr, #4
-
 #define execute_load_rdmap_slow_stub(load_type)                              ;\
 ld_rdmap_slow_##load_type:                                                   ;\
   save_flags()                                                               ;\
@@ -1080,7 +1070,7 @@ ld_rdmap_slow_##load_type:                                                   ;\
   beq 9f                                  /* Page miss, go slow            */;\
   exec_ld_op_##load_type(15)              /* Pages are 32KB big            */;\
   restore_flags()                                                            ;\
-  add pc, lr, #4
+  bx lr
 #endif
 
 #define execute_load_builder(load_type, albits, load_function)               ;\
@@ -1090,12 +1080,12 @@ execute_load_bios_stub(load_type)                                            ;\
 ld_ewram_##load_type:                     /* EWRAM area                    */;\
   add r2, reg_base, #EWRAM_OFF                                               ;\
   exec_ld_op_##load_type(18)              /* Clear upper bits (18 LSB)     */;\
-  add pc, lr, #4                                                             ;\
+  bx lr                                                                      ;\
                                                                              ;\
 ld_iwram_##load_type:                     /* IWRAM area                    */;\
   add r2, reg_base, #(IWRAM_OFF+0x8000)                                      ;\
   exec_ld_op_##load_type(15)              /* Clear upper bits (15 LSB)     */;\
-  add pc, lr, #4                                                             ;\
+  bx lr                                                                      ;\
                                                                              ;\
 ld_ioram_##load_type:                     /* I/O RAM area                  */;\
   save_flags()                            /* cmp trashes the guest flags   */;\
@@ -1110,17 +1100,17 @@ ld_ioram_##load_type:                     /* I/O RAM area                  */;\
   add r2, reg_base, #IOREG_OFF                                               ;\
   exec_ld_op_##load_type(10)              /* Clear upper bits (10 LSB)     */;\
   restore_flags()                                                            ;\
-  add pc, lr, #4                                                             ;\
+  bx lr                                                                      ;\
                                                                              ;\
 ld_palram_##load_type:                    /* Palette RAM area              */;\
   add r2, reg_base, #PAL_RAM_OFF                                             ;\
   exec_ld_op_##load_type(10)              /* Clear upper bits (10 LSB)     */;\
-  add pc, lr, #4                                                             ;\
+  bx lr                                                                      ;\
                                                                              ;\
 ld_oamram_##load_type:                    /* OAM RAM area                  */;\
   add r2, reg_base, #OAM_RAM_OFF                                             ;\
   exec_ld_op_##load_type(10)              /* Clear upper bits (10 LSB)     */;\
-  add pc, lr, #4                                                             ;\
+  bx lr                                                                      ;\
                                                                              ;\
 /* ROM area: uses generic memory handlers to handle swapping */              ;\
 execute_load_rdmap_slow_stub(load_type)                                      ;\
@@ -1132,18 +1122,18 @@ ld_rdmap_##load_type:                                                        ;\
   ldr r2, [r2, r1, lsl #2]                /* r2 = base addr                */;\
                                                                              ;\
   exec_ld_op_##load_type(15)              /* Pages are 32KB big            */;\
-  add pc, lr, #4                                                             ;\
+  bx lr                                                                      ;\
                                                                              ;\
 /* Slow load path, for open/unmapped loads                                 */;\
 ld_slow_##load_type:                                                         ;\
   save_flags()                                                               ;\
 9:                                                                           ;\
-  ldr r1, [lr]                            /* r1 = PC                       */;\
+  call_lookup_mem_pc_to_r1()              /* r1 = guest PC                 */;\
 10:                                                                          ;\
   str r1, [reg_base, #REG_PC]             /* update PC                     */;\
   call_c_function(load_function)                                             ;\
   restore_flags()                                                            ;\
-  add pc, lr, #4                          /* return                        */;\
+  bx lr                                   /* return                        */;\
 
 
 #define load_table_gen(load_type, rdmapfn)                                   ;\

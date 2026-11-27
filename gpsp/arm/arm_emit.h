@@ -456,8 +456,10 @@ u32 arm_disect_imm_32bit(u32 imm, u32 *stores, u32 *rotations)
  *                        to reg[] in arm_stub.S)
  *    `blx reg` sets lr to the instruction after it exactly as `bl` would, so
  *    the stubs that read inline data through lr (`ldr r0, [lr]`,
- *    `ldr r0, [lr, #-12]`, `add pc, lr, #4`: the update, SWI, store-cpsr and
- *    memory stubs) work unchanged at any distance.  reg_base itself arrives
+ *    `ldr r0, [lr, #-12]`, `add pc, lr, #4`: update, SWI, store-cpsr) work
+ *    unchanged at any distance.  Memory load/store stubs have no inline PC
+ *    word and return via plain `bx lr`; cold slow/BIOS/SMC paths look up the
+ *    guest PC from host lr via arm_lookup_mem_pc().  reg_base itself arrives
  *    as an argument of execute_arm_translate_internal.  This class needs
  *    nothing from ARM_FAR_STUBS and is safe at any distance in every build.
  *
@@ -1537,14 +1539,14 @@ static void trace_instruction(u32 pc, u32 mode)
 #define arm_access_memory_load(mem_type)                                      \
   cycle_count += 2;                                                           \
   generate_load_call_##mem_type();                                            \
-  write32(pc);                                                                \
+  arm_mem_pc_record(translation_ptr, pc, ram_region);                         \
   arm_generate_store_reg_pc_no_flags(reg_rv, rd)                              \
 
 #define arm_access_memory_store(mem_type)                                     \
   cycle_count++;                                                              \
   arm_generate_load_reg_pc(reg_a1, rd, 12);                                   \
   generate_store_call_##mem_type();                                           \
-  write32((pc + 4))                                                           \
+  arm_mem_pc_record(translation_ptr, pc + 4, ram_region)                      \
 
 /* Calculate the address into a0 from _rn, _rm */
 
@@ -1713,9 +1715,103 @@ static inline u8 *emit_sp_iwram_load_fastpath(
   return done_branch;
 }
 
-#define arm_block_wb_is_up_up   1
-#define arm_block_wb_is_up_no   0
-#define arm_block_wb_is_up_down 0
+/* Phase B SP-in-IWRAM fastpath for PUSH / STMDB sp(!):
+ * Computes lo = sp - 4*count without modifying sp, checks (lo >> 24) == 3,
+ * (lo & 3) == 0, and (lo & 0x7FFF) + 4*count <= 0x8000, then bitwise-ORs all
+ * `count` SMC sentinel words at iwram[0..0x7FFF] (reg_base - 0xA8000) before
+ * mutating sp or writing IWRAM. On any failure or non-zero SMC sentinel,
+ * restores CPSR and falls back to the exact slow path so SMC invalidation
+ * and all non-IWRAM / unaligned / wrapping edge cases behave identically. */
+static inline u8 *emit_sp_iwram_store_fastpath(
+    u8 **tptr, u32 reg_list, u32 count, const u32 *reg_alloc, bool writeback)
+{
+  u8 *translation_ptr = *tptr;
+  u8 *slow_branch;
+  u8 *smc_branch;
+  u8 *done_branch;
+  u32 i;
+  s32 off;
+
+  if (reg_alloc[REG_SP] != mem_reg) {
+    ARM_SUB_REG_IMM(0, reg_a0, reg_alloc[REG_SP], count * 4, 0);
+  } else {
+    ARM_LDR_IMM(0, reg_a0, reg_base, REG_SP * 4);
+    ARM_SUB_REG_IMM(0, reg_a0, reg_a0, count * 4, 0);
+  }
+  generate_save_flags();
+  ARM_MOV_REG_IMMSHIFT(0, reg_a1, reg_a0, ARMSHIFT_ROR, 2);
+  ARM_MOV_REG_IMMSHIFT(0, reg_a1, reg_a1, ARMSHIFT_LSR, 22);
+  ARM_UBFX(0, reg_a2, reg_a0, 0, 15);
+  ARM_ADD_REG_IMM(0, reg_a2, reg_a2, count * 4, 0);
+  ARM_CMP_REG_IMM(0, reg_a2, 0x80, arm_imm_lsl_to_rot(8));
+  ARM_CMP_REG_IMM_COND(0, reg_a1, 3, 0, ARMCOND_LS);
+  generate_branch_filler(ARMCOND_NE, slow_branch);
+
+  /* reg_a2 = reg_base - 0xA8000 + (lo & 0x7FFF) + 4*count (end of SMC span). */
+  ARM_ADD_REG_REG(0, reg_a2, reg_a2, reg_base);
+  ARM_SUB_REG_IMM(0, reg_a2, reg_a2, 0xA8, arm_imm_lsl_to_rot(12));
+
+  /* Bitwise-OR all `count` SMC sentinel words before touching sp or IWRAM.
+   * Host LR is free scratch in translated code and never aliases reg_alloc[]. */
+  off = -(s32)(count * 4);
+  ARM_LDR_IMM(0, reg_a1, reg_a2, off);
+  if (count == 1) {
+    ARM_TST_REG_REG(0, reg_a1, reg_a1);
+  } else {
+    for (i = 1; i < count; i++) {
+      off += 4;
+      ARM_LDR_IMM(0, ARMREG_LR, reg_a2, off);
+      if (i + 1 < count) {
+        ARM_ORR_REG_REG(0, reg_a1, reg_a1, ARMREG_LR);
+      } else {
+        ARM_ORRS_REG_REG(0, reg_a1, reg_a1, ARMREG_LR);
+      }
+    }
+  }
+  generate_branch_filler(ARMCOND_NE, smc_branch);
+
+  generate_restore_flags();
+
+  /* Advance pointer from iwram SMC tags (-0xA8000) to iwram data (-0xA0000). */
+  ARM_ADD_REG_IMM(0, reg_a2, reg_a2, 0x80, arm_imm_lsl_to_rot(8));
+
+  off = -(s32)(count * 4);
+  for (i = 0; i < 15; i++) {
+    if ((reg_list >> i) & 1) {
+      u32 src = reg_alloc[i];
+      if (src != mem_reg) {
+        ARM_STR_IMM(0, src, reg_a2, off);
+      } else {
+        ARM_LDR_IMM(0, reg_a1, reg_base, i * 4);
+        ARM_STR_IMM(0, reg_a1, reg_a2, off);
+      }
+      off += 4;
+    }
+  }
+
+  if (writeback) {
+    if (reg_alloc[REG_SP] != mem_reg) {
+      ARM_MOV_REG_REG(0, reg_alloc[REG_SP], reg_a0);
+    } else {
+      ARM_STR_IMM(0, reg_a0, reg_base, REG_SP * 4);
+    }
+  }
+
+  generate_branch_filler(ARMCOND_AL, done_branch);
+  generate_branch_patch_conditional(slow_branch, translation_ptr);
+  generate_branch_patch_conditional(smc_branch, translation_ptr);
+  generate_restore_flags();
+
+  *tptr = translation_ptr;
+  return done_branch;
+}
+
+#define arm_block_wb_is_up_up     1
+#define arm_block_wb_is_up_no     0
+#define arm_block_wb_is_up_down   0
+#define arm_block_wb_is_down_down 1
+#define arm_block_wb_is_down_no   0
+#define arm_block_wb_is_down_up   0
 #define arm_block_sp_fastpath_eligible_load_no_no      (rn == 13 && reg_list != 0)
 #define arm_block_sp_fastpath_eligible_load_down_a_no  0
 #define arm_block_sp_fastpath_eligible_load_down_b_no  0
@@ -1726,19 +1822,27 @@ static inline u8 *emit_sp_iwram_load_fastpath(
 #define arm_block_sp_fastpath_eligible_load_up_yes     0
 #define arm_block_sp_fastpath_eligible_store_no_no      0
 #define arm_block_sp_fastpath_eligible_store_down_a_no  0
-#define arm_block_sp_fastpath_eligible_store_down_b_no  0
+#define arm_block_sp_fastpath_eligible_store_down_b_no                        \
+  (rn == 13 && reg_list != 0 && !(reg_list & ((1u << 13) | (1u << 15))))
 #define arm_block_sp_fastpath_eligible_store_up_no      0
 #define arm_block_sp_fastpath_eligible_store_no_yes     0
 #define arm_block_sp_fastpath_eligible_store_down_a_yes 0
 #define arm_block_sp_fastpath_eligible_store_down_b_yes 0
 #define arm_block_sp_fastpath_eligible_store_up_yes     0
 
+#define arm_block_sp_fastpath_emit_load(writeback_type)                       \
+  emit_sp_iwram_load_fastpath(&translation_ptr,                               \
+   reg_list & 0x7FFF, word_bit_count(reg_list), arm_register_allocation,      \
+   arm_block_wb_is_up_##writeback_type, (reg_list & 0x8000) != 0)
+#define arm_block_sp_fastpath_emit_store(writeback_type)                      \
+  emit_sp_iwram_store_fastpath(&translation_ptr,                              \
+   reg_list & 0x7FFF, word_bit_count(reg_list), arm_register_allocation,      \
+   arm_block_wb_is_down_##writeback_type)
+
 #define arm_block_sp_fastpath_try(access_type, offset_type, writeback_type, s_bit, fp_done) \
   if (arm_block_sp_fastpath_eligible_##access_type##_##offset_type##_##s_bit) \
   {                                                                           \
-    (fp_done) = emit_sp_iwram_load_fastpath(&translation_ptr,                 \
-     reg_list & 0x7FFF, word_bit_count(reg_list), arm_register_allocation,    \
-     arm_block_wb_is_up_##writeback_type, (reg_list & 0x8000) != 0);          \
+    (fp_done) = arm_block_sp_fastpath_emit_##access_type(writeback_type);     \
   }
 #define arm_block_sp_fastpath_finish(fp_done)                                 \
   if (fp_done)                                                                \
@@ -1756,7 +1860,7 @@ static inline u8 *emit_sp_iwram_load_fastpath(
 
 #define arm_block_memory_load()                                               \
   generate_load_call_u32();                                                   \
-  write32((pc + 8));                                                          \
+  arm_mem_pc_record(translation_ptr, pc + 8, ram_region);                     \
   arm_generate_store_reg(reg_rv, i)                                           \
 
 #define arm_block_memory_store()                                              \
@@ -1770,7 +1874,7 @@ static inline u8 *emit_sp_iwram_load_fastpath(
   arm_generate_load_reg_pc(reg_a1, i, 12);                                    \
   arm_block_memory_writeback_post_store(writeback_type);                      \
   generate_store_call_u32();                                                  \
-  write32((pc + 4))                                                           \
+  arm_mem_pc_record(translation_ptr, pc + 4, ram_region)                      \
 
 #define arm_ldm_sbit_yes 1
 #define arm_ldm_sbit_no  0
@@ -1880,13 +1984,13 @@ static inline u8 *emit_sp_iwram_load_fastpath(
   cycle_count += 3;                                                           \
   arm_generate_load_reg(reg_a0, rn);                                          \
   generate_load_call_##type();                                                \
-  write32((pc + 8));                                                          \
+  arm_mem_pc_record(translation_ptr, pc + 8, ram_region);                     \
   generate_mov(reg_a2, reg_rv);                                               \
   arm_generate_load_reg(reg_a0, rn);                                          \
   arm_generate_load_reg(reg_a1, rm);                                          \
   arm_generate_store_reg(reg_a2, rd);                                         \
   generate_store_call_##type();                                               \
-  write32((pc + 4));                                                          \
+  arm_mem_pc_record(translation_ptr, pc + 4, ram_region);                     \
 }                                                                             \
 
 
@@ -2057,14 +2161,14 @@ do {                                                                          \
 #define thumb_access_memory_load(mem_type, _rd)                               \
   cycle_count += 2;                                                           \
   generate_load_call_##mem_type();                                            \
-  write32(pc);                                                                \
+  arm_mem_pc_record(translation_ptr, pc, ram_region);                         \
   thumb_generate_store_reg(reg_rv, _rd)                                       \
 
 #define thumb_access_memory_store(mem_type, _rd)                              \
   cycle_count++;                                                              \
   thumb_generate_load_reg(reg_a1, _rd);                                       \
   generate_store_call_##mem_type();                                           \
-  write32((pc + 2))                                                           \
+  arm_mem_pc_record(translation_ptr, pc + 2, ram_region)                      \
 
 #define thumb_access_memory_generate_address_pc_relative(offset, _rb, _ro)    \
   generate_load_pc(reg_a0, (offset))                                          \
@@ -2125,7 +2229,7 @@ do {                                                                          \
   thumb_generate_load_reg(reg_s0, REG_SAVE);                                  \
   generate_add_reg_reg_imm(reg_a0, reg_s0, (bit_count[reg_list] * 4), 0);     \
   generate_load_call_u32();                                                   \
-  write32((pc + 4))
+  arm_mem_pc_record(translation_ptr, pc + 4, ram_region)
 
 #define thumb_block_memory_tail_no()
 #define thumb_block_memory_tail_up()
@@ -2141,20 +2245,33 @@ do {                                                                          \
 #define thumb_sp_fastpath_eligible_load_down_down(br)        0
 #define thumb_sp_fastpath_eligible_load_down_no(br)          0
 #define thumb_sp_fastpath_eligible_store_no_up(br)           0
-#define thumb_sp_fastpath_eligible_store_down_no(br)         0
-#define thumb_sp_fastpath_eligible_store_push_lr_push_lr(br) 0
+#define thumb_sp_fastpath_eligible_store_down_no(br)         ((br) == 13 && reg_list != 0)
+#define thumb_sp_fastpath_eligible_store_push_lr_push_lr(br) ((br) == 13)
 #define thumb_sp_fastpath_pop_pc_up                      0
 #define thumb_sp_fastpath_pop_pc_pop_pc                  1
 #define thumb_sp_fastpath_pop_pc_no                      0
 #define thumb_sp_fastpath_pop_pc_down                    0
 #define thumb_sp_fastpath_pop_pc_push_lr                 0
+#define thumb_sp_fastpath_push_lr_up                     0
+#define thumb_sp_fastpath_push_lr_pop_pc                 0
+#define thumb_sp_fastpath_push_lr_no                     0
+#define thumb_sp_fastpath_push_lr_down                   0
+#define thumb_sp_fastpath_push_lr_push_lr                1
+
+#define thumb_block_sp_fastpath_emit_load(post_op)                            \
+  emit_sp_iwram_load_fastpath(&translation_ptr, reg_list,                     \
+   bit_count[reg_list] + thumb_sp_fastpath_pop_pc_##post_op,                  \
+   thumb_register_allocation, true, thumb_sp_fastpath_pop_pc_##post_op)
+#define thumb_block_sp_fastpath_emit_store(post_op)                           \
+  emit_sp_iwram_store_fastpath(&translation_ptr,                              \
+   reg_list | (thumb_sp_fastpath_push_lr_##post_op ? (1u << REG_LR) : 0u),    \
+   bit_count[reg_list] + thumb_sp_fastpath_push_lr_##post_op,                 \
+   thumb_register_allocation, true)
 
 #define thumb_block_sp_fastpath_try(access_type, pre_op, post_op, base_reg, fp_done) \
   if (thumb_sp_fastpath_eligible_##access_type##_##pre_op##_##post_op((base_reg))) \
   {                                                                           \
-    u32 fp_pc = thumb_sp_fastpath_pop_pc_##post_op;                           \
-    (fp_done) = emit_sp_iwram_load_fastpath(&translation_ptr, reg_list,       \
-     bit_count[reg_list] + fp_pc, thumb_register_allocation, true, fp_pc);    \
+    (fp_done) = thumb_block_sp_fastpath_emit_##access_type(post_op);          \
   }
 #define thumb_block_sp_fastpath_finish(fp_done)                               \
   if (fp_done)                                                                \
@@ -2176,7 +2293,7 @@ do {                                                                          \
 
 #define thumb_block_memory_load()                                             \
   generate_load_call_u32();                                                   \
-  write32((pc + 4));                                                          \
+  arm_mem_pc_record(translation_ptr, pc + 4, ram_region);                     \
   thumb_generate_store_reg(reg_rv, i)                                         \
 
 #define thumb_block_memory_store()                                            \
@@ -2189,7 +2306,7 @@ do {                                                                          \
 #define thumb_block_memory_final_store()                                      \
   thumb_generate_load_reg(reg_a1, i);                                         \
   generate_store_call_u32();                                                  \
-  write32((pc + 2))                                                           \
+  arm_mem_pc_record(translation_ptr, pc + 2, ram_region)                      \
 
 #define thumb_block_memory_final_no(access_type)                              \
   thumb_block_memory_final_##access_type()                                    \

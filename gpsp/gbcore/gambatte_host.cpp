@@ -10,6 +10,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <new>
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#define GAM_AUDIO_NEON 1
+#else
+#define GAM_AUDIO_NEON 0
+#endif
 
 /* the cartridge's rumble motor: no motor on this build */
 void cartridge_set_rumble(unsigned) {}
@@ -80,6 +86,8 @@ struct Machine {
   gambatte_host_cb_t cb;
   int cgb_console, cgb;                       /* asked for / running as */
   unsigned decim, rate;                       /* output sample rate, input samples per output sample */
+  unsigned decim_pow2, decim_shift;           /* precomputed exact divisor for (1024 * decim * decim) */
+  uint32_t decim_mul;                         /* Granlund-Montgomery low 32-bit reciprocal for non-pow2 decim */
   uint8_t header[0x50];                       /* 0x100..0x14F */
   uint32_t cart_id;
   uint64_t frames;
@@ -98,7 +106,8 @@ struct Machine {
   unsigned undo_n;
   uint16_t video[VPITCH * VH];
   uint32_t sound[SOUND_BUF];
-  Machine() : cgb_console(0), cgb(0), decim(64), rate(32768), cart_id(0), frames(0), skip(0), quiet(0), rom_bytes(0),
+  Machine() : cgb_console(0), cgb(0), decim(64), rate(32768), decim_pow2(1), decim_shift(22), decim_mul(0),
+              cart_id(0), frames(0), skip(0), quiet(0), rom_bytes(0),
               since(0), out_n(0), ram_cheat_n(0), undo_n(0)
   {
     memset(&cb, 0, sizeof cb);
@@ -227,28 +236,152 @@ void audio_reset(Machine *m)
 
 enum { GAIN_NUM = 1111 };
 
+/* Precompute division-free scaling for (t * GAIN_NUM) / (1024 * d * d), 1 <= d <= MAX_DECIM. */
+void audio_init_decim(Machine *m, unsigned d)
+{
+  m->decim = d;
+  if ((d & (d - 1u)) == 0u) {
+    unsigned logd = 0;
+    while ((1u << logd) < d)
+      logd++;
+    m->decim_pow2 = 1;
+    m->decim_mul = 0;
+    m->decim_shift = 10u + 2u * logd;
+  } else {
+    const uint32_t d2 = d * d;
+    unsigned l = 1;
+    while ((1u << l) <= d2)
+      l++;
+    const uint64_t magic = (((uint64_t)1 << (32u + l)) + d2 - 1u) / d2;
+    m->decim_pow2 = 0;
+    m->decim_mul = (uint32_t)(magic - ((uint64_t)1 << 32));
+    m->decim_shift = l - 1u;
+  }
+}
+
+/* GAIN_NUM/1024: the level TGB Dual's mixer gives the same channels (a full-volume square wave: rms 8203
+ * there, 7562 here before the gain; tests/suites.c AUDIO line), so the two cores sound as loud as each other.
+ * Bit-identical to (int32_t)((int64_t)t * GAIN_NUM / (int64_t)(1024 * d * d)) clamped to [-32768, 32767]. */
+static inline int32_t audio_scale(const Machine *m, int32_t t)
+{
+  const int64_t p = (int64_t)t * GAIN_NUM;
+  int32_t o;
+  if (m->decim_pow2) {
+    const unsigned k = m->decim_shift;
+    const int64_t bias = (p >> 63) & (((int64_t)1 << k) - 1);
+    o = (int32_t)((p + bias) >> k);
+  } else {
+    const int neg = p < 0;
+    const uint64_t ap = neg ? (uint64_t)(-p) : (uint64_t)p;
+    const uint32_t u = (uint32_t)(ap >> 10);
+    const uint32_t t1 = (uint32_t)(((uint64_t)u * m->decim_mul) >> 32);
+    const uint32_t q = (t1 + ((u - t1) >> 1)) >> m->decim_shift;
+    o = neg ? -(int32_t)q : (int32_t)q;
+  }
+  return o > 32767 ? 32767 : o < -32768 ? -32768 : o;
+}
+
 void audio_feed(Machine *m, const int16_t *in, unsigned n)
 {
   const unsigned d = m->decim;
+  const size_t out_cap = sizeof m->out / sizeof m->out[0] / 2;
+
+  /* Finish any partial block in progress so the fast path starts aligned at since == 0. */
+  if (m->since != 0) {
+    unsigned need = d - m->since;
+    unsigned take = n < need ? n : need;
+    n -= take;
+    while (take--) {
+      const int32_t l = in[0], r = in[1], j = (int32_t)m->since;
+      in += 2;
+      m->u[0] += j * l; m->u[1] += j * r;
+      m->v[0] += l;     m->v[1] += r;
+      m->since++;
+    }
+    if (m->since == d) {
+      const int32_t o0 = audio_scale(m, m->pu[0] + (int32_t)d * m->v[0] - m->u[0]);
+      const int32_t o1 = audio_scale(m, m->pu[1] + (int32_t)d * m->v[1] - m->u[1]);
+      m->pu[0] = m->u[0]; m->u[0] = 0; m->v[0] = 0;
+      m->pu[1] = m->u[1]; m->u[1] = 0; m->v[1] = 0;
+      m->since = 0;
+      if (m->out_n < out_cap) {
+        m->out[2 * m->out_n] = (int16_t)o0;
+        m->out[2 * m->out_n + 1] = (int16_t)o1;
+        m->out_n++;
+      }
+    }
+  }
+
+#if GAM_AUDIO_NEON
+  /* Full d-sample blocks starting at since == 0: 4 stereo pairs per NEON iteration. */
+  if (d >= 4 && n >= d) {
+    static const int16_t kInitJ[4] = { 0, 1, 2, 3 };
+    const int16x4_t vj0 = vld1_s16(kInitJ);
+    const int16x4_t vfour = vdup_n_s16(4);
+    const unsigned d4 = d & ~3u;
+    int32_t pu0 = m->pu[0], pu1 = m->pu[1];
+    size_t out_n = m->out_n;
+
+    while (n >= d) {
+      int32x4_t vu_l = vdupq_n_s32(0), vu_r = vdupq_n_s32(0);
+      int32x2_t vv_l = vdup_n_s32(0), vv_r = vdup_n_s32(0);
+      int16x4_t vj = vj0;
+      for (unsigned k = 0; k < d4; k += 4) {
+        int16x4x2_t s = vld2_s16(in);
+        in += 8;
+        vu_l = vmlal_s16(vu_l, vj, s.val[0]);
+        vu_r = vmlal_s16(vu_r, vj, s.val[1]);
+        vv_l = vpadal_s16(vv_l, s.val[0]);
+        vv_r = vpadal_s16(vv_r, s.val[1]);
+        vj = vadd_s16(vj, vfour);
+      }
+      int32x2_t ul2 = vadd_s32(vget_low_s32(vu_l), vget_high_s32(vu_l));
+      int32x2_t ur2 = vadd_s32(vget_low_s32(vu_r), vget_high_s32(vu_r));
+      int32x2_t u_lr = vpadd_s32(ul2, ur2);
+      int32x2_t v_lr = vpadd_s32(vv_l, vv_r);
+      int32_t u0 = vget_lane_s32(u_lr, 0), u1 = vget_lane_s32(u_lr, 1);
+      int32_t v0 = vget_lane_s32(v_lr, 0), v1 = vget_lane_s32(v_lr, 1);
+
+      for (unsigned j = d4; j < d; ++j) {
+        const int32_t l = in[0], r = in[1];
+        in += 2;
+        u0 += (int32_t)j * l; u1 += (int32_t)j * r;
+        v0 += l;              v1 += r;
+      }
+
+      const int32_t o0 = audio_scale(m, pu0 + (int32_t)d * v0 - u0);
+      const int32_t o1 = audio_scale(m, pu1 + (int32_t)d * v1 - u1);
+      pu0 = u0;
+      pu1 = u1;
+      if (out_n < out_cap) {
+        m->out[2 * out_n] = (int16_t)o0;
+        m->out[2 * out_n + 1] = (int16_t)o1;
+        out_n++;
+      }
+      n -= d;
+    }
+
+    m->pu[0] = pu0;
+    m->pu[1] = pu1;
+    m->out_n = out_n;
+  }
+#endif
+
+  /* Remaining samples (and full blocks when d < 4 or non-NEON). */
   while (n--) {
     const int32_t l = in[0], r = in[1], j = (int32_t)m->since;
     in += 2;
     m->u[0] += j * l; m->u[1] += j * r;
     m->v[0] += l;     m->v[1] += r;
     if (++m->since == d) {
-      /* GAIN_NUM/1024: the level TGB Dual's mixer gives the same channels (a full-volume square wave: rms 8203
-       * there, 7562 here before the gain; tests/suites.c AUDIO line), so the two cores sound as loud as each other */
-      int32_t o[2];
-      for (int c = 0; c < 2; ++c) {
-        const int32_t t = m->pu[c] + (int32_t)d * m->v[c] - m->u[c];
-        o[c] = (int32_t)((int64_t)t * GAIN_NUM / (int64_t)(1024 * d * d));
-        o[c] = o[c] > 32767 ? 32767 : o[c] < -32768 ? -32768 : o[c];
-        m->pu[c] = m->u[c]; m->u[c] = 0; m->v[c] = 0;
-      }
+      const int32_t o0 = audio_scale(m, m->pu[0] + (int32_t)d * m->v[0] - m->u[0]);
+      const int32_t o1 = audio_scale(m, m->pu[1] + (int32_t)d * m->v[1] - m->u[1]);
+      m->pu[0] = m->u[0]; m->u[0] = 0; m->v[0] = 0;
+      m->pu[1] = m->u[1]; m->u[1] = 0; m->v[1] = 0;
       m->since = 0;
-      if (m->out_n < sizeof m->out / sizeof m->out[0] / 2) {
-        m->out[2 * m->out_n] = (int16_t)o[0];
-        m->out[2 * m->out_n + 1] = (int16_t)o[1];
+      if (m->out_n < out_cap) {
+        m->out[2 * m->out_n] = (int16_t)o0;
+        m->out[2 * m->out_n + 1] = (int16_t)o1;
         m->out_n++;
       }
     }
@@ -422,7 +555,7 @@ int gambatte_host_create(const uint8_t *rom, size_t size, int cgb_console, unsig
   d = rate ? (kNative + rate / 2) / rate : 64;
   if (d < 1) d = 1;
   if (d > MAX_DECIM) d = MAX_DECIM;
-  m->decim = d;
+  audio_init_decim(m, d);
   m->rate = kNative / d;
   g_m = m;
   /* palettes of a Game Boy running as a Game Boy (the DMG-hardware path only) */
@@ -628,44 +761,93 @@ int gambatte_host_state_kind(const void *src, size_t size)
   return 0;
 }
 
+enum { AUDIO_TRAILER = 28 };
+
+static void audio_save(const Machine *m, uint8_t *o)
+{
+  put32(o + 0, (uint32_t)m->u[0]);
+  put32(o + 4, (uint32_t)m->u[1]);
+  put32(o + 8, (uint32_t)m->v[0]);
+  put32(o + 12, (uint32_t)m->v[1]);
+  put32(o + 16, (uint32_t)m->pu[0]);
+  put32(o + 20, (uint32_t)m->pu[1]);
+  put32(o + 24, (uint32_t)m->since);
+}
+
+static void audio_load(Machine *m, const uint8_t *p)
+{
+  const unsigned since = get32(p + 24);
+  if (since < m->decim) {
+    m->u[0] = (int32_t)get32(p + 0);
+    m->u[1] = (int32_t)get32(p + 4);
+    m->v[0] = (int32_t)get32(p + 8);
+    m->v[1] = (int32_t)get32(p + 12);
+    m->pu[0] = (int32_t)get32(p + 16);
+    m->pu[1] = (int32_t)get32(p + 20);
+    m->since = since;
+  } else {
+    audio_reset(m);
+  }
+}
+
 size_t gambatte_host_state_size(void)
 {
-  return g_m ? STATE_HEAD + g_m->gb.stateSize() : 0;
+  return g_m ? STATE_HEAD + g_m->gb.stateSize() + AUDIO_TRAILER : 0;
 }
 
 long gambatte_host_state_save(void *dst, size_t cap)
 {
   Machine *m = g_m;
   uint8_t *o = (uint8_t *)dst;
-  const size_t n = gambatte_host_state_size();
+  const size_t gb_n = m ? m->gb.stateSize() : 0;
+  const size_t n = STATE_HEAD + gb_n + AUDIO_TRAILER;
   if (!m || !dst || cap < n)
     return -1;
   memcpy(o, kMagicGam, 4);
-  put32(o + 4, 1);
+  put32(o + 4, 2);
   put32(o + 8, m->cgb ? 1u : 0u);
   put32(o + 12, m->cart_id);
   m->gb.saveState(o + STATE_HEAD);
+  audio_save(m, o + STATE_HEAD + gb_n);
   return (long)n;
 }
 
-static int state_check(Machine *m, const void *src, size_t size)
+/* Returns state format version (1 = core only, 2 = core + audio filter trailer), or 0 if invalid. */
+static int state_check(Machine *m, const void *src, size_t size, size_t *gb_sz)
 {
   const uint8_t *p = (const uint8_t *)src;
-  if (!m || !src || size != gambatte_host_state_size())
-    return -1;
-  if (memcmp(p, kMagicGam, 4) || get32(p + 4) != 1 || get32(p + 8) != (m->cgb ? 1u : 0u) || get32(p + 12) != m->cart_id)
-    return -1;
+  const size_t raw = m ? m->gb.stateSize() : 0;
+  uint32_t ver;
+  if (!m || !src || size < STATE_HEAD)
+    return 0;
+  ver = get32(p + 4);
+  if (memcmp(p, kMagicGam, 4) || get32(p + 8) != (m->cgb ? 1u : 0u) || get32(p + 12) != m->cart_id)
+    return 0;
+  if (ver == 2 && size == STATE_HEAD + raw + AUDIO_TRAILER) {
+    if (gb_sz) *gb_sz = raw;
+    return 2;
+  }
+  if (ver == 1 && size == STATE_HEAD + raw) {
+    if (gb_sz) *gb_sz = raw;
+    return 1;
+  }
   return 0;
 }
 
 int gambatte_host_state_load(const void *src, size_t size)
 {
   Machine *m = g_m;
-  if (state_check(m, src, size) != 0)
+  const uint8_t *p = (const uint8_t *)src;
+  size_t gb_n = 0;
+  const int ver = state_check(m, src, size, &gb_n);
+  if (!ver)
     return -1;
-  if (!m->gb.loadState((const uint8_t *)src + STATE_HEAD, size - STATE_HEAD))
+  if (!m->gb.loadState(p + STATE_HEAD, gb_n))
     return -1;
-  audio_reset(m);
+  if (ver >= 2)
+    audio_load(m, p + STATE_HEAD + gb_n);
+  else
+    audio_reset(m);
   return 0;
 }
 
@@ -691,12 +873,14 @@ int gambatte_host_ahead_load(const void *src, size_t size)
   Machine *m = g_m;
   const size_t n = gambatte_host_state_size();
   const uint8_t *p = (const uint8_t *)src;
-  if (!m || size != n + 8 || state_check(m, src, n) != 0)
+  size_t gb_n = 0;
+  if (!m || size != n + 8 || state_check(m, src, n, &gb_n) != 2)
     return -1;
-  if (!m->gb.loadState(p + STATE_HEAD, n - STATE_HEAD))
+  if (!m->gb.loadState(p + STATE_HEAD, gb_n))
     return -1;
+  audio_load(m, p + STATE_HEAD + gb_n);
   m->frames = (uint64_t)get32(p + n) | (uint64_t)get32(p + n + 4) << 32;
-  return 0;                                 /* the sound's filter stays: the look-ahead frame made none */
+  return 0;
 }
 
 /* ---- display ---- */

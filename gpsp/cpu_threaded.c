@@ -255,6 +255,36 @@ typedef struct
 #define thumb_decode_branch()                                                 \
   u32 offset = opcode & 0x07FF                                                \
 
+#if defined(ARM_ARCH)
+/* Per-cache sorted side tables mapping host LR (return address after memory
+ * load/store BLX) to guest PC, eliminating inline PC literals so all fast
+ * load/store stubs return via plain `bx lr` without Cortex-A9 RAS mispredicts. */
+static void arm_mem_pc_record(const u8 *lr_ptr, u32 guest_pc, bool ram_region);
+static void arm_mem_pc_reset_rom(void);
+static void arm_mem_pc_truncate_rom(u32 watermark);
+static void arm_mem_pc_reset_ram(void);
+#if defined(SMC_RANGE) && SMC_RANGE
+static u32  arm_mem_pc_mark_ram(void);
+static void arm_mem_pc_rewind_ram(u32 mark);
+#endif
+static bool arm_rom_mem_pc_near_full(void);
+u32 function_cc arm_lookup_mem_pc(u32 host_lr);
+
+#define ARM_MEM_PC_RESET_ROM()         arm_mem_pc_reset_rom()
+#define ARM_MEM_PC_TRUNCATE_ROM(wm)    arm_mem_pc_truncate_rom((wm))
+#define ARM_MEM_PC_RESET_RAM()         arm_mem_pc_reset_ram()
+#define ARM_MEM_PC_MARK_RAM()          arm_mem_pc_mark_ram()
+#define ARM_MEM_PC_REWIND_RAM(m)       arm_mem_pc_rewind_ram((m))
+#define ARM_ROM_MEM_PC_NEAR_FULL()     arm_rom_mem_pc_near_full()
+#else
+#define ARM_MEM_PC_RESET_ROM()         do { } while (0)
+#define ARM_MEM_PC_TRUNCATE_ROM(wm)    do { (void)(wm); } while (0)
+#define ARM_MEM_PC_RESET_RAM()         do { } while (0)
+#define ARM_MEM_PC_MARK_RAM()          (0u)
+#define ARM_MEM_PC_REWIND_RAM(m)       do { (void)(m); } while (0)
+#define ARM_ROM_MEM_PC_NEAR_FULL()     (0)
+#endif
+
 /* Include the right emitter headers */
 #if defined(MIPS_ARCH)
   #include "mips/mips_emit.h"
@@ -3792,6 +3822,7 @@ static u32 smcr_vptr;      /* the full-flush build's ram_translation_ptr */
 static u32 smcr_vgen = 1;  /* +1 per tag-only flush */
 static u32 smcr_env_read;
 static u32 smcr_verify_on; /* GPSP_SMC_VERIFY=1 (twins) */
+static u32 smcr_verifying; /* non-zero during in-place smcr_verify_revival */
 static u32 smcr_lookups;
 #include <stdio.h>
 static FILE *smcr_trace_f; /* GPSP_SMC_TRACE=file (twins): one line per flush
@@ -4124,6 +4155,7 @@ static void smcr_full_flush(void)
   smcr_dc_clear();
   smcr_flush_tags();
   smcr_drop_all();
+  ARM_MEM_PC_RESET_RAM();
   last_ram_translation_ptr = smcr_base;
   ram_translation_ptr = smcr_base;
 }
@@ -4182,6 +4214,7 @@ static void smcr_reclaim(void)
   smcr_dc_clear();
   smcr_np = smcr_pover = 0;
   smcr_pmin = smcr_pmax = NULL;
+  ARM_MEM_PC_RESET_RAM();
   last_ram_translation_ptr = smcr_base;
   ram_translation_ptr = smcr_base;
 }
@@ -4239,6 +4272,7 @@ static u32 smcr_translate(u32 pc, u32 thumb, u32 redo)
 {
   static u8 swapbuf[SMCR_SWAP];
   u8 *start = ram_translation_ptr;
+  u32 mem_pc_mark = ARM_MEM_PC_MARK_RAM();
   u32 swaplen = 0, len, i, cph_t;
   bool ok;
 
@@ -4273,6 +4307,7 @@ static u32 smcr_translate(u32 pc, u32 thumb, u32 redo)
     smcr_mem_write(pc, swapbuf, swaplen);
   if (!ok) {
     ram_translation_ptr = start;
+    ARM_MEM_PC_REWIND_RAM(mem_pc_mark);
     return 0;
   }
 
@@ -4283,6 +4318,7 @@ static u32 smcr_translate(u32 pc, u32 thumb, u32 redo)
         (u32)(ram_translation_ptr - start) != r->s_total ||
         smcr_xn != r->n_exits) {
       ram_translation_ptr = start;
+      ARM_MEM_PC_REWIND_RAM(mem_pc_mark);
       return 0;
     }
     r->code = (u32)(start - smcr_base);
@@ -4299,6 +4335,7 @@ static u32 smcr_translate(u32 pc, u32 thumb, u32 redo)
         !smcr_grow((void **)&smcr_srcb, &smcr_capsrc, smcr_nsrc + len + nins,
                    1, 64 * 1024)) {
       ram_translation_ptr = start;
+      ARM_MEM_PC_REWIND_RAM(mem_pc_mark);
       return 0;
     }
   }
@@ -4306,6 +4343,7 @@ static u32 smcr_translate(u32 pc, u32 thumb, u32 redo)
       !smcr_grow((void **)&smcr_x, &smcr_capx, smcr_nx + smcr_xn,
                  sizeof(smcr_exit), 4096)) {
     ram_translation_ptr = start;
+    ARM_MEM_PC_REWIND_RAM(mem_pc_mark);
     return 0;
   }
   {
@@ -4532,6 +4570,7 @@ static void smcr_apply(void)
                                   rom_translation_cache_size &&
          rom_translation_cache_size >= 4 * SMC_RANGE_CARVE;
   smcr_drop_all();
+  ARM_MEM_PC_RESET_RAM();
   smcr_vptr = 0;          /* init and flush both restart the RAM cache */
   smcr_on = want;
   smcr_base = want ? ram_translation_cache - SMC_RANGE_CARVE
@@ -4611,8 +4650,10 @@ static void smcr_verify_revival(u32 idx, u32 thumb)
   ram_translation_ptr = code;
   smcr_bd_set(d.nins - 1, d.s_in);
   smcr_xlat_real = 1;
+  smcr_verifying = 1;
   smcr_xn = 0;
   ok = thumb ? translate_block_thumb(pc, true) : translate_block_arm(pc, true);
+  smcr_verifying = 0;
   smcr_xlat_real = 0;
   if (!ok || smcr_last_end != d.end || smcr_last_gate != d.gate ||
       (u32)(smcr_last_body - code) != d.s_body ||
@@ -4725,6 +4766,165 @@ static void smcr_dc_clear(void)
 #define SMCR_CODE_WRITE_FLUSH(k)      flush_translation_cache_ram()
 #define SMCR_FULL_FLUSH_HOOK()        do { } while (0)
 #endif /* SMC_RANGE */
+
+#if defined(ARM_ARCH)
+/* Cold sorted per-cache side tables mapping host LR (return address after a
+ * memory load/store BLX) to the exact guest PC for slow/IO/BIOS/SMC paths.
+ *
+ * Every recorded load/store site emits >= 24 bytes in the translation cache
+ * (minimum is 24B for cached byte load/store; SWP emits 52B for 2 entries),
+ * so (cache_bytes / 24 + 64) strictly bounds the worst-case entry count
+ * without ever forcing an extra RAM flush.  Static .bss storage keeps both
+ * Instance A and Instance B isolated with zero heap lifecycle issues. */
+#ifdef ROM_TRANSLATION_CACHE_SIZE_LARGE
+#define ARM_ROM_MEM_PC_BYTES \
+  ((ROM_TRANSLATION_CACHE_SIZE_LARGE) > (ROM_TRANSLATION_CACHE_SIZE) ? \
+   (ROM_TRANSLATION_CACHE_SIZE_LARGE) : (ROM_TRANSLATION_CACHE_SIZE))
+#else
+#define ARM_ROM_MEM_PC_BYTES (ROM_TRANSLATION_CACHE_SIZE)
+#endif
+
+#ifdef RAM_TRANSLATION_CACHE_SIZE_LARGE
+#define ARM_RAM_MEM_PC_BYTES_BASE \
+  ((RAM_TRANSLATION_CACHE_SIZE_LARGE) > (RAM_TRANSLATION_CACHE_SIZE) ? \
+   (RAM_TRANSLATION_CACHE_SIZE_LARGE) : (RAM_TRANSLATION_CACHE_SIZE))
+#else
+#define ARM_RAM_MEM_PC_BYTES_BASE (RAM_TRANSLATION_CACHE_SIZE)
+#endif
+
+#if defined(SMC_RANGE) && SMC_RANGE
+#define ARM_RAM_MEM_PC_BYTES ((ARM_RAM_MEM_PC_BYTES_BASE) + (SMC_RANGE_CARVE))
+#else
+#define ARM_RAM_MEM_PC_BYTES (ARM_RAM_MEM_PC_BYTES_BASE)
+#endif
+
+#define ARM_ROM_MEM_PC_CAP (((u32)(ARM_ROM_MEM_PC_BYTES) / 24u) + 64u)
+#define ARM_RAM_MEM_PC_CAP (((u32)(ARM_RAM_MEM_PC_BYTES) / 24u) + 64u)
+
+typedef struct {
+  u32 lr_off;
+  u32 guest_pc;
+} arm_mem_pc_entry;
+
+static arm_mem_pc_entry rom_mem_pc[ARM_ROM_MEM_PC_CAP];
+static arm_mem_pc_entry ram_mem_pc[ARM_RAM_MEM_PC_CAP];
+static u32 rom_mem_pc_count;
+static u32 ram_mem_pc_count;
+
+static const u8 *arm_ram_cache_base(void)
+{
+#if defined(SMC_RANGE) && SMC_RANGE
+  return smcr_on ? smcr_base : ram_translation_cache;
+#else
+  return ram_translation_cache;
+#endif
+}
+
+static void arm_mem_pc_record(const u8 *lr_ptr, u32 guest_pc, bool ram_region)
+{
+  arm_mem_pc_entry *tbl;
+  u32 *cntp;
+  u32 cap, n, off;
+
+#if defined(SMC_RANGE) && SMC_RANGE
+  if (smcr_verifying)
+    return;
+#endif
+
+  if (ram_region) {
+    tbl = ram_mem_pc;
+    cntp = &ram_mem_pc_count;
+    cap = ARM_RAM_MEM_PC_CAP;
+    off = (u32)(lr_ptr - arm_ram_cache_base());
+  } else {
+    tbl = rom_mem_pc;
+    cntp = &rom_mem_pc_count;
+    cap = ARM_ROM_MEM_PC_CAP;
+    off = (u32)(lr_ptr - rom_translation_cache);
+  }
+
+  n = *cntp;
+  while (n > 0 && tbl[n - 1].lr_off >= off)
+    n--;
+  if (n < cap) {
+    tbl[n].lr_off = off;
+    tbl[n].guest_pc = guest_pc;
+    n++;
+  }
+  *cntp = n;
+}
+
+static void arm_mem_pc_reset_rom(void)
+{
+  rom_mem_pc_count = 0;
+}
+
+static void arm_mem_pc_truncate_rom(u32 watermark)
+{
+  while (rom_mem_pc_count > 0 &&
+         rom_mem_pc[rom_mem_pc_count - 1].lr_off >= watermark)
+    rom_mem_pc_count--;
+}
+
+static void arm_mem_pc_reset_ram(void)
+{
+  ram_mem_pc_count = 0;
+}
+
+#if defined(SMC_RANGE) && SMC_RANGE
+static u32 arm_mem_pc_mark_ram(void)
+{
+  return ram_mem_pc_count;
+}
+
+static void arm_mem_pc_rewind_ram(u32 mark)
+{
+  if (mark < ram_mem_pc_count)
+    ram_mem_pc_count = mark;
+}
+#endif
+
+static bool arm_rom_mem_pc_near_full(void)
+{
+  return rom_mem_pc_count >= ARM_ROM_MEM_PC_CAP - 32u;
+}
+
+static u32 arm_mem_pc_bsearch(const arm_mem_pc_entry *tbl, u32 count, u32 off)
+{
+  u32 lo = 0, hi = count;
+  while (lo < hi) {
+    u32 mid = lo + ((hi - lo) >> 1);
+    u32 v = tbl[mid].lr_off;
+    if (v < off)
+      lo = mid + 1;
+    else if (v > off)
+      hi = mid;
+    else
+      return tbl[mid].guest_pc;
+  }
+  return reg[REG_PC];
+}
+
+u32 function_cc arm_lookup_mem_pc(u32 host_lr)
+{
+  uintptr_t lr = (uintptr_t)host_lr;
+  uintptr_t rom_lo = (uintptr_t)rom_translation_cache;
+  uintptr_t rom_hi = rom_lo + (uintptr_t)SMCR_ROM_SIZE;
+
+  if (lr >= rom_lo && lr < rom_hi)
+    return arm_mem_pc_bsearch(rom_mem_pc, rom_mem_pc_count, (u32)(lr - rom_lo));
+
+  {
+    uintptr_t ram_lo = (uintptr_t)arm_ram_cache_base();
+    uintptr_t ram_hi = (uintptr_t)ram_translation_cache +
+                       (uintptr_t)ram_translation_cache_size;
+    if (lr >= ram_lo && lr < ram_hi)
+      return arm_mem_pc_bsearch(ram_mem_pc, ram_mem_pc_count, (u32)(lr - ram_lo));
+  }
+
+  return reg[REG_PC];
+}
+#endif /* ARM_ARCH */
 
 /* RAM_MIRROR_FIX (GBAdhoc d9052db, issue #10, The Morrow's Golden Country
  * slows to ~2 s a frame a few combats in, then freezes).  IWRAM repeats every
@@ -6261,7 +6461,8 @@ bool translate_block_arm(u32 pc, bool ram_region)
        a simple recursive call here won't work, it has to pedal out to
        the beginning. */
 
-    if(translation_ptr > translation_cache_limit) {
+    if(translation_ptr > translation_cache_limit ||
+       (!ram_region && ARM_ROM_MEM_PC_NEAR_FULL())) {
       if (ram_region) {
         SMCR_REAL_OVERFLOW();
         flush_ram_full++;
@@ -6597,7 +6798,8 @@ bool translate_block_thumb(u32 pc, bool ram_region)
        a simple recursive call here won't work, it has to pedal out to
        the beginning. */
 
-    if(translation_ptr > translation_cache_limit)
+    if(translation_ptr > translation_cache_limit ||
+       (!ram_region && ARM_ROM_MEM_PC_NEAR_FULL()))
     {
       if (ram_region) {
         SMCR_REAL_OVERFLOW();
@@ -6873,6 +7075,7 @@ void flush_translation_cache_ram(void)
   smc_max_extent[0] = smc_max_extent[1] = 0;
 #endif
 
+  ARM_MEM_PC_RESET_RAM();
   last_ram_translation_ptr = ram_translation_cache;
   ram_translation_ptr = ram_translation_cache;
 
@@ -8590,6 +8793,7 @@ void flush_translation_cache_rom(void)
   jit_code_owner_changed(JOWN_ROM_FLUSH);
 #endif
   LZ_FLUSHED();
+  ARM_MEM_PC_TRUNCATE_ROM(rom_cache_watermark);
   last_rom_translation_ptr = &rom_translation_cache[rom_cache_watermark];
   rom_translation_ptr      = &rom_translation_cache[rom_cache_watermark];
 
@@ -8623,6 +8827,8 @@ void init_dynarec_caches(void)
   jit_code_owner_changed(JOWN_INIT);
 #endif
   LZ_FLUSHED();
+  ARM_MEM_PC_RESET_ROM();
+  ARM_MEM_PC_RESET_RAM();
   rom_translation_ptr = last_rom_translation_ptr = &rom_translation_cache[0];
   memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
 
@@ -8735,6 +8941,8 @@ static void jit_small_rebase(void)
   rom_translation_cache = rom_translation_cache_static + skip;
   ram_translation_cache = ram_translation_cache_static + skip;
   LZ_FLUSHED();
+  ARM_MEM_PC_RESET_ROM();
+  ARM_MEM_PC_RESET_RAM();
   rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
   ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
 }
@@ -8838,6 +9046,8 @@ void dynarec_select_translation_caches(void)
   rom_translation_cache_size = ROM_TRANSLATION_CACHE_SIZE_LARGE;
   ram_translation_cache_size = RAM_TRANSLATION_CACHE_SIZE_LARGE;
   LZ_FLUSHED();
+  ARM_MEM_PC_RESET_ROM();
+  ARM_MEM_PC_RESET_RAM();
   rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
   ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
   jit_cache_tier   = JIT_CACHE_LARGE;
@@ -8896,6 +9106,8 @@ void dynarec_release_translation_caches(void)
   rom_translation_cache_size = ROM_TRANSLATION_CACHE_SIZE;
   ram_translation_cache_size = RAM_TRANSLATION_CACHE_SIZE;
   LZ_FLUSHED();
+  ARM_MEM_PC_RESET_ROM();
+  ARM_MEM_PC_RESET_RAM();
   rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
   ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
   gamepak_spare_pool       = NULL;

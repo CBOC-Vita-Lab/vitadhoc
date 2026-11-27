@@ -250,21 +250,15 @@ static inline vq vq_mul(vq a, unsigned short c) { return vmulq_n_u16(a, c); }
 static inline vq vq_mla(vq acc, vq a, unsigned short c) { return vmlaq_n_u16(acc, a, c); }
 static inline vq vq_bsl(vq m, vq a, vq b) { return vbslq_u16(m, a, b); }   // m ? a : b
 static inline vq vq_tst(vq x, vq bit) { return vtstq_u16(x, bit); }       // (x & bit) != 0, one-bit `bit`
-static inline int vq_any(vq m)
-{
-  uint16x4_t h = vorr_u16(vget_low_u16(m), vget_high_u16(m));
-  uint32x2_t w = vreinterpret_u32_u16(h);
-  return (vget_lane_u32(w, 0) | vget_lane_u32(w, 1)) != 0;
-}
 static inline vq vq_load(const unsigned short *p) { return vld1q_u16(p); }
 static inline void vq_store(unsigned short *p, vq v) { vst1q_u16(p, v); }
-// The low and the high halves of eight 32-bit words.
-static inline void vq_lohi(const unsigned *s, vq *lo, vq *hi)
+// Pack four 32-bit pairs of u16 lanes (little-endian) into one 8x u16 vector.
+static inline vq vq_from_u32x4(unsigned a, unsigned b, unsigned c, unsigned d)
 {
-  uint16x8x2_t lh = vld2q_u16((const unsigned short *)s);
-  *lo = lh.val[0]; *hi = lh.val[1];
+  unsigned long long lo = (unsigned long long)a | ((unsigned long long)b << 32);
+  unsigned long long hi = (unsigned long long)c | ((unsigned long long)d << 32);
+  return vcombine_u16(vcreate_u16(lo), vcreate_u16(hi));
 }
-#define VQ_LANE(v, n, x) (v) = vsetq_lane_u16((x), (v), (n))
 #elif defined(__SSE2__)
 #define VM_VEC 1
 #include <emmintrin.h>
@@ -280,19 +274,12 @@ static inline vq vq_mul(vq a, unsigned short c) { return _mm_mullo_epi16(a, _mm_
 static inline vq vq_mla(vq acc, vq a, unsigned short c) { return _mm_add_epi16(acc, vq_mul(a, c)); }
 static inline vq vq_bsl(vq m, vq a, vq b) { return _mm_or_si128(_mm_and_si128(m, a), _mm_andnot_si128(m, b)); }
 static inline vq vq_tst(vq x, vq bit) { return _mm_cmpeq_epi16(_mm_and_si128(x, bit), bit); }
-static inline int vq_any(vq m) { return _mm_movemask_epi8(m) != 0; }
 static inline vq vq_load(const unsigned short *p) { return _mm_loadu_si128((const __m128i *)p); }
 static inline void vq_store(unsigned short *p, vq v) { _mm_storeu_si128((__m128i *)p, v); }
-static inline void vq_lohi(const unsigned *s, vq *lo, vq *hi)
+static inline vq vq_from_u32x4(unsigned a, unsigned b, unsigned c, unsigned d)
 {
-  __m128i a = _mm_loadu_si128((const __m128i *)s);
-  __m128i b = _mm_loadu_si128((const __m128i *)(s + 4));
-  // sign-extended 16-bit halves survive the signed pack unchanged
-  *lo = _mm_packs_epi32(_mm_srai_epi32(_mm_slli_epi32(a, 16), 16),
-                        _mm_srai_epi32(_mm_slli_epi32(b, 16), 16));
-  *hi = _mm_packs_epi32(_mm_srai_epi32(a, 16), _mm_srai_epi32(b, 16));
+  return _mm_set_epi32((int)d, (int)c, (int)b, (int)a);
 }
-#define VQ_LANE(v, n, x) (v) = _mm_insert_epi16((v), (x), (n))
 #endif
 #endif
 #ifndef VM_VEC
@@ -301,43 +288,25 @@ static inline void vq_lohi(const unsigned *s, vq *lo, vq *hi)
 
 #if VM_VEC
 
-// Eight palette entries, indexed by the 9-bit fields of s[0..7] at bit `sh`.
-template <int sh>
-static inline vq vm_gather32(const unsigned short *pal, const unsigned *s)
+static inline vq vm_pack_u16x8(unsigned short x0, unsigned short x1,
+  unsigned short x2, unsigned short x3, unsigned short x4, unsigned short x5,
+  unsigned short x6, unsigned short x7)
 {
-  vq v = vq_set1(0);
-  VQ_LANE(v, 0, pal[(s[0] >> sh) & 0x1FF]);
-  VQ_LANE(v, 1, pal[(s[1] >> sh) & 0x1FF]);
-  VQ_LANE(v, 2, pal[(s[2] >> sh) & 0x1FF]);
-  VQ_LANE(v, 3, pal[(s[3] >> sh) & 0x1FF]);
-  VQ_LANE(v, 4, pal[(s[4] >> sh) & 0x1FF]);
-  VQ_LANE(v, 5, pal[(s[5] >> sh) & 0x1FF]);
-  VQ_LANE(v, 6, pal[(s[6] >> sh) & 0x1FF]);
-  VQ_LANE(v, 7, pal[(s[7] >> sh) & 0x1FF]);
-  return v;
+  return vq_from_u32x4((unsigned)x0 | ((unsigned)x1 << 16),
+                       (unsigned)x2 | ((unsigned)x3 << 16),
+                       (unsigned)x4 | ((unsigned)x5 << 16),
+                       (unsigned)x6 | ((unsigned)x7 << 16));
 }
 
-static inline vq vm_gather16(const unsigned short *pal, const unsigned short *s)
-{
-  vq v = vq_set1(0);
-  VQ_LANE(v, 0, pal[s[0] & 0x1FF]);
-  VQ_LANE(v, 1, pal[s[1] & 0x1FF]);
-  VQ_LANE(v, 2, pal[s[2] & 0x1FF]);
-  VQ_LANE(v, 3, pal[s[3] & 0x1FF]);
-  VQ_LANE(v, 4, pal[s[4] & 0x1FF]);
-  VQ_LANE(v, 5, pal[s[5] & 0x1FF]);
-  VQ_LANE(v, 6, pal[s[6] & 0x1FF]);
-  VQ_LANE(v, 7, pal[s[7] & 0x1FF]);
-  return v;
-}
-
-// floor((x*ca + y*cb) / 16), clamped to `mx`.  Blue's clamp is the one the
-// perturbation proof removes (the original then keeps the low 5 bits).
-template <bool blue>
+// floor((x*ca + y*cb) / 16), clamped to `mx` only when `sat` (a + b > 16).
+// When !sat, x*ca + y*cb <= mx*(ca + cb) <= 16*mx, so floor(...) <= mx always.
+// Blue's clamp is the one the perturbation proof removes (keeping low 5 bits).
+template <bool blue, bool sat>
 static inline vq vm_chan_blend(vq x, vq y, unsigned short ca, unsigned short cb,
                                unsigned short mx)
 {
   vq t = vq_shr<4>(vq_mla(vq_mul(x, ca), y, cb));
+  if (!sat) return t;
 #if VREGRESS_PERTURB == 2
   if (blue) return vq_and(t, vq_set1(mx));
 #endif
@@ -370,42 +339,117 @@ static inline vq vm_bright8(vq p, unsigned y16, unsigned y)
                  vm_chan_bright(VM_B(p), y16, par));
 }
 
+// Branchless ARM-GPR per-pixel blend predicate placed at bit 9 (BLEND_ONLY)
+// or bit 11 (st_objs without BLEND_ONLY):
+//   bit 9  (0x200)      = top 1st-target
+//   bit 11 (0x800)      = top ST-OBJ
+//   bit 26 (0x04000000) = bottom 2nd-target
+template <blendtype bldtype, bool st_objs>
+static inline unsigned vm_blend_bit(unsigned w)
+{
+  if (st_objs && bldtype == BLEND_ONLY)
+    return (w | (w >> 2)) & (w >> 17);   // bit 9 = (bit 9 | bit 11) & bit 26
+  if (st_objs)
+    return w & (w >> 15);                // bit 11 = bit 11 & bit 26
+  return w & (w >> 17);                  // bit 9 = bit 9 & bit 26
+}
+
 template <blendtype bldtype, bool st_objs, bool sat>
 static inline void vm_blend_vec(const unsigned short *pal,
   unsigned a, unsigned b, unsigned y, unsigned start, unsigned end,
   unsigned short *dst, const unsigned *src)
 {
   const unsigned y16 = 16 - y;
-  const vq k200 = vq_set1(0x200), k400 = vq_set1(0x400), k800 = vq_set1(0x800);
+  const unsigned bmask = (bldtype == BLEND_ONLY) ? 0x200u : 0x800u;
+  const unsigned bwant = (st_objs && bldtype == BLEND_ONLY) ? 0xA00u
+                       : st_objs ? 0x800u : 0x200u;
   for (; start + 8 <= end; start += 8) {
     const unsigned *s = &src[start];
-    vq lo, hi;
-    vq_lohi(s, &lo, &hi);                  // the low and high halves of the pairs
-    vq p1 = vm_gather32<0>(pal, s);
-    vq r = p1;
+    unsigned short *d = &dst[start];
+    const unsigned w0 = s[0], w1 = s[1], w2 = s[2], w3 = s[3];
+    const unsigned w4 = s[4], w5 = s[5], w6 = s[6], w7 = s[7];
+    const unsigned wor = w0 | w1 | w2 | w3 | w4 | w5 | w6 | w7;
+    const bool need_bri = (bldtype == BLEND_DARK || bldtype == BLEND_BRIGHT) &&
+                          ((wor & 0x200u) != 0);
+    const bool maybe_blend = (st_objs || bldtype == BLEND_ONLY) &&
+                             ((wor & 0x04000000u) != 0) && ((wor & bwant) != 0);
 
-    if (bldtype == BLEND_DARK || bldtype == BLEND_BRIGHT) {
-      vq m_bri = vq_tst(lo, k200);
-      if (vq_any(m_bri))
-        r = vq_bsl(m_bri, vm_bright8<bldtype>(p1, y16, y), r);
+    if (!need_bri && !maybe_blend) {
+      d[0] = pal[w0 & 0x1FF]; d[1] = pal[w1 & 0x1FF];
+      d[2] = pal[w2 & 0x1FF]; d[3] = pal[w3 & 0x1FF];
+      d[4] = pal[w4 & 0x1FF]; d[5] = pal[w5 & 0x1FF];
+      d[6] = pal[w6 & 0x1FF]; d[7] = pal[w7 & 0x1FF];
+      continue;
     }
-    if (st_objs || bldtype == BLEND_ONLY) {
-      vq hi2nd = vq_tst(hi, k400);                         // 0x04000000
-      vq m_blend = vq_set1(0);
-      if (st_objs)
-        m_blend = vq_or(m_blend, vq_and(vq_tst(lo, k800), hi2nd));
-      if (bldtype == BLEND_ONLY)
-        m_blend = vq_or(m_blend, vq_and(vq_tst(lo, k200), hi2nd));
-      if (vq_any(m_blend)) {
-        vq p2 = vm_gather32<16>(pal, s);
-        vq v = vm_pack(
-          vm_chan_blend<false>(VM_R(p1), VM_R(p2), a, b, 31),
-          vm_chan_blend<false>(VM_G(p1), VM_G(p2), a, b, 63),
-          vm_chan_blend<true>(VM_B(p1), VM_B(p2), a, b, 31));
-        r = vq_bsl(m_blend, v, r);
+
+    unsigned t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0, t5 = 0, t6 = 0, t7 = 0;
+    bool need_blend = false, all_blend = false;
+    if (maybe_blend) {
+      t0 = vm_blend_bit<bldtype, st_objs>(w0);
+      t1 = vm_blend_bit<bldtype, st_objs>(w1);
+      t2 = vm_blend_bit<bldtype, st_objs>(w2);
+      t3 = vm_blend_bit<bldtype, st_objs>(w3);
+      t4 = vm_blend_bit<bldtype, st_objs>(w4);
+      t5 = vm_blend_bit<bldtype, st_objs>(w5);
+      t6 = vm_blend_bit<bldtype, st_objs>(w6);
+      t7 = vm_blend_bit<bldtype, st_objs>(w7);
+      need_blend = ((t0 | t1 | t2 | t3 | t4 | t5 | t6 | t7) & bmask) != 0;
+      if (!need_bri && !need_blend) {
+        d[0] = pal[w0 & 0x1FF]; d[1] = pal[w1 & 0x1FF];
+        d[2] = pal[w2 & 0x1FF]; d[3] = pal[w3 & 0x1FF];
+        d[4] = pal[w4 & 0x1FF]; d[5] = pal[w5 & 0x1FF];
+        d[6] = pal[w6 & 0x1FF]; d[7] = pal[w7 & 0x1FF];
+        continue;
+      }
+      all_blend = ((t0 & t1 & t2 & t3 & t4 & t5 & t6 & t7) & bmask) != 0;
+    }
+
+    vq p1 = vm_pack_u16x8(pal[w0 & 0x1FF], pal[w1 & 0x1FF],
+                          pal[w2 & 0x1FF], pal[w3 & 0x1FF],
+                          pal[w4 & 0x1FF], pal[w5 & 0x1FF],
+                          pal[w6 & 0x1FF], pal[w7 & 0x1FF]);
+    if (all_blend) {
+      vq p2 = vm_pack_u16x8(pal[(w0 >> 16) & 0x1FF], pal[(w1 >> 16) & 0x1FF],
+                            pal[(w2 >> 16) & 0x1FF], pal[(w3 >> 16) & 0x1FF],
+                            pal[(w4 >> 16) & 0x1FF], pal[(w5 >> 16) & 0x1FF],
+                            pal[(w6 >> 16) & 0x1FF], pal[(w7 >> 16) & 0x1FF]);
+      vq v = vm_pack(
+        vm_chan_blend<false, sat>(VM_R(p1), VM_R(p2), a, b, 31),
+        vm_chan_blend<false, sat>(VM_G(p1), VM_G(p2), a, b, 63),
+        vm_chan_blend<true,  sat>(VM_B(p1), VM_B(p2), a, b, 31));
+      vq_store(d, v);
+      continue;
+    }
+
+    vq r = p1;
+    if (need_bri) {
+      vq b8 = vm_bright8<bldtype>(p1, y16, y);
+      if ((w0 & w1 & w2 & w3 & w4 & w5 & w6 & w7) & 0x200u) {
+        r = b8;
+      } else {
+        vq mv = vq_from_u32x4((w0 & 0xFFFFu) | (w1 << 16),
+                              (w2 & 0xFFFFu) | (w3 << 16),
+                              (w4 & 0xFFFFu) | (w5 << 16),
+                              (w6 & 0xFFFFu) | (w7 << 16));
+        r = vq_bsl(vq_tst(mv, vq_set1(0x200)), b8, r);
       }
     }
-    vq_store(&dst[start], r);
+    if (need_blend) {
+      vq p2 = vm_pack_u16x8(pal[(w0 >> 16) & 0x1FF], pal[(w1 >> 16) & 0x1FF],
+                            pal[(w2 >> 16) & 0x1FF], pal[(w3 >> 16) & 0x1FF],
+                            pal[(w4 >> 16) & 0x1FF], pal[(w5 >> 16) & 0x1FF],
+                            pal[(w6 >> 16) & 0x1FF], pal[(w7 >> 16) & 0x1FF]);
+      vq v = vm_pack(
+        vm_chan_blend<false, sat>(VM_R(p1), VM_R(p2), a, b, 31),
+        vm_chan_blend<false, sat>(VM_G(p1), VM_G(p2), a, b, 63),
+        vm_chan_blend<true,  sat>(VM_B(p1), VM_B(p2), a, b, 31));
+      vq mv = vq_from_u32x4((t0 & 0xFFFFu) | (t1 << 16),
+                            (t2 & 0xFFFFu) | (t3 << 16),
+                            (t4 & 0xFFFFu) | (t5 << 16),
+                            (t6 & 0xFFFFu) | (t7 << 16));
+      r = vq_bsl(vq_tst(mv, vq_set1((unsigned short)bmask)), v, r);
+    }
+    vq_store(d, r);
   }
   vm_blend_orig<bldtype, st_objs, sat>(pal, a, b, y, start, end, dst, src);
 }
@@ -417,16 +461,156 @@ static inline void vm_bright_vec(const unsigned short *pal, unsigned y,
   const unsigned y16 = 16 - y;
   const vq k200 = vq_set1(0x200);
   for (; start + 8 <= end; start += 8) {
-    vq s = vq_load(&srcdst[start]);
-    vq p = vm_gather16(pal, &srcdst[start]);
-    vq m = vq_tst(s, k200);
-    if (vq_any(m))
-      p = vq_bsl(m, vm_bright8<bldtype>(p, y16, y), p);
-    vq_store(&srcdst[start], p);
+    unsigned short *s = &srcdst[start];
+    const unsigned h0 = s[0], h1 = s[1], h2 = s[2], h3 = s[3];
+    const unsigned h4 = s[4], h5 = s[5], h6 = s[6], h7 = s[7];
+    const unsigned hor = h0 | h1 | h2 | h3 | h4 | h5 | h6 | h7;
+    if (!(hor & 0x200u)) {
+      s[0] = pal[h0 & 0x1FF]; s[1] = pal[h1 & 0x1FF];
+      s[2] = pal[h2 & 0x1FF]; s[3] = pal[h3 & 0x1FF];
+      s[4] = pal[h4 & 0x1FF]; s[5] = pal[h5 & 0x1FF];
+      s[6] = pal[h6 & 0x1FF]; s[7] = pal[h7 & 0x1FF];
+      continue;
+    }
+    vq p = vm_pack_u16x8(pal[h0 & 0x1FF], pal[h1 & 0x1FF],
+                         pal[h2 & 0x1FF], pal[h3 & 0x1FF],
+                         pal[h4 & 0x1FF], pal[h5 & 0x1FF],
+                         pal[h6 & 0x1FF], pal[h7 & 0x1FF]);
+    vq b8 = vm_bright8<bldtype>(p, y16, y);
+    if ((h0 & h1 & h2 & h3 & h4 & h5 & h6 & h7) & 0x200u) {
+      vq_store(s, b8);
+    } else {
+      vq mv = vq_from_u32x4(h0 | (h1 << 16), h2 | (h3 << 16),
+                            h4 | (h5 << 16), h6 | (h7 << 16));
+      vq_store(s, vq_bsl(vq_tst(mv, k200), b8, p));
+    }
   }
   vm_bright_orig<bldtype>(pal, y, start, end, srcdst);
 }
+
+// Blend with precomputed 1024-entry brightness palette (pal_bri[0..511] = raw,
+// pal_bri[512..1023] = brightened/darkened), for BLEND_BRIGHT / BLEND_DARK.
+// Non-blending pixels (whether 1st-target or not) are a single pal_bri[w & 0x3FF]
+// lookup; ST-OBJ blending pixels blend raw pal_bri[w & 0x1FF] and pal_bri[(w>>16)&0x1FF].
+template <bool st_objs, bool sat>
+static inline void vm_blend_palbri_vec(const unsigned short *pal_bri,
+  unsigned a, unsigned b, unsigned start, unsigned end,
+  unsigned short *dst, const unsigned *src)
+{
+  const vq k800 = vq_set1(0x800);
+  for (; start + 8 <= end; start += 8) {
+    const unsigned *s = &src[start];
+    unsigned short *d = &dst[start];
+    const unsigned w0 = s[0], w1 = s[1], w2 = s[2], w3 = s[3];
+    const unsigned w4 = s[4], w5 = s[5], w6 = s[6], w7 = s[7];
+    if (st_objs) {
+      const unsigned wor = w0 | w1 | w2 | w3 | w4 | w5 | w6 | w7;
+      if ((wor & 0x04000800u) == 0x04000800u) {
+        const unsigned t0 = w0 & (w0 >> 15), t1 = w1 & (w1 >> 15);
+        const unsigned t2 = w2 & (w2 >> 15), t3 = w3 & (w3 >> 15);
+        const unsigned t4 = w4 & (w4 >> 15), t5 = w5 & (w5 >> 15);
+        const unsigned t6 = w6 & (w6 >> 15), t7 = w7 & (w7 >> 15);
+        if ((t0 | t1 | t2 | t3 | t4 | t5 | t6 | t7) & 0x800u) {
+          vq p1 = vm_pack_u16x8(pal_bri[w0 & 0x1FF], pal_bri[w1 & 0x1FF],
+                                pal_bri[w2 & 0x1FF], pal_bri[w3 & 0x1FF],
+                                pal_bri[w4 & 0x1FF], pal_bri[w5 & 0x1FF],
+                                pal_bri[w6 & 0x1FF], pal_bri[w7 & 0x1FF]);
+          vq p2 = vm_pack_u16x8(pal_bri[(w0 >> 16) & 0x1FF], pal_bri[(w1 >> 16) & 0x1FF],
+                                pal_bri[(w2 >> 16) & 0x1FF], pal_bri[(w3 >> 16) & 0x1FF],
+                                pal_bri[(w4 >> 16) & 0x1FF], pal_bri[(w5 >> 16) & 0x1FF],
+                                pal_bri[(w6 >> 16) & 0x1FF], pal_bri[(w7 >> 16) & 0x1FF]);
+          vq v = vm_pack(
+            vm_chan_blend<false, sat>(VM_R(p1), VM_R(p2), a, b, 31),
+            vm_chan_blend<false, sat>(VM_G(p1), VM_G(p2), a, b, 63),
+            vm_chan_blend<true,  sat>(VM_B(p1), VM_B(p2), a, b, 31));
+          if ((t0 & t1 & t2 & t3 & t4 & t5 & t6 & t7) & 0x800u) {
+            vq_store(d, v);
+          } else {
+            vq r = vm_pack_u16x8(pal_bri[w0 & 0x3FF], pal_bri[w1 & 0x3FF],
+                                 pal_bri[w2 & 0x3FF], pal_bri[w3 & 0x3FF],
+                                 pal_bri[w4 & 0x3FF], pal_bri[w5 & 0x3FF],
+                                 pal_bri[w6 & 0x3FF], pal_bri[w7 & 0x3FF]);
+            vq mv = vq_from_u32x4((t0 & 0xFFFFu) | (t1 << 16),
+                                  (t2 & 0xFFFFu) | (t3 << 16),
+                                  (t4 & 0xFFFFu) | (t5 << 16),
+                                  (t6 & 0xFFFFu) | (t7 << 16));
+            vq_store(d, vq_bsl(vq_tst(mv, k800), v, r));
+          }
+          continue;
+        }
+      }
+    }
+    d[0] = pal_bri[w0 & 0x3FF]; d[1] = pal_bri[w1 & 0x3FF];
+    d[2] = pal_bri[w2 & 0x3FF]; d[3] = pal_bri[w3 & 0x3FF];
+    d[4] = pal_bri[w4 & 0x3FF]; d[5] = pal_bri[w5 & 0x3FF];
+    d[6] = pal_bri[w6 & 0x3FF]; d[7] = pal_bri[w7 & 0x3FF];
+  }
+  for (; start < end; start++) {
+    unsigned pp = src[start];
+    if (st_objs && (pp & 0x04000800u) == 0x04000800u)
+      dst[start] = (unsigned short)vm_blend_px<sat>(
+        pal_bri[pp & 0x1FF], pal_bri[(pp >> 16) & 0x1FF], a, b);
+    else
+      dst[start] = pal_bri[pp & 0x3FF];
+  }
+}
 #endif /* VM_VEC */
+
+/* ---- 2 KiB L1-resident brightness palette helpers ------------------------- */
+
+template <blendtype bldtype>
+static inline void vm_build_pal_bri(unsigned short *out1024,
+  const unsigned short *pal512, unsigned y)
+{
+  const unsigned y16 = 16 - y;
+#if VM_VEC
+  for (unsigned i = 0; i < 512; i += 8) {
+    vq p = vq_load(pal512 + i);
+    vq_store(out1024 + i, p);
+    vq_store(out1024 + 512 + i, vm_bright8<bldtype>(p, y16, y));
+  }
+#else
+  const unsigned pa = bldtype == BLEND_DARK ? 0
+                                            : ((BLND_MSK * y) >> 4) & BLND_MSK;
+  for (unsigned i = 0; i < 512; i++) {
+    unsigned short p = pal512[i];
+    out1024[i] = p;
+    out1024[512 + i] = (unsigned short)vm_bright_px(p, pa, y16);
+  }
+#endif
+}
+
+static inline void vm_merge_brightness_palbri(const unsigned short *pal_bri,
+  unsigned start, unsigned end, unsigned short *srcdst)
+{
+  for (; start + 4 <= end; start += 4) {
+    unsigned s0 = srcdst[start + 0];
+    unsigned s1 = srcdst[start + 1];
+    unsigned s2 = srcdst[start + 2];
+    unsigned s3 = srcdst[start + 3];
+    srcdst[start + 0] = pal_bri[s0 & 0x3FF];
+    srcdst[start + 1] = pal_bri[s1 & 0x3FF];
+    srcdst[start + 2] = pal_bri[s2 & 0x3FF];
+    srcdst[start + 3] = pal_bri[s3 & 0x3FF];
+  }
+  for (; start < end; start++)
+    srcdst[start] = pal_bri[srcdst[start] & 0x3FF];
+}
+
+template <bool st_objs, bool sat>
+static inline void vm_blend_palbri_scalar(const unsigned short *pal_bri,
+  unsigned a, unsigned b, unsigned start, unsigned end,
+  unsigned short *dst, const unsigned *src)
+{
+  for (; start < end; start++) {
+    unsigned pp = src[start];
+    if (st_objs && (pp & 0x04000800u) == 0x04000800u)
+      dst[start] = (unsigned short)vm_blend_px<sat>(
+        pal_bri[pp & 0x1FF], pal_bri[(pp >> 16) & 0x1FF], a, b);
+    else
+      dst[start] = pal_bri[pp & 0x3FF];
+  }
+}
 
 /* ---- entry points --------------------------------------------------------- */
 
@@ -507,6 +691,27 @@ static inline void vm_merge_brightness(const unsigned short *pal,
   unsigned bldy, unsigned start, unsigned end, unsigned short *srcdst)
 {
   vm_merge_brightness_w<bldtype, 0>(pal, bldy, start, end, srcdst);
+}
+
+template <bool st_objs>
+static inline void vm_merge_blend_palbri(const unsigned short *pal_bri,
+  unsigned bldalpha, unsigned start, unsigned end,
+  unsigned short *dst, const unsigned *src)
+{
+  const unsigned a = vm_c16((bldalpha >> 0) & 0x1F);
+  const unsigned b = vm_c16((bldalpha >> 8) & 0x1F);
+  const bool can_saturate = a + b > 16;
+#if VM_VEC
+  if (can_saturate)
+    vm_blend_palbri_vec<st_objs, true>(pal_bri, a, b, start, end, dst, src);
+  else
+    vm_blend_palbri_vec<st_objs, false>(pal_bri, a, b, start, end, dst, src);
+#else
+  if (can_saturate)
+    vm_blend_palbri_scalar<st_objs, true>(pal_bri, a, b, start, end, dst, src);
+  else
+    vm_blend_palbri_scalar<st_objs, false>(pal_bri, a, b, start, end, dst, src);
+#endif
 }
 
 #endif /* GPSP_VIDEO_MERGE_H */

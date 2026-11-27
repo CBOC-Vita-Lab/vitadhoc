@@ -413,6 +413,42 @@ static inline void render_tile_Nbpp(
     tile_ptr += vertical_pixel_flip;
 
   if (is8bpp) {
+#if VT_NEON
+    if (rdtype == INDXCOLOR || rdtype == STCKCOLOR) {
+      u32 lo = ((const u32*)tile_ptr)[0];
+      u32 hi = ((const u32*)tile_ptr)[1];
+      if ((lo | hi) != 0) {
+        uint8x8_t idx = vld1_u8(tile_ptr);
+        if (hflip)
+          idx = vrev64_u8(idx);
+        if (rdtype == INDXCOLOR && sizeof(dtype) == 2) {
+          vt_indx16<isbase>((u16 *)dest_ptr, idx, (u16)px_comb, (u16)bg_comb);
+          return;
+        }
+        if (rdtype == INDXCOLOR && sizeof(dtype) == 4) {
+          vt_indx32<isbase>((u32 *)dest_ptr, idx, px_comb, bg_comb);
+          return;
+        }
+        if (rdtype == STCKCOLOR && sizeof(dtype) == 4) {
+          vt_stck_bg<isbase>((u32 *)dest_ptr, idx, px_comb, bg_comb);
+          return;
+        }
+      } else if (isbase) {
+        if (sizeof(dtype) == 2) {
+          vst1q_u16((u16 *)dest_ptr, vdupq_n_u16((u16)bg_comb));
+          return;
+        }
+        if (sizeof(dtype) == 4) {
+          uint32x4_t v = vdupq_n_u32(bg_comb);
+          vst1q_u32((u32 *)dest_ptr, v);
+          vst1q_u32((u32 *)dest_ptr + 4, v);
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+#endif
     for (u32 j = 0; j < 2; j++) {
       u32 tilepix = eswap32(((u32*)tile_ptr)[hflip ? 1-j : j]);
       if (tilepix) {
@@ -828,38 +864,119 @@ static inline u8 lookup_pix_8bpp(
   return tile_ptr[(px % 8) + ((py % 8) * 8)];
 }
 
+template <u32 map_pitch>
+static inline u8 lookup_pix_8bpp_c(
+  u32 px, u32 py, const u8 *tile_base, const u8 *map_base
+) {
+  u32 mapoff = (px >> 3) + ((py >> 3) << map_pitch);
+  const u8 *tile_ptr = &tile_base[(u32)map_base[mapoff] << 6];
+  return tile_ptr[(px & 7) | ((py & 7) << 3)];
+}
 
 template<typename dsttype, rendtype rdtype, bool isbase>
 static inline void rend_pix_8bpp(
   dsttype *dest_ptr, u8 pval, u32 bg_comb, u32 px_comb, const u16 *pal
 ) {
-  // Alhpa mode stacks previous value (unless rendering the first layer)
+  // For the base layer every pixel is written: branchless lookup/select.
+  if (isbase) {
+    if (rdtype == FULLCOLOR)
+      *dest_ptr = pal[pval];
+    else if (rdtype == INDXCOLOR)
+      *dest_ptr = (dsttype)(pval ? (pval | px_comb) : bg_comb);
+    else if (rdtype == STCKCOLOR)
+      *dest_ptr = (dsttype)(pval ? (pval | px_comb | (bg_comb << 16)) : bg_comb);
+    return;
+  }
+  // Alpha mode stacks previous value (unless rendering the first layer)
   if (pval) {
     if (rdtype == FULLCOLOR)
       *dest_ptr = pal[pval];
     else if (rdtype == INDXCOLOR)
-      *dest_ptr = pval | px_comb;  // Add combine flags
+      *dest_ptr = (dsttype)(pval | px_comb);  // Add combine flags
     else if (rdtype == STCKCOLOR)
-      // Stack pixels. If base, stack the base pixel.
-      *dest_ptr = pval | px_comb | ((isbase ? bg_comb : *dest_ptr) << 16);
-  }
-  else if (isbase) {
-    // Transparent pixel, but we are base layer, so render background.
-    if (rdtype == FULLCOLOR)
-      *dest_ptr = pal[0];
-    else
-      *dest_ptr = 0 | bg_comb;  // Just backdrop color and combine flags
+      // Stack pixels.
+      *dest_ptr = (dsttype)(pval | px_comb | ((u32)(*dest_ptr) << 16));
   }
 }
 
-template<typename dsttype, rendtype rdtype>
-static inline void render_bdrop_pixel_8bpp(
-  dsttype *dest_ptr, u32 bg_comb, u16 bgcol) {
-  // Alhpa mode stacks previous value (unless rendering the first layer)
-  if (rdtype == FULLCOLOR)
-    *dest_ptr = bgcol;
-  else
-    *dest_ptr = 0 | bg_comb;
+template<typename dtype, rendtype rdtype>
+static inline void fill_bdrop_span(
+  dtype *dest_ptr, u32 n, u32 bg_comb, u16 bgcol
+) {
+  const dtype val = (rdtype == FULLCOLOR) ? (dtype)bgcol : (dtype)bg_comb;
+#if VT_NEON
+  if (sizeof(dtype) == 2) {
+    uint16x8_t v = vdupq_n_u16((u16)val);
+    u16 *p = (u16 *)dest_ptr;
+    for (; n >= 8; n -= 8, p += 8)
+      vst1q_u16(p, v);
+    dest_ptr = (dtype *)p;
+  } else if (sizeof(dtype) == 4) {
+    uint32x4_t v = vdupq_n_u32((u32)val);
+    u32 *p = (u32 *)dest_ptr;
+    for (; n >= 4; n -= 4, p += 4)
+      vst1q_u32(p, v);
+    dest_ptr = (dtype *)p;
+  }
+#endif
+  while (n--)
+    *dest_ptr++ = val;
+}
+
+// Exact contiguous step interval [lo, hi) within [0, cnt) where
+// (u32)((s0 + k * d) >> 8) < wh, i.e., 0 <= s0 + k * d <= (wh << 8) - 1.
+// Returns false when empty. Avoids division whenever the whole span is
+// either completely in-bounds or completely out-of-bounds.
+static inline bool affine_axis_span(s32 s0, s32 d, u32 cnt, u32 wh,
+                                    u32 *lo_out, u32 *hi_out)
+{
+  if (!cnt)
+    return false;
+  const s64 M = ((s64)wh << 8) - 1;
+  const s64 ss = (s64)s0;
+  const s64 se = ss + (s64)(cnt - 1) * (s64)d;
+  if ((ss < 0 && se < 0) || (ss > M && se > M))
+    return false;
+  if (ss >= 0 && ss <= M && se >= 0 && se <= M) {
+    *lo_out = 0;
+    *hi_out = cnt;
+    return true;
+  }
+  u32 lo, hi;
+  if (d > 0) {
+    const u32 ud = (u32)d;
+    lo = (ss < 0) ? ((u32)(-ss) + ud - 1u) / ud : 0u;
+    hi = (se > M) ? ((u32)(M - ss) / ud + 1u) : cnt;
+  } else {
+    const u32 ad = (u32)(-d);
+    lo = (ss > M) ? ((u32)(ss - M) + ad - 1u) / ad : 0u;
+    hi = (se < 0) ? ((u32)ss / ad + 1u) : cnt;
+  }
+  if (lo >= hi)
+    return false;
+  *lo_out = lo;
+  *hi_out = hi;
+  return true;
+}
+
+template <typename dtype, rendtype rdtype, bool isbase, bool wrap, u32 map_pitch>
+static inline void affine_rot_loop_c(
+  dtype *dst_ptr, u32 cnt, s32 source_x, s32 source_y, s32 dx, s32 dy,
+  const u8 *tile_base, const u8 *map_base, u32 bg_comb, u32 px_comb, const u16 *pal
+) {
+  const u32 mask = (1u << (map_pitch + 3)) - 1u;
+  for (; cnt; cnt--) {
+    u32 pix_x = (u32)(source_x >> 8);
+    u32 pix_y = (u32)(source_y >> 8);
+    if (wrap) {
+      pix_x &= mask;
+      pix_y &= mask;
+    }
+    u8 pval = lookup_pix_8bpp_c<map_pitch>(pix_x, pix_y, tile_base, map_base);
+    rend_pix_8bpp<dtype, rdtype, isbase>(dst_ptr++, pval, bg_comb, px_comb, pal);
+    source_x += dx;
+    source_y += dy;
+  }
 }
 
 typedef void (*affine_render_function) (
@@ -897,125 +1014,148 @@ static inline void render_affine_background(
 
   if (wrap) {
     // In wrap mode the entire space is covered, since it "wraps" at the edges
-    u8 pval = 0;
-    u32 mctr = 0;
     if (rotate) {
-      for (u32 i = 0; cnt; i++, cnt--) {
-        u32 pix_x = (u32)(source_x >> 8) & (width_height-1);
-        u32 pix_y = (u32)(source_y >> 8) & (width_height-1);
-
-        // Lookup pixel and draw it (only every Nth if mosaic is on).  The
-        // counter form avoids a divl per pixel: mosh is loop-invariant but
-        // runtime-valued, so gcc/clang do not strength-reduce 'i % mosh'
-        // into a multiply-by-magic-constant sequence.  When mosaic == false
-        // the counter machinery is dead-code-eliminated at compile time.
-        if (!mosaic || !mctr) {
-          pval = lookup_pix_8bpp(pix_x, pix_y, tile_base, map_base, map_size);
-          mctr = mosh;
+      if (!mosaic) {
+        switch (map_size) {
+        case 0: affine_rot_loop_c<dtype, rdtype, isbase, true, 4>(dst_ptr, cnt, source_x, source_y, dx, dy, tile_base, map_base, bg_comb, px_comb, pal); break;
+        case 1: affine_rot_loop_c<dtype, rdtype, isbase, true, 5>(dst_ptr, cnt, source_x, source_y, dx, dy, tile_base, map_base, bg_comb, px_comb, pal); break;
+        case 2: affine_rot_loop_c<dtype, rdtype, isbase, true, 6>(dst_ptr, cnt, source_x, source_y, dx, dy, tile_base, map_base, bg_comb, px_comb, pal); break;
+        default: affine_rot_loop_c<dtype, rdtype, isbase, true, 7>(dst_ptr, cnt, source_x, source_y, dx, dy, tile_base, map_base, bg_comb, px_comb, pal); break;
         }
-        rend_pix_8bpp<dtype, rdtype, isbase>(dst_ptr++, pval, bg_comb, px_comb, pal);
-        if (mosaic) mctr--;
-
-        source_x += dx; source_y += dy;  // Move to the next pixel
-      }
-    } else {
-      // Y coordinate stays contant across the walk.
-      const u32 pix_y = (u32)(source_y >> 8) & (width_height-1);
-      for (u32 i = 0; cnt; i++, cnt--) {
-        u32 pix_x = (u32)(source_x >> 8) & (width_height-1);
-        if (!mosaic || !mctr) {
-          pval = lookup_pix_8bpp(pix_x, pix_y, tile_base, map_base, map_size);
-          mctr = mosh;
-        }
-        rend_pix_8bpp<dtype, rdtype, isbase>(dst_ptr++, pval, bg_comb, px_comb, pal);
-        if (mosaic) mctr--;
-        source_x += dx;  // Only moving in the X direction.
-      }
-    }
-  } else {
-    u16 bgcol = pal[0];
-    if (rotate) {
-      // Draw backdrop pixels if necessary until we reach the background edge.
-      while (cnt) {
-        // Draw backdrop pixels if they lie outside of the background.
-        u32 pix_x = (u32)(source_x >> 8), pix_y = (u32)(source_y >> 8);
-
-        // Stop once we find a pixel that is actually *inside* the map.
-        if (pix_x < width_height && pix_y < width_height)
-          break;
-
-        // Draw a backdrop pixel if we are the base layer.
-        if (isbase)
-          render_bdrop_pixel_8bpp<dtype, rdtype>(dst_ptr, bg_comb, bgcol);
-
-        dst_ptr++;
-        source_x += dx; source_y += dy;
-        cnt--;
-      }
-
-      // Draw background pixels by looking them up in the map
-      u8 pval = 0;
-      u32 mctr = 0;
-      for (u32 i = 0; cnt; i++, cnt--) {
-        u32 pix_x = (u32)(source_x >> 8), pix_y = (u32)(source_y >> 8);
-
-        // Check if we run out of background pixels, stop drawing.
-        if (pix_x >= width_height || pix_y >= width_height)
-          break;
-
-        // Lookup pixel and draw it.
-        if (!mosaic || !mctr) {
-          pval = lookup_pix_8bpp(pix_x, pix_y, tile_base, map_base, map_size);
-          mctr = mosh;
-        }
-        rend_pix_8bpp<dtype, rdtype, isbase>(dst_ptr++, pval, bg_comb, px_comb, pal);
-        if (mosaic) mctr--;
-
-        // Move to the next pixel, update coords accordingly
-        source_x += dx; source_y += dy;
-      }
-    } else {
-      // Specialized version for scaled-only backgrounds
-      u8 pval = 0;
-      const u32 pix_y = (u32)(source_y >> 8);
-      if (pix_y < width_height) {  // Check if within Y-coord range
-        // Draw/find till left edge
-        while (cnt) {
-          u32 pix_x = (u32)(source_x >> 8);
-          if (pix_x < width_height)
-            break;
-
-          if (isbase)
-            render_bdrop_pixel_8bpp<dtype, rdtype>(dst_ptr, bg_comb, bgcol);
-
-          dst_ptr++;
-          source_x += dx;
-          cnt--;
-        }
-        // Draw actual background
+      } else {
+        u8 pval = 0;
         u32 mctr = 0;
-        for (u32 i = 0; cnt; i++, cnt--) {
-          u32 pix_x = (u32)(source_x >> 8);
-          if (pix_x >= width_height)
-            break;
-
-          if (!mosaic || !mctr) {
+        const u32 mask = width_height - 1;
+        for (; cnt; cnt--) {
+          u32 pix_x = (u32)(source_x >> 8) & mask;
+          u32 pix_y = (u32)(source_y >> 8) & mask;
+          if (!mctr) {
             pval = lookup_pix_8bpp(pix_x, pix_y, tile_base, map_base, map_size);
             mctr = mosh;
           }
           rend_pix_8bpp<dtype, rdtype, isbase>(dst_ptr++, pval, bg_comb, px_comb, pal);
-          if (mosaic) mctr--;
+          mctr--;
+          source_x += dx; source_y += dy;
+        }
+      }
+    } else {
+      // Y coordinate stays constant across the walk: hoist row bases once.
+      const u32 mask = width_height - 1;
+      const u32 pix_y = (u32)(source_y >> 8) & mask;
+      const u8 *map_row = &map_base[(pix_y >> 3) << (map_size + 4)];
+      const u8 *tile_row_base = &tile_base[(pix_y & 7) << 3];
+      if (!mosaic) {
+        for (; cnt; cnt--) {
+          u32 pix_x = (u32)(source_x >> 8) & mask;
+          u8 pval = tile_row_base[((u32)map_row[pix_x >> 3] << 6) | (pix_x & 7)];
+          rend_pix_8bpp<dtype, rdtype, isbase>(dst_ptr++, pval, bg_comb, px_comb, pal);
+          source_x += dx;
+        }
+      } else {
+        u8 pval = 0;
+        u32 mctr = 0;
+        for (; cnt; cnt--) {
+          u32 pix_x = (u32)(source_x >> 8) & mask;
+          if (!mctr) {
+            pval = tile_row_base[((u32)map_row[pix_x >> 3] << 6) | (pix_x & 7)];
+            mctr = mosh;
+          }
+          rend_pix_8bpp<dtype, rdtype, isbase>(dst_ptr++, pval, bg_comb, px_comb, pal);
+          mctr--;
+          source_x += dx;
+        }
+      }
+    }
+  } else {
+    u16 bgcol = pal[0];
+    u32 in_start = 0, in_end = 0;
+    bool has_in = false;
 
+    if (rotate) {
+      u32 lx, hx, ly, hy;
+      if (affine_axis_span(source_x, dx, cnt, width_height, &lx, &hx) &&
+          affine_axis_span(source_y, dy, cnt, width_height, &ly, &hy)) {
+        in_start = lx > ly ? lx : ly;
+        in_end   = hx < hy ? hx : hy;
+        has_in   = in_start < in_end;
+      }
+    } else {
+      const u32 pix_y = (u32)(source_y >> 8);
+      if (pix_y < width_height)
+        has_in = affine_axis_span(source_x, dx, cnt, width_height, &in_start, &in_end);
+    }
+
+    if (!has_in) {
+      if (isbase)
+        fill_bdrop_span<dtype, rdtype>(dst_ptr, cnt, bg_comb, bgcol);
+      return;
+    }
+
+    // Leading out-of-bounds span [0, in_start)
+    if (in_start) {
+      if (isbase)
+        fill_bdrop_span<dtype, rdtype>(dst_ptr, in_start, bg_comb, bgcol);
+      dst_ptr  += in_start;
+      source_x += (s32)in_start * dx;
+      if (rotate)
+        source_y += (s32)in_start * dy;
+    }
+
+    // Bounds-check-free inner loop over exact in-bounds span [in_start, in_end)
+    u32 in_cnt = in_end - in_start;
+    if (rotate) {
+      if (!mosaic) {
+        switch (map_size) {
+        case 0: affine_rot_loop_c<dtype, rdtype, isbase, false, 4>(dst_ptr, in_cnt, source_x, source_y, dx, dy, tile_base, map_base, bg_comb, px_comb, pal); break;
+        case 1: affine_rot_loop_c<dtype, rdtype, isbase, false, 5>(dst_ptr, in_cnt, source_x, source_y, dx, dy, tile_base, map_base, bg_comb, px_comb, pal); break;
+        case 2: affine_rot_loop_c<dtype, rdtype, isbase, false, 6>(dst_ptr, in_cnt, source_x, source_y, dx, dy, tile_base, map_base, bg_comb, px_comb, pal); break;
+        default: affine_rot_loop_c<dtype, rdtype, isbase, false, 7>(dst_ptr, in_cnt, source_x, source_y, dx, dy, tile_base, map_base, bg_comb, px_comb, pal); break;
+        }
+        dst_ptr += in_cnt;
+      } else {
+        u8 pval = 0;
+        u32 mctr = 0;
+        for (; in_cnt; in_cnt--) {
+          if (!mctr) {
+            pval = lookup_pix_8bpp((u32)(source_x >> 8), (u32)(source_y >> 8),
+                                   tile_base, map_base, map_size);
+            mctr = mosh;
+          }
+          rend_pix_8bpp<dtype, rdtype, isbase>(dst_ptr++, pval, bg_comb, px_comb, pal);
+          mctr--;
+          source_x += dx; source_y += dy;
+        }
+      }
+    } else {
+      const u32 pix_y = (u32)(source_y >> 8);
+      const u8 *map_row = &map_base[(pix_y >> 3) << (map_size + 4)];
+      const u8 *tile_row_base = &tile_base[(pix_y & 7) << 3];
+      if (!mosaic) {
+        for (; in_cnt; in_cnt--) {
+          u32 pix_x = (u32)(source_x >> 8);
+          u8 pval = tile_row_base[((u32)map_row[pix_x >> 3] << 6) | (pix_x & 7)];
+          rend_pix_8bpp<dtype, rdtype, isbase>(dst_ptr++, pval, bg_comb, px_comb, pal);
+          source_x += dx;
+        }
+      } else {
+        u8 pval = 0;
+        u32 mctr = 0;
+        for (; in_cnt; in_cnt--) {
+          if (!mctr) {
+            u32 pix_x = (u32)(source_x >> 8);
+            pval = tile_row_base[((u32)map_row[pix_x >> 3] << 6) | (pix_x & 7)];
+            mctr = mosh;
+          }
+          rend_pix_8bpp<dtype, rdtype, isbase>(dst_ptr++, pval, bg_comb, px_comb, pal);
+          mctr--;
           source_x += dx;
         }
       }
     }
 
-    // Complete the line on the right, if we ran out over the bg edge.
-    // Only necessary for the base layer, otherwise we can safely finish.
-    if (isbase)
-      while (cnt--)
-        render_bdrop_pixel_8bpp<dtype, rdtype>(dst_ptr++, bg_comb, bgcol);
+    // Trailing out-of-bounds span [in_end, cnt)
+    if (isbase && in_end < cnt)
+      fill_bdrop_span<dtype, rdtype>(dst_ptr, cnt - in_end, bg_comb, bgcol);
   }
 }
 
@@ -1339,6 +1479,31 @@ static inline void render_obj_tile_Nbpp(u32 px_comb,
   u32 px_attr = px_comb | palette | 0x100;  // Combine flags + high palette bit
 
   if (is8bpp) {
+#if VT_NEON
+    if (rdtype == INDXCOLOR || rdtype == STCKCOLOR) {
+      u32 lo = ((const u32*)tile_ptr)[0];
+      u32 hi = ((const u32*)tile_ptr)[1];
+      if ((lo | hi) != 0) {
+        uint8x8_t idx = vld1_u8(tile_ptr);
+        if (hflip)
+          idx = vrev64_u8(idx);
+        if (rdtype == INDXCOLOR && sizeof(dsttype) == 2) {
+          vt_indx16<false>((u16 *)dest_ptr, idx, (u16)px_attr, 0);
+          return;
+        }
+        if (rdtype == INDXCOLOR && sizeof(dsttype) == 4) {
+          vt_indx32<false>((u32 *)dest_ptr, idx, px_attr, 0);
+          return;
+        }
+        if (rdtype == STCKCOLOR && sizeof(dsttype) == 4) {
+          vt_stck_obj((u32 *)dest_ptr, idx, px_attr);
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+#endif
     for (u32 j = 0; j < 2; j++) {
       u32 tilepix = eswap32(((u32*)tile_ptr)[hflip ? 1-j : j]);
       if (tilepix) {
@@ -1763,9 +1928,12 @@ static s16 obj_inv_minx[4][160], obj_inv_maxx[4][160];
 
 static struct {
   s32 row;                       // the row built, -1: none (order_layers)
+  u8  pri_mask;                  // bit p set iff some pixel has final pri == p
+  u16 min_x[4];                  // inclusive min x of winning pixels at pri p
+  u16 max_x[4];                  // exclusive max x of winning pixels at pri p
   u16 code[GBA_SCREEN_PITCH];    // INDXCOLOR code of the winning pixel, 0: none
   u8  pri[GBA_SCREEN_PITCH];     // its priority, 4: no sprite pixel here
-} obj_ex = { -1, {0}, {0} };
+} obj_ex = { -1, 0, {0}, {0}, {0}, {0} };
 
 static inline void obj_inv_reset(void)
 {
@@ -1773,6 +1941,7 @@ static inline void obj_inv_reset(void)
   memset(obj_inv_minx, 0x7F, sizeof(obj_inv_minx));   // +32639
   memset(obj_inv_maxx, 0x80, sizeof(obj_inv_maxx));   // -32640
   obj_ex.row = -1;
+  obj_ex.pri_mask = 0;
 #ifdef OBJ_EXACT_ALL
   memset(obj_inv_row, 1, sizeof(obj_inv_row));
 #endif
@@ -1791,49 +1960,128 @@ static inline void obj_inv_note(u32 row, u32 p, s32 x0, s32 x1)
   if (x1 > obj_inv_maxx[p][row]) obj_inv_maxx[p][row] = (s16)x1;
 }
 
-// The pixels [*cx0, *cx1) of the line the sprite's area covers, transparent
-// ones included (a non-affine sprite: its box; an affine one: the texture, as
-// render_affine_object() walks it).
-static void obj_cover(const t_sprite *obji, bool is_affine, bool mosaic,
-                      s32 vcount, s32 *cx0, s32 *cx1)
-{
-  if (!is_affine) {
-    *cx0 = MAX(0, obji->obj_x);
-    *cx1 = MIN((s32)GBA_SCREEN_PITCH, obji->obj_x + obji->obj_w);
-    return;
-  }
-  const t_affp *affp = &((t_affp*)oam_ram)[(obji->attr1 >> 9) & 0x1f];
-  s32 dx  = (s16)eswap16(affp->dx),  dy  = (s16)eswap16(affp->dy);
-  s32 dmx = (s16)eswap16(affp->dmx), dmy = (s16)eswap16(affp->dmy);
-  u32 w = obji->obj_w, h = obji->obj_h;
-  bool dbl = obji->is_double;
-  s32 middle_x = dbl ? obji->obj_w : (obji->obj_w / 2);
-  s32 middle_y = dbl ? obji->obj_h : (obji->obj_h / 2);
-  s32 width = dbl ? obji->obj_w * 2 : obji->obj_w;
-  if (mosaic) {
-    s32 mosv = ((read_ioreg(REG_MOSAIC) >> 12) & 0xF) + 1;
-    vcount -= vcount % mosv;
-  }
-  s32 y_delta = vcount - (obji->obj_y + middle_y);
+// Single-pass affine sprite walk + direct merge into obj_ex, eliminating the
+// duplicate obj_cover() + render_affine_object() walk and tmp[] scratch buffer.
+template <bool is_8bpp, bool mosaic, bool rotate>
+static void obj_exact_affine_draw(
+  const t_sprite *obji, const t_affp *affp, s32 vcount,
+  u32 prio, bool is_trans, u32 px_attr, u32 mosv, u32 mosh,
+  s32 *any_min, s32 *any_max
+) {
+  const u32 tile_bsize  = is_8bpp ? tile_size_8bpp  : tile_size_4bpp;
+  const u32 tile_bwidth = is_8bpp ? tile_width_8bpp : tile_width_4bpp;
+
+  const s32 dx  = (s16)eswap16(affp->dx);
+  const s32 dy  = (s16)eswap16(affp->dy);
+  const s32 dmx = (s16)eswap16(affp->dmx);
+  const s32 dmy = (s16)eswap16(affp->dmy);
+
+  const u32 obj_dimw = obji->obj_w;
+  const u32 obj_dimh = obji->obj_h;
+  const bool is_double = obji->is_double;
+  s32 middle_x = is_double ? obji->obj_w : (obji->obj_w / 2);
+  const s32 middle_y = is_double ? obji->obj_h : (obji->obj_h / 2);
+  const s32 obj_width = is_double ? obji->obj_w * 2 : obji->obj_w;
+
+  if (mosaic)
+    vcount -= vcount % (s32)mosv;
+  const s32 y_delta = vcount - (obji->obj_y + middle_y);
   if (obji->obj_x < 0)
     middle_x -= (0 - obji->obj_x);
-  s32 sx = (w << 7) + (y_delta * dmx) - (middle_x * dx);
-  s32 sy = (h << 7) + (y_delta * dmy) - (middle_x * dy);
-  s32 x   = MAX(0, obji->obj_x);
-  s32 end = MIN((s32)GBA_SCREEN_PITCH, obji->obj_x + width);
-  *cx0 = *cx1 = x;
-  while (x < end) {                       // find the first pixel inside
-    if ((u32)(sx >> 8) < w && (u32)(sy >> 8) < h)
-      break;
-    x++; sx += dx; sy += dy;
+
+  s32 sx = (s32)(obj_dimw << 7) + (y_delta * dmx) - (middle_x * dx);
+  s32 sy = (s32)(obj_dimh << 7) + (y_delta * dmy) - (middle_x * dy);
+
+  if (!rotate && (u32)(sy >> 8) >= obj_dimh)
+    return;
+
+  const s32 d_start = MAX(0, obji->obj_x);
+  const s32 d_end   = MIN((s32)GBA_SCREEN_PITCH, obji->obj_x + obj_width);
+  if (d_start >= d_end)
+    return;
+  const u32 span_cnt = (u32)(d_end - d_start);
+
+  u32 lx, hx;
+  if (!affine_axis_span(sx, dx, span_cnt, obj_dimw, &lx, &hx))
+    return;
+  if (rotate) {
+    u32 ly, hy;
+    if (!affine_axis_span(sy, dy, span_cnt, obj_dimh, &ly, &hy))
+      return;
+    if (ly > lx) lx = ly;
+    if (hy < hx) hx = hy;
+    if (lx >= hx)
+      return;
   }
-  *cx0 = x;
-  while (x < end) {                       // ...and walk on until it ends
-    if ((u32)(sx >> 8) >= w || (u32)(sy >> 8) >= h)
-      break;
-    x++; sx += dx; sy += dy;
+
+  const s32 cx0 = d_start + (s32)lx;
+  const s32 cx1 = d_start + (s32)hx;
+  if (cx0 < *any_min) *any_min = cx0;
+  if (cx1 > *any_max) *any_max = cx1;
+
+  sx += (s32)lx * dx;
+  if (rotate)
+    sy += (s32)lx * dy;
+
+  const bool obj1dmap = (read_ioreg(REG_DISPCNT) & 0x40) != 0;
+  const u32 msk = is_8bpp && !obj1dmap ? 0x3FE : 0x3FF;
+  const u32 base_tile = (obji->attr2 & msk) * 32;
+  const u32 tile_pitch = obj1dmap ? (obj_dimw / 8) * tile_bsize : 1024;
+  const u16 st_bit = is_trans ? 0x800 : 0;
+
+  u8 pixval = 0;
+  u32 mctr = 0;
+  for (s32 x = cx0; x < cx1; x++) {
+    const u32 cur = obj_ex.pri[x];
+    if (mosaic) {
+      if (!mctr) {
+        const u32 px = (u32)(sx >> 8), py = (u32)(sy >> 8);
+        if (is_8bpp) {
+          const u32 tile_off = base_tile + ((py >> 3) * tile_pitch) +
+            ((px >> 3) * tile_bsize) + ((py & 7) * tile_bwidth) + (px & 7);
+          pixval = OBJ_TILE(tile_off);
+        } else {
+          const u32 tile_off = base_tile + ((py >> 3) * tile_pitch) +
+            ((px >> 3) * tile_bsize) + ((py & 7) * tile_bwidth) + ((px >> 1) & 3);
+          const u8 pixpair = OBJ_TILE(tile_off);
+          pixval = (px & 1) ? (pixpair >> 4) : (pixpair & 0xF);
+        }
+        mctr = mosh;
+      }
+      mctr--;
+      if (prio < cur) {
+        if (pixval) {
+          obj_ex.code[x] = (u16)(pixval | px_attr);
+          obj_ex.pri[x] = (u8)prio;
+        } else if (cur != 4) {
+          obj_ex.pri[x] = (u8)prio;
+          obj_ex.code[x] = (u16)((obj_ex.code[x] & ~0x800) | st_bit);
+        }
+      }
+    } else if (prio < cur) {
+      const u32 px = (u32)(sx >> 8), py = (u32)(sy >> 8);
+      if (is_8bpp) {
+        const u32 tile_off = base_tile + ((py >> 3) * tile_pitch) +
+          ((px >> 3) * tile_bsize) + ((py & 7) * tile_bwidth) + (px & 7);
+        pixval = OBJ_TILE(tile_off);
+      } else {
+        const u32 tile_off = base_tile + ((py >> 3) * tile_pitch) +
+          ((px >> 3) * tile_bsize) + ((py & 7) * tile_bwidth) + ((px >> 1) & 3);
+        const u8 pixpair = OBJ_TILE(tile_off);
+        pixval = (px & 1) ? (pixpair >> 4) : (pixpair & 0xF);
+      }
+      if (pixval) {
+        obj_ex.code[x] = (u16)(pixval | px_attr);
+        obj_ex.pri[x] = (u8)prio;
+      } else if (cur != 4) {
+        obj_ex.pri[x] = (u8)prio;
+        obj_ex.code[x] = (u16)((obj_ex.code[x] & ~0x800) | st_bit);
+      }
+    }
+    sx += dx;
+    if (rotate)
+      sy += dy;
   }
-  *cx1 = x;
 }
 
 #ifdef OBJ_EXACT_STATS     /* a test build: how often rows took the exact path */
@@ -1852,6 +2100,10 @@ static void obj_exact_build(s32 vcount)
   u32 present[4] = { 0, 0, 0, 0 };        // OAM indices on this row
   u16 tmp[GBA_SCREEN_PITCH];
   const u16 *palptr = &palette_ram_converted[0x100];
+  const u32 obj_cflags = color_flags(4);
+  const u32 mosreg = read_ioreg(REG_MOSAIC) & 0xFF00;
+  const u32 mosv = ((mosreg >> 12) & 0xF) + 1;
+  const u32 mosh = ((mosreg >>  8) & 0xF) + 1;
 
   for (u32 pr = 0; pr < 4; pr++) {
     u32 cnt = obj_priority_count[pr][vcount];
@@ -1859,77 +2111,125 @@ static void obj_exact_build(s32 vcount)
     for (u32 i = 0; i < cnt; i++)
       present[list[i] >> 5] |= 1u << (list[i] & 31);
   }
-  memset(obj_ex.code, 0, sizeof(obj_ex.code));
   memset(obj_ex.pri, 4, sizeof(obj_ex.pri));
 
-  for (u32 objoff = 0; objoff < 128; objoff++) {
-    if (!((present[objoff >> 5] >> (objoff & 31)) & 1))
-      continue;
-    const t_oam *oamentry = &((t_oam*)oam_ram)[objoff];
-    u16 obj_attr0 = eswap16(oamentry->attr0);
-    u16 obj_attr1 = eswap16(oamentry->attr1);
-    u16 obj_shape = obj_attr0 >> 14;
-    u16 obj_size = (obj_attr1 >> 14);
-    bool is_affine = obj_attr0 & 0x100;
-    bool is_trans = ((obj_attr0 >> 10) & 0x3) == OBJ_MOD_SEMITRAN;
+  s32 any_min = GBA_SCREEN_PITCH, any_max = 0;
 
-    t_sprite obji = {
-      .obj_x = obj_attr1_x(obj_attr1) - wide_xo,
-      .obj_y = obj_attr0 & 0xFF,
-      .obj_w = obj_dim_table[obj_shape][obj_size][0],
-      .obj_h = obj_dim_table[obj_shape][obj_size][1],
-      .attr1 = obj_attr1,
-      .attr2 = eswap16(oamentry->attr2),
-      .is_double = (obj_attr0 & 0x200) != 0,
-    };
-    s32 obj_maxw = (is_affine && obji.is_double) ? obji.obj_w * 2 : obji.obj_w;
-    if (obji.obj_x >= (s32)GBA_SCREEN_PITCH || obji.obj_x + obj_maxw <= 0)
-      continue;
-    if (obji.obj_y > 160)
-      obji.obj_y -= 256;
+  for (u32 w = 0; w < 4; w++) {
+    u32 bits = present[w];
+    while (bits) {
+      u32 objoff = (w << 5) | (u32)__builtin_ctz(bits);
+      bits &= bits - 1;
+      const t_oam *oamentry = &((t_oam*)oam_ram)[objoff];
+      u16 obj_attr0 = eswap16(oamentry->attr0);
+      u16 obj_attr1 = eswap16(oamentry->attr1);
+      u16 obj_shape = obj_attr0 >> 14;
+      u16 obj_size = (obj_attr1 >> 14);
+      bool is_affine = (obj_attr0 & 0x100) != 0;
+      bool is_trans = ((obj_attr0 >> 10) & 0x3) == OBJ_MOD_SEMITRAN;
 
-    u32 prio = (obji.attr2 >> 10) & 3;
-    u32 pxcomb = (is_trans ? 0x800 : 0) | color_flags(4);
-    bool emosaic = (obj_attr0 & 0x1000) != 0;
-    bool is_8bpp = (obj_attr0 & 0x2000) != 0;
-    const u32 mosreg = read_ioreg(REG_MOSAIC) & 0xFF00;
-    bool mosaic = emosaic && mosreg;
+      t_sprite obji = {
+        .obj_x = obj_attr1_x(obj_attr1) - wide_xo,
+        .obj_y = obj_attr0 & 0xFF,
+        .obj_w = obj_dim_table[obj_shape][obj_size][0],
+        .obj_h = obj_dim_table[obj_shape][obj_size][1],
+        .attr1 = obj_attr1,
+        .attr2 = eswap16(oamentry->attr2),
+        .is_double = (obj_attr0 & 0x200) != 0,
+      };
+      s32 obj_maxw = (is_affine && obji.is_double) ? obji.obj_w * 2 : obji.obj_w;
+      if (obji.obj_x >= (s32)GBA_SCREEN_PITCH || obji.obj_x + obj_maxw <= 0)
+        continue;
+      if (obji.obj_y > 160)
+        obji.obj_y -= 256;
 
-    s32 cx0, cx1;
-    obj_cover(&obji, is_affine, mosaic, vcount, &cx0, &cx1);
-    if (cx0 >= cx1)
-      continue;
-    memset(&tmp[cx0], 0, (cx1 - cx0) * sizeof(u16));
+      u32 prio = (obji.attr2 >> 10) & 3;
+      u32 pxcomb = (is_trans ? 0x800 : 0) | obj_cflags;
+      bool emosaic = (obj_attr0 & 0x1000) != 0;
+      bool is_8bpp = (obj_attr0 & 0x2000) != 0;
+      bool mosaic = emosaic && mosreg;
 
-    if (mosaic) {
-      if (is_8bpp)
-        render_sprite<u16, INDXCOLOR, true, true>(
-          &obji, is_affine, 0, GBA_SCREEN_PITCH, tmp, pxcomb, palptr);
-      else
-        render_sprite<u16, INDXCOLOR, false, true>(
-          &obji, is_affine, 0, GBA_SCREEN_PITCH, tmp, pxcomb, palptr);
-    } else {
-      if (is_8bpp)
-        render_sprite<u16, INDXCOLOR, true, false>(
-          &obji, is_affine, 0, GBA_SCREEN_PITCH, tmp, pxcomb, palptr);
-      else
-        render_sprite<u16, INDXCOLOR, false, false>(
-          &obji, is_affine, 0, GBA_SCREEN_PITCH, tmp, pxcomb, palptr);
-    }
+      if (is_affine) {
+        u16 pal = is_8bpp ? 0 : ((obji.attr2 >> 8) & 0xF0);
+        u32 px_attr = pxcomb | pal | 0x100;
+        const t_affp *affp = &((t_affp*)oam_ram)[(obji.attr1 >> 9) & 0x1f];
+        bool rot = affp->dy != 0;
+        if (mosaic) {
+          if (is_8bpp) {
+            if (rot) obj_exact_affine_draw<true,  true,  true >(&obji, affp, vcount, prio, is_trans, px_attr, mosv, mosh, &any_min, &any_max);
+            else     obj_exact_affine_draw<true,  true,  false>(&obji, affp, vcount, prio, is_trans, px_attr, mosv, mosh, &any_min, &any_max);
+          } else {
+            if (rot) obj_exact_affine_draw<false, true,  true >(&obji, affp, vcount, prio, is_trans, px_attr, mosv, mosh, &any_min, &any_max);
+            else     obj_exact_affine_draw<false, true,  false>(&obji, affp, vcount, prio, is_trans, px_attr, mosv, mosh, &any_min, &any_max);
+          }
+        } else {
+          if (is_8bpp) {
+            if (rot) obj_exact_affine_draw<true,  false, true >(&obji, affp, vcount, prio, is_trans, px_attr, mosv, mosh, &any_min, &any_max);
+            else     obj_exact_affine_draw<true,  false, false>(&obji, affp, vcount, prio, is_trans, px_attr, mosv, mosh, &any_min, &any_max);
+          } else {
+            if (rot) obj_exact_affine_draw<false, false, true >(&obji, affp, vcount, prio, is_trans, px_attr, mosv, mosh, &any_min, &any_max);
+            else     obj_exact_affine_draw<false, false, false>(&obji, affp, vcount, prio, is_trans, px_attr, mosv, mosh, &any_min, &any_max);
+          }
+        }
+        continue;
+      }
 
-    // The merge: only a strictly better priority takes a pixel over.
-    for (s32 x = cx0; x < cx1; x++) {
-      u32 cur = obj_ex.pri[x];
-      if (prio < cur) {
-        if (tmp[x]) {
-          obj_ex.code[x] = tmp[x];
-          obj_ex.pri[x] = (u8)prio;
-        } else if (cur != 4) {            // transparent: keep the colour,
-          obj_ex.pri[x] = (u8)prio;       // take the priority and the ST flag
-          obj_ex.code[x] = (obj_ex.code[x] & ~0x800) | (is_trans ? 0x800 : 0);
+      s32 cx0 = MAX(0, obji.obj_x);
+      s32 cx1 = MIN((s32)GBA_SCREEN_PITCH, obji.obj_x + obji.obj_w);
+      if (cx0 >= cx1)
+        continue;
+      if (cx0 < any_min) any_min = cx0;
+      if (cx1 > any_max) any_max = cx1;
+      memset(&tmp[cx0], 0, (cx1 - cx0) * sizeof(u16));
+
+      if (mosaic) {
+        if (is_8bpp)
+          render_sprite<u16, INDXCOLOR, true, true>(
+            &obji, false, 0, GBA_SCREEN_PITCH, tmp, pxcomb, palptr);
+        else
+          render_sprite<u16, INDXCOLOR, false, true>(
+            &obji, false, 0, GBA_SCREEN_PITCH, tmp, pxcomb, palptr);
+      } else {
+        if (is_8bpp)
+          render_sprite<u16, INDXCOLOR, true, false>(
+            &obji, false, 0, GBA_SCREEN_PITCH, tmp, pxcomb, palptr);
+        else
+          render_sprite<u16, INDXCOLOR, false, false>(
+            &obji, false, 0, GBA_SCREEN_PITCH, tmp, pxcomb, palptr);
+      }
+
+      // The merge: only a strictly better priority takes a pixel over.
+      const u16 st_bit = is_trans ? 0x800 : 0;
+      for (s32 x = cx0; x < cx1; x++) {
+        u32 cur = obj_ex.pri[x];
+        if (prio < cur) {
+          if (tmp[x]) {
+            obj_ex.code[x] = tmp[x];
+            obj_ex.pri[x] = (u8)prio;
+          } else if (cur != 4) {            // transparent: keep the colour,
+            obj_ex.pri[x] = (u8)prio;       // take the priority and the ST flag
+            obj_ex.code[x] = (u16)((obj_ex.code[x] & ~0x800) | st_bit);
+          }
         }
       }
     }
+  }
+
+  u8 pmask = 0;
+  u16 mnx[4] = { GBA_SCREEN_PITCH, GBA_SCREEN_PITCH, GBA_SCREEN_PITCH, GBA_SCREEN_PITCH };
+  u16 mxx[4] = { 0, 0, 0, 0 };
+  for (s32 x = any_min; x < any_max; x++) {
+    u32 p = obj_ex.pri[x];
+    if (p < 4) {
+      pmask |= (u8)(1u << p);
+      if ((u16)x < mnx[p]) mnx[p] = (u16)x;
+      mxx[p] = (u16)(x + 1);
+    }
+  }
+  obj_ex.pri_mask = pmask;
+  for (u32 p = 0; p < 4; p++) {
+    obj_ex.min_x[p] = mnx[p];
+    obj_ex.max_x[p] = mxx[p];
   }
   obj_ex.row = vcount;
 }
@@ -1941,9 +2241,11 @@ static void render_scanline_objs_exact(
   s32 vcount = read_ioreg(REG_VCOUNT);
   if (obj_ex.row != vcount)
     obj_exact_build(vcount);
-  if (end > GBA_SCREEN_PITCH)
-    end = GBA_SCREEN_PITCH;
-  for (u32 x = start; x < end; x++) {
+  if (!(obj_ex.pri_mask & (1u << priority)))
+    return;
+  u32 x0 = MAX(start, (u32)obj_ex.min_x[priority]);
+  u32 x1 = MIN(end,   (u32)obj_ex.max_x[priority]);
+  for (u32 x = x0; x < x1; x++) {
     if (obj_ex.pri[x] != priority)
       continue;
     u32 code = obj_ex.code[x];
@@ -2262,6 +2564,67 @@ static void order_layers(u32 layer_flags, u32 vcnt)
 // VIDEO_MERGE_ORIG, and what tools/tests/test_video_merge.cc proves them against).
 #include "video_merge.h"
 
+#ifndef VIDEO_MERGE_ORIG
+// 2 KiB L1-resident lazy brightness palette, private to this renderer instance
+// (CORE_A, CORE_B/gbab_*, and CORE_R/gbar_* each compile their own static copy
+// in .bss, so dual-instance link mode and the render thread never collide and
+// instance B resets cleanly on .bss zero).
+//   tbl[0..511]    = raw palette_ram_converted[0..511]
+//   tbl[512..1023] = brighten/darken(palette_ram_converted[0..511], bldtype, y)
+// Indexed directly by (pix & 0x3FF): bit 9 is the 1st-target flag.
+static struct {
+  u16 tbl[1024] __attribute__((aligned(64)));
+  u8  valid;
+  u8  line_ok;
+  u8  dirty;
+  u8  in_replay;
+  u8  bldtype;
+  u8  y;
+} g_pal_bri;
+
+static inline bool pal_bri_same_raw(const u16 *a, const u16 *b)
+{
+#if VM_VEC && (defined(__ARM_NEON) || defined(__ARM_NEON__))
+  uint16x8_t d0 = vdupq_n_u16(0), d1 = vdupq_n_u16(0);
+  for (u32 i = 0; i < 512; i += 16) {
+    d0 = vorrq_u16(d0, veorq_u16(vld1q_u16(a + i),     vld1q_u16(b + i)));
+    d1 = vorrq_u16(d1, veorq_u16(vld1q_u16(a + i + 8), vld1q_u16(b + i + 8)));
+  }
+  uint16x8_t d = vorrq_u16(d0, d1);
+  uint16x4_t h = vorr_u16(vget_low_u16(d), vget_high_u16(d));
+  uint32x2_t w = vreinterpret_u32_u16(h);
+  return (vget_lane_u32(w, 0) | vget_lane_u32(w, 1)) == 0;
+#else
+  return memcmp(a, b, 512 * sizeof(u16)) == 0;
+#endif
+}
+
+template <blendtype bldtype>
+static inline const u16 *pal_bri_prepare(u32 y)
+{
+  if (g_pal_bri.valid && g_pal_bri.bldtype == (u8)bldtype && g_pal_bri.y == (u8)y) {
+    if (g_pal_bri.line_ok)
+      return g_pal_bri.tbl;
+    if (g_pal_bri.in_replay && !g_pal_bri.dirty) {
+      g_pal_bri.line_ok = 1;
+      return g_pal_bri.tbl;
+    }
+    if (pal_bri_same_raw(g_pal_bri.tbl, palette_ram_converted)) {
+      g_pal_bri.line_ok = 1;
+      g_pal_bri.dirty = 0;
+      return g_pal_bri.tbl;
+    }
+  }
+  vm_build_pal_bri<bldtype>(g_pal_bri.tbl, palette_ram_converted, y);
+  g_pal_bri.valid = 1;
+  g_pal_bri.line_ok = 1;
+  g_pal_bri.dirty = 0;
+  g_pal_bri.bldtype = (u8)bldtype;
+  g_pal_bri.y = (u8)y;
+  return g_pal_bri.tbl;
+}
+#endif
+
 // Applies blending (and optional brighten/darken) effect to a bunch of
 // color-indexed pixel pairs. Depending on the mode and the pixel target
 // number, blending, darken/brighten or no effect will be applied.
@@ -2384,8 +2747,14 @@ static void merge_blend(u32 start, u32 end, u16 *dst, u32 *src) {
   memcpy(chk, dst, sizeof(chk));
   merge_blend_ref<bldtype, st_objs>(start, end, chk, src);
 #endif
-  vm_merge_blend<bldtype, st_objs>(palette_ram_converted,
-    read_ioreg(REG_BLDALPHA), read_ioreg(REG_BLDY), start, end, dst, src);
+  if (bldtype == BLEND_BRIGHT || bldtype == BLEND_DARK) {
+    const u32 y = vm_c16(read_ioreg(REG_BLDY) & 0x1F);
+    const u16 *pb = pal_bri_prepare<bldtype>(y);
+    vm_merge_blend_palbri<st_objs>(pb, read_ioreg(REG_BLDALPHA), start, end, dst, src);
+  } else {
+    vm_merge_blend<bldtype, st_objs>(palette_ram_converted,
+      read_ioreg(REG_BLDALPHA), read_ioreg(REG_BLDY), start, end, dst, src);
+  }
 #ifdef VIDEO_MERGE_CHECK
   if (memcmp(chk, dst, sizeof(chk))) {
     fprintf(stderr, "VIDEO_MERGE_CHECK: merge_blend<%d,%d> differs\n", (int)bldtype, (int)st_objs);
@@ -2436,8 +2805,9 @@ static void merge_brightness(u32 start, u32 end, u16 *srcdst) {
   memcpy(chk, srcdst, sizeof(chk));
   merge_brightness_ref<bldtype>(start, end, chk);
 #endif
-  vm_merge_brightness<bldtype>(palette_ram_converted, read_ioreg(REG_BLDY),
-                               start, end, srcdst);
+  const u32 y = vm_c16(read_ioreg(REG_BLDY) & 0x1F);
+  const u16 *pb = pal_bri_prepare<bldtype>(y);
+  vm_merge_brightness_palbri(pb, start, end, srcdst);
 #ifdef VIDEO_MERGE_CHECK
   if (memcmp(chk, srcdst, sizeof(chk))) {
     fprintf(stderr, "VIDEO_MERGE_CHECK: merge_brightness<%d> differs\n", (int)bldtype);
@@ -3757,6 +4127,10 @@ void wide_compose(const u16 *center_frame)
 void me_replay_lines(const me_capture_frame *cap, int *reloads, int use_log)
 {
   int ln, n = 0;
+#ifndef VIDEO_MERGE_ORIG
+  g_pal_bri.in_replay = 1;
+  g_pal_bri.dirty = 1;
+#endif
 #if ME_MIDFRAME_LOG
   const me_log_entry *log = (const me_log_entry *)cap->log_addr;
   u32 log_n = (use_log && log) ? cap->log_n : 0, k = 0;
@@ -3770,7 +4144,19 @@ void me_replay_lines(const me_capture_frame *cap, int *reloads, int use_log)
     memcpy(io_registers, cap->ioregs[ln], ME_CAP_IOREGS * sizeof(u16));
 #if ME_MIDFRAME_LOG
     if (log_n)
+    {
+      u32 k0 = k;
       k = ml_redo_line(log, log_n, k, (u32)ln);
+#ifndef VIDEO_MERGE_ORIG
+      for (u32 j = k0; j < k; j++)
+        if (MLT_REGION(log[j].tag) == ME_LOG_PAL) {
+          g_pal_bri.dirty = 1;
+          break;
+        }
+#else
+      (void)k0;
+#endif
+    }
 #endif
 #if ME_AFFINE_LINES
     {
@@ -3791,6 +4177,10 @@ void me_replay_lines(const me_capture_frame *cap, int *reloads, int use_log)
   if (log_n)                       /* line 160: back to the snapshot state */
     ml_redo_line(log, log_n, k, 160);
 #endif
+#ifndef VIDEO_MERGE_ORIG
+  g_pal_bri.in_replay = 0;
+  g_pal_bri.dirty = 1;
+#endif
   if (reloads)
     *reloads = n;
 }
@@ -3806,6 +4196,10 @@ void update_scanline(void)
 
   if(skip_next_frame)
     return;
+
+#ifndef VIDEO_MERGE_ORIG
+  g_pal_bri.line_ok = 0;
+#endif
 
   /* ME renderer capture: log this line's LCD registers; at line 0 also latch
    * the affine seed (video_reload_counters ran at the last vblank) and the

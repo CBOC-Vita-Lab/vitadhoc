@@ -1,6 +1,43 @@
 # Performance
 
-## 2.0 NEON xBR and MMPX in the two players (qemu and model numbers; nothing here ran on a Vita)
+## 2.0 Real PS Vita Hardware Results (`rc7`)
+
+Measured on 2026-11-27 on a physical PS Vita running VitAdhoc `2.0 rc7` (500 MHz via PSVshell, 4-core Auto, default settings: Wide View Auto, Image quality Auto, Fit screen, Ambient Glow 5/10). All timings come directly from on-console telemetry logs (`gbadhoc.log`, `snes/player.log`, `md/player.log`).
+
+### Boot, Launch, Menu & Cover Throughput
+
+| Measurement | Before (`rc6`) | After (`2.0 rc7`) | Notes |
+| --- | --- | --- | --- |
+| Cold boot `cheats.db` init | 4,880 ms | **0.016 ms** | Deferred via `cheats_db_open_later()` until cheats are opened or an encrypted GBA `.cht` needs seeds |
+| Video init -> interactive Home Screen | 5,000+ ms | **55.8 ms** | **23 ms** first interactive frame; 2,886 ROMs across 11 consoles scanned in **2.74 s** |
+| Menu landing on a new game | 25 `stat()` calls/game, visible stall | **1 `stat()`/game, 0 UI waits, 0 GPU blocks** | Max GPU upload **1.0 ms** (1 upload/frame cap), max metadata **0.001 ms**, CDRAM recycling, D-pad tap latching |
+| Live cover checking (`ux0:` + Vita Wi-Fi) | Serial TLS/HTTP, per-miss file rewrites | **249 / 930 covers in ~10 s** | Persistent HTTP/1.1 Keep-Alive, O(1) hash index, batched `.missing.txt`, box-art-first two-pass fetch, SD yield |
+| NES launch (*Super Mario Bros. 3*, 1,091-ROM folder) | >40 s freeze | **3.6 s cold / 0.88 s warm** | **45x faster** warm launch (`sidecar_migrate` dir cache + `art_dir_cache` + skip sync `.vh565` write) |
+| GBA launch (*Golden Sun*, 925-ROM folder) | ~18.4 s | **2.87 s** | Same FAT32 launch-path fixes |
+| GBA launch (*Mario Golf*, 925-ROM folder) | — | **2.45 s** | Warm cache |
+| GBC launch (`cgb-acid2`, Gambatte Accurate) | — | **0.56 s** | Default `4x xBRZ` |
+
+### Gameplay Frame Rates & Frame Budgets
+
+| System & Title | Before (`rc6`) | After (`2.0 rc7`) | Hardware Telemetry |
+| --- | --- | --- | --- |
+| **GBA:** *Pokemon Unbound* (Battle, `slot=9`) | 34.08 fps (`jit=10.69 ms`, 531 reclaims, 159,187 `vm_syncs`) | **Locked 60.0 fps** | `pace=full`, `miss=0%`, `emu=52-67%`, `tot=10.08-10.18 ms`, `jit=0.051 ms` (**209x faster**), `reclaims=0`, `vm_syncs=417` (-99.7%), `emergencies=0` |
+| **GBA:** *Pokemon Unbound* (Town, `slot=8`) | 48.21 fps | **Locked 60.0 fps** | `pace=full`, `miss=0%`, `emu=27-50%`, `tot=6.59 ms`, `jit=0.074 ms`, `reclaims=0`, `vm_syncs=753` |
+| **GBA:** *Golden Sun* (Vale rainstorm, Wide View) | — | **Locked 60.0 fps** | `miss=0%`, `emu=41-44%`, Wide View `282x160` full width |
+| **GBA:** *Mario Golf* (Hole 1 3D) | — | **Locked 60.0 fps** | `miss=0%`, `reclaims=0` |
+| **SNES:** *Super Mario RPG* (SA-1, Wide View Auto) | 28.8 fps (half-pace lock) | **59.8-59.9 fps** | `pace=full`, `over=0`, `max=5.8-9.9 ms`, Wide View 85% cover, LookGovernor stepped `xBR 2x -> Sharp` keeping Wide View + blends |
+| **SNES:** *Yoshi's Island* (Super FX 2, Wide View Auto) | 30.0 fps | **Locked 59.9 fps** | `pace=full`, `over=0`, `max=7.7 ms`, 0 PPU/APU waits, Wide View active |
+| **SNES:** *Super Mario Kart* (DSP-1 / Mode 7, Wide View Auto) | 30.0-46.0 fps | **Locked 60.0 fps** | `fps=59.9-60.2`, `pace=full`, `over=0`, `max=4.2-4.4 ms`, Wide View 92% cover, `up_need=0.98`, 0 flaps |
+| **Genesis:** *Gunstar Heroes* (Wide View Auto) | 30.0 fps | **Locked 60.0 fps** | `fps=59.9-60.0`, `pace=full`, `over=0`, `max=7.5-8.8 ms`, **`xBR 2x` (`2.04-2.65 ms/pic`) AND Wide View (`margin=56`) both active** |
+| **Genesis:** *Sonic the Hedgehog 2* (Wide View Auto) | 30.0 fps | **59.0-60.0 fps** | `pace: half -> full`, `emu_fps=60.0`, `over=0`, `max=7.1-8.7 ms`, `ur=0/0`, Wide View `margin=56` |
+| **NES:** *Super Mario Bros. 3* (NTSC Wide View) | Letterboxed | **Locked 60.0 fps** | `miss=0%`, `2x xBRZ` in `1.17 ms` avg, `up0`/`up1`/`up2` on `c1/c2/c3`, `main=c0`, full-height `956x544` Fit |
+| **GBC:** `cgb-acid2` (Gambatte Accurate) | 3x xBRZ cap | **Locked 60.0 fps** | `factor=4` (`640x576 -> 604x544` Fit) in `0.106 ms` avg, `late=0/0/0`, 21% load |
+
+Bit-exact verification of the generic GBA SMC upgrade (`SMCR_MAXVER=256`, Move-To-Front LRU, `src_hash` pre-filter, `1.5 MiB` carve) passed on `armhf-vitasim` vs `x86` (`GPSP_SMC_VERIFY=1`, identical final frame SHA-256 and audio CRC).
+
+---
+
+## 2.0 NEON xBR and MMPX in the two players (pre-hardware qemu and model numbers)
 
 The Super NES and Sega players scale with playerkit's pk_scale (xBR 2x / 3x and MMPX 2x, 16 bit, on the drawing thread and its helpers).
 The decisions of xBR were already eight pixels wide (compiler vectors); the new NEON loops (playerkit/src/pk_scale.cpp, ARM builds only) also do the

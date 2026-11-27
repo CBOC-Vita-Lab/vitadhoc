@@ -1,9 +1,11 @@
 # Online Play
 
 Online play links two Vitas that are far apart with a five-character room
-code. No router settings, no port forwarding, no accounts. It is new in
-VitAdhoc 2.0 and has not yet been tried on two real consoles: see
-[Known Issues](../KNOWN-ISSUES.md).
+code. No router settings, no port forwarding, no accounts. The live room and
+relay service (`vitadhoc.psvita.dev`) is deployed and verified (`138/138`
+automated tests + `9/9` live relay smoke); two-real-Vita sessions over real
+home/mobile networks are new in 2.0 and ready for community testing (see
+[Known Issues](../KNOWN-ISSUES.md)).
 
 This page has two halves: [for players](#for-players) (what to press, what the
 messages mean, what is sent where) and [for developers](#for-developers) (how

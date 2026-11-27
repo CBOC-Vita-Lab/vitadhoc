@@ -2,10 +2,37 @@
 
 ## Version 2.0 — <date TBD at release>
 
-The everything update: eleven consoles in one app, and a friend anywhere in the
-world a five-character code away. Everything here was checked on PC test builds
-and in emulators; none of it has run on a real Vita yet (see
-[Known Issues](KNOWN-ISSUES.md)), so speeds are aims, not promises.
+The biggest VitAdhoc update yet: eleven consoles in one native app, true 16:9
+Wide View at 60 fps, room-code online play on `vitadhoc.psvita.dev`, and major
+real-hardware CPU, boot, launch, cover, and menu speedups verified on a physical
+PS Vita (see [Performance](docs/PERFORMANCE.md) and [Known Issues](KNOWN-ISSUES.md)).
+
+**Real-hardware Vita tuning (`rc7`)**
+
+- **Generic GBA self-modifying code (SMC) cache upgrade:** Expanded the RAM
+  translation cache (`SMCR_MAXVER=256`, Move-To-Front LRU, `src_hash` pre-filter,
+  `1.5 MiB` carve) and fixed a pre-existing `jit_lazy_exits` watermark bug.
+  Eliminates dynarec thrashing in all SMC-heavy GBA games and modern ROM hacks
+  (`ipatix` `hq_mixer`, CFRU, `pokeemerald` hacks like *Pokemon Unbound* and
+  *Radical Red*) with 100% bit-exact output (*Pokemon Unbound* battles: 34.08 ->
+  locked 60.0 fps on Vita, 209x less JIT time, 0 reclaims).
+- **SNES & Genesis 60 fps LookGovernor & Core 0 scaler wakeup fix:** Resolved
+  `PACE_HALF` 30 fps deadlocks and Core 0 scaler helper wakeup starvation so
+  heavy titles (*Super Mario RPG*, *Yoshi's Island*, *Super Mario Kart*, *Gunstar
+  Heroes*, *Sonic 2*) hold 59.8-60.0 fps with Wide View active (and `xBR 2x` +
+  Wide View together on *Gunstar Heroes*).
+- **Best-looking defaults on NES & GB/GBC:** Removed the NTSC NES vertical
+  margin clamp so Wide View fills `956x544` full height at Fit with zero
+  letterbox bars, and raised GB/GBC `Auto` xBRZ from `3x` to **`4x`**
+  (`640x576 -> 604x544` Fit).
+- **Vita FAT32 boot, launch, cover-checking & browsing speedups:** Deferred
+  `cheats.db` + `rom_crc` opening (cold boot DB init 4,880 ms -> 0.016 ms;
+  interactive Home Screen in 55.8 ms), single-pass cached `sidecar_migrate`,
+  in-memory `art_dir_cache`, skipped blocking `.vh565` launch writes (1,091-ROM
+  NES launch >40 s -> 3.6 s cold / 0.88 s warm), persistent HTTP/1.1 Keep-Alive
+  two-pass box-art-first cover checking (249/930 covers in ~10 s on Vita Wi-Fi),
+  lock-free menu loader pools, CDRAM texture recycling, 1 GPU upload/frame cap,
+  and multi-sample D-pad tap latching (0 UI waits, 0 GPU blocks).
 
 **An Accurate Game Boy core**
 

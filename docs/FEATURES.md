@@ -634,9 +634,9 @@ game, or its own patched copy: the partner's game is sent across. Two players
 (NES, WonderSwan and SNES) needs the very same game file on both Vitas, so a
 patched copy does not match an unpatched one.
 
-The bundled cheat catalogue covers about 2,190 GBA and Game Boy games and
-about 2,000 NES games (found by checksum, then by name); WonderSwan has a list
-for one game. Typed codes work everywhere; custom codes are
+The bundled cheat catalogue (`cheats.db`) covers 7,005 games and 151,936 cheats
+across the supported consoles (found by checksum, then by header/name). Typed
+codes and live **Search memory** work on every console; custom codes are
 supported too. Some codes require an enable code, and some code types are
 unsupported. Cheats suspend during link play and in recognised Hardcore
 games. Back up a battery save before experimenting.

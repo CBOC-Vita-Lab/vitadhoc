@@ -1,121 +1,134 @@
-## VitAdhoc 2.0: Eleven consoles, one app, a friend anywhere
+# VitAdhoc 2.0: 11 Consoles, 60 fps Wide View, and Online Play by Room Code
 
-The biggest VitAdhoc yet. Five Sega consoles join the family, so one app now
-plays **Game Boy Advance, Game Boy, Game Boy Color, NES, WonderSwan, Super NES,
-Genesis / Mega Drive, Sega CD, Master System, Game Gear and SG-1000**,
-natively on your PS Vita. And you can play two-player games with a friend on the other side of
-the world: one of you types a code of five characters, and you are linked.
+**VitAdhoc 2.0** turns your PS Vita into a single native launcher and emulator for **11 retro consoles**: Game Boy Advance, Game Boy, Game Boy Color, NES / Famicom, WonderSwan / Color, Super NES, Genesis / Mega Drive, Sega CD / Mega CD, Master System, Game Gear, and SG-1000.
 
-Everything below was checked on PC test builds and in emulators. None of it
-has run on a real Vita yet, so no speed is promised: where we say "aims for",
-that is what we are going for. See [Known Issues](KNOWN-ISSUES.md).
+Everything runs from one Vita-native home screen with automatic box art, descriptions, gameplay previews, Continue, ten save-state slots, RetroAchievements, and a 7,005-game built-in cheat database. Pick a game and play at locked 60 fps with true zero-stretch 16:9 Wide View, or link up with a friend anywhere using a 5-character room code (`vitadhoc.psvita.dev`) with no port forwarding and no accounts.
 
-**New consoles**
+---
 
-- **Sega Genesis / Mega Drive, Master System, Game Gear and SG-1000.** Each has
-  its own shelf in the console list with box art, descriptions, Starred,
-  Recent, play time, Continue, ten state slots with pictures, cheats, patches
-  and RetroArch save import. They get the same picture and pacing features as
-  every other console, and aim for a smooth 60 (50 for European games).
-- **Sega CD / Mega CD** is its own shelf, played by the same Sega program:
-  `.cue` + `.bin`, `.iso` and `.chd` discs, read from storage as the game
-  runs. It needs your own Sega CD BIOS (VitAdhoc cannot include one); saves
-  (backup RAM and the RAM cartridge) are kept per game. Continue, ten states,
-  rewind, fast forward, cheats, RetroAchievements, wide view and Two players
-  work as on the Genesis. It is the least tested console in 2.0: see
-  [Known Issues](KNOWN-ISSUES.md).
-- **Rewind, fast forward and RetroAchievements** on all of them, with a
-  remappable pad (Genesis A / B / C on Square / Cross / Circle, X / Y / Z on
-  L / Triangle / R).
-- **No sprite flicker** on the Master System, Game Gear and SG-1000: every
-  sprite on a line is drawn, and the game runs exactly the same.
+## Real PS Vita Screenshots (`960x544`)
 
-**Online play**
+![VitAdhoc 2.0 Home Screen](store/screenshots/vita-2.0/home.png)
+*2.0 home screen on a physical PS Vita: box art grid, hero art, Wikipedia summary, Triangle console picker (`Game Boy Advance`), and live `Checking covers: 249 of 930` progress.*
 
-- **Play with a friend anywhere.** Host a game, share the five-character code,
-  and your friend types it. No router settings, no accounts. The Vitas link
-  directly when they can and through a relay when they cannot.
-- **Every two-player console.** GBA Link Cable and Wireless Adapter, Game Boy
-  and Game Boy Color Link Cable, save and state sharing, and Two players for
-  NES, WonderSwan, Super NES, Genesis / Mega Drive, Sega CD, Master System
-  and SG-1000. The join finds your copy of the game for you. On a cable each of
-  you can play your own game (Ruby with Sapphire).
-- **Safe to join.** Every emulator checks a game state sent by the other
-  player, or read from a file, before using it; the state loaders were fuzz
-  tested on the PC build. The room service limits guessing of codes and
-  protects the relay. Both Vitas need VitAdhoc 2.0.
+| GBA Wide View (Locked 60 fps) | GBA ROM Hack at Locked 60 fps | GBC Default 4x xBRZ Supersampling |
+| --- | --- | --- |
+| ![Golden Sun in GBA Wide View](store/screenshots/vita-2.0/gba-wide.png) | ![Pokemon Unbound Battle at 60 fps](store/screenshots/vita-2.0/gba-unbound-60fps.png) | ![cgb-acid2 at 4x xBRZ on GBC](store/screenshots/vita-2.0/gbc-4x-xbrz.png) |
+| *Golden Sun* filling 16:9 with zero stretching | *Pokemon Unbound* battle: **34.08 -> 60.0 fps** | `cgb-acid2` (Gambatte Accurate): `640x576 -> 604x544` Fit |
 
-**Picture and play**
+---
 
-- **Quick response** shows a button press one frame sooner, with the game
-  running exactly as without it. Game Boy, Game Boy Color, NES, WonderSwan,
-  Super NES and the Sega consoles have it (Settings, and per game); it is on
-  Auto where a frame is cheap enough and off in linked and online play. Not
-  offered for Game Boy Advance: see [Known Issues](KNOWN-ISSUES.md).
-- **Names in every alphabet.** Japanese, Korean, fullwidth forms, accented
-  Latin, Greek and Cyrillic names (plus Simplified Chinese GB 2312 hanzi) show
-  as written in the app and in the Super NES and Sega menus, instead of `?`.
+## What's New Since v1.3.1
 
-- **Wide view across the library:** GBA Wide view defaults to `On + any game`
-  with Soft edges so the catalogue gets full-width play out of the box (turn it
-  off per game if edges misbehave). On NES, Super NES and the Sega consoles,
-  the real picture stays pixel exact in the middle, with the sides showing more
-  of the level you have seen or a soft continuation of the edge (never a guessed
-  tile). NES Wide View (`424×224`/`240`) supports full 2x upscaling (`xBRZ 2x`,
-  `Scale2x`, `MMPX 2x`) and Sharp Bilinear (`1344×720` render target), Master
-  System and SG-1000 automatically step `xBR 3x` down to `xBR 2x` when needed
-  within the `1024×576` scaler budget, and Game Gear composes LCD and Screen
-  colour profiles in a single LUT pass.
-- **Smooth 50 Hz for European games** removes the hitch PAL games had on the
-  60 Hz screen. The game still runs at its true speed.
-- **The same looks everywhere:** Ambient glow, Scanlines, LCD grid and LCD
-  ghosting, each with a 0 to 10 strength, plus real Game Boy Color palettes
-  for original Game Boy games.
-- **Super FX games run on a much faster exact core** (Doom, Stunt Race FX),
-  aiming to animate closer to the real console.
-- **A console picker & full PlayerKit menu parity:** Triangle drops a list of
-  every console with its game count; Circle cancels. **Undo and lock for save
-  states** (`L` lock/unlock, persisted `R` undo for both loads and overwrites),
-  **unified Cheats buttons** (`Triangle` = Add, `Square` = Delete), **Start**
-  to resume the Super NES and Sega pause menus, **Right-stick Rewind** enabled
-  by default across all eleven consoles, **`Settings > Controls > Left stick`**
-  (`D-pad` / `Custom` / `Off`), an in-game **Achievements** viewer, synced
-  **Light theme** & **Tap screen for menu** via `display.ini`, and mappable PNG
-  **Screenshots** in the Super NES and Sega players across all eight languages.
-- **Your library, quicker and smarter:** the home screen appears at once, even
-  on a big card in a slow adapter; cover lookup handles `.zip`/`.7z` entries,
-  GoodTools tags and ROM hack protection; RetroArch and Emu4Vita++ `.lpl`
-  playlists support 6-line and archive formats and filter out unsupported
-  systems; rear touch uses a unified 12% outer edge grip inset + center
-  deadzone across all eleven consoles; and WonderSwan keeps unswapped physical
-  buttons (`Circle = A, Cross = B`) even on Asian Vitas.
-- **Core, online and FAT32 hardening:** Online 2.0 adds STUN fallback, TURN
-  and worker budget hardening, an in-app cartridge picker for mismatched
-  link-cable games, and host gameplay-progress preservation if a link partner
-  disconnects; GBA ARMv7/Thumb-2 dynarec (7th cached guest register `r10`,
-  `ubfx`/`cbnz` fast-path stubs, ARM literal pool folding, single-instruction
-  Thumb `NEG` and IWRAM `POP`/`LDMIA sp` fastpath), Super NES Mode 7, Sega
-  VDP/FM/CD read-ahead, `.smd` netplay normalization, in-place Mega Drive
-  region timing updates, Gambatte zero-initialized savestates, NES and
-  WonderSwan cores carry exact scheduling and memory refinements; and saves and
-  archives use safe two-step `.old` file replacement on Vita FAT32 (`APP_VER`
-  `02.00` in LiveArea).
+Version 2.0 combines everything from the unreleased 1.4 wave and the full 2.0 release cycle, growing VitAdhoc from 4 consoles to 11.
 
-**Install or update**
+### 11 Consoles in One Native Vita App
 
-Install `VitAdhoc.vpk` with VitaShell over the existing bubble (title ID
-`GBAD00001`), or use the
-[CBOC Vita Installer](https://github.com/CBOC-Vita-Lab/vita-installer/releases/latest).
-Games, saves and settings stay in place. For online play your friend installs
-it too. Sega games go in any folder under `ux0:ROMS/` (for example `MD`, `SMS`,
-`GG`, `SG-1000`, `SegaCD`).
+- **7 new consoles added since v1.3.1:**
+  - **NES & Famicom** (FCEUmm): `.nes`, `.fds` (Famicom Disk System with your own `disksys.rom`), `.unf`, `.unif`, plus touch-screen **NES Zapper** support.
+  - **WonderSwan & WonderSwan Color** (Beetle WonderSwan): `.ws`, `.wsc`, `.pc2`. Automatic portrait/landscape rotation, upright or sideways Vita controls, 75 Hz-to-60 Hz motion blending, and unswapped physical buttons (`Circle = A`, `Cross = B`) across all Vita regions.
+  - **Sega Genesis / Mega Drive, Master System, Game Gear, and SG-1000** (Genesis Plus GX in `md.bin`): `.md`, `.gen`, `.smd`, `.68k`, SEGA-header `.bin`, `.sms`, `.gg`, `.sg`, `.sc`. Default 6-button Genesis layout (`Square`/`Cross`/`Circle` = A/B/C, `L`/`Triangle`/`R` = X/Y/Z), dedicated-core YM2612 FM audio, and optional **No sprite flicker** on 8-bit Sega.
+  - **Sega CD / Mega CD** (in `md.bin` with a disc read-ahead thread): `.cue`+`.bin`, `.iso`, `.chd` (LZMA/zlib/zstd/FLAC), and `.m3u` multi-disc playlists with in-game tray swap (**Settings > Speed > Change disc**). Requires your own region Sega CD BIOS; per-game backup RAM and configurable RAM cartridge (512 KB default).
+- **Upgraded cores for existing consoles:**
+  - **Game Boy / Game Boy Color:** TGB Dual (Standard, default for link, Camera, and SGB borders) alongside an optional cycle-accurate **Gambatte** core (`Settings > Game Boy core > Accurate`) sharing battery saves, palettes, cheats, rewind, Quick Response, and RetroAchievements.
+  - **Game Boy Advance** (gpSP ARMv7 dynarec with upgraded generic SMC cache) and **Super NES** (Snes9x 1.63 + post-1.63 fixes and a faster exact Super FX block cache).
+- **Drop-down Console Picker:** Press **Triangle** on the home screen to jump straight to any of the 11 consoles with live game counts.
 
-`VitAdhoc-install.zip` contains the same VPK, full source, guides and
-checksums. No commercial games or proprietary BIOS are included.
+### Online Multiplayer by 5-Character Room Code
 
-Full list: [CHANGELOG.md](CHANGELOG.md). An unofficial fan project, not
-affiliated with Nintendo, Sega, Bandai or Sony. Built by AI agents (Claude),
-directed and play-tested by a human.
+- **Play together anywhere (`vitadhoc.psvita.dev`):** Host any supported game, share the 5-character code (omitting `I`, `L`, `O`, `0`, and `1` so nothing looks alike), and your friend joins from any Wi-Fi network or hotspot. No port forwarding, no accounts, and no PSN sign-in. Direct UDP NAT hole-punching runs first (with STUN fallback) and automatically switches to a Cloudflare TURN relay when routers block direct links. Optional **Always use the relay** hides your IP from peers.
+- **Full two-player coverage:**
+  - **GBA Link Cable & Wireless Adapter:** Online, Same Wi-Fi, or Nearby (Ad-Hoc). Link Cable supports cross-version trading and battling (Ruby + Sapphire, FireRed + LeafGreen, Emerald + FireRed) with cached cartridge transfer and an in-app cartridge picker when joining.
+  - **GB / GBC Link Cable:** Cross-generation `.gb` + `.gbc` links (such as Gen 1 + Gen 2 Time Capsule) over Online, Same Wi-Fi, Nearby, or same-console split screen.
+  - **Two Players (NES, WonderSwan, SNES, Genesis / Mega Drive, Sega CD single-disc, Master System, SG-1000):** Shared two-Vita play over Same Wi-Fi or Online (plus Nearby on NES and WonderSwan).
+- **Same-Console 2P Split Screen, Mystery Gift & Save/State Sharing:** Two GBA or GB/GBC instances side by side on one Vita/PS TV (second DualShock or touch-screen P2 pad), built-in GBA Mystery Gift Station receiver, and Vita-to-Vita save/state sharing over Wi-Fi or Online room codes.
+- **Hardened state loading & disconnect recovery:** Every core validates incoming state data (fuzz-tested under host sanitizers), and unexpected partner disconnects preserve host gameplay progress.
 
-SHA-256 `VitAdhoc.vpk`:
-`0000000000000000000000000000000000000000000000000000000000000000`
+### True 16:9 Wide View & Smart Auto Visuals
+
+- **Zero-stretch Wide View out of the box:**
+  - **GBA Wide View** defaults to `On + any game` with **Soft edges** (toggle per game if a specific title's margins misbehave).
+  - **Full-height `956x544` NTSC NES Wide View:** Fills all 544 vertical pixels at Fit (`394x224` NTSC / `422x240` PAL) with zero top/bottom letterbox bars, backed by live nametables, learned level maps, soft edge falloff, and 2x upscaling (`xBRZ 2x`, `MMPX 2x`, `Scale2x`) or Sharp Bilinear.
+  - **SNES & Sega Wide View (Auto by default):** Keeps the native image pixel-exact in the center while extending left and right margins with real background/learned data or soft edges, never guessed tiles.
+- **Governed Image quality: Auto (best look without dropping frames):**
+  - **GB / GBC:** Defaults to **4x xBRZ supersampling** (`640x576` scaled cleanly down to `604x544` at Fit).
+  - **GBA & WonderSwan:** Starts at xBRZ 3x, stepping through xBRZ 2x, MMPX 2x, and Sharp Bilinear (software-3D GBA bitmap titles automatically start at Sharp Bilinear).
+  - **SNES & Sega:** NEON-accelerated xBR 2x/3x and MMPX 2x (with automatic 3x-to-2x step-down within the `1024x576` texture budget on 8-bit Sega).
+  - Any manual setting stays locked; the Look Governor only adjusts **Auto** mode.
+- **Unified looks & colour accuracy across all 11 systems:**
+  - Independent 0-10 sliders for **Ambient glow**, **Scanlines**, **LCD grid**, **CRT mask** (aperture-grille stripes), and **LCD ghosting**.
+  - Authentic console colour profiles (GBA, GBC, WonderSwan, Game Gear LCD, NES NTSC), **GBC Auto** palettes for original Game Boy cartridges (detected by header, not filename), an optional **Screen: OLED (PCH-1000)** colour profile folded directly into the LUT at zero extra cost, and **Smooth 50 Hz** mode for PAL NES, SNES, and Sega games (plus **Steady pacing** and **Smooth hand-over**).
+
+### Gameplay, Library, Accessibility & Extras
+
+- **Quick Response (1-frame run-ahead):** Shaves a frame of input lag on GB, GBC, NES, WonderSwan, SNES, and Sega (Auto where headroom allows; disabled during link/online and not used on GBA).
+- **Rewind & Fast Forward:** Right-stick left for Rewind and right-stick right for Fast Forward on by default across all 11 systems (`Select + Square` also rewinds). Fast Forward adds **normal-pitch audio** alongside 2x, 3x, Unlimited, and Unlimited Smooth.
+- **RetroAchievements on all 11 consoles:** Hardcore mode, live progress counters (`3/10`), near-unlock markers, leaderboard trackers, and an in-game **Achievements** viewer inside `snes.bin` and `md.bin`.
+- **7,005-Game Built-in Cheat Database + Live Memory Search:** Bundled `cheats.db` holds **7,005 games (151,936 cheats)**, paired with on-console **Search memory** (Exact, Changed, Unchanged, Increased, Decreased, including GBC banked WRAM) on every system. Unified buttons: `Triangle` = Add, `Square` = Delete.
+- **Save Safety & 10 State Slots Everywhere:** Pre-overwrite automatic backups, two-way **RetroArch save sync** + on-demand **Export save**, ten thumbnail state slots per game with **Slot Lock (`L`)** and persisted **Undo (`R`)** across all 11 consoles.
+- **Library Organization & `.7z` Archives:** Custom **Collections**, **Most played** / **Not played yet** views, read-only **RetroArch & Emu4Vita++ `.lpl` playlists** (JSON and legacy 6-line), full **`.7z`** support everywhere `.zip` works, **Game title vs File name** display toggle, and Wikipedia descriptions for NES, WonderSwan, and Sega (~460 mismatched descriptions cleaned out of older consoles).
+- **Extras & Accessibility:** **Save Clip** (10-second lossless animated PNG), **Game Boy Camera** (Vita front/back camera or `camera.png`) & **Game Boy Printer** (PNG export to `prints/`), mappable **Rear Touch Panel** (unified 12% grip inset + center deadzone), **Left stick** (`D-pad` / `Custom` / `Off`), **Button Test**, **Tap screen for menu** toggle, synced **Light / Dark theme**, **Large text** & **High contrast** (`display.ini`), **8 UI languages** (English, Spanish, French, German, Italian, Brazilian Portuguese, Japanese, Simplified Chinese) with CJK/Korean/Greek/Cyrillic text rendering everywhere, and a daily opt-out GitHub **Update check**.
+
+---
+
+## Real PS Vita Hardware Performance (`rc7`)
+
+Measured on a physical PS Vita (500 MHz via PSVshell, 4-core Auto; runs at 444 MHz stock without PSVshell):
+
+| Scenario / Game | Before (`rc6`) | After (`2.0 rc7`) | What Changed |
+| --- | --- | --- | --- |
+| **Cold boot (`cheats.db` init)** | 4,880 ms | **0.016 ms** | Lazy `cheats.db` & `rom_crc` loading |
+| **Cold boot -> interactive Home Screen** | 5,000+ ms | **55.8 ms** (23 ms 1st frame) | Deferred scan + lazy DB (2,886 ROMs across 11 systems scanned in **2.74 s**) |
+| **Menu landing on a new game** | Visible hang (25 `stat`s/game) | **0 UI waits / 0 GPU blocks** (1 `stat`, 1.0 ms max upload) | Lock-free loader pools, CDRAM texture reuse, 1 GPU upload/frame cap, D-pad tap latching |
+| **Checking covers (live Vita Wi-Fi)** | Slow serial TLS/HTTP | **249 / 930 checked in ~10 s** | HTTP/1.1 Keep-Alive, O(1) index, batched misses, box-art-first two-pass fetch, SD yield |
+| **NES launch (1,091-ROM folder, *SMB 3*)** | >40 s freeze | **3.6 s cold / 0.88 s warm (45x faster)** | Cached `sidecar_migrate`, `art_dir_cache`, skip blocking `.vh565` write |
+| **GBA launch (925-ROM folder, *Golden Sun*)** | ~18.4 s | **2.87 s** | Same FAT32 launch path fixes |
+| **GBA SMC ROM hack (*Pokemon Unbound* Battle)** | 34.08 fps (`jit=10.69 ms`, 531 reclaims) | **Locked 60.0 fps** (`jit=0.051 ms`, **0 reclaims**, `vm_syncs` -99.7%) | Generic `SMCR_MAXVER=256` MTF LRU + `src_hash` + 1.5 MiB carve (100% bit-exact) |
+| **GBA (*Pokemon Unbound* Town, *Golden Sun*, *Mario Golf*)** | 48.21 fps (Town) | **Locked 60.0 fps** (`miss=0%`) | Generic SMC cache + GBA ARMv7 dynarec & NEON PPU optimizations |
+| **SNES SA-1 (*Super Mario RPG*, Wide View)** | 28.8 fps (half-pace lock) | **59.8-59.9 fps** (`over=0`, `max=5.8-9.9 ms`) | LookGovernor pacing fix + Core 0 scaler helper wakeup |
+| **SNES Super FX 2 (*Yoshi's Island*, Wide View)** | 30.0 fps | **Locked 59.9 fps** (`over=0`, `max=7.7 ms`) | Faster exact Super FX block cache + LookGovernor & Core 0 wakeup fix |
+| **SNES DSP-1 / Mode 7 (*Super Mario Kart*, Wide View)** | 30.0-46.0 fps | **Locked 60.0 fps** (`over=0`, `max=4.2-4.4 ms`, 92% cover) | Mode 7 optimizations + LookGovernor fix |
+| **Genesis (*Gunstar Heroes*, Wide View + `xBR 2x`)** | 30.0 fps | **Locked 60.0 fps** (`xBR 2x` + Wide View both active) | Dedicated FM core + Core 0 scaler wakeup + NEON xBR |
+| **Genesis (*Sonic the Hedgehog 2*, Wide View)** | 30.0 fps | **59.0-60.0 fps** (`emu_fps=60.0`, `over=0`) | LookGovernor & Core 0 wakeup fix |
+| **NES (*Super Mario Bros. 3*, `956x544` Wide View)** | Letterboxed | **Locked 60.0 fps** (`2x xBRZ` in 1.17 ms avg, full height) | Removed NTSC vertical margin clamp + `main_cpu=0` pinning |
+| **GBC (`cgb-acid2`, Gambatte Accurate, `4x xBRZ`)** | 3x ceiling | **Locked 60.0 fps** (`4x xBRZ` in 0.106 ms avg, 21% load) | New 4x Auto xBRZ ceiling + Gambatte NEON audio |
+
+*Note on the GBA SMC upgrade:* The cache improvements in `gpsp/cpu_threaded.c` contain zero game-specific checks or CRCs. Every GBA ROM hack or official game that executes self-modifying code in RAM (including `ipatix` `hq_mixer`, CFRU, and `pokeemerald` hacks like *Pokemon Unbound*, *Radical Red*, and *Inclement Emerald*) gets the exact same speedup automatically, verified bit-exact against x86 (`GPSP_SMC_VERIFY=1`).
+
+*Note on Online 2.0:* `vitadhoc.psvita.dev` is deployed and verified (`138/138` automated tests + `9/9` live relay smoke). Multi-console two-Vita sessions over real home/mobile networks are ready for community testing.
+
+---
+
+## Key Bug Fixes Since v1.3.1
+
+- **GBA compatibility:** Fixed *Top Gun: Combat Zones*, *Polarium Advance*, *Rock 'N Roll Racing*, *Activision Anthology*, and *X-Men: Reign of Apocalypse*; fixed scanline-exact OAM sprite priority (*Golden Sun*, *Mario Golf*); fixed pre-existing `jit_lazy_exits` watermark corruption.
+- **Game Boy / GBC accuracy:** TGB Dual passes 11/11 `cpu_instrs` (up from 2/11), `dmg-acid2`, `cgb-acid2`, and 13/13 `dmg_sound`/`cgb_sound` tests; Gambatte passes 53/60 accuracy ROMs with zero-initialized savestates.
+- **SNES audio & graphics:** Replaced the SNES audio pacer to fix crackle and drift (#15), fixed mosaic run-ahead parity, and updated Mode 7 and Super FX paths.
+- **Sega stability:** Normalized `.smd` interleaved headers for netplay, added in-place PAL/NTSC region timing switches without restarting the draw thread, skipped Sega CD `.bin` tracks during Genesis scans, and hardened Sega CD read-ahead cleanup.
+- **Cover art & library matching:** Cover lookup peeks inside `.zip`/`.7z` entries, strips GoodTools tags, prevents ROM hacks from inheriting unpatched base GBA art, and follows HTTP redirects.
+- **FAT32 & online reliability:** Safe two-step `.old` replacement on Vita FAT32 for saves, states, and archives; TURN nonce-generation tracking and STUN fallback; full PlayerKit menu parity (Light theme, Tap screen, Language, Text size, High contrast, `Start` to resume, Lock/Undo states, unified Cheat buttons, Achievements viewer, PNG screenshots) across `eboot.bin`, `snes.bin`, and `md.bin`.
+
+---
+
+## Install or Upgrade
+
+- **Upgrading from v1.x:** Close VitAdhoc, back up `ux0:data/GBAdhoc/` (recommended), and install `VitAdhoc.vpk` directly over your existing bubble (`GBAD00001`) using VitaShell or the [CBOC Vita Installer](https://github.com/CBOC-Vita-Lab/vita-installer/releases/latest). Do **not** uninstall first. All ROM paths, battery saves, save states, covers, and settings stay intact.
+- **Fresh install:** Install `VitAdhoc.vpk`, launch once to create `ux0:data/GBAdhoc/`, and drop games into `ux0:data/GBAdhoc/roms/` or any folder under `ux0:ROMS/` (`GBA`, `GB`, `GBC`, `NES`, `WS`, `SNES`, `MD`, `SMS`, `GG`, `SG-1000`, `SegaCD`) or existing RetroFlow folders.
+- **BIOS files:** An open-source GBA BIOS is built in. Supply your own region BIOS only for **Sega CD** (`ux0:data/GBAdhoc/bios/`) and **Famicom Disk System** (`disksys.rom`).
+- **Online requirement:** Both Vitas must run **VitAdhoc 2.0**.
+
+### Release Assets
+
+| File | Description |
+| --- | --- |
+| `VitAdhoc.vpk` | Native PS Vita package (`GBAD00001`, `APP_VER 02.00`) |
+| `VitAdhoc-install.zip` | Same VPK plus full source, guides, and checksums |
+| `cboc-release.json` | Metadata for CBOC Vita Installer |
+| `SHA256SUMS` | File verification checksums |
+
+- SHA-256 (`VitAdhoc-2.0-rc7.vpk`, updated by `tools/pin-release.py` on final `v2.0` tag):
+  `ded2cfc021d7391bae6036d23423650ce07b0297970fccfb19957dd0fd25a7dc`
+
+Full docs: [README](README.md) · [Install Guide](INSTALL.md) · [Controls](CONTROLS.md) · [Play Together](PLAY-TOGETHER.md) · [Online Play](docs/ONLINE.md) · [Known Issues](KNOWN-ISSUES.md) · [Changelog](CHANGELOG.md)
+
+*An unofficial fan project, not affiliated with Nintendo, Sega, Bandai, or Sony. No commercial games or proprietary BIOS are included.*

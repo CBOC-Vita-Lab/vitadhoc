@@ -166,10 +166,11 @@ Everything else VitAdhoc makes for a game goes under `ux0:data/GBAdhoc/`:
 | Game Boy | `states/gb/Game.gb.st0` … `Game.gb.st9` | `states/gb/Game.gb.rsm` |
 | Game Boy Color | `states/gbc/Game.gbc.st0` … `Game.gbc.st9` | `states/gbc/Game.gbc.rsm` |
 
-SNES games keep their four state slots and picture settings in
-`ux0:data/GBAdhoc/snes/` (`states/Game.st0` … `Game.st3`). Before VitAdhoc
-first writes over a SNES save it did not make, a copy goes to
-`ux0:data/GBAdhoc/backups/snes/`.
+SNES games keep their ten state slots and picture settings in
+`ux0:data/GBAdhoc/snes/` (`states/Game.st0` … `Game.st9`), and Sega games keep
+theirs in `ux0:data/GBAdhoc/md/` (`states/Game.st0` … `Game.st9`). Before
+VitAdhoc first writes over a SNES or Sega save it did not make, a copy goes to
+`ux0:data/GBAdhoc/backups/snes/` or `ux0:data/GBAdhoc/backups/md/`.
 
 NES and WonderSwan games keep their states under
 `ux0:data/GBAdhoc/states/nes/` and `states/ws/`, like the
@@ -231,7 +232,9 @@ psgm:play?titleid=GBAD00001&param=ux0:ROMS/GBA/Pokemon Emerald.gba
 Everything after `param=` is the game's path, exactly as written (it is not
 URL-decoded, so names with `&`, `%` or `+` work). A name without a drive is
 looked up in `roms/`. The extension picks the console: `.gba`, `.gb`,
-`.gbc`, `.sfc`/`.smc` or `.nes`/`.fds`/`.unf`/`.unif` (a `.zip` works too). Close VitAdhoc before launching another game this way.
+`.gbc`, `.sfc`/`.smc`, `.nes`/`.fds`/`.unf`/`.unif`, `.ws`/`.wsc`/`.pc2`,
+`.md`/`.gen`/`.smd`/`.68k`, `.sms`, `.gg`, `.sg`/`.sc`, or `.cue`/`.iso`/`.chd`/`.m3u`
+(a `.zip` or `.7z` works too). Close VitAdhoc before launching another game this way.
 
 ## Zipped Games
 
@@ -239,8 +242,9 @@ Games kept in `.zip` files work too: VitAdhoc looks inside each zip and lists
 it under its console. On start, the game is unpacked once into
 `ux0:data/GBAdhoc/unzipped/` (only the game you're playing is kept there) and
 checked against the zip's checksum. Saves and states sit beside the `.zip`,
-named after it. The first game entry (`.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.nes`, `.fds`,
-`.unf` or `.unif`) is used; keep one
+named after it. The first game entry (`.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`,
+`.nes`, `.fds`, `.unf`, `.unif`, `.ws`, `.wsc`, `.pc2`, `.md`, `.gen`, `.smd`,
+`.sms`, `.gg`, `.sg`, or `.sc`) is used; keep one
 game per zip to avoid surprises. Stored and deflated entries up to 32 MiB
 are supported; encrypted, multi-disk and ZIP64 archives are not.
 
@@ -259,7 +263,7 @@ and check the new expected save name before continuing.
 Put a PNG in `ux0:data/GBAdhoc/overlays/` and it is drawn over the game, with
 its own transparency: a bezel, a Game Boy shell, a dot-matrix mask.
 
-- `overlays/gba.png`, `gb.png`, `gbc.png`, `snes.png`, `nes.png`: for every game of that console.
+- `overlays/gba.png`, `gb.png`, `gbc.png`, `snes.png`, `nes.png`, `ws.png`, `md.png`, `segacd.png`, `sms.png`, `gg.png`, `sg1000.png`: for every game of that console.
 - `overlays/<game name>.png` (the game's file name without its extension):
   for that game only.
 

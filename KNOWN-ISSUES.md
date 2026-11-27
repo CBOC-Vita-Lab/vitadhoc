@@ -6,21 +6,11 @@ misbehaves. Found something else? Please tell us in
 [GitHub issues](https://github.com/CBOC-Vita-Lab/vitadhoc/issues), with the
 game, its region and what you did.
 
-## Version 2.0: Not Yet Tested On A Console
+## Version 2.0: Hardware Test Coverage
 
-Everything new in 2.0 was verified on PC test builds, in emulators and by
-models of the Vita's speed. **None of it has run on a real Vita yet**, so no 2.0
-speed figure exists and nothing here is promised: every console aims for a
-locked 60 frames a second (50 for European games), and that is what the first
-tests on a Vita will check. Current measured results are those of earlier
-versions, in the [performance report](docs/PERFORMANCE.md).
+VitAdhoc 2.0 (`rc7`) has been verified on a physical PS Vita across cold boot, large-folder launches, live Wi-Fi cover checking, menu browsing, GBA (including SMC ROM hacks like *Pokemon Unbound*, plus *Golden Sun* and *Mario Golf*), SNES (*Super Mario RPG*, *Yoshi's Island*, *Super Mario Kart*), Genesis (*Gunstar Heroes*, *Sonic 2*), NES (*Super Mario Bros. 3* in a 1,091-ROM folder), and GBC (Gambatte Accurate at `4x xBRZ`). See [Performance](docs/PERFORMANCE.md) for the measured numbers.
 
-The first things to watch: the Sega consoles, online play on real networks,
-the Super NES wide view and Super FX games, and how large a smoothing step each
-console holds at a steady 60 (Image quality Auto starts at a ceiling per
-console and steps down by itself). Each can be turned off in Settings if it
-misbehaves: Smooth hand-over, Steady pacing, Wide view, Image quality, Quick
-response, No sprite flicker.
+Several newer 2.0 features were verified on PC test builds, automated suites, or live relay smoke tests (`vitadhoc.psvita.dev`) and still await broader real-console play-testing: **two-real-Vita online sessions over home/mobile networks**, **Sega CD disc streaming**, **NES Zapper touch calibration**, **Game Boy Camera hardware timing**, and **non-English translations**. Every major visual and pacing feature can be turned off in Settings if a game misbehaves: Smooth hand-over, Steady pacing, Wide view, Image quality, Quick response, No sprite flicker.
 
 - **Hardware anti-aliasing was dropped:** a game picture is one flat
   rectangle, so there is no polygon edge for it to smooth; the smoothing

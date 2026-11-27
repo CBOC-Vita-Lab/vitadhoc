@@ -28,6 +28,9 @@ void vdpw_frame_end(void);                            /* end of a frame: join, s
 void vdpw_status_changed(void);                       /* the emulating thread wrote status bits itself (reset, state load) */
 void vdpw_vram_all_changed(void);                     /* VRAM was rewritten in bulk without the per-pattern marks */
 void vdpw_mark_vram(unsigned name);                   /* one 32 byte VRAM pattern changed (MARK_BG_DIRTY) */
+void vdpw_mark_sat(unsigned off);                     /* one 32 byte chunk of internal SAT changed */
+void vdpw_mark_vsram(unsigned off);                   /* one 32 byte chunk of VSRAM changed */
+void vdpw_small_all_changed(void);                    /* SAT / VSRAM rewritten in bulk (reset, state load) */
 unsigned vdpw_spr_col(void);
 void vdpw_q_call(void (*fn)(void *), void *arg);   /* fn(arg) on the worker after everything queued, its copy of the VDP level with the emulating thread's */
 void vdpw_wide_cache(int on, int check);           /* the worker renderer's strip cache (on by default with the worker); check: draw anyway and compare */

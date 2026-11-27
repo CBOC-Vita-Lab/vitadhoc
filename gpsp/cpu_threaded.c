@@ -39,7 +39,9 @@ u32 smc_window_violations;
 #include "gpsp_profile.h"   /* named build profiles + illegal-flag rejection */
 #if defined(VITA)
 #include <psp2/kernel/sysmem.h>
+#ifdef __vita__
 #include <psp2/kernel/processmgr.h>   /* sceKernelGetProcessTimeLow (jd_*) */
+#endif
 #include <stdio.h>
 #elif defined(PS2)
 #include <kernel.h>
@@ -326,7 +328,7 @@ u32 gpsp_jit_counters(u32 *out, u32 n)
  * frame is closed when the first event of the next one arrives; the window
  * keeps the frame with the most time (translation + sync), its own totals,
  * and is emptied when the frontend reads it. */
-#if defined(VITA)
+#if defined(VITA) && defined(__vita__)
 #define JD_NOW_US() ((u32)sceKernelGetProcessTimeLow())
 #elif defined(PSP)
 #define JD_NOW_US() ((u32)sceKernelGetSystemTimeLow())
@@ -802,6 +804,32 @@ void translate_icache_sync() {
 #else
 #define arm_emit_case(op)   (((op) >> 20) & 0xFF)
 #define arm_scan_nv_nop()
+#endif
+
+#ifdef ARM_ARCH
+#define arm_ldr_pc_pool_or_mem(is_up, dir)                                    \
+  do {                                                                        \
+    u32 _ldr_rn = (opcode >> 16) & 0x0F;                                      \
+    u32 _ldr_off = opcode & 0x0FFF;                                           \
+    u32 _aoff = (is_up) ? (pc + 8 + _ldr_off) : (pc + 8 - _ldr_off);          \
+    if (!ram_region && (_ldr_rn == 15) &&                                     \
+        ((_aoff >> 15) == (pc >> 15)) &&                                      \
+        ((_aoff & 3) == 0) &&                                                 \
+        ((pc >> 24) != 0x0D) &&                                               \
+        (((pc >> 24) != 0x00) || ((pc < 0x4000) && (_aoff < 0x4000))) &&      \
+        !((_aoff >= 0x080000C0 && _aoff < 0x080000D0) ||                      \
+          (_aoff >= 0x0A0000C0 && _aoff < 0x0A0000D0) ||                      \
+          (_aoff >= 0x0C0000C0 && _aoff < 0x0C0000D0))) {                     \
+      u32 _ldr_rd = (opcode >> 12) & 0x0F;                                    \
+      u32 value = readaddress32(pc_address_block, (_aoff & 0x7FFF));          \
+      arm_load_pc_pool_const(_ldr_rd, value);                                 \
+    } else {                                                                  \
+      arm_access_memory(load, dir, pre, u32, imm);                            \
+    }                                                                         \
+  } while (0)
+#else
+#define arm_ldr_pc_pool_or_mem(is_up, dir)                                    \
+  arm_access_memory(load, dir, pre, u32, imm)
 #endif
 
 #define translate_arm_instruction()                                           \
@@ -1836,7 +1864,7 @@ void translate_icache_sync() {
                                                                               \
     case 0x51:                                                                \
       /* LDR rd, [rn - imm] */                                                \
-      arm_access_memory(load, down, pre, u32, imm);                           \
+      arm_ldr_pc_pool_or_mem(0, down);                                        \
       break;                                                                  \
                                                                               \
     case 0x52:                                                                \
@@ -1876,7 +1904,7 @@ void translate_icache_sync() {
                                                                               \
     case 0x59:                                                                \
       /* LDR rd, [rn + imm] */                                                \
-      arm_access_memory(load, up, pre, u32, imm);                             \
+      arm_ldr_pc_pool_or_mem(1, up);                                          \
       break;                                                                  \
                                                                               \
     case 0x5A:                                                                \

@@ -196,12 +196,13 @@ struct FxBlock
 
 enum { MAXI = 24, MAXOPS = 100, HBITS = 12 };
 
-static const void	*s_lab[K_COUNT];
+static const void	*s_lab_m[3][K_COUNT];
+static bool			s_lab_ready;
 static uint8		s_kflags[K_COUNT], s_kcls[K_COUNT];
 static uint8		s_fw[K_COUNT], s_fr[K_COUNT], s_vg[K_COUNT];	// flags a kind writes / reads (1 sign+zero, 2 carry, 4 overflow), variant family
 static bool			s_ready;
 static uint64		s_spread[256], s_unpack[256];
-static FxBlock		*s_tab[1 << HBITS];
+static FxBlock		*s_tab_m[3][1 << HBITS];
 static uint8		*s_arena;
 static size_t		s_used, s_cap = 1536 * 1024;
 static uint32		s_epoch = 1;
@@ -281,7 +282,7 @@ static void fxf_init (void)
 
 void fx_blocksReset (void)
 {
-	memset(s_tab, 0, sizeof s_tab);
+	memset(s_tab_m, 0, sizeof s_tab_m);
 	s_used = 0;
 	s_resets++;
 	s_epoch++;
@@ -400,10 +401,10 @@ struct Dec
 	uint8	cnt[DC_N];
 };
 
-static void fxf_emit (Dec &D, int k, uint32 dd, uint32 ss, uint32 nn, uint32 aux, uint32 imm, uint32 off, uint32 a)
+static void fxf_emit (Dec &D, const void *const *lab, int k, uint32 dd, uint32 ss, uint32 nn, uint32 aux, uint32 imm, uint32 off, uint32 a)
 {
 	FxOp &o = D.ops[D.n++];
-	o.h = s_lab[k];
+	o.h = lab[k];
 	o.d = (uint8) dd; o.s = (uint8) ss; o.n = (uint8) nn; o.a = (uint8) k;
 	o.imm = (uint16) imm; o.off = (uint16) off; o.aux = aux;
 	D.cnt[s_kcls[k]]++;
@@ -418,9 +419,10 @@ static inline uint32 fxf_hash (uint32 key, uint32 ps) { return ((key ^ (ps * 0x2
 
 static inline uint32 fxf_pack (uint32 alt, uint32 b, uint32 s, uint32 d) { return alt | (b << 2) | (s << 3) | (d << 7); }
 
-static void fxf_flagpass (FxBlock *b);
-static FxBlock *fxf_store (const Dec &D, uint32 key, uint32 ps, uint32 pc, uint32 first, uint32 nfetch, uint32 ninstr, bool hasD, int clsD, bool slow)
+static void fxf_flagpass (FxBlock *b, const void *const *lab);
+static FxBlock *fxf_store (int mi, const Dec &D, uint32 key, uint32 ps, uint32 pc, uint32 first, uint32 nfetch, uint32 ninstr, bool hasD, int clsD, bool slow)
 {
+	const void *const *lab = s_lab_m[mi];
 	size_t sz = sizeof(FxBlock) + (D.n > 1 ? (D.n - 1) : 0) * sizeof(FxOp);
 	sz = (sz + 15) & ~(size_t) 15;
 	if (!s_arena)
@@ -438,25 +440,25 @@ static FxBlock *fxf_store (const Dec &D, uint32 key, uint32 ps, uint32 pc, uint3
 	b->lkPc[0] = b->lkPc[1] = 0xffffffffu;
 	if (D.n)
 		memcpy(b->ops, D.ops, D.n * sizeof(FxOp));
-	fxf_flagpass(b);
+	fxf_flagpass(b, lab);
 	// the end ops find their block (and its successor cache) through their own distance from it (in bytes)
 	for (int i = 0; i < D.n; i++)
 	{
-		if (b->ops[i].h == s_lab[K_END_SEQ] || b->ops[i].h == s_lab[K_END_J])
+		if (b->ops[i].h == lab[K_END_SEQ] || b->ops[i].h == lab[K_END_J])
 			b->ops[i].off = (uint16) (offsetof(FxBlock, ops) + i * sizeof(FxOp));
-		if (b->ops[i].h == s_lab[K_LJMP])
+		if (b->ops[i].h == lab[K_LJMP])
 			b->noChain = 1;
 	}
 	uint32 h = fxf_hash(key, ps);
-	b->next = s_tab[h];
-	s_tab[h] = b;
+	b->next = s_tab_m[mi][h];
+	s_tab_m[mi][h] = b;
 	return b;
 }
 
 // Dead-flag elimination: at the end of a block every flag is live (the next block, the reference and the CPU
 // read them); going backwards, an op only has to write the flags that a later op reads before another op
 // overwrites them. A block runs as a whole, so nothing can look at the flags in between.
-static void fxf_flagpass (FxBlock *b)
+static void fxf_flagpass (FxBlock *b, const void *const *lab)
 {
 	uint32 live = 7;
 	for (int i = (int) b->nops - 1; i >= 0; i--)
@@ -468,10 +470,10 @@ static void fxf_flagpass (FxBlock *b)
 			uint32 need = live & w;
 			switch (s_vg[k])
 			{
-				case 3: o.h = s_lab[k - 7 + need]; break;
-				case 2: o.h = s_lab[k - 3 + (need & 3)]; break;
-				case 1: o.h = s_lab[k - 1 + (need & 1)]; break;
-				case 4: o.h = s_lab[k - 3 + ((need & 1) | ((need >> 1) & 2))]; break;
+				case 3: o.h = lab[k - 7 + need]; break;
+				case 2: o.h = lab[k - 3 + (need & 3)]; break;
+				case 1: o.h = lab[k - 1 + (need & 1)]; break;
+				case 4: o.h = lab[k - 3 + ((need & 1) | ((need >> 1) & 2))]; break;
 			}
 			live &= ~w;
 		}
@@ -481,8 +483,9 @@ static void fxf_flagpass (FxBlock *b)
 
 // Decode the block that starts with the pipe byte at pc - 1, entered with the prefix state ps
 // (ALT bits, B, source and destination register; see fxf_pack).
-static FxBlock *fxf_decode (uint32 pbr, uint32 pc, uint32 ps)
+static FxBlock *fxf_decode (int mi, uint32 pbr, uint32 pc, uint32 ps)
 {
+	const void *const *lab = s_lab_m[mi];
 	const uint8 *code = GSU.apvRomBank[pbr & 0xff];
 	uint32 key = (pbr << 16) | pc;
 	uint32 ia0 = (pc - 1) & 0xffff;
@@ -493,7 +496,7 @@ static FxBlock *fxf_decode (uint32 pbr, uint32 pc, uint32 ps)
 	st_decodes++;
 #endif
 	if (fxf_isRam(code))
-		return fxf_store(D, key, ps, pc, 0, 0, 0, false, 0, true);
+		return fxf_store(mi, D, key, ps, pc, 0, 0, 0, false, 0, true);
 
 	uint32 pos = 0, ninstr = 0, fetchLen = 0;
 	uint32 alt = ps & 3, b = (ps >> 2) & 1, s = (ps >> 3) & 15, d = (ps >> 7) & 15;
@@ -504,7 +507,7 @@ static FxBlock *fxf_decode (uint32 pbr, uint32 pc, uint32 ps)
 	auto cut = [&]()
 	{
 		if (pos == 0) { slow = true; D.n = 0; memset(D.cnt, 0, sizeof D.cnt); }
-		else { fxf_emit(D, K_END_SEQ, 0, 0, 0, pos, fxf_pack(alt, b, s, d), 0, 0); fetchLen = pos; }
+		else { fxf_emit(D, lab, K_END_SEQ, 0, 0, 0, pos, fxf_pack(alt, b, s, d), 0, 0); fetchLen = pos; }
 		done = true;
 	};
 	// the R15 reader prelude
@@ -512,7 +515,7 @@ static FxBlock *fxf_decode (uint32 pbr, uint32 pc, uint32 ps)
 	{
 		uint8 f = s_kflags[k];
 		if (((f & P_RS) && ss == 15) || ((f & P_RN) && nn == 15))
-			fxf_emit(D, K_PC, 0, 0, 0, 0, 0, posMain, 0);
+			fxf_emit(D, lab, K_PC, 0, 0, 0, 0, 0, posMain, 0);
 	};
 	// The delay slot instruction after a jump-like op, executed in prefix state st = (a2, b2, s2, d2).
 	// false (and nothing emitted): the block has to end before the jump.
@@ -565,15 +568,15 @@ static FxBlock *fxf_decode (uint32 pbr, uint32 pc, uint32 ps)
 				return false;
 		}
 		if (!fold)
-			fxf_emit(D, K_DFETCH, 0, 0, 0, 0, 0, 0, 0);
+			fxf_emit(D, lab, K_DFETCH, 0, 0, 0, 0, 0, 0, 0);
 		if (k >= 0)
 		{
-			fxf_emit(D, k, dd, ss, nn, aux, imm, 0, 0);
+			fxf_emit(D, lab, k, dd, ss, nn, aux, imm, 0, 0);
 			if (r14)
-				fxf_emit(D, K_READR14, 0, 0, 0, 0, 0, 0, 0);
+				fxf_emit(D, lab, K_READR14, 0, 0, 0, 0, 0, 0, 0);
 			clsD = s_kcls[k];
 		}
-		fxf_emit(D, K_END_J, 0, 0, 0, 0, nst, 0, 0);
+		fxf_emit(D, lab, K_END_J, 0, 0, 0, 0, nst, 0, 0);
 #ifdef FX_STATS
 		rj.ok = true;
 #endif
@@ -586,7 +589,7 @@ static FxBlock *fxf_decode (uint32 pbr, uint32 pc, uint32 ps)
 		uint8 c0[DC_N];
 		memcpy(c0, D.cnt, sizeof c0);
 		needPC(k, ss, nn, pos);
-		fxf_emit(D, k, dd, ss, nn, aux, imm, off, 0);
+		fxf_emit(D, lab, k, dd, ss, nn, aux, imm, off, 0);
 		// the jump-like ops (branches, LOOP, JMP, LJMP) account for the delay slot's first fetch themselves
 		bool fold = (k >= K_BRA && k <= K_LJMP);
 		bool ok = consumes ? delaySlot(pos + len, 0, 0, 0, 0, fold) : delaySlot(pos + len, alt, b, s, d, fold);
@@ -640,9 +643,9 @@ static FxBlock *fxf_decode (uint32 pbr, uint32 pc, uint32 ps)
 				else
 				{
 					needPC(K_MOVE, s, I.n, pos);
-					fxf_emit(D, K_MOVE, 0, s, I.n, 0, 0, 0, 0);
+					fxf_emit(D, lab, K_MOVE, 0, s, I.n, 0, 0, 0, 0);
 					if (I.n == 14)
-						fxf_emit(D, K_READR14, 0, 0, 0, 0, 0, 0, 0);
+						fxf_emit(D, lab, K_READR14, 0, 0, 0, 0, 0, 0, 0);
 					pos += 1;
 					clear();
 				}
@@ -660,9 +663,9 @@ static FxBlock *fxf_decode (uint32 pbr, uint32 pc, uint32 ps)
 				else
 				{
 					needPC(K_MOVES, s, I.n, pos);
-					fxf_emit(D, K_MOVES, d, s, I.n, 0, 0, 0, 0);
+					fxf_emit(D, lab, K_MOVES, d, s, I.n, 0, 0, 0, 0);
 					if (d == 14)
-						fxf_emit(D, K_READR14, 0, 0, 0, 0, 0, 0, 0);
+						fxf_emit(D, lab, K_READR14, 0, 0, 0, 0, 0, 0, 0);
 					pos += 1;
 					clear();
 				}
@@ -672,14 +675,14 @@ static FxBlock *fxf_decode (uint32 pbr, uint32 pc, uint32 ps)
 				clear();
 				continue;
 			case T_STOP:
-				fxf_emit(D, K_STOP, 0, 0, 0, pos + 1, 0, 0, 0);
+				fxf_emit(D, lab, K_STOP, 0, 0, 0, pos + 1, 0, 0, 0);
 				fetchLen = pos + 1;
 				pos += 1;
 				done = true;
 				continue;
 			case T_CACHE:
-				fxf_emit(D, K_CACHE, 0, 0, 0, pos, 0, 0, 0);
-				fxf_emit(D, K_END_SEQ, 0, 0, 0, pos + 1, 0, 0, 0);
+				fxf_emit(D, lab, K_CACHE, 0, 0, 0, pos, 0, 0, 0);
+				fxf_emit(D, lab, K_END_SEQ, 0, 0, 0, pos + 1, 0, 0, 0);
 				fetchLen = pos + 1;
 				pos += 1;
 				done = true;
@@ -713,10 +716,10 @@ static FxBlock *fxf_decode (uint32 pbr, uint32 pc, uint32 ps)
 		if (k == K_RPIX)
 		{
 			// the reference leaves the prefix state alone when the pixel is off screen: imm is the state to continue with
-			fxf_emit(D, K_RPIX, dd, ss, 0, 0, fxf_pack(alt, b, s, d), pos + 1, 0);
+			fxf_emit(D, lab, K_RPIX, dd, ss, 0, 0, fxf_pack(alt, b, s, d), pos + 1, 0);
 			if (dd == 14)
-				fxf_emit(D, K_READR14, 0, 0, 0, 0, 0, 0, 0);
-			fxf_emit(D, K_END_SEQ, 0, 0, 0, pos + 1, 0, 0, 0);
+				fxf_emit(D, lab, K_READR14, 0, 0, 0, 0, 0, 0, 0);
+			fxf_emit(D, lab, K_END_SEQ, 0, 0, 0, pos + 1, 0, 0, 0);
 			fetchLen = pos + 1;
 			pos += 1;
 			done = true;
@@ -732,15 +735,15 @@ static FxBlock *fxf_decode (uint32 pbr, uint32 pc, uint32 ps)
 			continue;
 		}
 		needPC(k, ss, I.n, pos);
-		fxf_emit(D, k, dd, ss, I.n, aux, I.imm, 0, 0);
+		fxf_emit(D, lab, k, dd, ss, I.n, aux, I.imm, 0, 0);
 		if (((f & P_WD) && dd == 14) || ((k == K_INC || k == K_DEC || k == K_IBT || k == K_IWT || k == K_LMS || k == K_LM) && I.n == 14))
-			fxf_emit(D, K_READR14, 0, 0, 0, 0, 0, 0, 0);
+			fxf_emit(D, lab, K_READR14, 0, 0, 0, 0, 0, 0, 0);
 		pos += I.len;
 		clear();
 	}
 	if (slow)
-		return fxf_store(D, key, ps, pc, 0, 0, 0, false, 0, true);
-	return fxf_store(D, key, ps, pc, code[ia0], fetchLen, ninstr, hasD, clsD, false);
+		return fxf_store(mi, D, key, ps, pc, 0, 0, 0, false, 0, true);
+	return fxf_store(mi, D, key, ps, pc, code[ia0], fetchLen, ninstr, hasD, clsD, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -846,15 +849,17 @@ template <int MODE> static uint32 fxf_exec (uint32 cyc, bool init)
 #define X(n) &&L_##n,
 	static const void *const labs[K_COUNT] = { FXK_LIST(X) };
 #undef X
+	const int mi = (MODE == 0) ? 0 : (MODE == 3) ? 2 : 1;
 	if (init)
 	{
-		memcpy(s_lab, labs, sizeof labs);
+		memcpy(s_lab_m[mi], labs, sizeof labs);
 		return 0;
 	}
 
 	uint32 *const R = GSU.avReg;
-	// one copy of this function per plot depth (MODE 0: 2 bits, 1: 4 bits (modes 1 and 2), 3: 8 bits); the blocks
-	// hold the labels of the copy that decoded them, so they are dropped when the depth changes (fxf_run)
+	// one copy of this function per plot depth (MODE 0: 2 bits, 1: 4 bits (modes 1 and 2), 3: 8 bits); each depth
+	// keeps its own hash table s_tab_m[mi] so mid-frame depth switches do not flush cached blocks
+	FxBlock **const tab = s_tab_m[mi];
 	const uint32 mode = MODE;
 	const uint32 cMem = GSU.vCostMem, cCache = GSU.vCostCache;
 	FxOp *o;
@@ -872,12 +877,12 @@ next:
 	pc = R[15] & 0xffff;
 	pbr = GSU.vPrgBankReg;
 	key = (pbr << 16) | pc;
-	blk = s_tab[fxf_hash(key, ps)];
+	blk = tab[fxf_hash(key, ps)];
 	while (blk && (blk->key != key || blk->ps != ps))
 		blk = blk->next;
 	if (!blk)
 	{
-		blk = fxf_decode(pbr, pc, ps);
+		blk = fxf_decode(mi, pbr, pc, ps);
 		if (!blk)
 			goto slow1;
 	}
@@ -911,12 +916,12 @@ nextc:
 			pbr = GSU.vPrgBankReg;
 			key = (pbr << 16) | pc;
 			uint32 r0 = s_resets;
-			blk = s_tab[fxf_hash(key, ps)];
+			blk = tab[fxf_hash(key, ps)];
 			while (blk && (blk->key != key || blk->ps != ps))
 				blk = blk->next;
 			if (!blk)
 			{
-				blk = fxf_decode(pbr, pc, ps);
+				blk = fxf_decode(mi, pbr, pc, ps);
 				if (!blk)
 				{
 					PIPE_FROM_R15();
@@ -1488,16 +1493,12 @@ static uint32 fxf_run (uint32 nInstructions)
 {
 	if (!s_ready)
 		fxf_init();
+	if (!s_lab_ready)
 	{
-		static int s_depth = -1;
-		int d = (GSU.vMode == 0) ? 0 : (GSU.vMode == 3) ? 3 : 1;
-		if (d != s_depth)
-		{
-			if (s_depth >= 0)
-				fx_blocksReset();
-			s_depth = d;
-			if (d == 0) fxf_exec<0>(0, true); else if (d == 3) fxf_exec<3>(0, true); else fxf_exec<1>(0, true);
-		}
+		fxf_exec<0>(0, true);
+		fxf_exec<1>(0, true);
+		fxf_exec<3>(0, true);
+		s_lab_ready = true;
 	}
 #ifdef FX_STATS
 	static bool sreg;

@@ -3500,14 +3500,30 @@ static void wide_soft_frame(u32 m)
 /* WIDE_FILL_STRETCH: the 240 pixels drawn across the whole wide line. */
 static void wide_stretch_fill(const u16 *center, u16 *out, u32 w)
 {
+  if (w <= 1) {
+    if (w == 1)
+      out[0] = center[0];
+    return;
+  }
+  const u32 den = w - 1;
+  const u32 step_q = (239u * 256u) / den;
+  const u32 step_r = (239u * 256u) % den;
+  u32 pos = 0, rem = 0;
+
   for (u32 x = 0; x < w; x++) {
-    const u32 pos = (x * 239u * 256u) / (w - 1);
     const u32 i = pos >> 8, f = pos & 255;
     const u32 p = center[i], q = center[i < 239 ? i + 1 : 239];
     const u32 r = ((p >> 11) * (256 - f) + (q >> 11) * f) >> 8;
     const u32 g = (((p >> 5) & 0x3F) * (256 - f) + ((q >> 5) & 0x3F) * f) >> 8;
     const u32 b = ((p & 0x1F) * (256 - f) + (q & 0x1F) * f) >> 8;
     out[x] = (u16)((r << 11) | (g << 5) | b);
+
+    pos += step_q;
+    rem += step_r;
+    if (rem >= den) {
+      rem -= den;
+      pos++;
+    }
   }
 }
 

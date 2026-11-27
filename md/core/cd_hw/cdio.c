@@ -52,7 +52,7 @@ static long io_pread(int fd, void *b, size_t n, int64_t off) { return (long)prea
 enum { SLOT_FREE = 0, SLOT_REQ, SLOT_BUSY, SLOT_READY, SLOT_ERR, SLOT_ABANDON };
 #define WAIT_US 2000              /* the longest the emulating thread waits for a block the helper is on (then it reads the bytes itself) */
 #define WAIT_NAPS 4000            /* the same bound counted in naps, for a platform without a clock */
-#define IDLE_US 250000            /* the longest a close (and cdio_end) waits for the helper (then the cache is orphaned / the helper is given up: see cdio_close, cdio_end) */
+#define IDLE_US 250000            /* the longest a close (and cdio_end) waits for the helper */
 #define IDLE_NAPS 100000
 #define NSTAT 10
 enum { K_RAW = 0, K_CHD = 1 };
@@ -109,6 +109,7 @@ static struct {
 	md_thread_ops opsv;                     /* the copy ops points to */
 	int enabled, running;
 	void *wake, *lock;
+	int wake_waiting;                       /* 1 while the helper is sleeping on H.wake (coalesces redundant sem_post) */
 	int stop;
 	cache_t *reg[MAXC]; int nreg;
 	cdio_file *files[MAXF]; int nfiles;
@@ -131,6 +132,11 @@ static void add(unsigned long *p, unsigned long v) { __atomic_fetch_add(p, v, __
 static unsigned long now_us(void) { return H.ops && H.ops->now_us ? (unsigned long)H.ops->now_us(H.ops->user) : 0; }
 static void lock(void) { H.ops->sem_wait(H.ops->user, H.lock); }
 static void unlock(void) { H.ops->sem_post(H.ops->user, H.lock); }
+static void wake_helper(void)
+{
+	if (__atomic_exchange_n(&H.wake_waiting, 0, __ATOMIC_SEQ_CST))
+		H.ops->sem_post(H.ops->user, H.wake);
+}
 /* a wait for the helper (the emulating thread): the platform's short sleep when it has one, else a yield. A yield gives way to equal or higher priority
  * threads only: with the helper below the emulating thread on the same core, a spin on yield would starve it */
 static void nap(void) { if (H.ops->nap) H.ops->nap(H.ops->user); else H.ops->yield(H.ops->user); }
@@ -369,8 +375,8 @@ static void request(cache_t *c, int64_t blk)
 	if (__atomic_load_n(&s->state, __ATOMIC_ACQUIRE) == SLOT_READY && !s->touched) add(&H.st[7], 1);      /* read ahead for nothing */
 	s->blk = blk; s->len = 0; s->touched = 0; s->used = ++c->tick;
 	__atomic_store_n(&s->seq, ++H.seq, __ATOMIC_RELAXED);
-	__atomic_store_n(&s->state, SLOT_REQ, __ATOMIC_RELEASE);
-	H.ops->sem_post(H.ops->user, H.wake);
+	__atomic_store_n(&s->state, SLOT_REQ, __ATOMIC_SEQ_CST);
+	wake_helper();
 }
 
 /* the slot holding `blk` finished, waiting for the helper when it is on it: 0 = there is no such block (read it yourself) */
@@ -440,12 +446,30 @@ static size_t async_read(cdio_file *f, int64_t off, uint8_t *dst, size_t len)
 			got += k;
 		} else {
 			const unsigned long t0 = now_us();
-			const size_t n = direct_read(f, pos, dst + got, len - got);     /* exactly the bytes asked for */
-			add(&H.st[2], 1); add(&H.st[4], now_us() - t0);
-			got += n;
-			last = (off + (int64_t)got - 1) / BLK;
-			if (last < blk) last = blk;
-			break;
+			int v = (len - got < BLK && find_slot(c, blk) < 0) ? pick_victim(c) : -1;
+			if (v >= 0) {
+				/* cache the full 16 KB block on small .cue/.bin misses so the next 7 sectors hit memory */
+				slot_t *s = &c->s[v];
+				if (__atomic_load_n(&s->state, __ATOMIC_ACQUIRE) == SLOT_READY && !s->touched) add(&H.st[7], 1);
+				const size_t rd = direct_read(f, blk * BLK, s->data, BLK);
+				add(&H.st[2], 1); add(&H.st[4], now_us() - t0);
+				s->blk = blk; s->len = rd; s->touched = 1; s->used = ++c->tick;
+				__atomic_store_n(&s->state, SLOT_READY, __ATOMIC_RELEASE);
+				if (boff >= rd) break;
+				{
+					size_t k = rd - boff;
+					if (k > len - got) k = len - got;
+					memcpy(dst + got, s->data + boff, k);
+					got += k;
+				}
+			} else {
+				const size_t n = direct_read(f, pos, dst + got, len - got);     /* exactly the bytes asked for */
+				add(&H.st[2], 1); add(&H.st[4], now_us() - t0);
+				got += n;
+				last = (off + (int64_t)got - 1) / BLK;
+				if (last < blk) last = blk;
+				break;
+			}
 		}
 	}
 	if (got) last = (off + (int64_t)got - 1) / BLK;
@@ -713,18 +737,31 @@ static void helper_work(cache_t *c, slot_t *s)
 	}
 }
 
+static int helper_has_work(void)
+{
+	int i, j, found = 0;
+	if (__atomic_load_n(&H.stop, __ATOMIC_SEQ_CST)) return 1;
+	lock();
+	for (i = 0; i < H.nreg && !found; i++) {
+		cache_t *c = H.reg[i];
+		for (j = 0; j < c->nslots; j++)
+			if (__atomic_load_n(&c->s[j].state, __ATOMIC_SEQ_CST) == SLOT_REQ) { found = 1; break; }
+	}
+	unlock();
+	return found;
+}
+
 static void helper_main(void *arg)
 {
 	(void)arg;
 	for (;;) {
-		H.ops->sem_wait(H.ops->user, H.wake);
 		if (__atomic_load_n(&H.stop, __ATOMIC_ACQUIRE)) break;
 		for (;;) {
 			cache_t *bc = NULL;
 			slot_t *bs = NULL;
 			unsigned bseq = 0;
 			int i, j, claimed = 0, need_open = 0, victim_fd = -1;
-				cache_t *orph;
+			cache_t *orph;
 			lock();
 			for (;;) {                                  /* the oldest request of all the caches */
 				bc = NULL; bs = NULL;
@@ -757,6 +794,14 @@ static void helper_main(void *arg)
 			}
 			if (__atomic_load_n(&H.stop, __ATOMIC_ACQUIRE)) break;
 		}
+		if (__atomic_load_n(&H.stop, __ATOMIC_ACQUIRE)) break;
+		__atomic_store_n(&H.wake_waiting, 1, __ATOMIC_SEQ_CST);
+		if (helper_has_work()) {
+			if (__atomic_exchange_n(&H.wake_waiting, 0, __ATOMIC_SEQ_CST) == 0)
+				H.ops->sem_wait(H.ops->user, H.wake);   /* producer already posted */
+			continue;
+		}
+		H.ops->sem_wait(H.ops->user, H.wake);
 	}
 	{   /* the last acts: free what is left and say that we do no more work (under the lock: a closer either sees `leaving` and frees its orphan itself, or has put
 		 * it on the list in time), then say that we are gone: after that nothing of the platform's ops, semaphores or caches is used by this thread */
@@ -781,15 +826,21 @@ static void warm_zlib(void)
 	}
 }
 
+static int cdio_reap_dead(void)
+{
+	if (!H.dead) return 1;
+	if (!__atomic_load_n(&H.done, __ATOMIC_ACQUIRE)) return 0;
+	if (H.ops && H.ops->wait_end) H.ops->wait_end(H.ops->user, MD_WORKER_DISC);
+	if (H.ops && H.ops->sem_destroy) { if (H.wake) H.ops->sem_destroy(H.ops->user, H.wake); if (H.lock) H.ops->sem_destroy(H.ops->user, H.lock); }
+	H.wake = H.lock = NULL; H.dead = 0;			   /* the helper that was given up has left since: reaped and ready for the next disc */
+	return 1;
+}
+
 void cdio_set_ops(const md_thread_ops *ops, int enabled)
 {
 	/* a helper that lives (running, or given up and not yet gone) keeps the functions it was started with: they are copied here, and the copy is not changed under it */
 	if (H.running) return;
-	if (H.dead) {
-		if (!__atomic_load_n(&H.done, __ATOMIC_ACQUIRE)) return;
-		if (H.ops && H.ops->sem_destroy) { if (H.wake) H.ops->sem_destroy(H.ops->user, H.wake); if (H.lock) H.ops->sem_destroy(H.ops->user, H.lock); }
-		H.wake = H.lock = NULL; H.dead = 0;			   /* the helper that was given up has left since: the next disc may have one again */
-	}
+	if (!cdio_reap_dead()) return;
 	if (ops) { H.opsv = *ops; H.ops = &H.opsv; } else H.ops = NULL;
 	H.enabled = ops && enabled && ops->sem_create && ops->sem_post && ops->sem_wait && ops->spawn && ops->wait_end && ops->yield;
 }
@@ -804,7 +855,8 @@ void cdio_begin(void)
 	int i;
 	memset(H.st, 0, sizeof H.st);
 	H.erng = 12345; H.hrng = 54321;
-	if (!H.enabled || H.running || H.dead) return;	   /* (dead: a helper that was given up still lives: no second one until it has left) */
+	if (!cdio_reap_dead()) return;
+	if (!H.enabled || H.running) return;
 	warm_zlib();
 	/* every file starts again with caches of the helper's kind */
 	for (i = 0; i < MAXF; i++) if (H.files[i] && H.files[i]->c.s && !H.files[i]->c.registered) cache_free(&H.files[i]->c);
@@ -812,7 +864,7 @@ void cdio_begin(void)
 	H.lock = H.ops->sem_create(H.ops->user);
 	if (!H.wake || !H.lock) { if (H.ops->sem_destroy) { if (H.wake) H.ops->sem_destroy(H.ops->user, H.wake); if (H.lock) H.ops->sem_destroy(H.ops->user, H.lock); } H.wake = H.lock = NULL; return; }
 	H.ops->sem_post(H.ops->user, H.lock);
-	H.stop = 0; H.nreg = 0; H.seq = 0; H.done = 0; H.leaving = 0; H.orph = NULL;
+	H.stop = 0; H.wake_waiting = 0; H.nreg = 0; H.seq = 0; H.done = 0; H.leaving = 0; H.orph = NULL;
 	if (H.ops->spawn(H.ops->user, MD_WORKER_DISC, helper_main, NULL)) {
 		if (H.ops->sem_destroy) { H.ops->sem_destroy(H.ops->user, H.wake); H.ops->sem_destroy(H.ops->user, H.lock); }
 		H.wake = H.lock = NULL;
@@ -828,8 +880,8 @@ void cdio_end(void)
 	const unsigned long t0 = now_us();
 	unsigned long n = 0;
 	if (!H.running) return;
-	__atomic_store_n(&H.stop, 1, __ATOMIC_RELEASE);
-	H.ops->sem_post(H.ops->user, H.wake);
+	__atomic_store_n(&H.stop, 1, __ATOMIC_SEQ_CST);
+	wake_helper();
 	/* wait for the helper to leave, a bounded time (it is not in a block unless the read of one is stalled; the join of the platform has no bound of its own) */
 	while (!(done = __atomic_load_n(&H.done, __ATOMIC_ACQUIRE))) {
 		nap();

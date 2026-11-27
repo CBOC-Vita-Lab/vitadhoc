@@ -432,12 +432,15 @@ u32 gbc_sound_master_volume;
 #define gbc_sound_render_samples(type, sample_length, envelope_op, sweep_op)  \
   for(i = 0; i < buffer_ticks; i++)                                           \
   {                                                                           \
-    current_sample =                                                          \
-     sample_data[fp16_16_to_u32(sample_index) % sample_length];               \
+    const u32 sidx = fp16_16_to_u32(sample_index);                            \
+    current_sample = sample_data[                                             \
+     (((sample_length) & ((sample_length) - 1)) == 0)                         \
+      ? (sidx & ((sample_length) - 1))                                        \
+      : (sidx % (sample_length))];                                            \
     gbc_sound_render_sample_##type();                                         \
                                                                               \
     sample_index += frequency_step;                                           \
-    buffer_index = (buffer_index + 2) % BUFFER_SIZE;                          \
+    buffer_index = (buffer_index + 2) & BUFFER_SIZE_MASK;                     \
                                                                               \
     update_tone_counters(envelope_op, sweep_op);                              \
   }                                                                           \
@@ -467,7 +470,7 @@ u32 gbc_sound_master_volume;
     if(sample_index >= u32_to_fp16_16(gbc_noise_wrap_##noise_type))           \
       sample_index -= u32_to_fp16_16(gbc_noise_wrap_##noise_type);            \
                                                                               \
-    buffer_index = (buffer_index + 2) % BUFFER_SIZE;                          \
+    buffer_index = (buffer_index + 2) & BUFFER_SIZE_MASK;                     \
     update_tone_counters(envelope_op, sweep_op);                              \
   }                                                                           \
 

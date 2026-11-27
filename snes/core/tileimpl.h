@@ -853,20 +853,43 @@ namespace TileImpl {
 						const uint32 n = (Right - x0) < Mode7Chunk ? (Right - x0) : Mode7Chunk;
 						// the plane position of a pixel is linear in its index, so when the first and the last pixel of the run are
 						// inside the plane (or the plane wraps) every pixel is: no per-pixel range test then
-						const int Xa = (AA + BB) >> 8, Ya = (CC + DD) >> 8;
-						const int Xb = (AA + (int) (n - 1) * aa + BB) >> 8, Yb = (CC + (int) (n - 1) * cc + DD) >> 8;
+						const int A0 = AA + BB, C0 = CC + DD;
+						const int Xa = A0 >> 8, Ya = C0 >> 8;
+						const int Xb = (A0 + (int) (n - 1) * aa) >> 8, Yb = (C0 + (int) (n - 1) * cc) >> 8;
 						if (!rep || (((Xa | Ya | Xb | Yb) & ~0x3ff) == 0))
 						{
+#if defined(__arm__) && !defined(__aarch64__)
+							// On Cortex-A9 (Vita), NEON->ARM lane transfer stalls ~20 cycles per 4 pixels;
+							// keep coordinate stepping in ARM GPRs, 4x unrolled, with BB/DD pre-folded into A0/C0.
+							int A2 = A0, C2 = C0;
+							uint32 i = 0;
+							for (; i + 4 <= n; i += 4)
+							{
+								const int X0 = (A2 >> 8) & 0x3ff, Y0 = (C2 >> 8) & 0x3ff; A2 += aa; C2 += cc;
+								const int X1 = (A2 >> 8) & 0x3ff, Y1 = (C2 >> 8) & 0x3ff; A2 += aa; C2 += cc;
+								const int X2 = (A2 >> 8) & 0x3ff, Y2 = (C2 >> 8) & 0x3ff; A2 += aa; C2 += cc;
+								const int X3 = (A2 >> 8) & 0x3ff, Y3 = (C2 >> 8) & 0x3ff; A2 += aa; C2 += cc;
+								pb[i]     = VRAM1[(VRAM0[((Y0 & ~7) << 5) + ((X0 >> 2) & ~1)] << 7) + ((Y0 & 7) << 4) + ((X0 & 7) << 1)] & OP::MASK;
+								pb[i + 1] = VRAM1[(VRAM0[((Y1 & ~7) << 5) + ((X1 >> 2) & ~1)] << 7) + ((Y1 & 7) << 4) + ((X1 & 7) << 1)] & OP::MASK;
+								pb[i + 2] = VRAM1[(VRAM0[((Y2 & ~7) << 5) + ((X2 >> 2) & ~1)] << 7) + ((Y2 & 7) << 4) + ((X2 & 7) << 1)] & OP::MASK;
+								pb[i + 3] = VRAM1[(VRAM0[((Y3 & ~7) << 5) + ((X3 >> 2) & ~1)] << 7) + ((Y3 & 7) << 4) + ((X3 & 7) << 1)] & OP::MASK;
+							}
+							for (; i < n; i++, A2 += aa, C2 += cc)
+							{
+								const int X = (A2 >> 8) & 0x3ff, Y = (C2 >> 8) & 0x3ff;
+								pb[i] = VRAM1[(VRAM0[((Y & ~7) << 5) + ((X >> 2) & ~1)] << 7) + ((Y & 7) << 4) + ((X & 7) << 1)] & OP::MASK;
+							}
+#else
 							// four pixels a step: the plane coordinates and the two byte addresses are made as vectors, the two
 							// loads are scalar. A run is rounded up to four pixels: the extra ones read inside VRAM (the
 							// coordinates are masked to the plane) and are never drawn
 							const s9x_v4i lane = { 0, 1, 2, 3 };
-							s9x_v4i Av = AA + lane * aa, Cv = CC + lane * cc;
+							s9x_v4i Av = A0 + lane * aa, Cv = C0 + lane * cc;
 							const s9x_v4i sa = { 4 * aa, 4 * aa, 4 * aa, 4 * aa }, sc = { 4 * cc, 4 * cc, 4 * cc, 4 * cc };
 							for (uint32 i = 0; i < n; i += 4)
 							{
-								const s9x_v4i X = ((Av + BB) >> 8) & 0x3ff;
-								const s9x_v4i Y = ((Cv + DD) >> 8) & 0x3ff;
+								const s9x_v4i X = (Av >> 8) & 0x3ff;
+								const s9x_v4i Y = (Cv >> 8) & 0x3ff;
 								const s9x_v4i a1 = ((Y & ~7) << 5) + ((X >> 2) & ~1);
 								const s9x_v4i a2 = ((Y & 7) << 4) + ((X & 7) << 1);
 								int ia[4], ib[4];
@@ -878,14 +901,15 @@ namespace TileImpl {
 								pb[i + 3] = VRAM1[(VRAM0[ia[3]] << 7) + ib[3]] & OP::MASK;
 								Av += sa; Cv += sc;
 							}
+#endif
 						}
 						else
 						{
-							int A2 = AA, C2 = CC;
+							int A2 = A0, C2 = C0;
 							for (uint32 i = 0; i < n; i++, A2 += aa, C2 += cc)
 							{
-								const int X = ((A2 + BB) >> 8);
-								const int Y = ((C2 + DD) >> 8);
+								const int X = A2 >> 8;
+								const int Y = C2 >> 8;
 								uint8 b;
 								if (((X | Y) & ~0x3ff) == 0)
 								{
@@ -990,9 +1014,28 @@ namespace TileImpl {
 			if (PPU.BGMosaic[OP::BG])
 			{
 				HMosaic = PPU.Mosaic;
-				MLeft  -= MLeft  % HMosaic;
-				MRight += HMosaic - 1;
-				MRight -= MRight % HMosaic;
+				if (g_wide_on)
+				{
+					int32 sL = (int32) Left + g_wide_dx;
+					int32 sR = (int32) Right + g_wide_dx;
+					int32 rL = sL % HMosaic;
+					if (rL < 0)
+						rL += HMosaic;
+					sL -= rL;
+					sR += HMosaic - 1;
+					int32 rR = sR % HMosaic;
+					if (rR < 0)
+						rR += HMosaic;
+					sR -= rR;
+					MLeft  = sL - g_wide_dx;
+					MRight = sR - g_wide_dx;
+				}
+				else
+				{
+					MLeft  -= MLeft  % HMosaic;
+					MRight += HMosaic - 1;
+					MRight -= MRight % HMosaic;
+				}
 			}
 
 			uint32	Offset = StartY * GFX.PPL;
@@ -1024,13 +1067,13 @@ namespace TileImpl {
 
 				if (PPU.Mode7HFlip)
 				{
-					startx = MRight - 1;
+					startx = g_wide_on ? 255 - ((int) MLeft + g_wide_dx) : MRight - 1;
 					aa = -l->MatrixA;
 					cc = -l->MatrixC;
 				}
 				else
 				{
-					startx = MLeft;
+					startx = g_wide_on ? (int) MLeft + g_wide_dx : MLeft;
 					aa = l->MatrixA;
 					cc = l->MatrixC;
 				}
@@ -1061,7 +1104,8 @@ namespace TileImpl {
 							for (int32 h = MosaicStart; h < VMosaic; h++)
 							{
 								for (int32 w = x + HMosaic - 1; w >= x; w--)
-									DRAW_PIXEL(w + h * GFX.PPL, (w >= (int32) Left && w < (int32) Right));
+									if (w >= (int32) Left && w < (int32) Right)
+										DRAW_PIXEL(w + h * GFX.PPL, 1);
 							}
 						}
 					}
@@ -1095,7 +1139,8 @@ namespace TileImpl {
 							for (int32 h = MosaicStart; h < VMosaic; h++)
 							{
 								for (int32 w = x + HMosaic - 1; w >= x; w--)
-									DRAW_PIXEL(w + h * GFX.PPL, (w >= (int32) Left && w < (int32) Right));
+									if (w >= (int32) Left && w < (int32) Right)
+										DRAW_PIXEL(w + h * GFX.PPL, 1);
 							}
 						}
 					}

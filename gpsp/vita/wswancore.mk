@@ -51,10 +51,10 @@ endif
 
 $(B)/wswan/blend.o: $(WS_DIR)/frontend/blend.c $(WS_DIR)/frontend/blend.h $(FLAGS_STAMP)
 	@mkdir -p $(dir $@)
-	$(CC) $(CORE_ARCH_FLAGS) -O2 -g -std=gnu99 -MMD -MP -c -o $@ $<
+	$(CC) $(CORE_ARCH_FLAGS) $(WS_OPT) -g -std=gnu99 -MMD -MP -c -o $@ $<
 $(B)/wswan/layout.o: $(WS_DIR)/frontend/layout.c $(WS_DIR)/frontend/layout.h $(FLAGS_STAMP)
 	@mkdir -p $(dir $@)
-	$(CC) $(CORE_ARCH_FLAGS) -O2 -g -std=gnu99 -MMD -MP -c -o $@ $<
+	$(CC) $(CORE_ARCH_FLAGS) $(WS_OPT) -g -std=gnu99 -MMD -MP -c -o $@ $<
 $(B)/wswan/wscore.o: $(GP)/wscore/wscore.c $(GP)/wscore/wscore.h $(WS_DIR)/frontend/host.h $(FE_STAMP)
 	@mkdir -p $(dir $@)
 	$(CC) $(FE_FLAGS) $(FE_INC) -MMD -MP -c -o $@ $<

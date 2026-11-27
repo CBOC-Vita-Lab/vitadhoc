@@ -69,6 +69,9 @@ int wide_vn, wide_vall = 1;
 /* VitAdhoc: the VDP worker (vdp_thread.h) learns about bulk VRAM changes and the status bits this file writes itself */
 #define VDPW_VRAM_ALL() { wide_vall = 1; if (vdpw_on) vdpw_vram_all_changed(); }
 #define VDPW_STATUS() { if (vdpw_on) vdpw_status_changed(); }
+#define VDPW_MARK_SAT(off) { if (vdpw_on) vdpw_mark_sat(off); }
+#define VDPW_MARK_VSRAM(off) { if (vdpw_on) vdpw_mark_vsram(off); }
+#define VDPW_SMALL_ALL() { if (vdpw_on) vdpw_small_all_changed(); }
 
 /* VINT timings */
 #define VINT_H32_MCYCLE (770)
@@ -285,6 +288,7 @@ void vdp_reset(void)
     VDPW_VRAM_ALL();
     memset((char *)cram, 0, sizeof(cram));
     memset((char *)vsram, 0, sizeof(vsram));
+    VDPW_SMALL_ALL();
   }
   memset((char *)reg, 0, sizeof(reg));
 
@@ -554,6 +558,7 @@ int vdp_context_load(uint8 *state)
     for (i = 0; i < 0x40; i++) ((uint16 *)cram)[i] &= cmask;
   }
   load_param(vsram, sizeof(vsram));
+  VDPW_SMALL_ALL();
   load_param(temp_reg, sizeof(temp_reg));
 
   /* restore VDP registers */
@@ -2394,6 +2399,7 @@ static void vdp_bus_w(unsigned int data)
       {
         /* Update internal SAT */
         *(uint16 *) &sat[index & sat_addr_mask] = data;
+        VDPW_MARK_SAT(index & sat_addr_mask);
       }
 
       /* Only write unique data to VRAM */
@@ -2471,6 +2477,7 @@ static void vdp_bus_w(unsigned int data)
     case 0x05:  /* VSRAM */
     {
       *(uint16 *)&vsram[addr & 0x7E] = data;
+      VDPW_MARK_VSRAM(addr & 0x7E);
 
       /* 2-cell Vscroll mode */
       if (reg[11] & 0x04)
@@ -2871,6 +2878,7 @@ static void vdp_z80_data_w_m5(unsigned int data)
       {
         /* Update internal SAT */
         WRITE_BYTE(sat, index & sat_addr_mask, data);
+        VDPW_MARK_SAT(index & sat_addr_mask);
       }
 
       /* Only write unique data to VRAM */
@@ -2933,6 +2941,7 @@ static void vdp_z80_data_w_m5(unsigned int data)
     {
       /* Write low byte to even address & high byte to odd address */
       WRITE_BYTE(vsram, (addr & 0x7F) ^ 1, data);
+      VDPW_MARK_VSRAM(addr & 0x7F);
       break;
     }
   }
@@ -3359,6 +3368,7 @@ static void vdp_dma_copy(unsigned int length)
       {
         /* Update internal SAT */
         WRITE_BYTE(sat, (addr & sat_addr_mask) ^ 1, data);
+        VDPW_MARK_SAT(addr & sat_addr_mask);
       }
 
       /* Write byte to adjacent VRAM destination address */
@@ -3400,6 +3410,7 @@ static void vdp_dma_fill(unsigned int length)
         {
           /* Update internal SAT */
           WRITE_BYTE(sat, (addr & sat_addr_mask) ^ 1, data);
+          VDPW_MARK_SAT(addr & sat_addr_mask);
         }
 
         /* Write byte to adjacent VRAM address */
@@ -3467,6 +3478,7 @@ static void vdp_dma_fill(unsigned int length)
       {
         /* Write VSRAM data */
         *(uint16 *)&vsram[addr & 0x7E] = data;
+        VDPW_MARK_VSRAM(addr & 0x7E);
           
         /* Increment VSRAM address */
         addr += reg[15];

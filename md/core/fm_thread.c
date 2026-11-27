@@ -17,6 +17,7 @@ typedef struct {
 	unsigned head;                         /* published by the producer */
 	unsigned tail;                         /* advanced by whoever consumes (the worker, or the emulating thread taking over), under `lock` */
 	int lock;                              /* 1 while a thread is consuming */
+	int want;                              /* 1 when the emulating thread wants to take over the lock */
 	int waiting;                           /* the worker sleeps on the semaphore */
 	int *buf;
 	/* producer private */
@@ -83,6 +84,7 @@ static void worker_main(void *arg)
 			const unsigned long long t0 = W.ops->now_us ? W.ops->now_us(W.ops->user) : 0;
 			int stop = 0;
 			for (;;) {
+				if (__atomic_load_n(&W.want, __ATOMIC_ACQUIRE)) break;
 				tail = LOADA(W.tail); head = LOADA(W.head);
 				if (tail == head) break;
 				if (!consume_one(tail)) { if (W.ring[tail & W.mask] == OP_STOP) { STOREA(W.tail, tail + 1); stop = 1; } break; }
@@ -108,7 +110,9 @@ static void publish(int wake)
 /* the emulating thread does what the worker has not got to: the same records, the same code, the same chip */
 static void take_over(void)
 {
+	__atomic_store_n(&W.want, 1, __ATOMIC_RELEASE);
 	while (!try_lock()) { if (W.ops->nap) W.ops->nap(W.ops->user); else W.ops->yield(W.ops->user); }     /* the worker is inside one record: it ends soon */
+	__atomic_store_n(&W.want, 0, __ATOMIC_RELEASE);
 	for (;;) {
 		const unsigned tail = LOADA(W.tail);
 		if (tail == W.ph) break;
@@ -137,7 +141,7 @@ static void wait_idle(void)
 	if (W.debug & 4) { take_over(); }
 	while (LOADA(W.tail) != W.ph) {
 		W.cen.join_wait_polls++;
-		if (++spins > 32) W.ops->yield(W.ops->user);
+		if (++spins > 16) { if (W.ops->nap) W.ops->nap(W.ops->user); else W.ops->yield(W.ops->user); }
 		if (t0 ? (W.ops->now_us(W.ops->user) - t0 > FMW_BOUND_US) : (spins > 4000)) { take_over(); break; }
 	}
 	W.tail_seen = W.ph;

@@ -207,6 +207,8 @@ void S9xStartScreenRefresh (void)
 	if (GFX.DoInterlace)
 		GFX.DoInterlace--;
 
+	PPU.MosaicStart = 0;
+
 	if (IPPU.RenderThisFrame)
 	{
 		if (!GFX.DoInterlace || !S9xInterlaceField())
@@ -222,7 +224,6 @@ void S9xStartScreenRefresh (void)
 			IPPU.RenderedFramesCount++;
 		}
 
-		PPU.MosaicStart = 0;
 		PPU.RecomputeClipWindows = TRUE;
 		IPPU.PreviousLine = IPPU.CurrentLine = 0;
 
@@ -2424,6 +2425,11 @@ struct WCache
 	uint8	*vz[SW_NPASS + 1];
 	uint16	*vsub;
 	uint8	*vsubz;
+	uint32	f_hits;			// cache hits / lines evaluated this frame (for hit-rate hysteresis)
+	uint32	f_lines;
+	uint8	low_streak;		// consecutive frames with <10% hit rate
+	uint8	cool;			// frames remaining to skip key hashing while scene scrolls every line
+	bool	probe_prime;	// first frame after cooldown: repopulating keys, do not penalize 0 hits
 };
 static WCache C;
 
@@ -2740,6 +2746,9 @@ static void wide_cache_reset (void)
 	}
 	memset(C.kvalid, 0, sizeof(C.kvalid));
 	memset(C.zd, 0, sizeof(C.zd));
+	C.f_hits = C.f_lines = 0;
+	C.low_streak = C.cool = 0;
+	C.probe_prime = false;
 }
 
 extern "C" void S9xWideRenderFrameStart (int margin)
@@ -2765,6 +2774,12 @@ extern "C" void S9xWideRenderFrameStart (int margin)
 	const bool moved = prev_m != W.m;		// the strips moved (first frame, other margin): clear everything once
 	prev_m = W.m;
 	C.fseq++;
+	C.f_hits = C.f_lines = 0;
+	if (__atomic_load_n(&g_s9x_wcache_verify, __ATOMIC_RELAXED))
+	{
+		C.low_streak = C.cool = 0;
+		C.probe_prime = false;
+	}
 	const bool want = __atomic_load_n(&g_s9x_wcache, __ATOMIC_RELAXED) != 0;
 	if (want)
 	{
@@ -3018,7 +3033,8 @@ static void wide_line_keys (const S9xRenderJob &job, int y0, int y1, int mode, u
 			const int shift = (mode == 0) ? 4 : (mode == 1) ? (n == 2 ? 4 : 5) : (n == 0 ? 6 : 5);
 			bh.add(0x42470000ull | (uint64) n);
 #if WCACHE_NEGATIVE_CONTROL != 1
-			bh.add(wide_vmax(job.vver, (uint32) PPU.BG[n].SCBase << 1, 0x2000));
+			const uint32 sc_bytes = 0x800u << ((PPU.BG[n].SCSize & 1) + ((PPU.BG[n].SCSize >> 1) & 1));
+			bh.add(wide_vmax(job.vver, (uint32) PPU.BG[n].SCBase << 1, sc_bytes));
 			bh.add(wide_vmax(job.vver, (uint32) PPU.BG[n].NameBase << 1, 1024u << shift));
 #endif
 		}
@@ -3272,12 +3288,12 @@ static void S9xWideBatch (const S9xRenderJob &job)
 	uint8 hit[SW_ROWS];
 	memset(hit + y0, 0, (size_t) (y1 - y0 + 1));
 	uint64 lkey[SW_ROWS][2];
-	const bool keyed = C.on && !C.shadow && job.vok;
+	const bool keyed = C.on && !C.shadow && job.vok && C.cool == 0;
 	if (keyed)
 		wide_line_keys(job, y0, y1, mode, tm, ts, pflags, lkey, hit);
 	else if (C.on)
 		for (int y = y0; y <= y1; y++)
-			C.kvalid[y] = 0;		// no key for these lines (no version numbers): drawn now, never reused
+			C.kvalid[y] = 0;		// no key for these lines (no version numbers or in cooldown): drawn now, never reused
 	if (C.on)
 		for (int y = y0; y <= y1; y++)
 			C.lseq[y] = C.fseq;
@@ -3286,6 +3302,11 @@ static void S9xWideBatch (const S9xRenderJob &job)
 	int nhit = 0;
 	for (int y = y0; y <= y1; y++)
 		nhit += hit[y];
+	if (keyed)
+	{
+		C.f_hits += (uint32) nhit;
+		C.f_lines += (uint32) (y1 - y0 + 1);
+	}
 	g_s9x_wcache_stat_add(2, 1);
 	g_s9x_wcache_stat_add(0, nhit);
 	g_s9x_wcache_stat_add(1, (y1 - y0 + 1) - nhit);
@@ -3346,6 +3367,27 @@ extern "C" void S9xWideFillView (struct SWideView *v)
 				C.zd[y] = 0;
 				C.kvalid[y] = 0;
 			}
+		if (!__atomic_load_n(&g_s9x_wcache_verify, __ATOMIC_RELAXED))
+		{
+			if (C.cool > 0)
+				C.cool--;
+			else if (C.probe_prime)
+				C.probe_prime = false;
+			else if (C.f_lines > 0)
+			{
+				if (C.f_hits * 10 < C.f_lines)
+				{
+					if (++C.low_streak >= 8)
+					{
+						C.cool = 30;
+						C.low_streak = 0;
+						C.probe_prime = true;
+					}
+				}
+				else
+					C.low_streak = 0;
+			}
+		}
 	}
 	memset(v, 0, sizeof(*v));
 	v->m = W.m;

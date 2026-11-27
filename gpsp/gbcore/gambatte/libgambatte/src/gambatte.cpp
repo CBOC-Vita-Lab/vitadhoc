@@ -54,7 +54,7 @@ long GB::runFor(gambatte::video_pixel_t *const videoBuf, const int pitch,
 }
    
 void GB::Priv::full_init(bool const clearSram) {
-   SaveState state;
+   SaveState state = {};
    
    cpu.setStatePtrs(state);
    setInitState(state, cpu.isCgb(), gbaCgbMode, clearSram);
@@ -143,7 +143,7 @@ void GB::setDmgPaletteColor(unsigned palNum, unsigned colorNum, unsigned rgb32) 
 }
 
 bool GB::loadState(const void *data, size_t size) {
-   SaveState state;
+   SaveState state = {};
    p_->cpu.setStatePtrs(state);
 
    if (StateSaver::loadState(state, data, size)) {
@@ -155,14 +155,14 @@ bool GB::loadState(const void *data, size_t size) {
 }
 
 void GB::saveState(void *data) {
-   SaveState state;
+   SaveState state = {};
    p_->cpu.setStatePtrs(state);
    p_->cpu.saveState(state);
    StateSaver::saveState(state, data);
 }
 
 size_t GB::stateSize() const {
-   SaveState state;
+   SaveState state = {};
    p_->cpu.setStatePtrs(state);
    p_->cpu.saveState(state);
    return StateSaver::stateSize(state);
@@ -267,7 +267,7 @@ bool GB::gbadhocRtcSet(const GbadhocRtc &r) {
 }
 
 void GB::gbadhocRegs(unsigned char out[8], unsigned *pc) {
- SaveState state;
+ SaveState state = {};
  p_->cpu.setStatePtrs(state);
  p_->cpu.saveState(state);
  out[0] = state.cpu.b; out[1] = state.cpu.c; out[2] = state.cpu.d; out[3] = state.cpu.e;

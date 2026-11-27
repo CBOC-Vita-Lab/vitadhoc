@@ -76,17 +76,21 @@ typedef struct {
 typedef struct {
 	const md_thread_ops *ops;
 	void *sem;
+	void *idle_sem;                        /* wakes wait_idle() without busy-spinning */
 	uint32 *ring;
 	unsigned mask;
 	unsigned head;                         /* published by the producer */
 	unsigned tail;                         /* published by the worker after it has done a record */
 	int waiting;                           /* the worker sleeps on the semaphore */
+	int join_waiting;                      /* the producer sleeps on idle_sem in wait_idle() */
 	/* producer private */
 	unsigned ph, tail_seen;
 	int since_wake;
 	vdpw_state_t last_state;
 	int have_state;
 	uint8 sat_shadow[0x400], vsram_shadow[0x80];
+	uint32 sat_dirty;                      /* 32-bit dirty mask for 32 x 32-byte chunks of sat */
+	uint8 vsram_dirty;                     /* 4-bit dirty mask for 4 x 32-byte chunks of vsram */
 	int shadow_valid;
 	uint8 vdirty[0x800];
 	uint16 vlist[0x800];
@@ -190,20 +194,34 @@ static void emit_vram(void)
 	W.vn = 0;
 }
 
-/* the sprite attribute copy and the vertical scroll RAM: small, compared with what the worker holds and sent in 32 byte pieces */
+/* the sprite attribute copy and the vertical scroll RAM: only 32-byte chunks marked dirty by vdp_ctrl writes are checked */
 static void emit_small(void)
 {
-	unsigned i;
-	for (i = 0; i < sizeof sat / 32; i++)
-		if (!W.shadow_valid || memcmp(sat + i * 32, W.sat_shadow + i * 32, 32)) {
-			memcpy(W.sat_shadow + i * 32, sat + i * 32, 32);
-			reserve(2 + 8); put(OP_SAT); put(i); put_block(sat + i * 32, 8);
+	if (!W.shadow_valid) { W.sat_dirty = 0xFFFFFFFFu; W.vsram_dirty = 0x0Fu; }
+	if (W.sat_dirty) {
+		uint32 m = W.sat_dirty;
+		W.sat_dirty = 0;
+		while (m) {
+			const unsigned i = (unsigned) __builtin_ctz(m);
+			m &= m - 1;
+			if (!W.shadow_valid || memcmp(sat + i * 32, W.sat_shadow + i * 32, 32)) {
+				memcpy(W.sat_shadow + i * 32, sat + i * 32, 32);
+				reserve(2 + 8); put(OP_SAT); put(i); put_block(sat + i * 32, 8);
+			}
 		}
-	for (i = 0; i < sizeof vsram / 32; i++)
-		if (!W.shadow_valid || memcmp(vsram + i * 32, W.vsram_shadow + i * 32, 32)) {
-			memcpy(W.vsram_shadow + i * 32, vsram + i * 32, 32);
-			reserve(2 + 8); put(OP_VSRAM); put(i); put_block(vsram + i * 32, 8);
+	}
+	if (W.vsram_dirty) {
+		unsigned m = W.vsram_dirty;
+		W.vsram_dirty = 0;
+		while (m) {
+			const unsigned i = (unsigned) __builtin_ctz(m);
+			m &= m - 1;
+			if (!W.shadow_valid || memcmp(vsram + i * 32, W.vsram_shadow + i * 32, 32)) {
+				memcpy(W.vsram_shadow + i * 32, vsram + i * 32, 32);
+				reserve(2 + 8); put(OP_VSRAM); put(i); put_block(vsram + i * 32, 8);
+			}
 		}
+	}
 	W.shadow_valid = 1;
 }
 
@@ -221,6 +239,10 @@ void vdpw_mark_vram(unsigned name)
 	name &= 0x7FF;
 	if (!W.vdirty[name]) { W.vdirty[name] = 1; W.vlist[W.vn++] = (uint16) name; }
 }
+
+void vdpw_mark_sat(unsigned off) { W.sat_dirty |= 1u << ((off >> 5) & 31); }
+void vdpw_mark_vsram(unsigned off) { W.vsram_dirty |= (uint8) (1u << ((off >> 5) & 3)); }
+void vdpw_small_all_changed(void) { W.sat_dirty = 0xFFFFFFFFu; W.vsram_dirty = 0x0Fu; }
 
 void vdpw_vram_all_changed(void) { W.vall = 1; }
 void vdpw_status_changed(void) { if (vdpw_on) W.push_needed = 1; }
@@ -318,7 +340,16 @@ static void wait_idle(void)
 	publish(1);
 	while (LOADA(W.tail) != W.ph) {
 		W.cen.join_wait_polls++;
-		if (++spins > 64) W.ops->yield(W.ops->user);
+		if (++spins <= 16) continue;
+		if (W.idle_sem) {
+			__atomic_store_n(&W.join_waiting, 1, __ATOMIC_SEQ_CST);
+			if (__atomic_load_n(&W.tail, __ATOMIC_SEQ_CST) == W.ph) {
+				if (__atomic_exchange_n(&W.join_waiting, 0, __ATOMIC_SEQ_CST)) break;
+			}
+			W.ops->sem_wait(W.ops->user, W.idle_sem);
+		} else {
+			if (W.ops->nap) W.ops->nap(W.ops->user); else W.ops->yield(W.ops->user);
+		}
 	}
 	W.tail_seen = W.ph;
 	if (t0) W.cen.join_wait_us += (unsigned long) (W.ops->now_us(W.ops->user) - t0);
@@ -528,13 +559,22 @@ static void worker_main(void *arg)
 				n = 5;
 				break;
 			}
-			case OP_STOP: STOREA(W.tail, tail + 1); return;
+			case OP_STOP:
+				__atomic_store_n(&W.tail, tail + 1, __ATOMIC_SEQ_CST);
+				if (W.idle_sem && __atomic_exchange_n(&W.join_waiting, 0, __ATOMIC_SEQ_CST))
+					W.ops->sem_post(W.ops->user, W.idle_sem);
+				return;
 			default: n = 1; break;
 			}
 			tail += n;
 			STOREA(W.tail, tail);
 		}
-		if (t0) __atomic_store_n(&W.vdp_busy, W.vdp_busy + (W.ops->now_us(W.ops->user) - t0), __ATOMIC_RELAXED); }
+		if (t0) __atomic_store_n(&W.vdp_busy, W.vdp_busy + (W.ops->now_us(W.ops->user) - t0), __ATOMIC_RELAXED);
+		__atomic_thread_fence(__ATOMIC_SEQ_CST);
+		if (W.idle_sem && __atomic_load_n(&W.join_waiting, __ATOMIC_SEQ_CST) && tail == __atomic_load_n(&W.head, __ATOMIC_SEQ_CST)) {
+			if (__atomic_exchange_n(&W.join_waiting, 0, __ATOMIC_SEQ_CST))
+				W.ops->sem_post(W.ops->user, W.idle_sem);
+		} }
 	}
 	(void) rec;
 }
@@ -549,13 +589,17 @@ int vdpw_start(const md_thread_ops *ops)
 	W.mask = QCAP_WORDS - 1;
 	W.sem = ops->sem_create(ops->user);
 	if (!W.sem) { free(W.ring); return 3; }
+	W.idle_sem = ops->sem_create(ops->user);
 	memset(&vw_bitmap, 0, sizeof vw_bitmap);
 	W.push_needed = 1;
 	W.vall = 1;                                  /* the first drawing call carries the whole VRAM */
+	W.sat_dirty = 0xFFFFFFFFu;
+	W.vsram_dirty = 0x0Fu;
 	vw_wide_cache_on = 1;
 	vdpw_on = 1;
 	if (ops->spawn(ops->user, MD_WORKER_VDP, worker_main, NULL)) {
 		vdpw_on = 0;
+		if (W.idle_sem) ops->sem_destroy(ops->user, W.idle_sem);
 		ops->sem_destroy(ops->user, W.sem);
 		free(W.ring);
 		return 4;
@@ -572,8 +616,10 @@ void vdpw_stop(void)
 	publish(1);
 	W.ops->wait_end(W.ops->user, MD_WORKER_VDP);
 	vdpw_on = 0;
+	if (W.idle_sem) W.ops->sem_destroy(W.ops->user, W.idle_sem);
 	W.ops->sem_destroy(W.ops->user, W.sem);
 	free(W.ring);
 	W.ring = 0;
+	W.idle_sem = 0;
 	W.started = 0;
 }

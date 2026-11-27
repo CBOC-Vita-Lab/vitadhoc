@@ -61,6 +61,7 @@ _##symbol:
 #define reg_x3            r6
 #define reg_x4            r7
 #define reg_x5            r8
+#define reg_x6            r10
 
 
 #define MODE_SUPERVISOR   0x13
@@ -97,12 +98,13 @@ _##symbol:
   ldr reg_x0, [reg_base, #REG_R0]                                            ;\
   ldr reg_x1, [reg_base, #REG_R1]                                            ;\
   ldr reg_x2, [reg_base, #REG_R6]                                            ;\
+  ldr reg_x6, [reg_base, #REG_R7]                                            ;\
   ldr reg_x3, [reg_base, #REG_R9]                                            ;\
   ldr reg_x4, [reg_base, #REG_R12]                                           ;\
   ldr reg_x5, [reg_base, #REG_R14]                                           ;\
 
 #define load_registers_thumb()                                               ;\
-  ldm reg_base, {reg_x0, reg_x1, reg_x2, reg_x3, reg_x4, reg_x5}
+  ldm reg_base, {reg_x0, reg_x1, reg_x2, reg_x3, reg_x4, reg_x5, reg_x6}
 
 
 @ Will store the register set from cached registers back to memory.
@@ -111,19 +113,21 @@ _##symbol:
   str reg_x0, [reg_base, #REG_R0]                                            ;\
   str reg_x1, [reg_base, #REG_R1]                                            ;\
   str reg_x2, [reg_base, #REG_R6]                                            ;\
+  str reg_x6, [reg_base, #REG_R7]                                            ;\
   str reg_x3, [reg_base, #REG_R9]                                            ;\
   str reg_x4, [reg_base, #REG_R12]                                           ;\
   str reg_x5, [reg_base, #REG_R14]                                           ;\
 
 #define store_registers_thumb()                                              ;\
-  stm reg_base, {reg_x0, reg_x1, reg_x2, reg_x3, reg_x4, reg_x5}
+  stm reg_base, {reg_x0, reg_x1, reg_x2, reg_x3, reg_x4, reg_x5, reg_x6}
 
 #define store_registers_cond()                                               ;\
-  stmne reg_base, {reg_x0, reg_x1, reg_x2, reg_x3, reg_x4, reg_x5}           ;\
+  stmne reg_base, {reg_x0, reg_x1, reg_x2, reg_x3, reg_x4, reg_x5, reg_x6}   ;\
   bne 80f                                                                    ;\
   str reg_x0, [reg_base, #REG_R0]                                            ;\
   str reg_x1, [reg_base, #REG_R1]                                            ;\
   str reg_x2, [reg_base, #REG_R6]                                            ;\
+  str reg_x6, [reg_base, #REG_R7]                                            ;\
   str reg_x3, [reg_base, #REG_R9]                                            ;\
   str reg_x4, [reg_base, #REG_R12]                                           ;\
   str reg_x5, [reg_base, #REG_R14]                                           ;\
@@ -182,6 +186,7 @@ _##symbol:
 @ address the call site loaded).  Leaves the flags alone.
 
 #define REG_LINK_CYC      (62 * 4)
+#define REG_PAL_UPDATED   (63 * 4)
 
 #ifdef GBA_LINK
 #define link_io_snapshot()                                                   ;\
@@ -586,19 +591,32 @@ return_to_main:
 #define store_align_16()  bic r0, r0, #0x01; extract_u16(r1, r1)
 #define store_align_32()  bic r0, r0, #0x03
 
+#if __ARM_ARCH >= 7
+#define mask_addr_8(nbits)                                                   ;\
+  ubfx r0, r0, #0, #(nbits)                /* isolate bottom n bits        */
+
+#define mask_addr_16(nbits)                                                  ;\
+  ubfx r0, r0, #0, #(nbits)                /* isolate bottom n bits        */;\
+  bic r0, r0, #1                           /* LSB is also zero             */
+
+#define mask_addr_32(nbits)                                                  ;\
+  ubfx r0, r0, #0, #(nbits)                /* isolate bottom n bits        */;\
+  bic r0, r0, #3                           /* 2 LSB are also zero          */
+#else
 #define mask_addr_8(nbits)                                                   ;\
   mov r0, r0, lsl #(32 - nbits)            /* isolate bottom n bits in top */;\
-  mov r0, r0, lsr #(32 - nbits)            /* high bits are now clear      */;\
+  mov r0, r0, lsr #(32 - nbits)            /* high bits are now clear      */
 
 #define mask_addr_16(nbits)                                                  ;\
   mov r0, r0, lsl #(32 - nbits)            /* isolate bottom n bits in top */;\
   mov r0, r0, lsr #(32 - nbits + 1)        /* high bits are now clear      */;\
-  mov r0, r0, lsl #1                       /* LSB is also zero             */;\
+  mov r0, r0, lsl #1                       /* LSB is also zero             */
 
 #define mask_addr_32(nbits)                                                  ;\
   mov r0, r0, lsl #(32 - nbits)            /* isolate bottom n bits in top */;\
   mov r0, r0, lsr #(32 - nbits + 2)        /* high bits are now clear      */;\
-  mov r0, r0, lsl #2                       /* 2 LSB are also zero          */;\
+  mov r0, r0, lsl #2                       /* 2 LSB are also zero          */
+#endif
 
 @ Vram, OAM and palette memories can only be accessed at a 16 bit boundary
 #define mask_addr_bus16_32(nbits) mask_addr_32(nbits)
@@ -629,6 +647,71 @@ return_to_main:
 @ The instruction at LR is not an inst but a u32 data that contains the PC
 @ Used for SMC. That's why return is essentially `pc = lr + 4`
 
+#if __ARM_ARCH >= 7
+#define execute_store_ram_stubs(store_type, str_op, load_op)                 ;\
+.syntax unified                                                            ;\
+.thumb                                                                     ;\
+.align 2                                                                   ;\
+.thumb_func                                                                ;\
+ext_store_iwram_u##store_type:                                             ;\
+  mask_addr_##store_type(15)              /* Mask to mirror memory (+align)*/;\
+  add.w r2, reg_base, #(IWRAM_OFF+0x8000) /* r2 = iwram base               */;\
+  str_op r1, [r0, r2]                     /* store data                    */;\
+  sub.w r2, r2, #0x8000                   /* r2 = iwram smc base           */;\
+  load_op r1, [r0, r2]                    /* r1 = SMC sentinel             */;\
+  cbnz r1, 1f                             /* if non-zero, perform smc write*/;\
+  add.w lr, lr, #4                        /* skip inline PC                */;\
+  bx lr                                   /* return to ARM (lr[0]==0)      */;\
+1:                                                                         ;\
+  save_flags()                            /* save live flags before ARM    */;\
+  adr r2, 3f                                                               ;\
+  bx r2                                                                    ;\
+                                                                           ;\
+.align 2                                                                   ;\
+.thumb_func                                                                ;\
+ext_store_ewram_u##store_type:                                             ;\
+  mask_addr_##store_type(18)              /* Mask to mirror memory (+align)*/;\
+  add.w r2, reg_base, #EWRAM_OFF          /* r2 = ewram base               */;\
+  str_op r1, [r0, r2]                     /* store data                    */;\
+  add.w r2, r2, #0x40000                  /* r2 = ewram smc base           */;\
+  load_op r1, [r0, r2]                    /* r1 = SMC sentinel             */;\
+  cbnz r1, 2f                             /* if non-zero, perform smc write*/;\
+  add.w lr, lr, #4                        /* skip inline PC                */;\
+  bx lr                                   /* return to ARM (lr[0]==0)      */;\
+2:                                                                         ;\
+  save_flags()                            /* save live flags before ARM    */;\
+  adr r2, 3f                                                               ;\
+  bx r2                                                                    ;\
+.arm                                                                       ;\
+.syntax divided                                                            ;\
+.align 2
+#else
+#define execute_store_ram_stubs(store_type, str_op, load_op)                 ;\
+ext_store_iwram_u##store_type:                                             ;\
+  save_flags()                                                             ;\
+  mask_addr_##store_type(15)              /* Mask to mirror memory (+align)*/;\
+  add r2, reg_base, #(IWRAM_OFF+0x8000)   /* r2 = iwram base               */;\
+  str_op r1, [r0, r2]                     /* store data                    */;\
+  sub r2, r2, #0x8000                     /* r2 = iwram smc base           */;\
+  load_op r1, [r0, r2]                    /* r1 = SMC sentinel             */;\
+  cmp r1, #0                              /* Check value, should be zero   */;\
+  bne 3f                                  /* if so perform smc write       */;\
+  restore_flags()                                                          ;\
+  add pc, lr, #4                          /* return                        */;\
+                                                                           ;\
+ext_store_ewram_u##store_type:                                             ;\
+  save_flags()                                                             ;\
+  mask_addr_##store_type(18)              /* Mask to mirror memory (+align)*/;\
+  add r2, reg_base, #EWRAM_OFF            /* r2 = ewram base               */;\
+  str_op r1, [r0, r2]                     /* store data                    */;\
+  add r2, r2, #0x40000                    /* r2 = ewram smc base           */;\
+  load_op r1, [r0, r2]                    /* r1 = SMC sentinel             */;\
+  cmp r1, #0                              /* Check value, should be zero   */;\
+  bne 3f                                  /* if so perform smc write       */;\
+  restore_flags()                                                          ;\
+  add pc, lr, #4                          /* return                        */
+#endif
+
 #define execute_store_builder(store_type, str_op, str_op16, load_op)         ;\
                                                                              ;\
 ext_store_u##store_type:                                                     ;\
@@ -653,38 +736,14 @@ ext_io_store_u##store_type:                                                  ;\
   restore_flags()                                                            ;\
   add pc, lr, #4                          /* return                        */;\
                                                                              ;\
-ext_store_iwram_u##store_type:                                               ;\
-  save_flags()                                                               ;\
-  mask_addr_##store_type(15)              /* Mask to mirror memory (+align)*/;\
-  add r2, reg_base, #(IWRAM_OFF+0x8000)   /* r2 = iwram base               */;\
-  str_op r1, [r0, r2]                     /* store data                    */;\
-  sub r2, r2, #0x8000                     /* r2 = iwram smc base           */;\
-  load_op r1, [r0, r2]                    /* r1 = SMC sentinel             */;\
-  cmp r1, #0                              /* Check value, should be zero   */;\
-  bne 3f                                  /* if so perform smc write       */;\
-  restore_flags()                                                            ;\
-  add pc, lr, #4                          /* return                        */;\
-                                                                             ;\
-ext_store_ewram_u##store_type:                                               ;\
-  save_flags()                                                               ;\
-  mask_addr_##store_type(18)              /* Mask to mirror memory (+align)*/;\
-  add r2, reg_base, #EWRAM_OFF            /* r2 = ewram base               */;\
-  str_op r1, [r0, r2]                     /* store data                    */;\
-  add r2, r2, #0x40000                    /* r2 = ewram smc base           */;\
-  load_op r1, [r0, r2]                    /* r1 = SMC sentinel             */;\
-  cmp r1, #0                              /* Check value, should be zero   */;\
-  bne 3f                                  /* if so perform smc write       */;\
-  restore_flags()                                                            ;\
-  add pc, lr, #4                          /* return                        */;\
+execute_store_ram_stubs(store_type, str_op, load_op)                         ;\
                                                                              ;\
 ext_store_vram_u##store_type:                                                ;\
-  save_flags()                                                               ;\
   mask_addr_bus16_##store_type(17)        /* Mask to mirror memory (+align)*/;\
   dup##store_type(r1)                     /* Duplicate byte if necessary   */;\
-  cmp r0, #0x18000                        /* Check if exceeds 96KB         */;\
-  subcs r0, r0, #0x8000                   /* Mirror to the last bank       */;\
+  and r2, r0, #0x10000                    /* Mirror >= 96KB (0x18000..     */;\
+  bic r0, r0, r2, lsr #1                  /*   0x1FFFF -> 0x10000..0x17FFF)*/;\
   add r2, reg_base, #VRAM_OFF             /* r2 = vram base                */;\
-  restore_flags()                                                            ;\
   str_op16 r1, [r0, r2]                   /* store data                    */;\
   mark_vram_page()                        /* vram_clean[page] = 0          */;\
   add pc, lr, #4                          /* return                        */;\
@@ -748,6 +807,8 @@ ext_store_palette_u16:
 
   add r1, reg_base, #PAL_CONV_OFF         // r1 = converted palette ram
   strh r2, [r0, r1]                       // Converted value write (r2)
+  mov r2, #1
+  str r2, [reg_base, #REG_PAL_UPDATED]
   add pc, lr, #4                          // return
 
 ext_store_palette_u32_safe:
@@ -774,6 +835,8 @@ ext_store_palette_u32:
   and r1, r1, #0x7C00
   orr r9, r1, lsr #10
   strh r9, [r0, r2]                       // Write second halfword
+  mov r2, #1
+  str r2, [reg_base, #REG_PAL_UPDATED]
 
   add pc, lr, #4                          // return
 
@@ -806,12 +869,10 @@ ext_store_ewram_u32_safe:
 
 ext_store_vram_u32_safe:
   mask_addr_8(17)                         @ Mask to mirror memory (no need to align!)
-  save_flags()
+  and r2, r0, #0x10000                    @ Mirror >= 96KB (0x18000..0x1FFFF)
+  bic r0, r0, r2, lsr #1                  @   to 0x10000..0x17FFF
   add r2, reg_base, #VRAM_OFF             @ r2 = vram base
-  cmp r0, #0x18000                        @ Check if exceeds 96KB
-  subcs r0, r0, #0x8000                   @ Mirror to the last bank
   str r1, [r0, r2]                        @ store data
-  restore_flags()
   mark_vram_page()                        @ vram_clean[page] = 0
   bx lr                                   @ Return
 
@@ -908,6 +969,27 @@ lookup_pc:
   bx r0                                   @ jump to new ARM block
 
 
+#if __ARM_ARCH >= 7
+#define exec_ld_op_s8(mirrorbits)                                            ;\
+  ubfx r0, r0, #0, #(mirrorbits)                                             ;\
+  ldrsb r0, [r2, r0]
+
+#define exec_ld_op_u8(mirrorbits)                                            ;\
+  ubfx r0, r0, #0, #(mirrorbits)                                             ;\
+  ldrb r0, [r2, r0]
+
+#define exec_ld_op_s16(mirrorbits)                                           ;\
+  ubfx r0, r0, #0, #(mirrorbits)                                             ;\
+  ldrsh r0, [r2, r0]
+
+#define exec_ld_op_u16(mirrorbits)                                           ;\
+  ubfx r0, r0, #0, #(mirrorbits)                                             ;\
+  ldrh r0, [r2, r0]
+
+#define exec_ld_op_u32(mirrorbits)                                           ;\
+  ubfx r0, r0, #0, #(mirrorbits)                                             ;\
+  ldr r0, [r2, r0]
+#else
 #define exec_ld_op_s8(mirrorbits)                                            ;\
   mov r0, r0, lsl #(32 - mirrorbits)                                         ;\
   mov r0, r0, lsr #(32 - mirrorbits)                                         ;\
@@ -930,11 +1012,53 @@ lookup_pc:
 
 #define exec_ld_op_u32(mirrorbits)                                           ;\
   mov r0, r0, lsl #(32 - mirrorbits)                                         ;\
-  ldr r0, [r2, r0, lsr #(32 - mirrorbits)]                                   ;\
+  ldr r0, [r2, r0, lsr #(32 - mirrorbits)]
+#endif
 
+#if __ARM_ARCH >= 7
+#define execute_load_bios_stub(load_type)                                    ;\
+.syntax unified                                                            ;\
+.thumb                                                                     ;\
+.align 2                                                                   ;\
+.thumb_func                                                                ;\
+ld_bios_##load_type:                      /* BIOS area, need to verify PC  */;\
+  ldr r1, [lr]                            /* r1 = PC                       */;\
+  lsr.w r2, r1, #15                       /* r2 = High addr bits from PC   */;\
+  cbnz r2, 1f                             /* Jump to slow handler          */;\
+  ldr.w r2, [reg_base, #RDMAP_OFF]        /* r2 = read_mem[0]              */;\
+  exec_ld_op_##load_type(15)              /* Clear upper bits (15 LSB)     */;\
+  add.w lr, lr, #4                                                           ;\
+  bx lr                                                                      ;\
+1:                                                                         ;\
+  save_flags()                                                               ;\
+  adr r2, 10f                                                                ;\
+  bx r2                                                                      ;\
+.arm                                                                       ;\
+.syntax divided                                                            ;\
+.align 2
 
-#define execute_load_builder(load_type, albits, load_function)               ;\
-                                                                             ;\
+#define execute_load_rdmap_slow_stub(load_type)                              ;\
+.syntax unified                                                            ;\
+.thumb                                                                     ;\
+.align 2                                                                   ;\
+.thumb_func                                                                ;\
+ld_rdmap_slow_##load_type:                                                 ;\
+  add.w r2, reg_base, #RDMAP_OFF          /* r2 = memory_map_read          */;\
+  lsr.w r1, r0, #15                       /* r1 = page index of address    */;\
+  ldr.w r2, [r2, r1, lsl #2]              /* r2 = base addr                */;\
+  cbz r2, 2f                              /* Page miss, go slow            */;\
+  exec_ld_op_##load_type(15)              /* Pages are 32KB big            */;\
+  add.w lr, lr, #4                                                           ;\
+  bx lr                                                                      ;\
+2:                                                                         ;\
+  save_flags()                                                               ;\
+  adr r2, 9f                                                                 ;\
+  bx r2                                                                      ;\
+.arm                                                                       ;\
+.syntax divided                                                            ;\
+.align 2
+#else
+#define execute_load_bios_stub(load_type)                                    ;\
 ld_bios_##load_type:                      /* BIOS area, need to verify PC  */;\
   save_flags()                                                               ;\
   ldr r1, [lr]                            /* r1 = PC                       */;\
@@ -944,7 +1068,24 @@ ld_bios_##load_type:                      /* BIOS area, need to verify PC  */;\
   ldr r2, [reg_base, #RDMAP_OFF]          /* r2 = read_mem[0]              */;\
   exec_ld_op_##load_type(15)              /* Clear upper bits (15 LSB)     */;\
   restore_flags()                                                            ;\
-  add pc, lr, #4                                                             ;\
+  add pc, lr, #4
+
+#define execute_load_rdmap_slow_stub(load_type)                              ;\
+ld_rdmap_slow_##load_type:                                                   ;\
+  save_flags()                                                               ;\
+  add r2, reg_base, #RDMAP_OFF            /* r2 = memory_map_read          */;\
+  mov r1, r0, lsr #15                     /* r1 = page index of address    */;\
+  ldr r2, [r2, r1, lsl #2]                /* r2 = base addr                */;\
+  cmp r2, #0                                                                 ;\
+  beq 9f                                  /* Page miss, go slow            */;\
+  exec_ld_op_##load_type(15)              /* Pages are 32KB big            */;\
+  restore_flags()                                                            ;\
+  add pc, lr, #4
+#endif
+
+#define execute_load_builder(load_type, albits, load_function)               ;\
+                                                                             ;\
+execute_load_bios_stub(load_type)                                            ;\
                                                                              ;\
 ld_ewram_##load_type:                     /* EWRAM area                    */;\
   add r2, reg_base, #EWRAM_OFF                                               ;\
@@ -982,17 +1123,7 @@ ld_oamram_##load_type:                    /* OAM RAM area                  */;\
   add pc, lr, #4                                                             ;\
                                                                              ;\
 /* ROM area: uses generic memory handlers to handle swapping */              ;\
-ld_rdmap_slow_##load_type:                                                   ;\
-  save_flags()                                                               ;\
-  add r2, reg_base, #RDMAP_OFF            /* r2 = memory_map_read          */;\
-  mov r1, r0, lsr #15                     /* r1 = page index of address    */;\
-  ldr r2, [r2, r1, lsl #2]                /* r2 = base addr                */;\
-  cmp r2, #0                                                                 ;\
-  beq 9f                                  /* Page miss, go slow            */;\
-                                                                             ;\
-  exec_ld_op_##load_type(15)              /* Pages are 32KB big            */;\
-  restore_flags()                                                            ;\
-  add pc, lr, #4                                                             ;\
+execute_load_rdmap_slow_stub(load_type)                                      ;\
                                                                              ;\
 /* ROM/VRAM area: uses generic memory handlers, assumes is mapped */         ;\
 ld_rdmap_##load_type:                                                        ;\

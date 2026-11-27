@@ -337,14 +337,20 @@ static int describe(const SnCore *c, Desc *D, int margin, int settle)
 	mh = D->mh = D->disty ? 60 : 30;
 
 	/* tile content hashes of the BG pattern table in force, for the names the ring uses */
+	/* mh is 30 or 60 (ry in 0..59), so / 30 and % 30 reduce to a single threshold. */
 	{
 		int rx, ry, name;
 		memset(D->used, 0, sizeof D->used);
-		for (ry = 0; ry < mh; ry++)
+		for (ry = 0; ry < mh; ry++) {
+			const int qy = ry < 30 ? 0 : 1;
+			const int cy = qy ? ry - 30 : ry;
+			const int row_slot = (D->disty ? qy : 0) << 1;
+			const int cy32 = cy * 32;
 			for (rx = 0; rx < mw; rx++) {
-				const uint8_t *np = c->nt[D->np[((D->disty ? ry / 30 : 0) << 1) | (D->distx ? rx / 32 : 0)]];
-				D->used[np[(ry % 30) * 32 + (rx & 31)]] = 1;
+				const uint8_t *np = c->nt[D->np[row_slot | (D->distx ? (rx >> 5) : 0)]];
+				D->used[np[cy32 + (rx & 31)]] = 1;
 			}
+		}
 		for (name = 0; name < 256; name++)
 			if (D->used[name]) D->gh[name] = tile_hash(c->chr[D->bp[name >> 6]] + (name & 63) * 16);
 	}
@@ -359,20 +365,26 @@ static int describe(const SnCore *c, Desc *D, int margin, int settle)
 	{
 		int rx, ry;
 		const uint32_t settle_n = (uint32_t) (settle ? settle - 1 : 2);
-		for (ry = 0; ry < mh; ry++)
+		for (ry = 0; ry < mh; ry++) {
+			const int qy = ry < 30 ? 0 : 1;
+			const int cy = qy ? ry - 30 : ry;
+			const int row_slot = (D->disty ? qy : 0) << 1;
+			const int cy32 = cy * 32;
+			const int ai_row = 0x3c0 + (cy >> 2) * 8;
+			const int cy_shift = (cy & 2) << 1;
 			for (rx = 0; rx < mw; rx++) {
-				const int slot = D->np[((D->disty ? ry / 30 : 0) << 1) | (D->distx ? rx / 32 : 0)];
+				const int slot = D->np[row_slot | (D->distx ? (rx >> 5) : 0)];
 				const uint8_t *np = c->nt[slot];
 				uint32_t ts, as, ft, fa, f, cc, a, k = (uint32_t)(ry * mw + rx);
-				int mid, cx = rx & 31, cy = ry % 30, id = c->sid[slot], ai = 0x3c0 + (cy >> 2) * 8 + (cx >> 2), name;
-				ts = c->stamp[id][cy * 32 + cx];
+				int mid, cx = rx & 31, id = c->sid[slot], ai = ai_row + (cx >> 2), name;
+				ts = c->stamp[id][cy32 + cx];
 				as = c->stamp[id][ai];
 				ft = ts >> 1; fa = as >> 1;
 				f = ft > fa ? ft : fa;
 				mid = ((ts & 1) && ft == c->frame) || ((as & 1) && fa == c->frame);
-				name = np[cy * 32 + cx];
+				name = np[cy32 + cx];
 				a = np[ai];
-				cc = (a >> ((cx & 2) + ((cy & 2) << 1))) & 3;
+				cc = (a >> ((cx & 2) + cy_shift)) & 3;
 				D->code[k] = (uint32_t) name | (cc << 8);
 				D->code2[k] = D->code[k];
 				D->hash[k] = mix32(D->code[k] * 0x10001u + 0x1234567u, D->gh[name]);
@@ -391,6 +403,7 @@ static int describe(const SnCore *c, Desc *D, int margin, int settle)
 					D->code2[k] = WK_CODE_NOREC;   /* nor recorded by the map until it has settled */
 				}
 			}
+		}
 	}
 
 	L = &fr->layer[0];

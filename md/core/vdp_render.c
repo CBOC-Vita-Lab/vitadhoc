@@ -524,6 +524,7 @@ static wide_cache_t *wide_cache;
 uint32 wide_gen = 1, wide_parse_gen;
 int wide_cache_on, wide_cache_check;
 unsigned long wide_cache_stat[3];    /* strips copied, strips drawn, check: copies that differed from a fresh draw */
+static int wc_last_line = 999, wc_hits = 0, wc_lines = 0, wc_low_streak = 0, wc_cool = 0, wc_prime = 0;
 #define WIDE_COLS(orig)   (wide_pass ? wide_cols : (orig))
 #define WIDE_VW           (wide_pass ? wide_px : bitmap.viewport.w)
 #define WIDE_SPR_DX       (wide_pass ? wide_dx : 0)
@@ -5017,6 +5018,8 @@ void render_reset(void)
 
   /* Reset Sprite infos */
   spr_ovr = spr_col = object_count[0] = object_count[1] = 0;
+  wc_last_line = 999;
+  wc_hits = wc_lines = wc_low_streak = wc_cool = wc_prime = 0;
 }
 
 
@@ -5189,9 +5192,30 @@ static void wide_line(int line, int spr_in)
 
     if (wide_cache_on)
     {
-      if (!wide_cache) wide_cache = (wide_cache_t *) calloc(256, sizeof(wide_cache_t));
-      ce = wide_cache ? &wide_cache[line] : NULL;
-      if (ce && ce->ok && ce->gen == wide_gen && wide_parse_gen == wide_gen && ce->spr_in == (uint8) spr_in && ce->side == (uint8) sidebits) hit = 1;
+      if (line < wc_last_line)
+      {
+        if (wide_cache_check) { wc_cool = wc_low_streak = wc_prime = 0; }
+        else if (wc_cool > 0) { wc_cool--; }
+        else if (wc_prime) { wc_prime = 0; }
+        else if (wc_lines > 0)
+        {
+          if (wc_hits * 10 < wc_lines)
+          {
+            if (++wc_low_streak >= 8) { wc_cool = 30; wc_low_streak = 0; wc_prime = 1; }
+          }
+          else wc_low_streak = 0;
+        }
+        wc_hits = 0; wc_lines = 0;
+      }
+      wc_last_line = line;
+      if (wide_cache_check || wc_cool == 0)
+      {
+        if (!wide_cache) wide_cache = (wide_cache_t *) calloc(256, sizeof(wide_cache_t));
+        ce = wide_cache ? &wide_cache[line] : NULL;
+        if (ce && ce->ok && ce->gen == wide_gen && wide_parse_gen == wide_gen && ce->spr_in == (uint8) spr_in && ce->side == (uint8) sidebits) hit = 1;
+        wc_lines++;
+        if (hit) wc_hits++;
+      }
     }
     if (hit && !wide_cache_check)
     {

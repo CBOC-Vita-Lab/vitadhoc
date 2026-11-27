@@ -172,7 +172,7 @@ static void thread_main(void *)
 {
 	for (;;) {
 		if (head.load(std::memory_order_acquire) != tail.load(std::memory_order_acquire)) {
-			if (want.load(std::memory_order_acquire) || !try_lock()) { s9xmt::cpu_relax(); continue; }
+			if (want.load(std::memory_order_acquire) || !try_lock()) { s9xmt::yield_cpu(); continue; }
 			unsigned h = head.load(std::memory_order_acquire), t = tail.load(std::memory_order_relaxed), n = 0;
 			uint64_t t0 = s9xmt::now_ns();
 			while (t != h && n < CHUNK) {

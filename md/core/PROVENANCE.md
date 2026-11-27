@@ -250,3 +250,10 @@ worker, on every test ROM) and `arm_check.sh`. Edits to upstream files:
 ### Open
 
 - None known in this part. (The Game Gear tile cache difference after a state load, recorded here before, is fixed: see "Run-ahead and exact state loads".)
+
+### RC5 exact performance & worker refinements (26 Nov 2026, 2.0)
+
+- `vdp_thread.h`, `vdp_thread.c`, `vdp_ctrl.c`: `vdp_ctrl.c` marks 32-byte dirty chunks of `sat` and `vsram` (`VDPW_MARK_SAT`, `VDPW_MARK_VSRAM`, `VDPW_SMALL_ALL`) on every write/reset/load so `emit_small()` checks only modified chunks instead of scanning all 1152 bytes every scanline; `wait_idle()` sleeps on an `idle_sem` semaphore after 16 spins instead of busy-polling.
+- `fm_thread.c`: `take_over()` raises an atomic `W.want` hint checked per record in `worker_main()` so the FM worker yields its lock promptly; `wait_idle()` uses `nap()` after 16 spins.
+- `vdp_render.c`: `wide_line()` skips `wide_cache` lookups and strip writebacks for 30 frames (re-probing after priming) when hit rate remains below 10% for 8 consecutive frames (always active when `wide_cache_check` is set); `wc_*` adaptive state is reset inside `render_reset()`.
+- `cd_hw/cdio.c`: raised `IDLE_US` to `250000` (250 ms); reaps timed-out `MD_WORKER_DISC` via `cdio_reap_dead()` (`wait_end` once `H.done == 1`) in `cdio_set_ops()`/`cdio_begin()`; coalesces redundant `sem_post(H.wake)` calls with `H.wake_waiting`; fills a full 16 KB cache slot on small `.cue`/`.bin` sequential misses.

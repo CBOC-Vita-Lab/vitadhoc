@@ -254,7 +254,12 @@ bool wsExecuteLine(MDFN_Surface *surface, bool skip)
 
 
    v30mz_execute(96);
-   wsLine = (wsLine + 1) % (MAX(144, LCDVtotal) + 1);
+   /* wsLine is 0..255 and vtotal is 145..256, so next <= 256 < 2 * vtotal. */
+   {
+      uint32 vtotal = (uint32)MAX(144, LCDVtotal) + 1;
+      uint32 next = (uint32)wsLine + 1;
+      wsLine = (uint8)(next >= vtotal ? next - vtotal : next);
+   }
    if(wsLine == LineCompare)
       WSwan_Interrupt(WSINT_LINE_HIT);
 
@@ -328,6 +333,90 @@ void WSwan_SetPixelFormat(int depth, uint32 mono_start, uint32 mono_end)
          }
 
    WSwan_SetMonoPalette(depth, mono_start, mono_end);
+}
+
+/* Draw active sprites for the current scanline; use_win is a compile-time
+ * constant per specialization so !(DispControl & 0x08) needs no in_window
+ * fill or per-pixel branch. */
+static inline void wsDrawSprites(uint8 *b_bg, uint8 *b_bg_pal, int vmode,
+                                 bool use_win, const bool *in_window)
+{
+   int xs, ts, as, ys, ysx, h;
+
+   for(h = SpriteCountCache[FrameWhichActive] - 1; h >= 0; h--)
+   {
+      ts = SpriteTable[FrameWhichActive][h][0];
+      as = SpriteTable[FrameWhichActive][h][1];
+      ysx = SpriteTable[FrameWhichActive][h][2];
+      xs = SpriteTable[FrameWhichActive][h][3];
+
+      if(xs >= 249) xs -= 256;
+
+      if(ysx > 150)
+         ys = (int8)ysx;
+      else
+         ys = ysx;
+
+      ys = wsLine - ys;
+
+      if(ys >= 0 && ys < 8 && xs < 224)
+      {
+         uint32 palette = ((as >> 1) & 0x7);
+         const bool win_inv = (as & 0x10) != 0;
+
+         ts |= (as&1) << 8;
+         wsGetTile(ts, ys, as & 0x80, as & 0x40, 0);
+
+         if(vmode)
+         {
+            if(vmode & 0x2)
+            {
+               int x;
+               for(x = 0; x < 8; x++)
+                  if(wsTileRow[x])
+                  {
+                     if((as & 0x20) || !(b_bg[xs + x + 7] & 0x10))
+                     {
+                        if(!use_win || (in_window[7 + xs + x] != win_inv))
+                        {
+                           b_bg[xs + x + 7] = wsTileRow[x] | (b_bg[xs + x + 7] & 0x10);
+                           b_bg_pal[xs + x + 7] = 8 + palette;
+                        }
+                     }
+                  }
+            }
+            else
+            {
+               int x;
+               for(x = 0; x < 8; x++)
+                  if(wsTileRow[x] || !(palette & 0x4))
+                  {
+                     if((as & 0x20) || !(b_bg[xs + x + 7] & 0x10))
+                     {
+                        if(!use_win || (in_window[7 + xs + x] != win_inv))
+                        {
+                           b_bg[xs + x + 7] = wsTileRow[x] | (b_bg[xs + x + 7] & 0x10);
+                           b_bg_pal[xs + x + 7] = 8 + palette;
+                        }
+                     }
+                  }
+            }
+         }
+         else
+         {
+            int x;
+            for(x = 0; x < 8; x++)
+               if(wsTileRow[x] || !(palette & 4))
+               {
+                  if((as & 0x20) || !(b_bg[xs + x + 7] & 0x10))
+                  {
+                     if(!use_win || (in_window[7 + xs + x] != win_inv))
+                        b_bg[xs + x + 7] = wsColors[wsMonoPal[8 + palette][wsTileRow[x]]] | (b_bg[xs + x + 7] & 0x10);
+                  }
+               }
+         }
+      }
+   }
 }
 
 void wsScanline(uint16 *target, int depth)
@@ -485,123 +574,17 @@ void wsScanline(uint16 *target, int depth)
 
    if((DispControl & 0x04) && SpriteCountCache[FrameWhichActive] && (LayerEnabled & 0x04))/* Sprites */
    {
-      int xs,ts,as,ys,ysx,h;
-      bool in_window[256 + 8*2];
-
       if(DispControl & 0x08)
       {
+         bool in_window[256 + 8*2];
          memset(in_window, 0, sizeof(in_window));
          if((wsLine >= SPRy0) && (wsLine <= SPRy1))
             for(j = SPRx0; j <= SPRx1 && j < 256; j++)
                in_window[7 + j] = 1;
+         wsDrawSprites(b_bg, b_bg_pal, wsVMode, true, in_window);
       }
       else
-         memset(in_window, 1, sizeof(in_window));
-
-      for(h = SpriteCountCache[FrameWhichActive] - 1; h >= 0; h--)
-      {
-         ts = SpriteTable[FrameWhichActive][h][0];
-         as = SpriteTable[FrameWhichActive][h][1];
-         ysx = SpriteTable[FrameWhichActive][h][2];
-         xs = SpriteTable[FrameWhichActive][h][3];
-
-         if(xs >= 249) xs -= 256;
-
-         if(ysx > 150) 
-            ys = (int8)ysx;
-         else 
-            ys = ysx;
-
-         ys = wsLine - ys;
-
-         if(ys >= 0 && ys < 8 && xs < 224)
-         {
-            uint32 palette = ((as >> 1) & 0x7);
-
-            ts |= (as&1) << 8;
-            wsGetTile(ts, ys, as & 0x80, as & 0x40, 0);
-
-            if(wsVMode)
-            {
-               if(wsVMode & 0x2)
-               {
-                  int x;
-                  for(x = 0; x < 8; x++)
-                     if(wsTileRow[x])
-                     {
-                        if((as & 0x20) || !(b_bg[xs + x + 7] & 0x10))
-                        {
-                           bool drawthis = 0;
-
-                           if(!(DispControl & 0x08)) 
-                              drawthis = true;
-                           else if((as & 0x10) && !in_window[7 + xs + x])
-                              drawthis = true;
-                           else if(!(as & 0x10) && in_window[7 + xs + x])
-                              drawthis = true;
-
-                           if(drawthis)
-                           {
-                              b_bg[xs + x + 7] = wsTileRow[x] | (b_bg[xs + x + 7] & 0x10);
-                              b_bg_pal[xs + x + 7] = 8 + palette;
-                           }
-                        }
-                     }
-               }
-               else
-               {
-                  int x;
-                  for(x = 0; x < 8; x++)
-                     if(wsTileRow[x] || !(palette & 0x4))
-                     {
-                        if((as & 0x20) || !(b_bg[xs + x + 7] & 0x10))
-                        {
-                           bool drawthis = 0;
-
-                           if(!(DispControl & 0x08))
-                              drawthis = true;
-                           else if((as & 0x10) && !in_window[7 + xs + x])
-                              drawthis = true;
-                           else if(!(as & 0x10) && in_window[7 + xs + x])
-                              drawthis = true;
-
-                           if(drawthis)
-                           {
-                              b_bg[xs + x + 7] = wsTileRow[x] | (b_bg[xs + x + 7] & 0x10);
-                              b_bg_pal[xs + x + 7] = 8 + palette;
-                           }
-                        }
-                     }
-
-               }
-
-            }
-            else
-            {
-               int x;
-               for(x = 0; x < 8; x++)
-                  if(wsTileRow[x] || !(palette & 4))
-                  {
-                     if((as & 0x20) || !(b_bg[xs + x + 7] & 0x10))
-                     {
-                        bool drawthis = false;
-
-                        if(!(DispControl & 0x08))
-                           drawthis = true;
-                        else if((as & 0x10) && !in_window[7 + xs + x])
-                           drawthis = true;
-                        else if(!(as & 0x10) && in_window[7 + xs + x])
-                           drawthis = true;
-
-                        if(drawthis)
-                           b_bg[xs + x + 7] = wsColors[wsMonoPal[8 + palette][wsTileRow[x]]] | (b_bg[xs + x + 7] & 0x10);
-                     }
-                  }
-
-            }
-         }
-      }
-
+         wsDrawSprites(b_bg, b_bg_pal, wsVMode, false, NULL);
    }	/* End sprite drawing */
 
    if(wsVMode)

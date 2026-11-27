@@ -556,10 +556,13 @@ void FASTAPASS(1) FCEU_SoundCPUHook(int cycles) {
 
 static void RDoPCM(void) {
 	uint32_t V;
+	int32_t pcm_out = (((int32_t)RawDALatch << 8) * FSettings.PCMVolume) & (~0xFFFF);
 
-	for (V = ChannelBC[4]; V < SOUNDTS; V++)
-		/* TODO: get rid of floating calculations to binary. set log volume scaling. */
-		WaveHi[V] += (((RawDALatch << 16) / 256) * FSettings.PCMVolume ) & (~0xFFFF);
+	if (pcm_out) {
+		for (V = ChannelBC[4]; V < SOUNDTS; V++)
+			/* TODO: get rid of floating calculations to binary. set log volume scaling. */
+			WaveHi[V] += pcm_out;
+	}
 
 	ChannelBC[4] = SOUNDTS;
 }
@@ -755,8 +758,12 @@ static void RDoTriangle(void) {
 	uint32_t V;
 	int32_t tcout = (tristep & 0xF);
 	uint32_t triangle_raw_period = (PSG[0xa] | ((PSG[0xb] & 7) << 8));
+	const int32_t tri_vol = FSettings.TriangleVolume;
+	int32_t tri_out;
 	if (!(tristep & 0x10)) tcout ^= 0xF;
 	tcout = (tcout * 3) << 16;	/* (tcout<<1); */
+	/* tcout is non-negative and a multiple of 65536, so tcout >> 8 equals tcout / 256. */
+	tri_out = ((tcout >> 8) * tri_vol) & (~0xFFFF);
 
 	/* The LQ tri/noise/PCM mixer (RDoTriangleNoisePCMLQ below) already
 	 * forces the triangle channel quiet when its period is low enough
@@ -771,9 +778,11 @@ static void RDoTriangle(void) {
 	    || (FSettings.RemoveTriangleNoise && triangle_raw_period <= 3)) {	/* Counter is halted, but we still need to output. */
 		int32_t *start = &WaveHi[ChannelBC[2]];
 		int32_t count = SOUNDTS - ChannelBC[2];
-		while (count--) {
-			*start += (tcout / 256 * FSettings.TriangleVolume) & (~0xFFFF);  /* TODO OPTIMIZE ME */
-			start++;
+		if (tri_out && count > 0) {
+			while (count--) {
+				*start += tri_out;
+				start++;
+			}
 		}
 
 		/* cout = (tcout / 256 * FSettings.TriangleVolume) & (~0xFFFF);
@@ -781,15 +790,17 @@ static void RDoTriangle(void) {
 			WaveHi[V] += cout; */
 
 	} else {
+		const uint32_t tri_reload = triangle_raw_period + 1;
 		for (V = ChannelBC[2]; V < SOUNDTS; V++) {
-			WaveHi[V] += (tcout / 256 * FSettings.TriangleVolume) & (~0xFFFF);  /* TODO OPTIMIZE ME! */
+			WaveHi[V] += tri_out;
 			wlcount[2]--;
 			if (!wlcount[2]) {
-				wlcount[2] = (PSG[0xa] | ((PSG[0xb] & 7) << 8)) + 1;
+				wlcount[2] = tri_reload;
 				tristep++;
 				tcout = (tristep & 0xF);
 				if (!(tristep & 0x10)) tcout ^= 0xF;
 				tcout = (tcout * 3) << 16;
+				tri_out = ((tcout >> 8) * tri_vol) & (~0xFFFF);
 			}
 		}
     }

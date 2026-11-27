@@ -303,8 +303,18 @@ void S9xAheadReset (void)
 {
 	built = false;
 	saved = false;
-	parts.clear();
-	buf.clear();
+	std::vector<Part>().swap(parts);
+	std::vector<uint8>().swap(buf);
+	std::vector<uint8>().swap(vram);
+	std::vector<uint8>().swap(obj);
+	std::vector<uint8>().swap(ctl);
+	std::vector<uint8>().swap(sa1l);
+	std::vector<uint8>().swap(msu);
+	std::vector<uint8>().swap(vage);
+	std::vector<uint8>().swap(uage);
+	std::vector<uint8>().swap(cht);
+	std::vector<uint8 *>().swap(map_keep);
+	std::vector<uint8 *>().swap(wmap_keep);
 	S9xAheadObjArm(NULL);
 	memset(&st, 0, sizeof st);
 }
@@ -340,8 +350,8 @@ bool S9xAheadSave (void)
 		dsp3_keep = S9xDSP3AheadState(NULL);
 	if (maps)
 	{
-		memcpy(&map_keep[0], Memory.Map, sizeof(Memory.Map));
-		memcpy(&wmap_keep[0], Memory.WriteMap, sizeof(Memory.WriteMap));
+		sync((uint8 *) &map_keep[0], (const uint8 *) Memory.Map, sizeof(Memory.Map));
+		sync((uint8 *) &wmap_keep[0], (const uint8 *) Memory.WriteMap, sizeof(Memory.WriteMap));
 		bwram_keep = Memory.BWRAM;
 	}
 	if (Settings.MSU1)
@@ -349,10 +359,10 @@ bool S9xAheadSave (void)
 	stamps = g_s9x_wide_stamp != 0;
 	if (stamps)
 	{
-		vage.resize(sizeof(g_s9x_vage));
-		uage.resize(sizeof(g_s9x_uage));
-		memcpy(&vage[0], g_s9x_vage, sizeof(g_s9x_vage));
-		memcpy(&uage[0], g_s9x_uage, sizeof(g_s9x_uage));
+		if (vage.size() != sizeof(g_s9x_vage)) vage.assign(sizeof(g_s9x_vage), 0);
+		if (uage.size() != sizeof(g_s9x_uage)) uage.assign(sizeof(g_s9x_uage), 0);
+		sync(&vage[0], (const uint8 *) g_s9x_vage, sizeof(g_s9x_vage));
+		sync(&uage[0], (const uint8 *) g_s9x_uage, sizeof(g_s9x_uage));
 		wide_clock0 = g_s9x_wide_clock;
 	}
 	S9xAPUAheadSave();
@@ -391,8 +401,8 @@ bool S9xAheadRestore (void)
 		S9xDSP3AheadState(dsp3_keep);
 	if (maps)
 	{
-		memcpy(Memory.Map, &map_keep[0], sizeof(Memory.Map));
-		memcpy(Memory.WriteMap, &wmap_keep[0], sizeof(Memory.WriteMap));
+		sync((uint8 *) Memory.Map, (const uint8 *) &map_keep[0], sizeof(Memory.Map));
+		sync((uint8 *) Memory.WriteMap, (const uint8 *) &wmap_keep[0], sizeof(Memory.WriteMap));
 		Memory.BWRAM = bwram_keep;
 	}
 	if (Settings.MSU1)
@@ -420,8 +430,8 @@ bool S9xAheadRestore (void)
 	}
 	if (stamps)
 	{
-		memcpy(g_s9x_vage, &vage[0], sizeof(g_s9x_vage));
-		memcpy(g_s9x_uage, &uage[0], sizeof(g_s9x_uage));
+		sync((uint8 *) g_s9x_vage, &vage[0], sizeof(g_s9x_vage));
+		sync((uint8 *) g_s9x_uage, &uage[0], sizeof(g_s9x_uage));
 		for (uint32 c = wide_clock0 + 1; c != g_s9x_wide_clock + 1; c++)
 			if ((c & 0x3fff) == 0)
 			{

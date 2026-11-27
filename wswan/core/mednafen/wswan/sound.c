@@ -289,7 +289,12 @@ void WSwan_SoundWrite(uint32 A, uint8 V)
       case 0x8F: SampleRAMPos = V; break;
       case 0x95: HyperVoice = V; break; /* Pick a port, any port?! */
    }
-   WSwan_SoundUpdate();
+   /* WSwan_SoundUpdate() at entry already advanced state to v30mz_timestamp
+    * (run_time == 0 here). Only Direct D/A (ch 1 with 0x20) and HyperVoice
+    * emit a new DAC level immediately at v30mz_timestamp. */
+   if(((control & 0x22) == 0x22 && (A == 0x89 || A == 0x90 || A == 0x94)) ||
+      ((HVoiceCtrl & 0x80) && (A == 0x6A || A == 0x6B || A == 0x95)))
+      WSwan_SoundUpdate();
 }
 
 uint8 WSwan_SoundRead(uint32 A)

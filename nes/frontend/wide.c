@@ -462,7 +462,7 @@ extern int nesscout_nes_host_state_load_mem(const uint8_t *buf, size_t n);
 extern void nesscout_nes_host_run_frame(void);
 extern void nesscout_nes_host_set_pad(int port, unsigned mask);
 extern void nesscout_nes_host_set_render(int on);
-extern int nesscout_nes_host_audio_take(int16_t *dst, int max_frames);
+extern void nesscout_FCEUI_Sound(int Rate);
 extern int nesscout_nesp_on, nesscout_nesp_margin;
 extern uint32_t nesscout_nesp_frame;
 extern uint32_t nesscout_nesp_ntgen;
@@ -575,7 +575,14 @@ static int scout_load(void)
 	char err[128];
 	if (S.loaded) return 1;
 	if (!S.rom || !nesw_is_cart()) return 0;
-	if (!S.inited) { if (nesscout_nes_host_init()) return 0; S.inited = 1; }
+	if (!S.inited) {
+		if (nesscout_nes_host_init()) return 0;
+		/* Disable discarded 48 kHz audio synthesis in the scout: APU Frame/DMC IRQs,
+		 * DMC DMA cycle steals, $4015 status, and PPU/CPU timing all run identically
+		 * with SndRate == 0, while soundtsinc stays initialised from host_init. */
+		nesscout_FCEUI_Sound(0);
+		S.inited = 1;
+	}
 	nesscout_nesp_on = 1;      /* the scout records lines and nametable writes, renders no margins */
 	nesscout_nesp_margin = 0;
 	if (nesscout_nes_host_load_mem(S.rom, S.rom_n, S.name, err, sizeof err)) return 0;
@@ -707,10 +714,8 @@ static int scout_one(void)
 	NesInst si;
 	wk_layer *SL;
 	int y, name;
-	int16_t junk[2048];
 	nesscout_nes_host_set_pad(0, S.pad);
 	nesscout_nes_host_run_frame();
-	while (nesscout_nes_host_audio_take(junk, 1024) > 0) {}
 	S.frames++;
 	S.st.frames++;
 	atomic_fetch_add_explicit(&S.tot_frames, 1u, memory_order_relaxed);

@@ -1369,20 +1369,22 @@ L_PLOT:
 				if (!(GSU.vPlotOptionReg & PLOT_FREEZEHIGH) && !c) NEXT;
 			}
 		}
-		// four read-modify-write pairs (one per two planes); s_spread[c] * v has the pixel's bit in the plane bytes
-		// whose colour bit is set
+		// four read-modify-write pairs (one per two planes); shifting the 32-bit halves of s_spread[c] by sh = 7 - (x & 7)
+		// places the pixel's bit in the plane bytes whose colour bit is set, identically to s_spread[c] * (128 >> (x & 7))
 		uint8 *a = GSU.apvScreen[y >> 3] + GSU.x[x >> 3] + ((y & 7) << 1);
-		uint32 v = 128u >> (x & 7);
+		uint32 sh = 7u - (x & 7u);
+		uint32 v = 1u << sh;
 		uint32 vv = v | (v << 8);
-		uint64 P = s_spread[c] * v;
-		fxf_pair(a, vv, (uint32) P);
+		uint32 p_lo = ((uint32) s_spread[c]) << sh;
+		fxf_pair(a, vv, p_lo);
 		if (mode != 0)
 		{
-			fxf_pair(a + 0x10, vv, (uint32) (P >> 16));
+			fxf_pair(a + 0x10, vv, p_lo >> 16);
 			if (mode == 3)
 			{
-				fxf_pair(a + 0x20, vv, (uint32) (P >> 32));
-				fxf_pair(a + 0x30, vv, (uint32) (P >> 48));
+				uint32 p_hi = ((uint32) (s_spread[c] >> 32)) << sh;
+				fxf_pair(a + 0x20, vv, p_hi);
+				fxf_pair(a + 0x30, vv, p_hi >> 16);
 			}
 		}
 	}

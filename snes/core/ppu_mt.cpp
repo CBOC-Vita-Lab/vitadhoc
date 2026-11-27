@@ -74,19 +74,32 @@ uint8 brightness_cap_W[64];
 
 bool8 g_s9x_vram_track = FALSE;
 uint32 g_s9x_colour_version = 0;
+uint32 g_s9x_cgram_version = 0;
+uint32 g_s9x_clip_version = 0;
 uint32 g_s9x_zdirty = 0, g_s9x_subzdirty = 0;	// see S9xClearZBuffers (gfx.cpp)
 bool8 g_s9x_obj_ran = FALSE;
 
 namespace ppumt {
 
 enum { K_BATCH, K_FRAME_START, K_FRAME_END, K_WIDE_END };
-enum { F_FULL = 1, F_COLOURS = 2 };
+enum { F_FULL = 1, F_BCAP = 2, F_DCM = 4, F_OBJ = 8, F_CGRAM = 16, F_CLIP = 32 };
 
 static const int NOBJ = sizeof(((struct SGFX *) 0)->OBJLines) / sizeof(((struct SGFX *) 0)->OBJLines[0]);
 static const size_t OBJ_ELEM = sizeof(((struct SGFX *) 0)->OBJLines[0]);
-static const size_t IP_A = offsetof(InternalPPU, TileCache) - offsetof(InternalPPU, Clip);
+static const size_t PPU_A_OFF = 0;
+static const size_t PPU_A_LEN = offsetof(SPPU, CGDATA);
+static const size_t PPU_B_OFF = offsetof(SPPU, OBJThroughMain);
+static const size_t PPU_B_LEN = offsetof(SPPU, OAMData) - offsetof(SPPU, OBJThroughMain);
+static const size_t PPU_C_OFF = offsetof(SPPU, FirstSprite);
+static const size_t PPU_C_LEN = sizeof(SPPU) - offsetof(SPPU, FirstSprite);
+static_assert(offsetof(SPPU, CGDATA) + sizeof(((SPPU *) 0)->CGDATA) == offsetof(SPPU, OBJ), "SPPU layout: CGDATA..OBJ");
+static_assert(offsetof(SPPU, OBJ) + sizeof(((SPPU *) 0)->OBJ) == offsetof(SPPU, OBJThroughMain), "SPPU layout: OBJ..OBJThroughMain");
+static_assert(offsetof(SPPU, OBJThroughMain) < offsetof(SPPU, OAMData), "SPPU layout: OBJThroughMain..OAMData");
+static_assert(offsetof(SPPU, OAMData) + sizeof(((SPPU *) 0)->OAMData) == offsetof(SPPU, FirstSprite), "SPPU layout: OAMData..FirstSprite");
 static const size_t IP_B = offsetof(InternalPPU, Red) - offsetof(InternalPPU, Interlace);
-static const size_t IP_C = sizeof(InternalPPU) - offsetof(InternalPPU, ScreenColors);
+static const size_t IP_D_OFF = offsetof(InternalPPU, MaxBrightness);
+static const size_t IP_D_LEN = sizeof(InternalPPU) - offsetof(InternalPPU, MaxBrightness);
+static_assert(offsetof(InternalPPU, ScreenColors) + sizeof(((InternalPPU *) 0)->ScreenColors) == offsetof(InternalPPU, MaxBrightness), "InternalPPU layout: ScreenColors..MaxBrightness");
 static const int NBLK = 0x10000 / 32;
 static const unsigned SLOTS = 16, MASK = SLOTS - 1;
 static const int NOUT = 4;
@@ -105,9 +118,14 @@ struct Slot
 	uint8 *z, *subz;
 	uint32 ppl, dointerlace, fixedcolour, starty, endy;
 	uint8 fillram[64];
+	bool8 ip_colors_changed, ip_obj_changed;
+	uint8 ppu_a[PPU_A_LEN], ppu_b[PPU_B_LEN], ppu_c[PPU_C_LEN];
+	uint8 ipb[IP_B], ipd[IP_D_LEN];
+	struct ClipData clip[2][6];
+	uint16 cgdata[256];
+	uint16 sc[256];
+	struct SOBJ ppu_obj[128];
 	uint8 objwidths[128], objvis[128];
-	uint8 ipa[IP_A], ipb[IP_B], ipc[IP_C];
-	struct SPPU ppu;
 	struct SLineData ld[240];
 	struct SLineMatrixData lm[240];
 	uint16 dcm[8][256];
@@ -148,8 +166,13 @@ static uint16 dirty_list[NBLK];
 static uint8 dirty_flag[NBLK];
 static int dirty_n;
 static bool full_resync;
+static bool frame_dirty;
+static bool dcm_need;
 static int obj_synced_from;
-static uint32 colours_sent;
+static uint32 bcap_sent;
+static uint32 dcm_sent;
+static uint32 cgram_sent;
+static uint32 clip_sent;
 static unsigned frames_posted;
 
 /* output slots for finished pictures */
@@ -262,10 +285,13 @@ static void alloc_caches(struct InternalPPU &ip)
 static inline void load_batch(const Slot &s, struct SPPU &ppu, struct InternalPPU &ip, struct SGFX &gfx, CMemory &mem,
 	struct SLineData *ld, struct SLineMatrixData *lm, uint16 (*dcm)[256], uint8 *bcap)
 {
-	memcpy(&ppu, &s.ppu, sizeof(ppu));
-	memcpy((uint8 *) &ip + offsetof(InternalPPU, Clip), s.ipa, IP_A);
+	memcpy((uint8 *) &ppu + PPU_A_OFF, s.ppu_a, PPU_A_LEN);
+	memcpy((uint8 *) &ppu + PPU_B_OFF, s.ppu_b, PPU_B_LEN);
+	memcpy((uint8 *) &ppu + PPU_C_OFF, s.ppu_c, PPU_C_LEN);
+	ip.ColorsChanged = s.ip_colors_changed;
+	ip.OBJChanged = s.ip_obj_changed;
 	memcpy((uint8 *) &ip + offsetof(InternalPPU, Interlace), s.ipb, IP_B);
-	memcpy((uint8 *) &ip + offsetof(InternalPPU, ScreenColors), s.ipc, IP_C);
+	memcpy((uint8 *) &ip + IP_D_OFF, s.ipd, IP_D_LEN);
 	gfx.Screen = s.screen;
 	gfx.SubScreen = s.sub;
 	gfx.ZBuffer = s.z;
@@ -276,16 +302,26 @@ static inline void load_batch(const Slot &s, struct SPPU &ppu, struct InternalPP
 	gfx.FixedColour = s.fixedcolour;
 	gfx.StartY = s.starty;
 	gfx.EndY = s.endy;
-	memcpy(gfx.OBJWidths, s.objwidths, sizeof(s.objwidths));
-	memcpy(gfx.OBJVisibleTiles, s.objvis, sizeof(s.objvis));
 	memcpy(mem.FillRAM + 0x2100, s.fillram, sizeof(s.fillram));
 	memcpy(&ld[s.row0], s.ld, s.nrows * sizeof(s.ld[0]));
 	memcpy(&lm[s.row0], s.lm, s.nrows * sizeof(s.lm[0]));
-	if (s.flags & F_COLOURS)
+	if (s.flags & F_CLIP)
+		memcpy(ip.Clip, s.clip, sizeof(s.clip));
+	if (s.flags & F_CGRAM)
 	{
-		memcpy(dcm, s.dcm, sizeof(s.dcm));
-		memcpy(bcap, s.bcap, sizeof(s.bcap));
+		memcpy(ppu.CGDATA, s.cgdata, sizeof(s.cgdata));
+		memcpy(ip.ScreenColors, s.sc, sizeof(s.sc));
 	}
+	if (s.flags & F_OBJ)
+	{
+		memcpy(ppu.OBJ, s.ppu_obj, sizeof(s.ppu_obj));
+		memcpy(gfx.OBJWidths, s.objwidths, sizeof(s.objwidths));
+		memcpy(gfx.OBJVisibleTiles, s.objvis, sizeof(s.objvis));
+	}
+	if (s.flags & F_BCAP)
+		memcpy(bcap, s.bcap, sizeof(s.bcap));
+	if (s.flags & F_DCM)
+		memcpy(dcm, s.dcm, sizeof(s.dcm));
 	if (s.obj_from >= 0)
 		memcpy(&gfx.OBJLines[s.obj_from], s.obj, (NOBJ - s.obj_from) * OBJ_ELEM);
 	if (s.flags & F_FULL)
@@ -508,7 +544,9 @@ static void wide_reader_set(bool want)
 		clear_caches(IPPU_W);
 	}
 	memcpy(&PPU_W, &PPU_R, sizeof(PPU_W));
-	memcpy(GFX_W.OBJLines, GFX_R.OBJLines, sizeof(GFX_W.OBJLines));	/* the sprite lines come in parts; every other field of GFX a batch sets itself */
+	memcpy(GFX_W.OBJLines, GFX_R.OBJLines, sizeof(GFX_W.OBJLines));	/* the sprite lines and dirty-gated sprite tables */
+	memcpy(GFX_W.OBJWidths, GFX_R.OBJWidths, sizeof(GFX_W.OBJWidths));
+	memcpy(GFX_W.OBJVisibleTiles, GFX_R.OBJVisibleTiles, sizeof(GFX_W.OBJVisibleTiles));
 	memcpy(&BG_W, &BG, sizeof(BG_W));
 	BG_W.Buffer = BG_W.BufferFlip = BG_W.Buffered = BG_W.BufferedFlip = NULL; /* set again by the tile selector */
 	memcpy(LineData_W, LineData_R, sizeof(LineData_W));
@@ -606,6 +644,7 @@ void S9xPPUMTSync(void)
 void S9xPPUMTFrameStart(void)
 {
 	wide_reader_update();
+	frame_dirty = true;
 	Slot &s = acquire();
 	s.kind = K_FRAME_START;
 	s.z = GFX.ZBuffer;
@@ -652,10 +691,13 @@ void S9xPPUMTBatch(const S9xRenderJob &job)
 	s.job = job;
 	s.flags = 0;
 
-	memcpy(&s.ppu, &PPU, sizeof(PPU));
-	memcpy(s.ipa, (uint8 *) &IPPU + offsetof(InternalPPU, Clip), IP_A);
-	memcpy(s.ipb, (uint8 *) &IPPU + offsetof(InternalPPU, Interlace), IP_B);
-	memcpy(s.ipc, (uint8 *) &IPPU + offsetof(InternalPPU, ScreenColors), IP_C);
+	memcpy(s.ppu_a, (const uint8 *) &PPU + PPU_A_OFF, PPU_A_LEN);
+	memcpy(s.ppu_b, (const uint8 *) &PPU + PPU_B_OFF, PPU_B_LEN);
+	memcpy(s.ppu_c, (const uint8 *) &PPU + PPU_C_OFF, PPU_C_LEN);
+	s.ip_colors_changed = IPPU.ColorsChanged;
+	s.ip_obj_changed = IPPU.OBJChanged;
+	memcpy(s.ipb, (const uint8 *) &IPPU + offsetof(InternalPPU, Interlace), IP_B);
+	memcpy(s.ipd, (const uint8 *) &IPPU + IP_D_OFF, IP_D_LEN);
 	s.screen = GFX.Screen;
 	s.sub = GFX.SubScreen;
 	s.z = GFX.ZBuffer;
@@ -666,8 +708,6 @@ void S9xPPUMTBatch(const S9xRenderJob &job)
 	s.fixedcolour = GFX.FixedColour;
 	s.starty = GFX.StartY;
 	s.endy = GFX.EndY;
-	memcpy(s.objwidths, GFX.OBJWidths, sizeof(s.objwidths));
-	memcpy(s.objvis, GFX.OBJVisibleTiles, sizeof(s.objvis));
 	memcpy(s.fillram, Memory.FillRAM + 0x2100, sizeof(s.fillram));
 
 	int r0 = (int) GFX.StartY, r1 = (int) GFX.EndY + 1;
@@ -678,21 +718,59 @@ void S9xPPUMTBatch(const S9xRenderJob &job)
 	memcpy(s.ld, &LineData[r0], s.nrows * sizeof(s.ld[0]));
 	memcpy(s.lm, &LineMatrixData[r0], s.nrows * sizeof(s.lm[0]));
 
-	if (full_resync || colours_sent != g_s9x_colour_version)
+	const bool force = full_resync || frame_dirty;
+	frame_dirty = false;
+	if (full_resync)
 	{
-		s.flags |= F_COLOURS;
-		memcpy(s.dcm, DirectColourMaps, sizeof(s.dcm));
+		dcm_need = true;
+		obj_synced_from = NOBJ;
+	}
+	if (dcm_sent != g_s9x_colour_version)
+		dcm_need = true;
+
+	if (force || clip_sent != g_s9x_clip_version)
+	{
+		s.flags |= F_CLIP;
+		memcpy(s.clip, IPPU.Clip, sizeof(s.clip));
+		clip_sent = g_s9x_clip_version;
+	}
+
+	const bool colours_changed = (bcap_sent != g_s9x_colour_version);
+	if (force || colours_changed)
+	{
+		s.flags |= F_BCAP;
 		memcpy(s.bcap, brightness_cap, sizeof(s.bcap));
-		colours_sent = g_s9x_colour_version;
+		bcap_sent = g_s9x_colour_version;
+	}
+
+	if (force || colours_changed || cgram_sent != g_s9x_cgram_version)
+	{
+		s.flags |= F_CGRAM;
+		memcpy(s.cgdata, PPU.CGDATA, sizeof(s.cgdata));
+		memcpy(s.sc, IPPU.ScreenColors, sizeof(s.sc));
+		cgram_sent = g_s9x_cgram_version;
+	}
+
+	if ((Memory.FillRAM[0x2130] & 1) && dcm_need)
+	{
+		s.flags |= F_DCM;
+		memcpy(s.dcm, DirectColourMaps, sizeof(s.dcm));
+		dcm_sent = g_s9x_colour_version;
+		dcm_need = false;
+	}
+
+	const bool obj_ran = (g_s9x_obj_ran != FALSE);
+	if (force || obj_ran)
+	{
+		s.flags |= F_OBJ;
+		memcpy(s.ppu_obj, PPU.OBJ, sizeof(s.ppu_obj));
+		memcpy(s.objwidths, GFX.OBJWidths, sizeof(s.objwidths));
+		memcpy(s.objvis, GFX.OBJVisibleTiles, sizeof(s.objvis));
 	}
 
 	/* sprite line table: lines from `from` on are the ones the worker may be missing */
 	int from = -1;
-	if (full_resync)
-	{
-		obj_synced_from = NOBJ;
-	}
-	if (g_s9x_obj_ran)
+	if (obj_ran)
 	{
 		g_s9x_obj_ran = FALSE;
 		from = r0;
@@ -801,8 +879,13 @@ bool S9xPPUMTSet(bool enable)
 		for (int i = 0; i < NBLK; i++) dirty_flag[i] = 0;
 		dirty_n = 0;
 		full_resync = true;
+		frame_dirty = true;
+		dcm_need = true;
 		obj_synced_from = NOBJ;
-		colours_sent = g_s9x_colour_version - 1;
+		bcap_sent = g_s9x_colour_version - 1;
+		dcm_sent = g_s9x_colour_version - 1;
+		cgram_sent = g_s9x_cgram_version - 1;
+		clip_sent = g_s9x_clip_version - 1;
 		g_s9x_obj_ran = TRUE;
 		prod = 0;
 		head.store(0); tail.store(0); sleeping.store(0); quit.store(0);

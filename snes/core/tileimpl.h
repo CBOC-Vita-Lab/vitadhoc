@@ -177,6 +177,9 @@ namespace TileImpl {
 	{
 		enum { None = 1, Vec = 0 };
 		static alwaysinline void CalcRow8(const PixCtx &c, const uint32 *main8, uint32 Offset, uint16 *out) {}
+#if S9X_NEON_RGB565
+		static alwaysinline uint16x8_t CalcRow8V16(const PixCtx &c, uint16x8_t main8, uint32 Offset) { (void) c; (void) Offset; return main8; }
+#endif
 		static alwaysinline uint16 Calc(const PixCtx &c, uint16 Main, uint16 Sub, uint8 SD)
 		{
 			return Main;
@@ -193,6 +196,23 @@ namespace TileImpl {
 		{
 			return Op::fn(Main, (SD & 0x20) ? Sub : c.FixedColour);
 		}
+#if S9X_NEON_RGB565
+		// eight RGB565 pixels at once in 16-bit NEON lanes (no widen/narrow, no stack spill)
+		static alwaysinline uint16x8_t CalcRow8V16(const PixCtx &c, uint16x8_t main8, uint32 Offset)
+		{
+			uint64 sz64;
+			memcpy(&sz64, c.SubZ + Offset, 8);
+			const uint64 szm = sz64 & 0x2020202020202020ULL;
+			if (szm == 0)
+				return Op::fnV16(main8, vdupq_n_u16((uint16) c.FixedColour));
+			const uint16x8_t sub = vld1q_u16(c.SubScreen + Offset);
+			if (szm == 0x2020202020202020ULL)
+				return Op::fnV16(main8, sub);
+			const uint8x8_t m8 = vtst_u8(vcreate_u8(sz64), vdup_n_u8(0x20));
+			const uint16x8_t sel = vreinterpretq_u16_s16(vmovl_s8(vreinterpret_s8_u8(m8)));
+			return Op::fnV16(main8, vbslq_u16(sel, sub, vdupq_n_u16((uint16) c.FixedColour)));
+		}
+#endif
 		// eight pixels at once: the same as Calc() for each (out[i] = Calc(main8[i], SubScreen[Offset+i], SubZ[Offset+i]))
 		static alwaysinline void CalcRow8(const PixCtx &c, const uint32 *main8, uint32 Offset, uint16 *out)
 		{
@@ -242,8 +262,16 @@ namespace TileImpl {
 	template<class Op>
 	struct MATHF1_2
 	{
-		enum { None = 0, Vec = 0 };
+		enum { None = 0, Vec = Op::Vec16 };
 		static alwaysinline void CalcRow8(const PixCtx &c, const uint32 *main8, uint32 Offset, uint16 *out) {}
+#if S9X_NEON_RGB565
+		static alwaysinline uint16x8_t CalcRow8V16(const PixCtx &c, uint16x8_t main8, uint32 Offset)
+		{
+			(void) Offset;
+			const uint16x8_t fixed = vdupq_n_u16((uint16) c.FixedColour);
+			return c.ClipColors ? Op::fnV16(main8, fixed) : Op::fn1_2V16(main8, fixed);
+		}
+#endif
 		static alwaysinline uint16 Calc(const PixCtx &c, uint16 Main, uint16 Sub, uint8 SD)
 		{
 			return c.ClipColors ? Op::fn(Main, c.FixedColour) : Op::fn1_2(Main, c.FixedColour);
@@ -256,8 +284,27 @@ namespace TileImpl {
 	template<class Op>
 	struct MATHS1_2
 	{
-		enum { None = 0, Vec = 0 };
+		enum { None = 0, Vec = Op::Vec16 };
 		static alwaysinline void CalcRow8(const PixCtx &c, const uint32 *main8, uint32 Offset, uint16 *out) {}
+#if S9X_NEON_RGB565
+		static alwaysinline uint16x8_t CalcRow8V16(const PixCtx &c, uint16x8_t main8, uint32 Offset)
+		{
+			uint64 sz64;
+			memcpy(&sz64, c.SubZ + Offset, 8);
+			const uint64 szm = sz64 & 0x2020202020202020ULL;
+			if (szm == 0)
+				return Op::fnV16(main8, vdupq_n_u16((uint16) c.FixedColour));
+			const uint16x8_t sub = vld1q_u16(c.SubScreen + Offset);
+			if (szm == 0x2020202020202020ULL)
+				return c.ClipColors ? Op::fnV16(main8, sub) : Op::fn1_2V16(main8, sub);
+			const uint8x8_t m8 = vtst_u8(vcreate_u8(sz64), vdup_n_u8(0x20));
+			const uint16x8_t sel = vreinterpretq_u16_s16(vmovl_s8(vreinterpret_s8_u8(m8)));
+			const uint16x8_t fixed = vdupq_n_u16((uint16) c.FixedColour);
+			if (c.ClipColors)
+				return Op::fnV16(main8, vbslq_u16(sel, sub, fixed));
+			return vbslq_u16(sel, Op::fn1_2V16(main8, sub), Op::fnV16(main8, fixed));
+		}
+#endif
 		static alwaysinline uint16 Calc(const PixCtx &c, uint16 Main, uint16 Sub, uint8 SD)
 		{
 			return c.ClipColors ? REGMATH<Op>::Calc(c, Main, Sub, SD) : (SD & 0x20) ? Op::fn1_2(Main, Sub) : Op::fn(Main, c.FixedColour);
@@ -345,18 +392,50 @@ namespace TileImpl {
 			uint16 *sp = ctx.S + Offset;
 			if (PIXEL::math_t::Vec && m == hi)
 			{
-				// a whole row with plain add / subtract maths: four pixels per vector operation
+				// a whole row with plain add / subtract / half-add / half-subtract maths
+#if S9X_NEON_RGB565
+				const uint16 *sc = ctx.ScreenColors;
+				const uint32 p_lo = (uint32) pix;
+				const uint32 p_hi = (uint32) (pix >> 32);
+				const uint32 w0 = (uint32) sc[p_lo & 0xff] | ((uint32) sc[(p_lo >> 8) & 0xff] << 16);
+				const uint32 w1 = (uint32) sc[(p_lo >> 16) & 0xff] | ((uint32) sc[p_lo >> 24] << 16);
+				const uint32 w2 = (uint32) sc[p_hi & 0xff] | ((uint32) sc[(p_hi >> 8) & 0xff] << 16);
+				const uint32 w3 = (uint32) sc[(p_hi >> 16) & 0xff] | ((uint32) sc[p_hi >> 24] << 16);
+				const uint16x8_t main8 = vcombine_u16(
+					vcreate_u16((uint64) w0 | ((uint64) w1 << 32)),
+					vcreate_u16((uint64) w2 | ((uint64) w3 << 32)));
+				vst1q_u16(sp, PIXEL::math_t::CalcRow8V16(ctx, main8, Offset));
+#else
 				uint32 mc[8];
 				for (int i = 0; i < 8; i++)
 					mc[i] = ctx.ScreenColors[(pix >> (8 * i)) & 0xff];
 				PIXEL::math_t::CalcRow8(ctx, mc, Offset, sp);
+#endif
 				const uint64 zz = (uint64) z2 * ones;
 				memcpy(ctx.DB + Offset, &zz, 8);
 			}
 			else if (PIXEL::math_t::Vec && __atomic_load_n(&g_s9x_fastpix, __ATOMIC_RELAXED) && ({ uint64 t3 = m & (m - 1); t3 &= t3 - 1; t3 != 0; }))
 			{
-				// a mixed row with plain add / subtract maths: the maths is a pure function of the pixel's colour and the
-				// sub screen at that position, so it is done for all eight lanes at once and only the drawn lanes are stored
+				// a mixed row with plain add / subtract / half-add / half-subtract maths: the maths is a pure function
+				// of the pixel's colour and the sub screen at that position, so it is done for all eight lanes at once
+				// and only the drawn lanes are kept
+#if S9X_NEON_RGB565
+				const uint16 *sc = ctx.ScreenColors;
+				const uint32 p_lo = (uint32) pix;
+				const uint32 p_hi = (uint32) (pix >> 32);
+				const uint32 w0 = (uint32) sc[p_lo & 0xff] | ((uint32) sc[(p_lo >> 8) & 0xff] << 16);
+				const uint32 w1 = (uint32) sc[(p_lo >> 16) & 0xff] | ((uint32) sc[p_lo >> 24] << 16);
+				const uint32 w2 = (uint32) sc[p_hi & 0xff] | ((uint32) sc[(p_hi >> 8) & 0xff] << 16);
+				const uint32 w3 = (uint32) sc[(p_hi >> 16) & 0xff] | ((uint32) sc[p_hi >> 24] << 16);
+				const uint16x8_t main8 = vcombine_u16(
+					vcreate_u16((uint64) w0 | ((uint64) w1 << 32)),
+					vcreate_u16((uint64) w2 | ((uint64) w3 << 32)));
+				const uint16x8_t res = PIXEL::math_t::CalcRow8V16(ctx, main8, Offset);
+				const uint8x8_t m8 = vreinterpret_u8_s8(vshr_n_s8(vreinterpret_s8_u8(vcreate_u8(m)), 7));
+				const uint16x8_t m16 = vreinterpretq_u16_s16(vmovl_s8(vreinterpret_s8_u8(m8)));
+				vst1q_u16(sp, vbslq_u16(m16, res, vld1q_u16(sp)));
+				vst1_u8(ctx.DB + Offset, vbsl_u8(m8, vdup_n_u8(z2), vcreate_u8(db)));
+#else
 				uint32 mc[8];
 				uint16 res[8];
 				for (int i = 0; i < 8; i++)
@@ -368,6 +447,7 @@ namespace TileImpl {
 					ctx.DB[Offset + i] = z2;
 					m &= m - 1;
 				} while (m);
+#endif
 			}
 			else if (PIXEL::Fill && m == hi)
 			{
@@ -706,14 +786,18 @@ namespace TileImpl {
 					}
 					if (PIXEL::math_t::Vec && PIXEL::Step == 1 && v0 == 0)
 					{
-						// CBOC-Vita: plain add / subtract maths on a group nothing has drawn on yet and that is not uniform (the sub
-						// screen shows through some of it): the eight results by the vector form (the same values as Calc() per
-						// pixel, as in DrawRow8). Same pixels, same depth as DRAW_PIXEL(x, 1).
+						// CBOC-Vita: plain add / subtract / half-add / half-subtract maths on a group nothing has drawn on yet and
+						// that is not uniform (the sub screen shows through some of it): the eight results by the vector form (the
+						// same values as Calc() per pixel, as in DrawRow8). Same pixels, same depth as DRAW_PIXEL(x, 1).
+#if S9X_NEON_RGB565
+						vst1q_u16(ctx.S + Offset + x, PIXEL::math_t::CalcRow8V16(ctx, vdupq_n_u16(ctx.ScreenColors[0]), Offset + x));
+#else
 						uint32 mc[8];
 						const uint32 c0 = ctx.ScreenColors[0];
 						for (int i = 0; i < 8; i++)
 							mc[i] = c0;
 						PIXEL::math_t::CalcRow8(ctx, mc, Offset + x, ctx.S + Offset + x);
+#endif
 						const uint64 ones = 0x0101010101010101ULL;
 						memcpy(ctx.DB + Offset + x, &ones, 8);
 						x += Group;

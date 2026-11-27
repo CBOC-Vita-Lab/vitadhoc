@@ -153,6 +153,8 @@ void S9xPPUMTStats (uint64_t *busy_ns, uint64_t *batches, uint64_t *waits, uint6
 extern bool8 g_s9x_obj_ran;
 extern bool8 g_s9x_vram_track;
 extern uint32 g_s9x_colour_version;
+extern uint32 g_s9x_cgram_version;
+extern uint32 g_s9x_clip_version;
 
 extern uint16		BlackColourMap[256];
 extern uint16		DirectColourMaps[8][256];
@@ -168,12 +170,26 @@ extern struct SGFX	GFX;
 // CBOC-Vita: 4-lane versions of the two plain blend operations, for whole tile rows (tileimpl.h, DrawRow8).
 // Lane for lane the same arithmetic as fn() (32-bit unsigned lanes hold the values fn() keeps in int, and
 // no intermediate of fn() is negative), written with GCC vector extensions so that it is SSE2 on the PC
-// and NEON on the Vita.
+// and NEON on the Vita. Under ARM NEON with RGB565, 8-wide 16-bit NEON helpers (fnV16, fn1_2V16) also
+// vectorize full and 1/2 blends directly in 16-bit lanes without widening or the 128 KiB GFX.ZERO LUT.
 typedef uint32 s9x_v4u __attribute__((vector_size(16)));
+
+#if (RGB_LOW_BITS_MASK == 0x0821) && ((RGB_REMOVE_LOW_BITS_MASK & 0xFFFF) == 0xF7DE) && (ALPHA_BITS_MASK == 0) && (GREEN_SHIFT_BITS == 6) && (RED_SHIFT_BITS == 11)
+#define S9X_RGB565_EXACT 1
+#else
+#define S9X_RGB565_EXACT 0
+#endif
+
+#if defined(__ARM_NEON) && S9X_RGB565_EXACT
+#define S9X_NEON_RGB565 1
+#include <arm_neon.h>
+#else
+#define S9X_NEON_RGB565 0
+#endif
 
 struct COLOR_ADD
 {
-	enum { Vec = 1 };
+	enum { Vec = 1, Vec16 = S9X_NEON_RGB565 };
 	static alwaysinline s9x_v4u fnV(s9x_v4u C1, s9x_v4u C2)
 	{
 		const uint32 RB = (0x1F << RED_SHIFT_BITS) | 0x1F;
@@ -189,6 +205,27 @@ struct COLOR_ADD
 #endif
 		return retval;
 	}
+
+#if S9X_NEON_RGB565
+	static alwaysinline uint16x8_t fnV16(uint16x8_t c1, uint16x8_t c2)
+	{
+		const uint16x8_t m_r = vdupq_n_u16(0xF800);
+		const uint16x8_t m_g = vdupq_n_u16(0x07C0);
+		const uint16x8_t m_b = vdupq_n_u16(0x001F);
+		const uint16x8_t r = vandq_u16(vqaddq_u16(vandq_u16(c1, m_r), vandq_u16(c2, m_r)), m_r);
+		const uint16x8_t g = vminq_u16(vaddq_u16(vandq_u16(c1, m_g), vandq_u16(c2, m_g)), m_g);
+		const uint16x8_t b = vminq_u16(vaddq_u16(vandq_u16(c1, m_b), vandq_u16(c2, m_b)), m_b);
+		return vorrq_u16(vorrq_u16(r, b), vsraq_n_u16(g, vandq_u16(g, vdupq_n_u16(0x0400)), 5));
+	}
+
+	static alwaysinline uint16x8_t fn1_2V16(uint16x8_t c1, uint16x8_t c2)
+	{
+		const uint16x8_t m_hi = vdupq_n_u16(0xF7DE);
+		const uint16x8_t m_lo = vdupq_n_u16(0x0821);
+		return vaddq_u16(vhaddq_u16(vandq_u16(c1, m_hi), vandq_u16(c2, m_hi)),
+		                 vandq_u16(vandq_u16(c1, c2), m_lo));
+	}
+#endif
 
 	static alwaysinline uint16 fn(uint16 C1, uint16 C2)
 	{
@@ -218,8 +255,12 @@ struct COLOR_ADD
 
 struct COLOR_ADD_BRIGHTNESS
 {
-	enum { Vec = 0 };
+	enum { Vec = 0, Vec16 = 0 };
 	static alwaysinline s9x_v4u fnV(s9x_v4u C1, s9x_v4u C2) { return C1; }	// never used (Vec = 0)
+#if S9X_NEON_RGB565
+	static alwaysinline uint16x8_t fnV16(uint16x8_t c1, uint16x8_t) { return c1; }
+	static alwaysinline uint16x8_t fn1_2V16(uint16x8_t c1, uint16x8_t) { return c1; }
+#endif
 
 	static alwaysinline uint16 fn(uint16 C1, uint16 C2)
 	{
@@ -241,7 +282,7 @@ struct COLOR_ADD_BRIGHTNESS
 
 struct COLOR_SUB
 {
-	enum { Vec = 1 };
+	enum { Vec = 1, Vec16 = S9X_NEON_RGB565 };
 	static alwaysinline s9x_v4u fnV(s9x_v4u C1, s9x_v4u C2)
 	{
 		const uint32 RB = THIRD_COLOR_MASK | FIRST_COLOR_MASK;
@@ -258,6 +299,34 @@ struct COLOR_SUB
 #endif
 		return retval;
 	}
+
+#if S9X_NEON_RGB565
+	static alwaysinline uint16x8_t fnV16(uint16x8_t c1, uint16x8_t c2)
+	{
+		const uint16x8_t m_r  = vdupq_n_u16(0xF800);
+		const uint16x8_t m_g6 = vdupq_n_u16(0x07E0);
+		const uint16x8_t m_g5 = vdupq_n_u16(0x07C0);
+		const uint16x8_t m_b  = vdupq_n_u16(0x001F);
+		const uint16x8_t r = vqsubq_u16(vandq_u16(c1, m_r), vandq_u16(c2, m_r));
+		const uint16x8_t g = vandq_u16(vqsubq_u16(vandq_u16(c1, m_g6), vandq_u16(c2, m_g6)), m_g5);
+		const uint16x8_t b = vqsubq_u16(vandq_u16(c1, m_b), vandq_u16(c2, m_b));
+		return vorrq_u16(vorrq_u16(r, b), vsraq_n_u16(g, vandq_u16(g, vdupq_n_u16(0x0400)), 5));
+	}
+
+	static alwaysinline uint16x8_t fn1_2V16(uint16x8_t c1, uint16x8_t c2)
+	{
+		const uint16x8_t idx = veorq_u16(
+			vhsubq_u16(vorrq_u16(c1, vdupq_n_u16(0x0820)),
+			           vandq_u16(c2, vdupq_n_u16(0xF7DE))),
+			vdupq_n_u16(0x8000));
+		const uint16x8_t rb_hi = vandq_u16(idx, vdupq_n_u16(0x8010));
+		const uint16x8_t g_hi  = vandq_u16(idx, vdupq_n_u16(0x0400));
+		const uint16x8_t mask  = vorrq_u16(
+			vsubq_u16(rb_hi, vshrq_n_u16(rb_hi, 4)),
+			vsubq_u16(g_hi,  vshrq_n_u16(g_hi,  5)));
+		return vandq_u16(idx, mask);
+	}
+#endif
 
 	static alwaysinline uint16 fn(uint16 C1, uint16 C2)
 	{
@@ -276,8 +345,16 @@ struct COLOR_SUB
 
 	static alwaysinline uint16 fn1_2(uint16 C1, uint16 C2)
 	{
+#if S9X_RGB565_EXACT
+		const uint32 idx = (((uint32) C1 | 0x10820u) - ((uint32) C2 & 0xF7DEu)) >> 1;
+		const uint32 rb_hi = idx & 0x8010u;
+		const uint32 g_hi  = idx & 0x0400u;
+		const uint32 mask  = (rb_hi - (rb_hi >> 4)) | (g_hi - (g_hi >> 5));
+		return (uint16) (idx & mask);
+#else
 		return GFX.ZERO[((C1 | RGB_HI_BITS_MASKx2) -
 			(C2 & RGB_REMOVE_LOW_BITS_MASK)) >> 1];
+#endif
 	}
 };
 

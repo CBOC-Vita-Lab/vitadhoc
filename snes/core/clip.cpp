@@ -231,4 +231,6 @@ void S9xComputeClipWindows (void)
 				StoreWindowRegions(0, &IPPU.Clip[sub][j], n_regions, windows, drawing_modes, sub);
 		}
 	}
+
+	g_s9x_clip_version++;
 }

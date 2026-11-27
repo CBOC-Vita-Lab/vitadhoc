@@ -94,7 +94,7 @@ void wsMakeTiles(void)
    lut_2bpp_ready = 1;
 }
 
-void wsGetTile(uint32 number,uint32 line,int flipv,int fliph,int bank)
+const uint8 *wsGetTilePtr(uint32 number,uint32 line,int flipv,int fliph,int bank)
 {
    uint32		t_adr,t_index,i;
    uint8		byte0,byte1,byte2,byte3;
@@ -115,54 +115,44 @@ void wsGetTile(uint32 number,uint32 line,int flipv,int fliph,int bank)
                t_index=number<<6;
                for(i=0;i<8;i++)
                {
+                  uint8 norm[8], flip[8];
                   byte0=wsRAM[t_adr++];
                   byte1=wsRAM[t_adr++];
                   byte2=wsRAM[t_adr++];
                   byte3=wsRAM[t_adr++];
-                  wsTCache[t_index]=byte0>>4;
-                  wsTCacheFlipped[t_index++]=byte3&15;
-                  wsTCache[t_index]=byte0&15;
-                  wsTCacheFlipped[t_index++]=byte3>>4;
-                  wsTCache[t_index]=byte1>>4;
-                  wsTCacheFlipped[t_index++]=byte2&15;
-                  wsTCache[t_index]=byte1&15;
-                  wsTCacheFlipped[t_index++]=byte2>>4;
-                  wsTCache[t_index]=byte2>>4;
-                  wsTCacheFlipped[t_index++]=byte1&15;
-                  wsTCache[t_index]=byte2&15;
-                  wsTCacheFlipped[t_index++]=byte1>>4;
-                  wsTCache[t_index]=byte3>>4;
-                  wsTCacheFlipped[t_index++]=byte0&15;
-                  wsTCache[t_index]=byte3&15;
-                  wsTCacheFlipped[t_index++]=byte0>>4;
+                  norm[0]=flip[7]=byte0>>4;
+                  norm[1]=flip[6]=byte0&15;
+                  norm[2]=flip[5]=byte1>>4;
+                  norm[3]=flip[4]=byte1&15;
+                  norm[4]=flip[3]=byte2>>4;
+                  norm[5]=flip[2]=byte2&15;
+                  norm[6]=flip[1]=byte3>>4;
+                  norm[7]=flip[0]=byte3&15;
+                  memcpy(&wsTCache[t_index], norm, 8);
+                  memcpy(&wsTCacheFlipped[t_index], flip, 8);
+                  t_index += 8;
                }
                break;
 
             case 6:
+               if(!lut_2bpp_ready)
+                  wsMakeTiles();
                t_adr=0x4000+(number<<5);
                t_index=number<<6;
                for(i=0;i<8;i++)
                {
+                  uint64 row, row_f;
                   byte0=wsRAM[t_adr++];
                   byte1=wsRAM[t_adr++];
                   byte2=wsRAM[t_adr++];
                   byte3=wsRAM[t_adr++];
-                  wsTCache[t_index]=((byte0>>7)&1)|(((byte1>>7)&1)<<1)|(((byte2>>7)&1)<<2)|(((byte3>>7)&1)<<3);
-                  wsTCacheFlipped[t_index++]=((byte0)&1)|(((byte1)&1)<<1)|(((byte2)&1)<<2)|(((byte3)&1)<<3);
-                  wsTCache[t_index]=((byte0>>6)&1)|(((byte1>>6)&1)<<1)|(((byte2>>6)&1)<<2)|(((byte3>>6)&1)<<3);
-                  wsTCacheFlipped[t_index++]=((byte0>>1)&1)|(((byte1>>1)&1)<<1)|(((byte2>>1)&1)<<2)|(((byte3>>1)&1)<<3);
-                  wsTCache[t_index]=((byte0>>5)&1)|(((byte1>>5)&1)<<1)|(((byte2>>5)&1)<<2)|(((byte3>>5)&1)<<3);
-                  wsTCacheFlipped[t_index++]=((byte0>>2)&1)|(((byte1>>2)&1)<<1)|(((byte2>>2)&1)<<2)|(((byte3>>2)&1)<<3);
-                  wsTCache[t_index]=((byte0>>4)&1)|(((byte1>>4)&1)<<1)|(((byte2>>4)&1)<<2)|(((byte3>>4)&1)<<3);
-                  wsTCacheFlipped[t_index++]=((byte0>>3)&1)|(((byte1>>3)&1)<<1)|(((byte2>>3)&1)<<2)|(((byte3>>3)&1)<<3);
-                  wsTCache[t_index]=((byte0>>3)&1)|(((byte1>>3)&1)<<1)|(((byte2>>3)&1)<<2)|(((byte3>>3)&1)<<3);
-                  wsTCacheFlipped[t_index++]=((byte0>>4)&1)|(((byte1>>4)&1)<<1)|(((byte2>>4)&1)<<2)|(((byte3>>4)&1)<<3);
-                  wsTCache[t_index]=((byte0>>2)&1)|(((byte1>>2)&1)<<1)|(((byte2>>2)&1)<<2)|(((byte3>>2)&1)<<3);
-                  wsTCacheFlipped[t_index++]=((byte0>>5)&1)|(((byte1>>5)&1)<<1)|(((byte2>>5)&1)<<2)|(((byte3>>5)&1)<<3);
-                  wsTCache[t_index]=((byte0>>1)&1)|(((byte1>>1)&1)<<1)|(((byte2>>1)&1)<<2)|(((byte3>>1)&1)<<3);
-                  wsTCacheFlipped[t_index++]=((byte0>>6)&1)|(((byte1>>6)&1)<<1)|(((byte2>>6)&1)<<2)|(((byte3>>6)&1)<<3);
-                  wsTCache[t_index]=((byte0)&1)|(((byte1)&1)<<1)|(((byte2)&1)<<2)|(((byte3)&1)<<3);
-                  wsTCacheFlipped[t_index++]=((byte0>>7)&1)|(((byte1>>7)&1)<<1)|(((byte2>>7)&1)<<2)|(((byte3>>7)&1)<<3);
+                  row = lut_2bpp_norm[byte0] | (lut_2bpp_norm[byte1] << 1)
+                      | (lut_2bpp_norm[byte2] << 2) | (lut_2bpp_norm[byte3] << 3);
+                  row_f = lut_2bpp_flip[byte0] | (lut_2bpp_flip[byte1] << 1)
+                        | (lut_2bpp_flip[byte2] << 2) | (lut_2bpp_flip[byte3] << 3);
+                  memcpy(&wsTCache[t_index], &row, 8);
+                  memcpy(&wsTCacheFlipped[t_index], &row_f, 8);
+                  t_index += 8;
                }
                break;
 
@@ -187,9 +177,9 @@ void wsGetTile(uint32 number,uint32 line,int flipv,int fliph,int bank)
       if(flipv)
          line=7-line;
       if(fliph)
-         memcpy(&wsTileRow[0],&wsTCacheFlipped[(number<<6)|(line<<3)],8);
+         return &wsTCacheFlipped[(number<<6)|(line<<3)];
       else
-         memcpy(&wsTileRow[0],&wsTCache[(number<<6)|(line<<3)],8);
+         return &wsTCache[(number<<6)|(line<<3)];
    }
    else
    {
@@ -208,53 +198,43 @@ void wsGetTile(uint32 number,uint32 line,int flipv,int fliph,int bank)
                t_index=number<<6;
                for(i=0;i<8;i++)
                {
+                  uint8 norm[8], flip[8];
                   byte0=wsRAM[t_adr++];
                   byte1=wsRAM[t_adr++];
                   byte2=wsRAM[t_adr++];
                   byte3=wsRAM[t_adr++];
-                  wsTCache2[t_index]=byte0>>4;
-                  wsTCacheFlipped2[t_index++]=byte3&15;
-                  wsTCache2[t_index]=byte0&15;
-                  wsTCacheFlipped2[t_index++]=byte3>>4;
-                  wsTCache2[t_index]=byte1>>4;
-                  wsTCacheFlipped2[t_index++]=byte2&15;
-                  wsTCache2[t_index]=byte1&15;
-                  wsTCacheFlipped2[t_index++]=byte2>>4;
-                  wsTCache2[t_index]=byte2>>4;
-                  wsTCacheFlipped2[t_index++]=byte1&15;
-                  wsTCache2[t_index]=byte2&15;
-                  wsTCacheFlipped2[t_index++]=byte1>>4;
-                  wsTCache2[t_index]=byte3>>4;
-                  wsTCacheFlipped2[t_index++]=byte0&15;
-                  wsTCache2[t_index]=byte3&15;
-                  wsTCacheFlipped2[t_index++]=byte0>>4;
+                  norm[0]=flip[7]=byte0>>4;
+                  norm[1]=flip[6]=byte0&15;
+                  norm[2]=flip[5]=byte1>>4;
+                  norm[3]=flip[4]=byte1&15;
+                  norm[4]=flip[3]=byte2>>4;
+                  norm[5]=flip[2]=byte2&15;
+                  norm[6]=flip[1]=byte3>>4;
+                  norm[7]=flip[0]=byte3&15;
+                  memcpy(&wsTCache2[t_index], norm, 8);
+                  memcpy(&wsTCacheFlipped2[t_index], flip, 8);
+                  t_index += 8;
                }
                break;
             case 6:
+               if(!lut_2bpp_ready)
+                  wsMakeTiles();
                t_adr=0x8000+(number<<5);
                t_index=number<<6;
                for(i=0;i<8;i++)
                {
+                  uint64 row, row_f;
                   byte0=wsRAM[t_adr++];
                   byte1=wsRAM[t_adr++];
                   byte2=wsRAM[t_adr++];
                   byte3=wsRAM[t_adr++];
-                  wsTCache2[t_index]=((byte0>>7)&1)|(((byte1>>7)&1)<<1)|(((byte2>>7)&1)<<2)|(((byte3>>7)&1)<<3);
-                  wsTCacheFlipped2[t_index++]=((byte0)&1)|(((byte1)&1)<<1)|(((byte2)&1)<<2)|(((byte3)&1)<<3);
-                  wsTCache2[t_index]=((byte0>>6)&1)|(((byte1>>6)&1)<<1)|(((byte2>>6)&1)<<2)|(((byte3>>6)&1)<<3);
-                  wsTCacheFlipped2[t_index++]=((byte0>>1)&1)|(((byte1>>1)&1)<<1)|(((byte2>>1)&1)<<2)|(((byte3>>1)&1)<<3);
-                  wsTCache2[t_index]=((byte0>>5)&1)|(((byte1>>5)&1)<<1)|(((byte2>>5)&1)<<2)|(((byte3>>5)&1)<<3);
-                  wsTCacheFlipped2[t_index++]=((byte0>>2)&1)|(((byte1>>2)&1)<<1)|(((byte2>>2)&1)<<2)|(((byte3>>2)&1)<<3);
-                  wsTCache2[t_index]=((byte0>>4)&1)|(((byte1>>4)&1)<<1)|(((byte2>>4)&1)<<2)|(((byte3>>4)&1)<<3);
-                  wsTCacheFlipped2[t_index++]=((byte0>>3)&1)|(((byte1>>3)&1)<<1)|(((byte2>>3)&1)<<2)|(((byte3>>3)&1)<<3);
-                  wsTCache2[t_index]=((byte0>>3)&1)|(((byte1>>3)&1)<<1)|(((byte2>>3)&1)<<2)|(((byte3>>3)&1)<<3);
-                  wsTCacheFlipped2[t_index++]=((byte0>>4)&1)|(((byte1>>4)&1)<<1)|(((byte2>>4)&1)<<2)|(((byte3>>4)&1)<<3);
-                  wsTCache2[t_index]=((byte0>>2)&1)|(((byte1>>2)&1)<<1)|(((byte2>>2)&1)<<2)|(((byte3>>2)&1)<<3);
-                  wsTCacheFlipped2[t_index++]=((byte0>>5)&1)|(((byte1>>5)&1)<<1)|(((byte2>>5)&1)<<2)|(((byte3>>5)&1)<<3);
-                  wsTCache2[t_index]=((byte0>>1)&1)|(((byte1>>1)&1)<<1)|(((byte2>>1)&1)<<2)|(((byte3>>1)&1)<<3);
-                  wsTCacheFlipped2[t_index++]=((byte0>>6)&1)|(((byte1>>6)&1)<<1)|(((byte2>>6)&1)<<2)|(((byte3>>6)&1)<<3);
-                  wsTCache2[t_index]=((byte0)&1)|(((byte1)&1)<<1)|(((byte2)&1)<<2)|(((byte3)&1)<<3);
-                  wsTCacheFlipped2[t_index++]=((byte0>>7)&1)|(((byte1>>7)&1)<<1)|(((byte2>>7)&1)<<2)|(((byte3>>7)&1)<<3);
+                  row = lut_2bpp_norm[byte0] | (lut_2bpp_norm[byte1] << 1)
+                      | (lut_2bpp_norm[byte2] << 2) | (lut_2bpp_norm[byte3] << 3);
+                  row_f = lut_2bpp_flip[byte0] | (lut_2bpp_flip[byte1] << 1)
+                        | (lut_2bpp_flip[byte2] << 2) | (lut_2bpp_flip[byte3] << 3);
+                  memcpy(&wsTCache2[t_index], &row, 8);
+                  memcpy(&wsTCacheFlipped2[t_index], &row_f, 8);
+                  t_index += 8;
                }
                break;
             default:
@@ -278,8 +258,13 @@ void wsGetTile(uint32 number,uint32 line,int flipv,int fliph,int bank)
       if(flipv)
          line=7-line;
       if(fliph)
-         memcpy(&wsTileRow[0],&wsTCacheFlipped2[(number<<6)|(line<<3)],8);
+         return &wsTCacheFlipped2[(number<<6)|(line<<3)];
       else
-         memcpy(&wsTileRow[0],&wsTCache2[(number<<6)|(line<<3)],8);
+         return &wsTCache2[(number<<6)|(line<<3)];
    }
+}
+
+void wsGetTile(uint32 number,uint32 line,int flipv,int fliph,int bank)
+{
+   memcpy(&wsTileRow[0], wsGetTilePtr(number, line, flipv, fliph, bank), 8);
 }

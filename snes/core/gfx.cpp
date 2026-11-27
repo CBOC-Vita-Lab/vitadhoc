@@ -3404,6 +3404,6 @@ extern "C" void S9xWideFillView (struct SWideView *v)
 	v->verify_lines = W.vline;
 	v->cgram = PPU.CGDATA;
 	v->colors = IPPU.ScreenColors;
-	v->oam = PPU.OAMData;
+	v->oam = NULL;
 	v->rendered_w = IPPU.RenderedScreenWidth;
 }

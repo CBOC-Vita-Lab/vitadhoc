@@ -114,11 +114,54 @@ uint32_t soundtsoffs = 0;
 int32_t nesincsize = 0;
 uint32_t soundtsinc = 0;
 uint32_t soundtsi = 0;
+static uint64_t soundtsinv = 0;
+static uint32_t nesincinv = 0;
 static int32_t sqacc[2];
 static uint32_t lq_tcout;
 static int32_t lq_triacc;
 static int32_t lq_noiseacc;
 /* LQ variables segment ends. */
+
+/* Exact replacement for (SOUNDTS << 16) / soundtsinc without 32-bit division:
+ * ts = SOUNDTS & 0xFFFF matches uint32_t (SOUNDTS << 16), and for any
+ * soundtsinc in [4096, 2^28), inv = ceil(2^60 / soundtsinc) satisfies
+ * ((uint64_t)ts * inv) >> 44 == (ts << 16) / soundtsinc for all ts in 0..65535. */
+static INLINE int32_t SoundTS_EndLQ(void) {
+	uint32_t ts = SOUNDTS & 0xFFFFu;
+	if (soundtsinv)
+		return (int32_t)(((uint64_t)ts * soundtsinv) >> 44);
+	return (int32_t)((SOUNDTS << 16) / soundtsinc);
+}
+
+/* Lower bound on steps until acc <= 0 (always in [1, exact_k] and >= exact_k - 1).
+ * The caller subtracts step * inc and checks acc <= 0; any rare -1 under-estimate
+ * completes on the next iteration with step = 1, staying 100% bit-exact with no divide. */
+static INLINE int32_t StepsToZeroLQ(int32_t acc, int32_t inc) {
+	if (acc <= inc) return 1;
+	if (nesincinv)
+		return (int32_t)(((uint64_t)(uint32_t)(acc - 1) * (uint64_t)nesincinv) >> 32) + 1;
+	return (int32_t)((uint32_t)(acc - 1) / (uint32_t)inc) + 1;
+}
+
+/* Add constant totalout to Wave[V >> 4] for all V in [start, end) (start < end). */
+static INLINE void AddWaveRun(int32_t start, int32_t end, int32_t totalout) {
+	if (!totalout) return;
+	{
+		int32_t b0 = start >> 4;
+		int32_t b1 = (end - 1) >> 4;
+		if (b0 == b1) {
+			Wave[b0] += (end - start) * totalout;
+		} else {
+			int32_t out16 = totalout << 4;
+			int32_t full_end = end >> 4;
+			Wave[b0] += (((b0 + 1) << 4) - start) * totalout;
+			for (b0++; b0 < full_end; b0++)
+				Wave[b0] += out16;
+			if (end & 15)
+				Wave[full_end] += (end & 15) * totalout;
+		}
+	}
+}
 
 static int32_t lengthcount[4];
 static const uint8_t lengthtable[0x20] =
@@ -653,7 +696,7 @@ static void RDoSQLQ(void) {
 	int32_t totalout;
 
 	start = ChannelBC[0];
-	end = (SOUNDTS << 16) / soundtsinc;
+	end = SoundTS_EndLQ();
 	if (end <= start) return;
 	ChannelBC[0] = end;
 
@@ -718,20 +761,22 @@ static void RDoSQLQ(void) {
 		 * to Wave[V>>4] - genuinely no-op for ~30000 NES cycles
 		 * per frame. Skip the loop entirely. */
 	} else {
-		for (V = start; V < end; V++) {
-			/* int tmpamp=0;
-			if(RectDutyCount[0]<rthresh[0])
-			 tmpamp=amp[0];
-			if(RectDutyCount[1]<rthresh[1])
-			 tmpamp+=amp[1];
-			tmpamp=wlookup1[tmpamp];
-			tmpamp = wlookup1[ ttable[0][RectDutyCount[0]] + ttable[1][RectDutyCount[1]] ];
-			*/
+		for (V = start; V < end; ) {
+			int32_t step = end - V;
+			int32_t k0 = inie[0] ? StepsToZeroLQ(sqacc[0], inie[0])
+			                     : (sqacc[0] <= 0 ? 1 : step);
+			int32_t k1 = inie[1] ? StepsToZeroLQ(sqacc[1], inie[1])
+			                     : (sqacc[1] <= 0 ? 1 : step);
+			if (k0 < step) step = k0;
+			if (k1 < step) step = k1;
 
-			Wave[V >> 4] += totalout;	/* tmpamp; */
+			AddWaveRun(V, V + step, totalout);
+			V += step;
 
-			sqacc[0] -= inie[0];
-			sqacc[1] -= inie[1];
+			if (inie[0])
+				sqacc[0] = (int32_t)((int64_t)sqacc[0] - (int64_t)step * (int64_t)inie[0]);
+			if (inie[1])
+				sqacc[1] = (int32_t)((int64_t)sqacc[1] - (int64_t)step * (int64_t)inie[1]);
 
 			if (sqacc[0] <= 0) {
  rea:
@@ -823,7 +868,7 @@ static void RDoTriangleNoisePCMLQ(void) {
 	int32_t totalout;
 
 	start = ChannelBC[2];
-	end = (SOUNDTS << 16) / soundtsinc;
+	end = SoundTS_EndLQ();
 	if (end <= start) return;
 	ChannelBC[2] = end;
 
@@ -876,11 +921,20 @@ static void RDoTriangleNoisePCMLQ(void) {
 	totalout = wl2(scaled_tcout + noiseout + scaled_dmc);
 
 	if (inie[0] && inie[1]) {
-		for (V = start; V < end; V++) {
-			Wave[V >> 4] += totalout;
+		const int32_t noise_inc = (int32_t)((PAL ? PALNoiseFreqTable[PSG[0xE] & 0xF]
+		                                         : NTSCNoiseFreqTable[PSG[0xE] & 0xF]) << (16 + 1));
+		for (V = start; V < end; ) {
+			int32_t step = end - V;
+			int32_t k0 = StepsToZeroLQ(lq_triacc, inie[0]);
+			int32_t k1 = StepsToZeroLQ(lq_noiseacc, inie[1]);
+			if (k0 < step) step = k0;
+			if (k1 < step) step = k1;
 
-			lq_triacc -= inie[0];
-			lq_noiseacc -= inie[1];
+			AddWaveRun(V, V + step, totalout);
+			V += step;
+
+			lq_triacc   = (int32_t)((int64_t)lq_triacc   - (int64_t)step * (int64_t)inie[0]);
+			lq_noiseacc = (int32_t)((int64_t)lq_noiseacc - (int64_t)step * (int64_t)inie[1]);
 
 			if (lq_triacc <= 0) {
  rea:
@@ -901,10 +955,7 @@ static void RDoTriangleNoisePCMLQ(void) {
 				/* used to added <<(16+2) when the noise table
 				 * values were half.
 				 */
-				if (PAL)
-					lq_noiseacc += PALNoiseFreqTable[PSG[0xE] & 0xF] << (16 + 1);
-				else
-					lq_noiseacc += NTSCNoiseFreqTable[PSG[0xE] & 0xF] << (16 + 1);
+				lq_noiseacc += noise_inc;
 				nreg = (nreg << 1) + (((nreg >> nshift) ^ (nreg >> 14)) & 1);
 				nreg &= 0x7fff;
 				noiseout = amptab[(nreg >> 0xe) & 1];
@@ -913,10 +964,15 @@ static void RDoTriangleNoisePCMLQ(void) {
 			}	/* noiseacc<=0 */
 		}	/* for(V=... */
 	} else if (inie[0]) {
-		for (V = start; V < end; V++) {
-			Wave[V >> 4] += totalout;
+		for (V = start; V < end; ) {
+			int32_t step = end - V;
+			int32_t k0 = StepsToZeroLQ(lq_triacc, inie[0]);
+			if (k0 < step) step = k0;
 
-			lq_triacc -= inie[0];
+			AddWaveRun(V, V + step, totalout);
+			V += step;
+
+			lq_triacc = (int32_t)((int64_t)lq_triacc - (int64_t)step * (int64_t)inie[0]);
 
 			if (lq_triacc <= 0) {
  area:
@@ -933,18 +989,24 @@ static void RDoTriangleNoisePCMLQ(void) {
 			}
 		}
 	} else if (inie[1]) {
-		for (V = start; V < end; V++) {
-			Wave[V >> 4] += totalout;
-			lq_noiseacc -= inie[1];
+		const int32_t noise_inc = (int32_t)((PAL ? PALNoiseFreqTable[PSG[0xE] & 0xF]
+		                                         : NTSCNoiseFreqTable[PSG[0xE] & 0xF]) << (16 + 1));
+		for (V = start; V < end; ) {
+			int32_t step = end - V;
+			int32_t k1 = StepsToZeroLQ(lq_noiseacc, inie[1]);
+			if (k1 < step) step = k1;
+
+			AddWaveRun(V, V + step, totalout);
+			V += step;
+
+			lq_noiseacc = (int32_t)((int64_t)lq_noiseacc - (int64_t)step * (int64_t)inie[1]);
+
 			if (lq_noiseacc <= 0) {
  area2:
 				/* used to be added <<(16+2) when the noise table
 				 * values were half.
 				 */
-				if (PAL)
-					lq_noiseacc += PALNoiseFreqTable[PSG[0xE] & 0xF] << (16 + 1);
-				else
-					lq_noiseacc += NTSCNoiseFreqTable[PSG[0xE] & 0xF] << (16 + 1);
+				lq_noiseacc += noise_inc;
 				nreg = (nreg << 1) + (((nreg >> nshift) ^ (nreg >> 14)) & 1);
 				nreg &= 0x7fff;
 				noiseout = amptab[(nreg >> 0xe) & 1];
@@ -953,8 +1015,7 @@ static void RDoTriangleNoisePCMLQ(void) {
 			}	/* noiseacc<=0 */
 		}
 	} else {
-		for (V = start; V < end; V++)
-			Wave[V >> 4] += totalout;
+		AddWaveRun(start, end, totalout);
 	}
 }
 
@@ -1100,7 +1161,7 @@ int FlushEmulateSound(void) {
 		for (x = 0; x < 5; x++)
 			ChannelBC[x] = left;
 	} else {
-		end = (SOUNDTS << 16) / soundtsinc;
+		end = SoundTS_EndLQ();
 		if (GameExpSound.Fill)
 			GameExpSound.Fill(end & 0xF);
 
@@ -1312,6 +1373,14 @@ void SetSoundVariables(void) {
 		 * (uint64_t)((double)CPU * 65536.0) truncation exactly. */
 		soundtsinc = (uint32_t)(((cpu_num * 65536ULL) / cpu_den) /
 				(FSettings.SndRate * 16));
+
+		/* Precomputed reciprocals for SoundTS_EndLQ() and StepsToZeroLQ(). */
+		soundtsinv = (soundtsinc >= 4096u && soundtsinc < (1u << 28))
+		           ? (((1ULL << 60) + (uint64_t)soundtsinc - 1ULL) / (uint64_t)soundtsinc)
+		           : 0ULL;
+		nesincinv  = (nesincsize >= 2)
+		           ? (uint32_t)((1ULL << 32) / (uint32_t)nesincsize)
+		           : 0u;
 	}
 
 	memset(sqacc, 0, sizeof(sqacc));

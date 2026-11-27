@@ -624,6 +624,7 @@ static inline void REGISTER_2122 (uint8 Byte)
 			FLUSH_REDRAW();
 			PPU.CGDATA[PPU.CGADD] = (Byte & 0x7f) << 8 | PPU.CGSavedByte;
 			IPPU.ColorsChanged = TRUE;
+			g_s9x_cgram_version++;
 			IPPU.Red[PPU.CGADD] = IPPU.XB[PPU.CGSavedByte & 0x1f];
 			IPPU.Blue[PPU.CGADD] = IPPU.XB[(Byte >> 2) & 0x1f];
 			IPPU.Green[PPU.CGADD] = IPPU.XB[(PPU.CGDATA[PPU.CGADD] >> 5) & 0x1f];

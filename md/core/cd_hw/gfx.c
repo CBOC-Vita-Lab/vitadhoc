@@ -154,6 +154,16 @@ void word_ram_2M_dma_w(unsigned int length)
 /*   WORD-RAM 0 & 1 DOT image SUB-CPU interface (1M Mode)      */
 /***************************************************************/
 
+/* Branchless priority write helper replacing the 256 KiB gfx.lut_prio[4][256][256] table:
+ * mode 0 = normal (data), 1 = underwrite (prev over data), 2 = overwrite (data over prev), 3 = invalid (prev). */
+INLINE uint8 cd_prio_write(unsigned int mode, uint8 prev, uint8 data)
+{
+  uint8 top = (mode & 1) ? prev : data;
+  uint8 bot = (mode & 2) ? prev : data;
+  uint8 keep = (uint8)(((top & 0x0f) ? 0 : 0x0f) | ((top & 0xf0) ? 0 : 0xf0));
+  return (uint8)(top | (bot & keep));
+}
+
 unsigned int dot_ram_0_read16(unsigned int address)
 {
   uint8 data = READ_BYTE(scd.word_ram[0], (address >> 1) & 0x1ffff);
@@ -172,7 +182,7 @@ void dot_ram_0_write16(unsigned int address, unsigned int data)
   address = (address >> 1) & 0x1ffff;
   prev = READ_BYTE(scd.word_ram[0], address);
   data = (data & 0x0f) | ((data >> 4) & 0xf0);
-  data = gfx.lut_prio[(scd.regs[0x02>>1].w >> 3) & 0x03][prev][data];
+  data = cd_prio_write((scd.regs[0x02>>1].w >> 3) & 0x03, prev, (uint8)data);
   WRITE_BYTE(scd.word_ram[0], address, data);
 }
 
@@ -182,7 +192,7 @@ void dot_ram_1_write16(unsigned int address, unsigned int data)
   address = (address >> 1) & 0x1ffff;
   prev = READ_BYTE(scd.word_ram[1], address);
   data = (data & 0x0f) | ((data >> 4) & 0xf0);
-  data = gfx.lut_prio[(scd.regs[0x02>>1].w >> 3) & 0x03][prev][data];
+  data = cd_prio_write((scd.regs[0x02>>1].w >> 3) & 0x03, prev, (uint8)data);
   WRITE_BYTE(scd.word_ram[1], address, data);
 }
 
@@ -223,7 +233,7 @@ void dot_ram_0_write8(unsigned int address, unsigned int data)
     data = (prev & 0x0f) | (data << 4);
   }
 
-  data = gfx.lut_prio[(scd.regs[0x02>>1].w >> 3) & 0x03][prev][data];
+  data = cd_prio_write((scd.regs[0x02>>1].w >> 3) & 0x03, prev, (uint8)data);
   WRITE_BYTE(scd.word_ram[0], (address >> 1) & 0x1ffff, data);
 }
 
@@ -240,7 +250,7 @@ void dot_ram_1_write8(unsigned int address, unsigned int data)
     data = (prev & 0x0f) | (data << 4);
   }
 
-  data = gfx.lut_prio[(scd.regs[0x02>>1].w >> 3) & 0x03][prev][data];
+  data = cd_prio_write((scd.regs[0x02>>1].w >> 3) & 0x03, prev, (uint8)data);
   WRITE_BYTE(scd.word_ram[1], (address >> 1) & 0x1ffff, data);
 }
 
@@ -304,7 +314,7 @@ void cell_ram_1_write8(unsigned int address, unsigned int data)
 
 void gfx_init(void)
 {
-  int i, j;
+  int i;
   uint16 offset;
   uint8 mask, row, col, temp;
 
@@ -356,21 +366,7 @@ void gfx_init(void)
     gfx.lut_offset[i] = offset | 0xe000;
   }
 
-  /* Initialize priority modes lookup table */
-  for (i=0; i<0x100; i++)
-  {
-    for (j=0; j<0x100; j++)
-    {
-      /* normal */
-      gfx.lut_prio[0][i][j] = j;
-      /* underwrite */
-      gfx.lut_prio[1][i][j] = ((i & 0x0f) ? (i & 0x0f) : (j & 0x0f)) | ((i & 0xf0) ? (i & 0xf0) : (j & 0xf0));
-      /* overwrite */
-      gfx.lut_prio[2][i][j] = ((j & 0x0f) ? (j & 0x0f) : (i & 0x0f)) | ((j & 0xf0) ? (j & 0xf0) : (i & 0xf0));
-      /* invalid */
-      gfx.lut_prio[3][i][j] = i;
-    }
-  }
+  /* Priority writes are computed inline via cd_prio_write() (zero 256 KiB table footprint). */
 
   /* Initialize cell lookup table             */
   /* table entry = yyxxshrr (8 bits)          */
@@ -524,6 +520,9 @@ INLINE void gfx_render(uint32 bufferIndex, uint32 width)
   /* bits [1:0] of 32x32 pixels stamp index are masked (see Chuck Rock II - Son of Chuck) */
   uint32 stamp_mask = (scd.regs[0x58>>1].byte.l & 0x02) ? 0x7fc : 0x7ff;
 
+  /* priority write mode (loop-invariant across the scanline) */
+  const unsigned int prio_mode = (scd.regs[0x02>>1].w >> 3) & 0x03;
+
   /* pixel map start position for current line (13.3 format converted to 13.11) */
   uint32 xpos = *gfx.tracePtr++ << 8;
   uint32 ypos = *gfx.tracePtr++ << 8;
@@ -628,7 +627,7 @@ INLINE void gfx_render(uint32 bufferIndex, uint32 width)
     }
 
     /* priority mode write */
-    pixel_out = gfx.lut_prio[(scd.regs[0x02>>1].w >> 3) & 0x03][pixel_in][pixel_out];
+    pixel_out = cd_prio_write(prio_mode, pixel_in, pixel_out);
 
     /* write data to image buffer */
     WRITE_BYTE(scd.word_ram_2M, (bufferIndex >> 1) & 0x3ffff, pixel_out);

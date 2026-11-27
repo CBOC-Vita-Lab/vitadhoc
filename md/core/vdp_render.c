@@ -44,6 +44,22 @@
 #define VDPW_NO_WRAP
 #include "shared.h"
 
+#ifdef __ARM_NEON
+#pragma push_macro("reg")
+#pragma push_macro("sat")
+#pragma push_macro("status")
+#pragma push_macro("bitmap")
+#undef reg
+#undef sat
+#undef status
+#undef bitmap
+#include <arm_neon.h>
+#pragma pop_macro("bitmap")
+#pragma pop_macro("status")
+#pragma pop_macro("sat")
+#pragma pop_macro("reg")
+#endif
+
 extern int8 reset_do_not_clear_buffers;
 
 #ifndef HAVE_NO_SPRITE_LIMIT
@@ -115,7 +131,71 @@ INLINE void WRITE_LONG(void *address, uint32 data)
   else *(uint32 *)address = data;
 }
 
+#else  /* !ALIGN_LONG */
+#undef READ_LONG
+#undef WRITE_LONG
+
+/* Unaligned 32-bit load/store via memcpy: lowers to a single unaligned ldr/str
+ * on ARMv7 Cortex-A9 and x86 with zero strict-aliasing UB, zero UBSan alignment
+ * faults, and no ARMv7 ldm/stm/strd merging across unaligned linebuf pointers. */
+#if defined(ALT_RENDERER) && !(defined(__ARM_NEON) && defined(LSB_FIRST))
+INLINE uint32 READ_LONG(const void *address)
+{
+  uint32 data;
+  memcpy(&data, address, sizeof(data));
+  return data;
+}
+#endif
+
+INLINE void WRITE_LONG(void *address, uint32 data)
+{
+  memcpy(address, &data, sizeof(data));
+}
+
 #endif  /* ALIGN_LONG */
+
+#ifdef __ARM_NEON
+/* Exact branchless NEON equivalents of make_lut_bg (ste == 0, lut[0]) and
+ * make_lut_bg_ste (ste != 0, lut[2]), eliminating 64 KiB L1D LUT thrashing.
+ * Verified exhaustively across all 2 * 65,536 (bx, ax) byte pairs. */
+INLINE uint8x16_t merge_bg_16_neon(uint8x16_t ax, uint8x16_t bx, int ste)
+{
+  const uint8x16_t v0f = vdupq_n_u8(0x0F);
+  const uint8x16_t v40 = vdupq_n_u8(0x40);
+  const uint8x16_t v7f = vdupq_n_u8(0x7F);
+  uint8x16_t a_nz   = vtstq_u8(ax, v0f);
+  uint8x16_t b_nz   = vtstq_u8(bx, v0f);
+  uint8x16_t b_prio = vtstq_u8(vbicq_u8(bx, ax), v40);
+  uint8x16_t pick_a = vbicq_u8(a_nz, vandq_u8(b_nz, b_prio));
+  uint8x16_t any_nz = vorrq_u8(a_nz, b_nz);
+  uint8x16_t c      = vandq_u8(vbslq_u8(pick_a, ax, bx), vandq_u8(any_nz, v7f));
+  if (ste)
+  {
+    uint8x16_t hi = vshlq_n_u8(vandq_u8(vorrq_u8(ax, bx), v40), 1);
+    c = vorrq_u8(c, hi);
+  }
+  return c;
+}
+
+INLINE uint8x8_t merge_bg_8_neon(uint8x8_t ax, uint8x8_t bx, int ste)
+{
+  const uint8x8_t v0f = vdup_n_u8(0x0F);
+  const uint8x8_t v40 = vdup_n_u8(0x40);
+  const uint8x8_t v7f = vdup_n_u8(0x7F);
+  uint8x8_t a_nz   = vtst_u8(ax, v0f);
+  uint8x8_t b_nz   = vtst_u8(bx, v0f);
+  uint8x8_t b_prio = vtst_u8(vbic_u8(bx, ax), v40);
+  uint8x8_t pick_a = vbic_u8(a_nz, vand_u8(b_nz, b_prio));
+  uint8x8_t any_nz = vorr_u8(a_nz, b_nz);
+  uint8x8_t c      = vand_u8(vbsl_u8(pick_a, ax, bx), vand_u8(any_nz, v7f));
+  if (ste)
+  {
+    uint8x8_t hi = vshl_n_u8(vand_u8(vorr_u8(ax, bx), v40), 1);
+    c = vorr_u8(c, hi);
+  }
+  return c;
+}
+#endif  /* __ARM_NEON */
 
 
 /* Draw 2-cell column (8-pixels high) */
@@ -183,95 +263,47 @@ INLINE void WRITE_LONG(void *address, uint32 data)
    One pattern = 8 pixels = 8 bytes = two 32-bit writes per pattern
 */
 
-#ifdef ALIGN_LONG
 #ifdef LSB_FIRST
 #define DRAW_COLUMN(ATTR, LINE) \
   GET_LSB_TILE(ATTR, LINE) \
   WRITE_LONG(dst, src[0] | atex); \
-  dst++; \
-  WRITE_LONG(dst, src[1] | atex); \
-  dst++; \
+  WRITE_LONG(dst + 4, src[1] | atex); \
   GET_MSB_TILE(ATTR, LINE) \
-  WRITE_LONG(dst, src[0] | atex); \
-  dst++; \
-  WRITE_LONG(dst, src[1] | atex); \
-  dst++;
+  WRITE_LONG(dst + 8, src[0] | atex); \
+  WRITE_LONG(dst + 12, src[1] | atex); \
+  dst += 16;
 #define DRAW_COLUMN_IM2(ATTR, LINE) \
   GET_LSB_TILE_IM2(ATTR, LINE) \
   WRITE_LONG(dst, src[0] | atex); \
-  dst++; \
-  WRITE_LONG(dst, src[1] | atex); \
-  dst++; \
+  WRITE_LONG(dst + 4, src[1] | atex); \
   GET_MSB_TILE_IM2(ATTR, LINE) \
-  WRITE_LONG(dst, src[0] | atex); \
-  dst++; \
-  WRITE_LONG(dst, src[1] | atex); \
-  dst++;
+  WRITE_LONG(dst + 8, src[0] | atex); \
+  WRITE_LONG(dst + 12, src[1] | atex); \
+  dst += 16;
 #else
 #define DRAW_COLUMN(ATTR, LINE) \
   GET_MSB_TILE(ATTR, LINE) \
   WRITE_LONG(dst, src[0] | atex); \
-  dst++; \
-  WRITE_LONG(dst, src[1] | atex); \
-  dst++; \
+  WRITE_LONG(dst + 4, src[1] | atex); \
   GET_LSB_TILE(ATTR, LINE) \
-  WRITE_LONG(dst, src[0] | atex); \
-  dst++; \
-  WRITE_LONG(dst, src[1] | atex); \
-  dst++;
+  WRITE_LONG(dst + 8, src[0] | atex); \
+  WRITE_LONG(dst + 12, src[1] | atex); \
+  dst += 16;
 #define DRAW_COLUMN_IM2(ATTR, LINE) \
   GET_MSB_TILE_IM2(ATTR, LINE) \
   WRITE_LONG(dst, src[0] | atex); \
-  dst++; \
-  WRITE_LONG(dst, src[1] | atex); \
-  dst++; \
+  WRITE_LONG(dst + 4, src[1] | atex); \
   GET_LSB_TILE_IM2(ATTR, LINE) \
-  WRITE_LONG(dst, src[0] | atex); \
-  dst++; \
-  WRITE_LONG(dst, src[1] | atex); \
-  dst++;
+  WRITE_LONG(dst + 8, src[0] | atex); \
+  WRITE_LONG(dst + 12, src[1] | atex); \
+  dst += 16;
 #endif
-#else /* NOT ALIGNED */
-#ifdef LSB_FIRST
-#define DRAW_COLUMN(ATTR, LINE) \
-  GET_LSB_TILE(ATTR, LINE) \
-  *dst++ = (src[0] | atex); \
-  *dst++ = (src[1] | atex); \
-  GET_MSB_TILE(ATTR, LINE) \
-  *dst++ = (src[0] | atex); \
-  *dst++ = (src[1] | atex);
-#define DRAW_COLUMN_IM2(ATTR, LINE) \
-  GET_LSB_TILE_IM2(ATTR, LINE) \
-  *dst++ = (src[0] | atex); \
-  *dst++ = (src[1] | atex); \
-  GET_MSB_TILE_IM2(ATTR, LINE) \
-  *dst++ = (src[0] | atex); \
-  *dst++ = (src[1] | atex);
-#else
-#define DRAW_COLUMN(ATTR, LINE) \
-  GET_MSB_TILE(ATTR, LINE) \
-  *dst++ = (src[0] | atex); \
-  *dst++ = (src[1] | atex); \
-  GET_LSB_TILE(ATTR, LINE) \
-  *dst++ = (src[0] | atex); \
-  *dst++ = (src[1] | atex);
-#define DRAW_COLUMN_IM2(ATTR, LINE) \
-  GET_MSB_TILE_IM2(ATTR, LINE) \
-  *dst++ = (src[0] | atex); \
-  *dst++ = (src[1] | atex); \
-  GET_LSB_TILE_IM2(ATTR, LINE) \
-  *dst++ = (src[0] | atex); \
-  *dst++ = (src[1] | atex);
-#endif
-#endif /* ALIGN_LONG */
 
 #ifdef ALT_RENDERER
-/* Draw background tiles directly using priority look-up table */
+/* Draw background tiles directly using priority look-up table (or 16-wide NEON on ARM) */
 /* SRC_A = layer A rendered pixel line (4 bytes = 4 pixels at once) */
 /* SRC_B = layer B cached pixel line (4 bytes = 4 pixels at once) */
 /* Note: cache address is always aligned so no need to use READ_LONG macro */
-/* This might be faster or slower than original method, depending on  */
-/* architecture (x86, PowerPC), cache size, memory access speed, etc...  */
 
 #ifdef LSB_FIRST
 #define DRAW_BG_TILE(SRC_A, SRC_B) \
@@ -287,135 +319,92 @@ INLINE void WRITE_LONG(void *address, uint32 data)
   *lb++ = table[((SRC_B << 8) & 0xff00) | (SRC_A & 0xff)];
 #endif
 
-#ifdef ALIGN_LONG
-#ifdef LSB_FIRST
+#if defined(__ARM_NEON) && defined(LSB_FIRST)
+#define DRAW_BG_COLUMN(ATTR, LINE, SRC_A, SRC_B) \
+  { \
+    const uint8 *_s0 = &bg_pattern_cache[((ATTR) & 0x00001FFF) << 6 | (LINE)]; \
+    const uint8 *_s1 = &bg_pattern_cache[((ATTR) & 0x1FFF0000) >> 10 | (LINE)]; \
+    uint8x8_t _b0 = vorr_u8(vld1_u8(_s0), vdup_n_u8((uint8)(((ATTR) >> 9) & 0x70))); \
+    uint8x8_t _b1 = vorr_u8(vld1_u8(_s1), vdup_n_u8((uint8)(((ATTR) >> 25) & 0x70))); \
+    uint8x16_t _bx = vcombine_u8(_b0, _b1); \
+    uint8x16_t _ax = vld1q_u8(lb); \
+    vst1q_u8(lb, merge_bg_16_neon(_ax, _bx, (table != lut[0]))); \
+    lb += 16; \
+  }
+#define DRAW_BG_COLUMN_IM2(ATTR, LINE, SRC_A, SRC_B) \
+  { \
+    const uint8 *_s0 = &bg_pattern_cache[(((ATTR) & 0x000003FF) << 7 | ((ATTR) & 0x00001800) << 6 | (LINE)) ^ (((ATTR) & 0x00001000) >> 6)]; \
+    const uint8 *_s1 = &bg_pattern_cache[(((ATTR) & 0x03FF0000) >> 9 | ((ATTR) & 0x18000000) >> 10 | (LINE)) ^ (((ATTR) & 0x10000000) >> 22)]; \
+    uint8x8_t _b0 = vorr_u8(vld1_u8(_s0), vdup_n_u8((uint8)(((ATTR) >> 9) & 0x70))); \
+    uint8x8_t _b1 = vorr_u8(vld1_u8(_s1), vdup_n_u8((uint8)(((ATTR) >> 25) & 0x70))); \
+    uint8x16_t _bx = vcombine_u8(_b0, _b1); \
+    uint8x16_t _ax = vld1q_u8(lb); \
+    vst1q_u8(lb, merge_bg_16_neon(_ax, _bx, (table != lut[0]))); \
+    lb += 16; \
+  }
+#elif defined(LSB_FIRST)
 #define DRAW_BG_COLUMN(ATTR, LINE, SRC_A, SRC_B) \
   GET_LSB_TILE(ATTR, LINE) \
-  SRC_A = READ_LONG((uint32 *)lb); \
+  SRC_A = READ_LONG(lb); \
   SRC_B = (src[0] | atex); \
   DRAW_BG_TILE(SRC_A, SRC_B) \
-  SRC_A = READ_LONG((uint32 *)lb); \
+  SRC_A = READ_LONG(lb); \
   SRC_B = (src[1] | atex); \
   DRAW_BG_TILE(SRC_A, SRC_B) \
   GET_MSB_TILE(ATTR, LINE) \
-  SRC_A = READ_LONG((uint32 *)lb); \
+  SRC_A = READ_LONG(lb); \
   SRC_B = (src[0] | atex); \
   DRAW_BG_TILE(SRC_A, SRC_B) \
-  SRC_A = READ_LONG((uint32 *)lb); \
+  SRC_A = READ_LONG(lb); \
   SRC_B = (src[1] | atex); \
   DRAW_BG_TILE(SRC_A, SRC_B)
 #define DRAW_BG_COLUMN_IM2(ATTR, LINE, SRC_A, SRC_B) \
   GET_LSB_TILE_IM2(ATTR, LINE) \
-  SRC_A = READ_LONG((uint32 *)lb); \
+  SRC_A = READ_LONG(lb); \
   SRC_B = (src[0] | atex); \
   DRAW_BG_TILE(SRC_A, SRC_B) \
-  SRC_A = READ_LONG((uint32 *)lb); \
+  SRC_A = READ_LONG(lb); \
   SRC_B = (src[1] | atex); \
   DRAW_BG_TILE(SRC_A, SRC_B) \
   GET_MSB_TILE_IM2(ATTR, LINE) \
-  SRC_A = READ_LONG((uint32 *)lb); \
+  SRC_A = READ_LONG(lb); \
   SRC_B = (src[0] | atex); \
   DRAW_BG_TILE(SRC_A, SRC_B) \
-  SRC_A = READ_LONG((uint32 *)lb); \
+  SRC_A = READ_LONG(lb); \
   SRC_B = (src[1] | atex); \
   DRAW_BG_TILE(SRC_A, SRC_B)
 #else
 #define DRAW_BG_COLUMN(ATTR, LINE, SRC_A, SRC_B) \
   GET_MSB_TILE(ATTR, LINE) \
-  SRC_A = READ_LONG((uint32 *)lb); \
+  SRC_A = READ_LONG(lb); \
   SRC_B = (src[0] | atex); \
   DRAW_BG_TILE(SRC_A, SRC_B) \
-  SRC_A = READ_LONG((uint32 *)lb); \
+  SRC_A = READ_LONG(lb); \
   SRC_B = (src[1] | atex); \
   DRAW_BG_TILE(SRC_A, SRC_B) \
   GET_LSB_TILE(ATTR, LINE) \
-  SRC_A = READ_LONG((uint32 *)lb); \
+  SRC_A = READ_LONG(lb); \
   SRC_B = (src[0] | atex); \
   DRAW_BG_TILE(SRC_A, SRC_B) \
-  SRC_A = READ_LONG((uint32 *)lb); \
+  SRC_A = READ_LONG(lb); \
   SRC_B = (src[1] | atex); \
   DRAW_BG_TILE(SRC_A, SRC_B)
 #define DRAW_BG_COLUMN_IM2(ATTR, LINE, SRC_A, SRC_B) \
   GET_MSB_TILE_IM2(ATTR, LINE) \
-  SRC_A = READ_LONG((uint32 *)lb); \
+  SRC_A = READ_LONG(lb); \
   SRC_B = (src[0] | atex); \
   DRAW_BG_TILE(SRC_A, SRC_B) \
-  SRC_A = READ_LONG((uint32 *)lb); \
+  SRC_A = READ_LONG(lb); \
   SRC_B = (src[1] | atex); \
   DRAW_BG_TILE(SRC_A, SRC_B) \
   GET_LSB_TILE_IM2(ATTR, LINE) \
-  SRC_A = READ_LONG((uint32 *)lb); \
+  SRC_A = READ_LONG(lb); \
   SRC_B = (src[0] | atex); \
   DRAW_BG_TILE(SRC_A, SRC_B) \
-  SRC_A = READ_LONG((uint32 *)lb); \
+  SRC_A = READ_LONG(lb); \
   SRC_B = (src[1] | atex); \
   DRAW_BG_TILE(SRC_A, SRC_B)
 #endif
-#else /* NOT ALIGNED */
-#ifdef LSB_FIRST
-#define DRAW_BG_COLUMN(ATTR, LINE, SRC_A, SRC_B) \
-  GET_LSB_TILE(ATTR, LINE) \
-  SRC_A = *(uint32 *)(lb); \
-  SRC_B = (src[0] | atex); \
-  DRAW_BG_TILE(SRC_A, SRC_B) \
-  SRC_A = *(uint32 *)(lb); \
-  SRC_B = (src[1] | atex); \
-  DRAW_BG_TILE(SRC_A, SRC_B) \
-  GET_MSB_TILE(ATTR, LINE) \
-  SRC_A = *(uint32 *)(lb); \
-  SRC_B = (src[0] | atex); \
-  DRAW_BG_TILE(SRC_A, SRC_B) \
-  SRC_A = *(uint32 *)(lb); \
-  SRC_B = (src[1] | atex); \
-  DRAW_BG_TILE(SRC_A, SRC_B)
-#define DRAW_BG_COLUMN_IM2(ATTR, LINE, SRC_A, SRC_B) \
-  GET_LSB_TILE_IM2(ATTR, LINE) \
-  SRC_A = *(uint32 *)(lb); \
-  SRC_B = (src[0] | atex); \
-  DRAW_BG_TILE(SRC_A, SRC_B) \
-  SRC_A = *(uint32 *)(lb); \
-  SRC_B = (src[1] | atex); \
-  DRAW_BG_TILE(SRC_A, SRC_B) \
-  GET_MSB_TILE_IM2(ATTR, LINE) \
-  SRC_A = *(uint32 *)(lb); \
-  SRC_B = (src[0] | atex); \
-  DRAW_BG_TILE(SRC_A, SRC_B) \
-  SRC_A = *(uint32 *)(lb); \
-  SRC_B = (src[1] | atex); \
-  DRAW_BG_TILE(SRC_A, SRC_B)
-#else
-#define DRAW_BG_COLUMN(ATTR, LINE, SRC_A, SRC_B) \
-  GET_MSB_TILE(ATTR, LINE) \
-  SRC_A = *(uint32 *)(lb); \
-  SRC_B = (src[0] | atex); \
-  DRAW_BG_TILE(SRC_A, SRC_B) \
-  SRC_A = *(uint32 *)(lb); \
-  SRC_B = (src[1] | atex); \
-  DRAW_BG_TILE(SRC_A, SRC_B) \
-  GET_LSB_TILE(ATTR, LINE) \
-  SRC_A = *(uint32 *)(lb); \
-  SRC_B = (src[0] | atex); \
-  DRAW_BG_TILE(SRC_A, SRC_B) \
-  SRC_A = *(uint32 *)(lb); \
-  SRC_B = (src[1] | atex); \
-  DRAW_BG_TILE(SRC_A, SRC_B)
-#define DRAW_BG_COLUMN_IM2(ATTR, LINE, SRC_A, SRC_B) \
-  GET_MSB_TILE_IM2(ATTR, LINE) \
-  SRC_A = *(uint32 *)(lb); \
-  SRC_B = (src[0] | atex); \
-  DRAW_BG_TILE(SRC_A, SRC_B) \
-  SRC_A = *(uint32 *)(lb); \
-  SRC_B = (src[1] | atex); \
-  DRAW_BG_TILE(SRC_A, SRC_B) \
-  GET_LSB_TILE_IM2(ATTR, LINE) \
-  SRC_A = *(uint32 *)(lb); \
-  SRC_B = (src[0] | atex); \
-  DRAW_BG_TILE(SRC_A, SRC_B) \
-  SRC_A = *(uint32 *)(lb); \
-  SRC_B = (src[1] | atex); \
-  DRAW_BG_TILE(SRC_A, SRC_B)
-#endif
-#endif /* ALIGN_LONG */
 #endif /* ALT_RENDERER */
 
 #define DRAW_SPRITE_TILE(WIDTH,ATTR,TABLE)  \
@@ -595,7 +584,7 @@ static const uint32 tms_palette[16] =
 #endif
 
 /* Cached and flipped patterns */
-static uint8 ALIGNED_(4) bg_pattern_cache[0x80000];
+static uint8 ALIGNED_(8) bg_pattern_cache[0x80000];
 
 /* Sprite pattern name offset look-up table (Mode 5) */
 static uint8 name_lut[0x400];
@@ -1025,6 +1014,34 @@ static uint32 make_lut_bgobj_m4(uint32 bx, uint32 sx)
 
 INLINE void merge(uint8 *srca, uint8 *srcb, uint8 *dst, uint8 *table, int width)
 {
+#ifdef __ARM_NEON
+  if (table == lut[0] || table == lut[2])
+  {
+    const int ste = (table == lut[2]);
+    while (width >= 16)
+    {
+      uint8x16_t ax = vld1q_u8(srca);
+      uint8x16_t bx = vld1q_u8(srcb);
+      vst1q_u8(dst, merge_bg_16_neon(ax, bx, ste));
+      srca += 16; srcb += 16; dst += 16;
+      width -= 16;
+    }
+    while (width >= 8)
+    {
+      uint8x8_t ax = vld1_u8(srca);
+      uint8x8_t bx = vld1_u8(srcb);
+      vst1_u8(dst, merge_bg_8_neon(ax, bx, ste));
+      srca += 8; srcb += 8; dst += 8;
+      width -= 8;
+    }
+    while (width > 0)
+    {
+      *dst++ = table[(*srcb++ << 8) | (*srca++)];
+      width--;
+    }
+    return;
+  }
+#endif
   do
   {
     *dst++ = table[(*srcb++ << 8) | (*srca++)];
@@ -1484,7 +1501,7 @@ void render_bg_m4(int line)
   int shift = index & 7;
 
   /* Background line buffer */
-  uint32 *dst = (uint32 *)&linebuf[0][0x20 + shift];
+  uint8 *dst = &linebuf[0][0x20 + shift];
 
   /* Vertical scrolling */
   int v_line = line + vscroll;
@@ -1568,15 +1585,9 @@ void render_bg_m4(int line)
       uint32 *src23 = (uint32 *)&bg_pattern_cache[((attr & (0x63F | ((reg[4] & 0x07) << 6))) << 6) | v_line];
 
       /* Copy left & right half, retrieving each pixel data bits from appropriate source and adding the attribute bits in */
-#ifdef ALIGN_LONG
       WRITE_LONG(dst, (src01[0] & 0x03030303) | (src23[0] & 0x0C0C0C0C) | atex);
-      dst++;
-      WRITE_LONG(dst, (src01[1] & 0x03030303) | (src23[1] & 0x0C0C0C0C) | atex);
-      dst++;
-#else
-      *dst++ = (src01[0] & 0x03030303) | (src23[0] & 0x0C0C0C0C) | atex;
-      *dst++ = (src01[1] & 0x03030303) | (src23[1] & 0x0C0C0C0C) | atex;
-#endif
+      WRITE_LONG(dst + 4, (src01[1] & 0x03030303) | (src23[1] & 0x0C0C0C0C) | atex);
+      dst += 8;
     }
     else
     {
@@ -1584,15 +1595,9 @@ void render_bg_m4(int line)
       uint32 *src = (uint32 *)&bg_pattern_cache[((attr & 0x7FF) << 6) | v_line];
 
       /* Copy left & right half, adding the attribute bits in */
-#ifdef ALIGN_LONG
       WRITE_LONG(dst, src[0] | atex);
-      dst++;
-      WRITE_LONG(dst, src[1] | atex);
-      dst++;
-#else
-      *dst++ = src[0] | atex;
-      *dst++ = src[1] | atex;
-#endif
+      WRITE_LONG(dst + 4, src[1] | atex);
+      dst += 8;
     }
   }
 }
@@ -1602,7 +1607,8 @@ void render_bg_m4(int line)
 void render_bg_m5(int line)
 {
   int column;
-  uint32 atex, atbuf, *src, *dst;
+  uint32 atex, atbuf, *src;
+  uint8 *dst;
 
   /* Common data */
   uint32 xscroll      = *(uint32 *)&vram[hscb + ((line & hscroll_mask) << 2)];
@@ -1639,7 +1645,7 @@ void render_bg_m5(int line)
   if(shift)
   {
     /* Plane B line buffer */
-    dst = (uint32 *)&linebuf[0][0x10 + shift];
+    dst = &linebuf[0][0x10 + shift];
 
     atbuf = nt[(index - 1) & pf_col_mask];
     DRAW_COLUMN(atbuf, v_line)
@@ -1647,7 +1653,7 @@ void render_bg_m5(int line)
   else
   {
     /* Plane B line buffer */
-    dst = (uint32 *)&linebuf[0][0x20];
+    dst = &linebuf[0][0x20];
   }
 
   for(column = 0; column < end; column++, index++)
@@ -1696,7 +1702,7 @@ void render_bg_m5(int line)
     if(shift)
     {
       /* Plane A line buffer */
-      dst = (uint32 *)&linebuf[1][0x10 + shift + (start << 4)];
+      dst = &linebuf[1][0x10 + shift + (start << 4)];
 
       /* Window bug */
       if (start)
@@ -1713,7 +1719,7 @@ void render_bg_m5(int line)
     else
     {
       /* Plane A line buffer */
-      dst = (uint32 *)&linebuf[1][0x20 + (start << 4)];
+      dst = &linebuf[1][0x20 + (start << 4)];
     }
 
     for(column = start; column < end; column++, index++)
@@ -1737,7 +1743,7 @@ void render_bg_m5(int line)
     v_line = (line & 7) << 3;
 
     /* Plane A line buffer */
-    dst = (uint32 *)&linebuf[1][0x20 + (start << 4)];
+    dst = &linebuf[1][0x20 + (start << 4)];
 
     for(column = start; column < end; column++)
     {
@@ -1753,7 +1759,8 @@ void render_bg_m5(int line)
 void render_bg_m5_vs(int line)
 {
   int column;
-  uint32 atex, atbuf, *src, *dst;
+  uint32 atex, atbuf, *src;
+  uint8 *dst;
   uint32 v_line, *nt;
 
   /* Common data */
@@ -1802,7 +1809,7 @@ void render_bg_m5_vs(int line)
     v_line = (v_line & 7) << 3;
 
     /* Plane B line buffer */
-    dst = (uint32 *)&linebuf[0][0x10 + shift];
+    dst = &linebuf[0][0x10 + shift];
 
     atbuf = nt[(index - 1) & pf_col_mask];
     DRAW_COLUMN(atbuf, v_line)
@@ -1810,7 +1817,7 @@ void render_bg_m5_vs(int line)
   else
   {
     /* Plane B line buffer */
-    dst = (uint32 *)&linebuf[0][0x20];
+    dst = &linebuf[0][0x20];
   }
 
   for(column = 0; column < end; column++, index++)
@@ -1873,7 +1880,7 @@ void render_bg_m5_vs(int line)
       v_line = (v_line & 7) << 3;
 
       /* Plane A line buffer */
-      dst = (uint32 *)&linebuf[1][0x10 + shift + (start << 4)];
+      dst = &linebuf[1][0x10 + shift + (start << 4)];
 
       /* Window bug */
       if (start)
@@ -1890,7 +1897,7 @@ void render_bg_m5_vs(int line)
     else
     {
       /* Plane A line buffer */
-      dst = (uint32 *)&linebuf[1][0x20 + (start << 4)];
+      dst = &linebuf[1][0x20 + (start << 4)];
     }
 
     for(column = start; column < end; column++, index++)
@@ -1927,7 +1934,7 @@ void render_bg_m5_vs(int line)
     v_line = (line & 7) << 3;
 
     /* Plane A line buffer */
-    dst = (uint32 *)&linebuf[1][0x20 + (start << 4)];
+    dst = &linebuf[1][0x20 + (start << 4)];
 
     for(column = start; column < end; column++)
     {
@@ -1944,7 +1951,8 @@ void render_bg_m5_vs(int line)
 void render_bg_m5_vs_enhanced(int line)
 {
   int column;
-  uint32 atex, atbuf, *src, *dst;
+  uint32 atex, atbuf, *src;
+  uint8 *dst;
   uint32 v_line, next_v_line, *nt;
 
   /* Vertical scroll offset */
@@ -1996,7 +2004,7 @@ void render_bg_m5_vs_enhanced(int line)
     v_line = (v_line & 7) << 3;
 
     /* Plane B line buffer */
-    dst = (uint32 *)&linebuf[0][0x10 + shift];
+    dst = &linebuf[0][0x10 + shift];
 
     atbuf = nt[(index - 1) & pf_col_mask];
     DRAW_COLUMN(atbuf, v_line)
@@ -2004,7 +2012,7 @@ void render_bg_m5_vs_enhanced(int line)
   else
   {
     /* Plane B line buffer */
-    dst = (uint32 *)&linebuf[0][0x20];
+    dst = &linebuf[0][0x20];
   }
 
   for(column = 0; column < end; column++, index++)
@@ -2039,15 +2047,9 @@ void render_bg_m5_vs_enhanced(int line)
     GET_MSB_TILE(atbuf, v_line)
 #endif
 
-#ifdef ALIGN_LONG
     WRITE_LONG(dst, src[0] | atex);
-    dst++;
-    WRITE_LONG(dst, src[1] | atex);
-    dst++;
-#else
-    *dst++ = (src[0] | atex);
-    *dst++ = (src[1] | atex);
-#endif
+    WRITE_LONG(dst + 4, src[1] | atex);
+    dst += 8;
 
 #ifdef LSB_FIRST
     v_line = (line + v_offset + (vs[column] >> 16)) & pf_row_mask;
@@ -2064,15 +2066,9 @@ void render_bg_m5_vs_enhanced(int line)
 #else
     GET_LSB_TILE(atbuf, v_line)
 #endif
-#ifdef ALIGN_LONG
     WRITE_LONG(dst, src[0] | atex);
-    dst++;
-    WRITE_LONG(dst, src[1] | atex);
-    dst++;
-#else
-    *dst++ = (src[0] | atex);
-    *dst++ = (src[1] | atex);
-#endif
+    WRITE_LONG(dst + 4, src[1] | atex);
+    dst += 8;
   }
 
   if (w == (line >= a))
@@ -2116,7 +2112,7 @@ void render_bg_m5_vs_enhanced(int line)
       v_line = (v_line & 7) << 3;
 
       /* Plane A line buffer */
-      dst = (uint32 *)&linebuf[1][0x10 + shift + (start << 4)];
+      dst = &linebuf[1][0x10 + shift + (start << 4)];
 
       /* Window bug */
       if (start)
@@ -2133,7 +2129,7 @@ void render_bg_m5_vs_enhanced(int line)
     else
     {
       /* Plane A line buffer */
-      dst = (uint32 *)&linebuf[1][0x20 + (start << 4)];
+      dst = &linebuf[1][0x20 + (start << 4)];
     }
 
     for(column = start; column < end; column++, index++)
@@ -2165,15 +2161,9 @@ void render_bg_m5_vs_enhanced(int line)
 #else
       GET_MSB_TILE(atbuf, v_line)
 #endif
-#ifdef ALIGN_LONG
       WRITE_LONG(dst, src[0] | atex);
-      dst++;
-      WRITE_LONG(dst, src[1] | atex);
-      dst++;
-#else
-      *dst++ = (src[0] | atex);
-      *dst++ = (src[1] | atex);
-#endif
+      WRITE_LONG(dst + 4, src[1] | atex);
+      dst += 8;
 
 #ifdef LSB_FIRST
       v_line = (line + v_offset + vs[column]) & pf_row_mask;
@@ -2190,15 +2180,9 @@ void render_bg_m5_vs_enhanced(int line)
 #else
       GET_LSB_TILE(atbuf, v_line)
 #endif
-#ifdef ALIGN_LONG
       WRITE_LONG(dst, src[0] | atex);
-      dst++;
-      WRITE_LONG(dst, src[1] | atex);
-      dst++;
-#else
-      *dst++ = (src[0] | atex);
-      *dst++ = (src[1] | atex);
-#endif
+      WRITE_LONG(dst + 4, src[1] | atex);
+      dst += 8;
     }
 
     /* Window width */
@@ -2216,7 +2200,7 @@ void render_bg_m5_vs_enhanced(int line)
     v_line = (line & 7) << 3;
 
     /* Plane A line buffer */
-    dst = (uint32 *)&linebuf[1][0x20 + (start << 4)];
+    dst = &linebuf[1][0x20 + (start << 4)];
 
     for(column = start; column < end; column++)
     {
@@ -2232,7 +2216,8 @@ void render_bg_m5_vs_enhanced(int line)
 void render_bg_m5_im2(int line)
 {
   int column, start, end, a, w;
-  uint32 atex, atbuf, *src, *dst;
+  uint32 atex, atbuf, *src;
+  uint8 *dst;
   uint32 shift, index, v_line, *nt;
 
   /* Common data */
@@ -2269,7 +2254,7 @@ void render_bg_m5_im2(int line)
   if(shift)
   {
     /* Plane B line buffer */
-    dst = (uint32 *)&linebuf[0][0x10 + shift];
+    dst = &linebuf[0][0x10 + shift];
 
     atbuf = nt[(index - 1) & pf_col_mask];
     DRAW_COLUMN_IM2(atbuf, v_line)
@@ -2277,7 +2262,7 @@ void render_bg_m5_im2(int line)
   else
   {
     /* Plane B line buffer */
-    dst = (uint32 *)&linebuf[0][0x20];
+    dst = &linebuf[0][0x20];
   }
 
   for(column = 0; column < end; column++, index++)
@@ -2330,7 +2315,7 @@ void render_bg_m5_im2(int line)
     if(shift)
     {
       /* Plane A line buffer */
-      dst = (uint32 *)&linebuf[1][0x10 + shift + (start << 4)];
+      dst = &linebuf[1][0x10 + shift + (start << 4)];
 
       /* Window bug */
       if (start)
@@ -2347,7 +2332,7 @@ void render_bg_m5_im2(int line)
     else
     {
       /* Plane A line buffer */
-      dst = (uint32 *)&linebuf[1][0x20 + (start << 4)];
+      dst = &linebuf[1][0x20 + (start << 4)];
     }
 
     for(column = start; column < end; column++, index++)
@@ -2371,7 +2356,7 @@ void render_bg_m5_im2(int line)
     v_line = (line & 15) << 3;
 
     /* Plane A line buffer */
-    dst = (uint32 *)&linebuf[1][0x20 + (start << 4)];
+    dst = &linebuf[1][0x20 + (start << 4)];
 
     for(column = start; column < end; column++)
     {
@@ -2387,7 +2372,8 @@ void render_bg_m5_im2(int line)
 void render_bg_m5_im2_vs(int line)
 {
   int column, start, end, a, w;
-  uint32 atex, atbuf, *src, *dst;
+  uint32 atex, atbuf, *src;
+  uint8 *dst;
   uint32 shift, index, v_line, *nt;
 
   /* Common data */
@@ -2435,7 +2421,7 @@ void render_bg_m5_im2_vs(int line)
     v_line = (v_line & 15) << 3;
 
     /* Plane B line buffer */
-    dst = (uint32 *)&linebuf[0][0x10 + shift];
+    dst = &linebuf[0][0x10 + shift];
 
     atbuf = nt[(index - 1) & pf_col_mask];
     DRAW_COLUMN_IM2(atbuf, v_line)
@@ -2443,7 +2429,7 @@ void render_bg_m5_im2_vs(int line)
   else
   {
     /* Plane B line buffer */
-    dst = (uint32 *)&linebuf[0][0x20];
+    dst = &linebuf[0][0x20];
   }
 
   for(column = 0; column < end; column++, index++)
@@ -2510,7 +2496,7 @@ void render_bg_m5_im2_vs(int line)
       v_line = (v_line & 15) << 3;
 
       /* Plane A line buffer */
-      dst = (uint32 *)&linebuf[1][0x10 + shift + (start << 4)];
+      dst = &linebuf[1][0x10 + shift + (start << 4)];
 
       /* Window bug */
       if (start)
@@ -2527,7 +2513,7 @@ void render_bg_m5_im2_vs(int line)
     else
     {
       /* Plane A line buffer */
-      dst = (uint32 *)&linebuf[1][0x20 + (start << 4)];
+      dst = &linebuf[1][0x20 + (start << 4)];
     }
 
     for(column = start; column < end; column++, index++)
@@ -2564,7 +2550,7 @@ void render_bg_m5_im2_vs(int line)
     v_line = (line & 15) << 3;
 
     /* Plane A line buffer */
-    dst = (uint32 *)&linebuf[1][0x20 + (start << 4)];
+    dst = &linebuf[1][0x20 + (start << 4)];
 
     for(column = start; column < end; column++)
     {
@@ -2582,7 +2568,8 @@ void render_bg_m5_im2_vs(int line)
 void render_bg_m5(int line)
 {
   int column, start, end;
-  uint32 atex, atbuf, *src, *dst;
+  uint32 atex, atbuf, *src;
+  uint8 *dst;
   uint32 shift, index, v_line, *nt;
   uint8 *lb;
 
@@ -2649,7 +2636,7 @@ void render_bg_m5(int line)
 #endif
 
     /* Background line buffer */
-    dst = (uint32 *)&linebuf[0][0x20 + (start << 4) + shift];
+    dst = &linebuf[0][0x20 + (start << 4) + shift];
 
     /* Plane A name table */
     nt = (uint32 *)&vram[ntab + (((v_line >> 3) << pf_shift) & 0x1FC0)];
@@ -2661,7 +2648,7 @@ void render_bg_m5(int line)
     if(shift)
     {
       /* Left-most column is partially shown */
-      dst -= 4;
+      dst -= 16;
 
       /* Window bug */
       if (start)
@@ -2697,7 +2684,7 @@ void render_bg_m5(int line)
   if (w)
   {
     /* Background line buffer */
-    dst = (uint32 *)&linebuf[0][0x20 + (start << 4)];
+    dst = &linebuf[0][0x20 + (start << 4)];
 
     /* Window name table */
     nt = (uint32 *)&vram[ntwb | ((line >> 3) << (6 + (reg[12] & 1)))];
@@ -2761,7 +2748,8 @@ void render_bg_m5(int line)
 void render_bg_m5_vs(int line)
 {
   int column, start, end;
-  uint32 atex, atbuf, *src, *dst;
+  uint32 atex, atbuf, *src;
+  uint8 *dst;
   uint32 shift, index, v_line, *nt;
   uint8 *lb;
 
@@ -2837,12 +2825,12 @@ void render_bg_m5_vs(int line)
 #endif
 
     /* Background line buffer */
-    dst = (uint32 *)&linebuf[0][0x20 + (start << 4) + shift];
+    dst = &linebuf[0][0x20 + (start << 4) + shift];
 
     if(shift)
     {
       /* Left-most column is partially shown */
-      dst -= 4;
+      dst -= 16;
 
       /* Plane A vertical scroll */
       v_line = (line + yscroll) & pf_row_mask;
@@ -2900,7 +2888,7 @@ void render_bg_m5_vs(int line)
   if (w)
   {
     /* Background line buffer */
-    dst = (uint32 *)&linebuf[0][0x20 + (start << 4)];
+    dst = &linebuf[0][0x20 + (start << 4)];
 
     /* Window name table */
     nt = (uint32 *)&vram[ntwb | ((line >> 3) << (6 + (reg[12] & 1)))];
@@ -2979,7 +2967,8 @@ void render_bg_m5_vs(int line)
 void render_bg_m5_vs_enhanced(int line)
 {
   int column, start, end;
-  uint32 atex, atbuf, *src, *dst;
+  uint32 atex, atbuf, *src;
+  uint8 *dst;
   uint32 shift, index, v_line, next_v_line, *nt;
   uint8 *lb;
 
@@ -3057,12 +3046,12 @@ void render_bg_m5_vs_enhanced(int line)
 #endif
 
     /* Background line buffer */
-    dst = (uint32 *)&linebuf[0][0x20 + (start << 4) + shift];
+    dst = &linebuf[0][0x20 + (start << 4) + shift];
 
     if(shift)
     {
       /* Left-most column is partially shown */
-      dst -= 4;
+      dst -= 16;
 
       /* Plane A vertical scroll */
       v_line = (line + yscroll) & pf_row_mask;
@@ -3115,15 +3104,9 @@ void render_bg_m5_vs_enhanced(int line)
 #else
       GET_MSB_TILE(atbuf, v_line)
 #endif
-#ifdef ALIGN_LONG
       WRITE_LONG(dst, src[0] | atex);
-      dst++;
-      WRITE_LONG(dst, src[1] | atex);
-      dst++;
-#else
-      *dst++ = (src[0] | atex);
-      *dst++ = (src[1] | atex);
-#endif
+      WRITE_LONG(dst + 4, src[1] | atex);
+      dst += 8;
 
 #ifdef LSB_FIRST
       v_line = (line + v_offset + vs[column]) & pf_row_mask;
@@ -3140,15 +3123,9 @@ void render_bg_m5_vs_enhanced(int line)
 #else
       GET_LSB_TILE(atbuf, v_line)
 #endif
-#ifdef ALIGN_LONG
       WRITE_LONG(dst, src[0] | atex);
-      dst++;
-      WRITE_LONG(dst, src[1] | atex);
-      dst++;
-#else
-      *dst++ = (src[0] | atex);
-      *dst++ = (src[1] | atex);
-#endif
+      WRITE_LONG(dst + 4, src[1] | atex);
+      dst += 8;
     }
 
     /* Window width */
@@ -3166,7 +3143,7 @@ void render_bg_m5_vs_enhanced(int line)
   if (w)
   {
     /* Background line buffer */
-    dst = (uint32 *)&linebuf[0][0x20 + (start << 4)];
+    dst = &linebuf[0][0x20 + (start << 4)];
 
     /* Window name table */
     nt = (uint32 *)&vram[ntwb | ((line >> 3) << (6 + (reg[12] & 1)))];
@@ -3244,57 +3221,31 @@ void render_bg_m5_vs_enhanced(int line)
     v_line = (v_line & 7) << 3;
 
     atbuf = nt[index & pf_col_mask];
-#ifdef ALIGN_LONG
-#ifdef LSB_FIRST
-  GET_LSB_TILE(atbuf, v_line)
-  xscroll = READ_LONG((uint32 *)lb);
-  yscroll = (src[0] | atex);
-  DRAW_BG_TILE(xscroll, yscroll)
-  xscroll = READ_LONG((uint32 *)lb);
-  yscroll = (src[1] | atex);
-  DRAW_BG_TILE(xscroll, yscroll)
+#if defined(__ARM_NEON) && defined(LSB_FIRST)
+    {
+      const uint8 *_s0 = &bg_pattern_cache[(atbuf & 0x00001FFF) << 6 | v_line];
+      uint8x8_t _b0 = vorr_u8(vld1_u8(_s0), vdup_n_u8((uint8)((atbuf >> 9) & 0x70)));
 
-  v_line = (line + v_offset + (vs[column] >> 16)) & pf_row_mask;
-  nt = (uint32 *)&vram[ntbb + (((v_line >> 3) << pf_shift) & 0x1FC0)];
-  v_line = (v_line & 7) << 3;
-  atbuf = nt[index & pf_col_mask];
-  
-  GET_MSB_TILE(atbuf, v_line)
-  xscroll = READ_LONG((uint32 *)lb);
-  yscroll = (src[0] | atex);
-  DRAW_BG_TILE(xscroll, yscroll)
-  xscroll = READ_LONG((uint32 *)lb);
-  yscroll = (src[1] | atex);
-  DRAW_BG_TILE(xscroll, yscroll)
-#else
-  GET_MSB_TILE(atbuf, v_line)
-  xscroll = READ_LONG((uint32 *)lb);
-  yscroll = (src[0] | atex);
-  DRAW_BG_TILE(xscroll, yscroll)
-  xscroll = READ_LONG((uint32 *)lb);
-  yscroll = (src[1] | atex);
-  DRAW_BG_TILE(xscroll, yscroll)
+      v_line = (line + v_offset + (vs[column] >> 16)) & pf_row_mask;
+      nt = (uint32 *)&vram[ntbb + (((v_line >> 3) << pf_shift) & 0x1FC0)];
+      v_line = (v_line & 7) << 3;
+      atbuf = nt[index & pf_col_mask];
 
-  v_line = (line + vs[column]) & pf_row_mask;
-  nt = (uint32 *)&vram[ntbb + (((v_line >> 3) << pf_shift) & 0x1FC0)];
-  v_line = (v_line & 7) << 3;
-  atbuf = nt[index & pf_col_mask];
- 
+      {
+        const uint8 *_s1 = &bg_pattern_cache[(atbuf & 0x1FFF0000) >> 10 | v_line];
+        uint8x8_t _b1 = vorr_u8(vld1_u8(_s1), vdup_n_u8((uint8)((atbuf >> 25) & 0x70)));
+        uint8x16_t _bx = vcombine_u8(_b0, _b1);
+        uint8x16_t _ax = vld1q_u8(lb);
+        vst1q_u8(lb, merge_bg_16_neon(_ax, _bx, (table != lut[0])));
+        lb += 16;
+      }
+    }
+#elif defined(LSB_FIRST)
   GET_LSB_TILE(atbuf, v_line)
-  xscroll = READ_LONG((uint32 *)lb);
+  xscroll = READ_LONG(lb);
   yscroll = (src[0] | atex);
   DRAW_BG_TILE(xscroll, yscroll)
-  xscroll = READ_LONG((uint32 *)lb);
-  yscroll = (src[1] | atex);
-  DRAW_BG_TILE(xscroll, yscroll)
-#endif
-#else /* NOT ALIGNED */
-#ifdef LSB_FIRST
-  GET_LSB_TILE(atbuf, v_line)
-  xscroll = *(uint32 *)(lb);
-  yscroll = (src[0] | atex);
-  DRAW_BG_TILE(xscroll, yscroll)
-  xscroll = *(uint32 *)(lb);
+  xscroll = READ_LONG(lb);
   yscroll = (src[1] | atex);
   DRAW_BG_TILE(xscroll, yscroll)
 
@@ -3304,18 +3255,18 @@ void render_bg_m5_vs_enhanced(int line)
   atbuf = nt[index & pf_col_mask];
 
   GET_MSB_TILE(atbuf, v_line)
-  xscroll = *(uint32 *)(lb);
+  xscroll = READ_LONG(lb);
   yscroll = (src[0] | atex);
   DRAW_BG_TILE(xscroll, yscroll)
-  xscroll = *(uint32 *)(lb);
+  xscroll = READ_LONG(lb);
   yscroll = (src[1] | atex);
   DRAW_BG_TILE(xscroll, yscroll)
 #else
   GET_MSB_TILE(atbuf, v_line)
-  xscroll = *(uint32 *)(lb);
+  xscroll = READ_LONG(lb);
   yscroll = (src[0] | atex);
   DRAW_BG_TILE(xscroll, yscroll)
-  xscroll = *(uint32 *)(lb);
+  xscroll = READ_LONG(lb);
   yscroll = (src[1] | atex);
   DRAW_BG_TILE(xscroll, yscroll)
 
@@ -3325,21 +3276,21 @@ void render_bg_m5_vs_enhanced(int line)
   atbuf = nt[index & pf_col_mask];
 
   GET_LSB_TILE(atbuf, v_line)
-  xscroll = *(uint32 *)(lb);
+  xscroll = READ_LONG(lb);
   yscroll = (src[0] | atex);
   DRAW_BG_TILE(xscroll, yscroll)
-  xscroll = *(uint32 *)(lb);
+  xscroll = READ_LONG(lb);
   yscroll = (src[1] | atex);
   DRAW_BG_TILE(xscroll, yscroll)
 #endif
-#endif /* ALIGN_LONG */
   }
 }
 
 void render_bg_m5_im2(int line)
 {
   int column, start, end, a, w;
-  uint32 atex, atbuf, *src, *dst;
+  uint32 atex, atbuf, *src;
+  uint8 *dst;
   uint32 shift, index, v_line, *nt;
   uint8 *lb;
 
@@ -3398,7 +3349,7 @@ void render_bg_m5_im2(int line)
 #endif
 
     /* Background line buffer */
-    dst = (uint32 *)&linebuf[0][0x20 + (start << 4) + shift];
+    dst = &linebuf[0][0x20 + (start << 4) + shift];
 
     /* Plane A name table */
     nt = (uint32 *)&vram[ntab + (((v_line >> 4) << pf_shift) & 0x1FC0)];
@@ -3409,7 +3360,7 @@ void render_bg_m5_im2(int line)
     if(shift)
     {
       /* Left-most column is partially shown */
-      dst -= 4;
+      dst -= 16;
 
       /* Window bug */
       if (start)
@@ -3445,7 +3396,7 @@ void render_bg_m5_im2(int line)
   if (w)
   {
     /* Background line buffer */
-    dst = (uint32 *)&linebuf[0][0x20 + (start << 4)];
+    dst = &linebuf[0][0x20 + (start << 4)];
 
     /* Window name table */
     nt = (uint32 *)&vram[ntwb | ((line >> 4) << (6 + (reg[12] & 1)))];
@@ -3499,7 +3450,8 @@ void render_bg_m5_im2(int line)
 void render_bg_m5_im2_vs(int line)
 {
   int column, start, end, a, w;
-  uint32 atex, atbuf, *src, *dst;
+  uint32 atex, atbuf, *src;
+  uint8 *dst;
   uint32 shift, index, v_line, *nt;
   uint8 *lb;
 
@@ -3566,12 +3518,12 @@ void render_bg_m5_im2_vs(int line)
 #endif
 
     /* Background line buffer */
-    dst = (uint32 *)&linebuf[0][0x20 + (start << 4) + shift];
+    dst = &linebuf[0][0x20 + (start << 4) + shift];
 
     if(shift)
     {
       /* Left-most column is partially shown */
-      dst -= 4;
+      dst -= 16;
 
       /* Plane A vertical scroll */
       v_line = (line + yscroll) & pf_row_mask;
@@ -3629,7 +3581,7 @@ void render_bg_m5_im2_vs(int line)
   if (w)
   {
     /* Background line buffer */
-    dst = (uint32 *)&linebuf[0][0x20 + (start << 4)];
+    dst = &linebuf[0][0x20 + (start << 4)];
 
     /* Window name table */
     nt = (uint32 *)&vram[ntwb | ((line >> 4) << (6 + (reg[12] & 1)))];
@@ -4853,7 +4805,7 @@ void update_bg_pattern_cache_m4(int index)
 void update_bg_pattern_cache_m5(int index)
 {
   int i;
-  uint8 x, y, c;
+  uint8 y, dirty;
   uint8 *dst;
   uint16 name;
   uint32 bp;
@@ -4863,44 +4815,61 @@ void update_bg_pattern_cache_m5(int index)
     /* Get modified pattern name index */
     name = bg_name_list[i];
 
-    /* Pattern cache base address */
+    /* Pattern cache base address (8-byte aligned) */
     dst = &bg_pattern_cache[name << 6];
+    dirty = bg_name_dirty[name];
 
     /* Check modified lines */
-    for(y = 0; y < 8; y ++)
+    for(y = 0; y < 8; y++)
     {
-      if(bg_name_dirty[name] & (1 << y))
+      if(dirty & (1 << y))
       {
+        uint32 y0 = (uint32)y << 3;
+        uint32 y1 = (uint32)(y ^ 7) << 3;
+        uint64_t norm, hflip;
+
         /* Byteplane data (one pattern = 4 bytes) */
         /* LIT_ENDIAN: byte0 (lsb) p2p3 p0p1 p6p7 p4p5 (msb) byte3 */
         /* BIG_ENDIAN: byte0 (msb) p0p1 p2p3 p4p5 p6p7 (lsb) byte3 */
         bp = *(uint32 *)&vram[(name << 5) | (y << 2)];
 
-        /* Update cached line (8 pixels = 8 bytes) */
-        for(x = 0; x < 8; x ++)
-        {
-          /* Extract pixel data */
-          c = bp & 0x0F;
-
-          /* Pattern cache data (one pattern = 8 bytes) */
-          /* byte0 <-> p0 p1 p2 p3 p4 p5 p6 p7 <-> byte7 (hflip = 0) */
-          /* byte0 <-> p7 p6 p5 p4 p3 p2 p1 p0 <-> byte7 (hflip = 1) */
+        /* Pack all 8 pixels into two 64-bit words (hflip=0, hflip=1) and
+         * emit 4 aligned 64-bit stores instead of 32 strided byte stores. */
 #ifdef LSB_FIRST
-          /* Byteplane data = (msb) p4p5 p6p7 p0p1 p2p3 (lsb) */
-          dst[0x00000 | (y << 3) | (x ^ 3)] = (c);        /* vflip=0, hflip=0 */
-          dst[0x20000 | (y << 3) | (x ^ 4)] = (c);        /* vflip=0, hflip=1 */
-          dst[0x40000 | ((y ^ 7) << 3) | (x ^ 3)] = (c);  /* vflip=1, hflip=0 */
-          dst[0x60000 | ((y ^ 7) << 3) | (x ^ 4)] = (c);  /* vflip=1, hflip=1 */
+        {
+          uint32 bp_hi = bp >> 16;
+          uint32 lo = ((bp >> 12) & 0x0F) | (bp & 0x0F00) | ((bp & 0x00F0) << 12) | ((bp & 0x000F) << 24);
+          uint32 hi = ((bp_hi >> 12) & 0x0F) | (bp_hi & 0x0F00) | ((bp_hi & 0x00F0) << 12) | ((bp_hi & 0x000F) << 24);
+          uint32 hlo, hhi;
+#if defined(__GNUC__)
+          hlo = __builtin_bswap32(hi);
+          hhi = __builtin_bswap32(lo);
 #else
-          /* Byteplane data = (msb) p0p1 p2p3 p4p5 p6p7 (lsb) */
-          dst[0x00000 | (y << 3) | (x ^ 7)] = (c);        /* vflip=0, hflip=0 */
-          dst[0x20000 | (y << 3) | (x)] = (c);            /* vflip=0, hflip=1 */
-          dst[0x40000 | ((y ^ 7) << 3) | (x ^ 7)] = (c);  /* vflip=1, hflip=0 */
-          dst[0x60000 | ((y ^ 7) << 3) | (x)] = (c);      /* vflip=1, hflip=1 */
+          hlo = ((hi & 0xFF) << 24) | ((hi & 0xFF00) << 8) | ((hi >> 8) & 0xFF00) | (hi >> 24);
+          hhi = ((lo & 0xFF) << 24) | ((lo & 0xFF00) << 8) | ((lo >> 8) & 0xFF00) | (lo >> 24);
 #endif
-          /* Next pixel */
-          bp = bp >> 4;
+          norm  = (uint64_t)lo  | ((uint64_t)hi  << 32);
+          hflip = (uint64_t)hlo | ((uint64_t)hhi << 32);
         }
+#else
+        {
+          uint8 nbuf[8], hbuf[8];
+          uint8 x;
+          for (x = 0; x < 8; x++)
+          {
+            uint8 c = (uint8)(bp & 0x0F);
+            nbuf[x ^ 7] = c;
+            hbuf[x] = c;
+            bp >>= 4;
+          }
+          memcpy(&norm, nbuf, 8);
+          memcpy(&hflip, hbuf, 8);
+        }
+#endif
+        memcpy(dst + (0x00000 | y0), &norm, 8);   /* vflip=0, hflip=0 */
+        memcpy(dst + (0x20000 | y0), &hflip, 8);  /* vflip=0, hflip=1 */
+        memcpy(dst + (0x40000 | y1), &norm, 8);   /* vflip=1, hflip=0 */
+        memcpy(dst + (0x60000 | y1), &hflip, 8);  /* vflip=1, hflip=1 */
       }
     }
 

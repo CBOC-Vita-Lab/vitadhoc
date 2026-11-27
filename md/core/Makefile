@@ -13,10 +13,11 @@ CORE := .
 FE   := ../frontend
 include $(CORE)/sources.mk
 
-# LSB_FIRST ALIGN_LONG ALT_RENDERER: the flags GPGX's own Vita build uses (psp2/Makefile). USE_16BPP_RENDERING: the VDP
+# LSB_FIRST ALT_RENDERER: unaligned 32-bit linebuf access in vdp_render.c uses memcpy (single unaligned ARMv7 ldr/str
+# without strict-aliasing UB or ARMv7 ldm/stm faults, replacing legacy ALIGN_LONG). USE_16BPP_RENDERING: the VDP
 # writes RGB565 directly (the Vita's native format; no conversion pass). USE_DYNAMIC_ALLOC: the 10 MB cartridge area is
 # allocated at load, not in .bss. HAVE_YM3438_CORE / HAVE_OPLL_CORE: the optional "enhanced" FM chips, never the default.
-CORE_DEFS := -DLSB_FIRST -DBYTE_ORDER=LITTLE_ENDIAN -DALIGN_LONG -DALT_RENDERER -DUSE_16BPP_RENDERING \
+CORE_DEFS := -DLSB_FIRST -DBYTE_ORDER=LITTLE_ENDIAN -DALT_RENDERER -DUSE_16BPP_RENDERING \
 	-DUSE_DYNAMIC_ALLOC -DHAVE_YM3438_CORE -DHAVE_OPLL_CORE -DMAXROMSIZE=10485760 -DMD_HOST -DMD_SEGACD -DUSE_LIBCHDR -DUSE_LIBTREMOR -DDISABLE_MANY_OGG_OPEN_FILES -DNDEBUG -U_FORTIFY_SOURCE -fno-stack-protector
 CINC := -I$(CORE) -I$(CORE)/m68k -I$(CORE)/z80 -I$(CORE)/sound -I$(CORE)/input_hw -I$(CORE)/cart_hw -I$(CORE)/cart_hw/svp \
 	-I$(CORE)/cd_hw -I$(CORE)/cd_hw/libchdr/include

@@ -7,6 +7,10 @@
 
 #include "fcoeffs.h"
 
+#ifdef __ARM_NEON
+#include <arm_neon.h>
+#endif
+
 /* Reference rate at which SexyFilter2's one-pole reproduces the legacy
  * hardcoded ">>3" coefficient (1/8 == 8192 in Q16).  The coefficient is
  * scaled by SEXYFILTER2_REF_RATE / SndRate so the corner frequency stays
@@ -127,6 +131,52 @@ void SexyFilter(int32_t *in, int32_t *out, int32_t count) {
 	code to be higher, or you *might* overflow the FIR code.
 */
 
+/* Paired FIR dot-product for NeoFilterSound. Both coeffs[] and sq2coeffs[] are
+ * symmetric linear-phase tables (D[i] == D[nco - 1 - i]), so walking forward
+ * over S1 = &in[(x >> 16) - nco + 1] against D[0..nco-1] sums the exact same
+ * (S[k] * D[k]) >> 6 integer terms as the original backward walk, enabling
+ * 4-wide NEON SIMD and sequential cache streaming with 100% bit-exact output. */
+static INLINE void NeoDotPair(const int32_t *S1, const int32_t *D, uint32_t nco,
+                              int32_t *out_acc, int32_t *out_acc2) {
+#ifdef __ARM_NEON
+	int32x4_t vacc1 = vdupq_n_s32(0);
+	int32x4_t vacc2 = vdupq_n_s32(0);
+	int32x4_t v_curr = vld1q_s32(S1);
+	uint32_t i;
+
+	for (i = 0; i < nco - 4; i += 4) {
+		int32x4_t v_next = vld1q_s32(S1 + i + 4);
+		int32x4_t vd     = vld1q_s32(D + i);
+		int32x4_t v_s2   = vextq_s32(v_curr, v_next, 1);
+		vacc1 = vaddq_s32(vacc1, vshrq_n_s32(vmulq_s32(v_curr, vd), 6));
+		vacc2 = vaddq_s32(vacc2, vshrq_n_s32(vmulq_s32(v_s2, vd), 6));
+		v_curr = v_next;
+	}
+	{
+		int32x4_t vd   = vld1q_s32(D + i);
+		int32x4_t v_s2 = vld1q_s32(S1 + i + 1);
+		vacc1 = vaddq_s32(vacc1, vshrq_n_s32(vmulq_s32(v_curr, vd), 6));
+		vacc2 = vaddq_s32(vacc2, vshrq_n_s32(vmulq_s32(v_s2, vd), 6));
+	}
+	{
+		int32x2_t s1 = vadd_s32(vget_low_s32(vacc1), vget_high_s32(vacc1));
+		int32x2_t s2 = vadd_s32(vget_low_s32(vacc2), vget_high_s32(vacc2));
+		*out_acc  = vget_lane_s32(s1, 0) + vget_lane_s32(s1, 1);
+		*out_acc2 = vget_lane_s32(s2, 0) + vget_lane_s32(s2, 1);
+	}
+#else
+	int32_t acc = 0, acc2 = 0;
+	uint32_t i;
+	for (i = 0; i < nco; i++) {
+		int32_t d = D[i];
+		acc  += (S1[i]     * d) >> 6;
+		acc2 += (S1[i + 1] * d) >> 6;
+	}
+	*out_acc  = acc;
+	*out_acc2 = acc2;
+#endif
+}
+
 int32_t NeoFilterSound(int32_t *in, int32_t *out, uint32_t inlen, int32_t *leftover) {
 	uint32_t x;
 	int32_t *outsave = out;
@@ -144,14 +194,9 @@ int32_t NeoFilterSound(int32_t *in, int32_t *out, uint32_t inlen, int32_t *lefto
 	 * the remaining ~0.1 LSB but regresses this hot loop >20%. */
 	if (FSettings.soundq == 2) {
 		for (x = mrindex; x < max; x += mrratio) {
-			int32_t acc = 0, acc2 = 0;
-			uint32_t c;
-			int32_t *S, *D;
+			int32_t acc, acc2;
 
-			for (c = SQ2NCOEFFS, S = &in[(x >> 16) - SQ2NCOEFFS], D = sq2coeffs; c; c--, D++) {
-				acc += (S[c] * *D) >> 6;
-				acc2 += (S[1 + c] * *D) >> 6;
-			}
+			NeoDotPair(&in[(x >> 16) - SQ2NCOEFFS + 1], sq2coeffs, SQ2NCOEFFS, &acc, &acc2);
 
 			acc = ((int64_t)acc * (65536 - (x & 65535)) + (int64_t)acc2 * (x & 65535)
 			       + (1 << 26)) >> (16 + 11);
@@ -161,14 +206,9 @@ int32_t NeoFilterSound(int32_t *in, int32_t *out, uint32_t inlen, int32_t *lefto
 		}
 	} else {
 		for (x = mrindex; x < max; x += mrratio) {
-			int32_t acc = 0, acc2 = 0;
-			uint32_t c;
-			int32_t *S, *D;
+			int32_t acc, acc2;
 
-			for (c = NCOEFFS, S = &in[(x >> 16) - NCOEFFS], D = coeffs; c; c--, D++) {
-				acc += (S[c] * *D) >> 6;
-				acc2 += (S[1 + c] * *D) >> 6;
-			}
+			NeoDotPair(&in[(x >> 16) - NCOEFFS + 1], coeffs, NCOEFFS, &acc, &acc2);
 
 			acc = ((int64_t)acc * (65536 - (x & 65535)) + (int64_t)acc2 * (x & 65535)
 			       + (1 << 26)) >> (16 + 11);

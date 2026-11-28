@@ -1224,7 +1224,7 @@ static bool hd_active(void) { return g_hd_ok && g_pipe.box().enabled() && g_pl->
 static void hd_start(const char *tini, double frame_hz)
 {
 	if (!g_pl->smooth_handoff()) { logf_("handoff: off (setting)\n"); return; }
-	if (!g_pipe.start(&g_hd_sys, 2, true, 16683, (uint32_t) (1e6 / frame_hz + 0.5))) { logf_("handoff: NOT started (mailbox)\n"); return; }
+	if (!g_pipe.start(&g_hd_sys, 2, true, 16683, (uint32_t) (1e6 / frame_hz + 0.5), 22000)) { logf_("handoff: NOT started (mailbox)\n"); return; }
 	/* threads.ini draw_core: 0, 1 or 2 overrides the core plan (default: core 3 on 4-core Vita, core 1 on 3-core) */
 	const int core_ini = ini_int(tini, "draw_core", -1);
 	const pk::Slot *ds = g_core_plan.find(pk::R_DRAW);
@@ -1715,6 +1715,7 @@ int main(int argc, char **argv)
 	unsigned w16 = 0, w20 = 0, w25 = 0;
 	double hd_draw_ms = 0;            /* the drawing thread's busy time and the repeats of the last hand-over census, for the look governor */
 	unsigned hd_repeated = 0, missed_refr = 0, pal_planned = 0;   /* pal_planned: refreshes that owed no frame (the 6th of a PAL game) */
+	unsigned hd_timeout0 = g_hd_ok ? g_pipe.box().census().gate_timeouts : 0;
 	unsigned hd_look_us0 = g_hd_cum_us.load(std::memory_order_relaxed), hd_look_n0 = g_hd_cum_n.load(std::memory_order_relaxed);
 	uint64_t stall_max_us = 0, work_max_us = 0;
 	unsigned s_w16 = 0, s_w20 = 0, s_w25 = 0;
@@ -1943,6 +1944,7 @@ int main(int argc, char **argv)
 			hd_look_us0 = g_hd_cum_us.load(std::memory_order_relaxed);
 			hd_look_n0 = g_hd_cum_n.load(std::memory_order_relaxed);
 			hd_repeated = missed_refr = pal_planned = 0;
+			hd_timeout0 = g_hd_ok ? g_pipe.box().census().gate_timeouts : 0;
 			g_scale_us.exchange(0); g_scale_pics.exchange(0); g_scale_max_us.exchange(0);
 			continue;
 		}
@@ -2089,7 +2091,20 @@ int main(int argc, char **argv)
 				pal_planned = 0;
 				/* a PAL game runs 5 frames in 6 refreshes: its cost per refresh is 50.007 / 59.94 of the cost per frame, so one that holds 50 is not overloaded */
 				if (pal && !g_pl->pal_fast()) ls.emu *= (float) (50.007 / 59.94);
-				const unsigned late = hd ? (hd_repeated > planned ? hd_repeated - planned : 0) : missed_refr;
+				unsigned hd_to = 0;
+				if (hd) {
+					const unsigned cur_to = g_pipe.box().census().gate_timeouts;
+					hd_to = cur_to >= hd_timeout0 ? cur_to - hd_timeout0 : 0;
+					hd_timeout0 = cur_to;
+				} else {
+					hd_timeout0 = g_hd_ok ? g_pipe.box().census().gate_timeouts : 0;
+				}
+				/* Include main-thread missed refreshes and handoff gate timeouts alongside hd_repeated:
+				 * census_line() suppresses repeated when half-mode ran part of the second, and gate waits
+				 * stall the emulating thread directly. */
+				const unsigned hd_late = hd_repeated + hd_to;
+				const unsigned raw_late = hd ? (hd_late > missed_refr ? hd_late : missed_refr) : missed_refr;
+				const unsigned late = raw_late > planned ? raw_late - planned : 0;
 				ls.missed = (int) late;
 				ls.parallel = hd;
 				ls.pace_half = g_pl->pace_mode() == pk::PACE_HALF;

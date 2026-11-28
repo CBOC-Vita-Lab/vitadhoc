@@ -22,6 +22,7 @@ extern uint8 *wsCartROM;
 extern uint32 eeprom_size;
 extern uint8 *wsSRAM;
 extern uint32 wsRAMSize;
+extern const uint8 *ws_read_bank[16];
 
 void WSwan_MemoryInit(bool lang, bool IsWSC, uint32 ssize, bool IsWW);
 void WSwan_MemoryKill(void);

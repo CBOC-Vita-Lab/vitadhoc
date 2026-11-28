@@ -1368,7 +1368,10 @@ void app_steady_options(void)
                    : (uint32_t)(g_frame_ns / 1000u);
    if (!g_steady_at_boot)
       boot_guard_release();            /* the row was changed: theirs again */
-   steady_config(budget);
+   if (g_game_console == FE_CONSOLE_WSWAN)
+      steady_config_wswan(budget);
+   else
+      steady_config(budget);
    steady_enable(g_pcfg.steady_pacing && !boot_guard_safe());
    fe_evt("steady_options on=%d budget_us=%u safe=%d",
           g_pcfg.steady_pacing && !boot_guard_safe(), (unsigned)budget,

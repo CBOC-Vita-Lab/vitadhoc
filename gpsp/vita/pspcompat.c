@@ -314,6 +314,83 @@ unsigned pspcompat_pad_raw(void)
    return vita_pad_read(0);
 }
 
+static unsigned  g_scan_cancel_wait;
+static unsigned  g_scan_cancel_wait2;
+static int       g_scan_cancel_have_ts;
+static SceUInt64 g_scan_cancel_ts;
+
+static unsigned vita_cancel_bits(unsigned buttons)
+{
+   unsigned mask = PSP_CTRL_CIRCLE | (g_pc_face_swap ? PSP_CTRL_CROSS : 0u);
+   return buttons & mask;
+}
+
+void pspcompat_pad_scan_cancel_begin(void)
+{
+   SceCtrlData pad;
+   memset(&pad, 0, sizeof(pad));
+   g_scan_cancel_wait = 0;
+   g_scan_cancel_wait2 = 0;
+   g_scan_cancel_ts = 0;
+   g_scan_cancel_have_ts = 0;
+   if (sceCtrlPeekBufferPositive(0, &pad, 1) > 0)
+   {
+      g_scan_cancel_wait = vita_cancel_bits(pad.buttons);
+      g_scan_cancel_ts = pad.timeStamp;
+      g_scan_cancel_have_ts = 1;
+   }
+   if (g_pad2_menu)
+   {
+      plat_pad q;
+      if (plat_pad_read2(&q))
+         g_scan_cancel_wait2 = vita_cancel_bits(q.buttons);
+   }
+}
+
+unsigned pspcompat_pad_scan_cancel(void)
+{
+   SceCtrlData pads[16];
+   int n, i, seen = 0;
+   unsigned triggered = 0;
+   memset(pads, 0, sizeof(pads));
+   n = sceCtrlPeekBufferPositive(0, pads, 16);
+   if (n > 0)
+   {
+      for (i = 0; i < n; i++)
+      {
+         unsigned b, fresh;
+         if (g_scan_cancel_have_ts && pads[i].timeStamp <= g_scan_cancel_ts)
+            continue;
+         b = vita_cancel_bits(pads[i].buttons);
+         fresh = b & ~g_scan_cancel_wait;
+         g_scan_cancel_wait &= b;
+         triggered |= fresh;
+         seen = 1;
+      }
+      if (!seen)
+      {
+         unsigned b = vita_cancel_bits(pads[n - 1].buttons);
+         unsigned fresh = b & ~g_scan_cancel_wait;
+         g_scan_cancel_wait &= b;
+         triggered |= fresh;
+      }
+      g_scan_cancel_ts = pads[n - 1].timeStamp;
+      g_scan_cancel_have_ts = 1;
+   }
+   if (g_pad2_menu)
+   {
+      plat_pad q;
+      if (plat_pad_read2(&q))
+      {
+         unsigned b = vita_cancel_bits(q.buttons);
+         unsigned fresh = b & ~g_scan_cancel_wait2;
+         g_scan_cancel_wait2 &= b;
+         triggered |= fresh;
+      }
+   }
+   return triggered;
+}
+
 void pspcompat_host_pad(unsigned (*fn)(void)) { (void)fn; }
 void pspcompat_host_advance(unsigned us)      { (void)us; }
 /* On the console the hook is the main loop's "a frame went by inside a modal
@@ -820,6 +897,21 @@ unsigned pspcompat_pad_raw(void)
    return pspcompat_pad();
 }
 #endif /* PSPCOMPAT_PLAT */
+
+static unsigned g_scan_cancel_wait;
+
+void pspcompat_pad_scan_cancel_begin(void)
+{
+   g_scan_cancel_wait = (pspcompat_pad() | pspcompat_pad_raw()) & PSP_CTRL_CIRCLE;
+}
+
+unsigned pspcompat_pad_scan_cancel(void)
+{
+   unsigned b = (pspcompat_pad() | pspcompat_pad_raw()) & PSP_CTRL_CIRCLE;
+   unsigned fresh = b & ~g_scan_cancel_wait;
+   g_scan_cancel_wait &= b;
+   return fresh;
+}
 
 static pc_uid pc_io_open_raw(const char *path, int flags, int mode)
 {

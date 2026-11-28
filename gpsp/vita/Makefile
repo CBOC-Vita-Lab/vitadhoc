@@ -25,8 +25,8 @@
 #   VERSION=4.1.1        the GBAdhoc release the core started from
 #   CORE_VERSION=...     what the log, link compatibility and RetroAchievements
 #                        report as the core: VERSION plus the 4.5.0 fixes taken in
-#   APP_VER=02.01        PARAM.SFO version (NN.NN), decoupled from VERSION and
-#                        CORE_VERSION so LiveArea/VitaShell/VitaDB show 2.01
+#   APP_VER=02.02        PARAM.SFO version (NN.NN), decoupled from VERSION and
+#                        CORE_VERSION so LiveArea/VitaShell/VitaDB show 2.02
 #                        while link compatibility stays intact
 #   TITLE_ID=GBAD00001   the bubble's id (4 letters + 5 digits)
 #   ARM_FAR_STUBS=1      build the core with -DARM_FAR_STUBS (arm/: stubs
@@ -318,7 +318,7 @@ $(SELF): $(VELF)
 
 # APP_VER is NN.NN (shown in LiveArea, VitaShell and VitaDB), decoupled from
 # VERSION and CORE_VERSION (4.1.1+4.5.0fixes) so link compatibility stays intact.
-APP_VER ?= 02.01
+APP_VER ?= 02.02
 $(SFO): Makefile $(APP_STAMP)
 	@mkdir -p $(dir $@)
 	$(VITASDK)/bin/vita-mksfoex -s TITLE_ID=$(TITLE_ID) -s APP_VER=$(APP_VER) \

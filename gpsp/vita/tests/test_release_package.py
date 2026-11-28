@@ -23,9 +23,9 @@ if os.environ.get("RELEASE_VPK"):
 else:
     VPK = VITA / "VitAdhoc.vpk"
     PINNED = False
-RUNTIME_SHA256 = "8cbee9bfc7396232d3322d074e75699c19e51cfe17b8059e3288306a3a1db071"  # version 2.0.1
-SNES_SHA256 = "ed456a6dd305c21457732592b505ca9b6245dd4313ef9543fc794bde4351bb89"  # version 2.0.1
-MD_SHA256 = "d4c84436c1eb9830368be9607620e6e1b07b160ed98d6a901a2ba3c9c1a44a89"  # version 2.0.1
+RUNTIME_SHA256 = "62e05f0cf2a3b2099f89d689e32aaa97be42ecaba4c6bddaef2aa447aa6241aa"  # version 2.0.2
+SNES_SHA256 = "60e2a0bfa071ff12bef45344f04e09c6be6782a5b3bf6e389c7bac1abb47bf41"  # version 2.0.2
+MD_SHA256 = "d4172ba085b74e23c7f9495bdbc8b5b57a2124b7fc8ab75513b40a00af2de53c"  # version 2.0.2
 NOTICES = {"licenses/GPL-2.0.txt", "licenses/MPL-2.0.txt", "licenses/Inter-OFL.txt",
            "licenses/Outfit-OFL.txt", "licenses/NotoSansCJK-OFL.txt",
            "licenses/CC-BY-SA-4.0.txt", "notices/THIRD-PARTY.md",
@@ -160,7 +160,7 @@ class ReleasePackageTests(unittest.TestCase):
             key = data[keys + key:data.index(b"\0", keys + key)].decode()
             fields[key] = data[values + offset:values + offset + size].rstrip(b"\0")
         self.assertEqual(fields["TITLE_ID"], b"GBAD00001")
-        self.assertEqual(fields["APP_VER"], b"02.01")
+        self.assertEqual(fields["APP_VER"], b"02.02")
 
 
 if __name__ == "__main__":

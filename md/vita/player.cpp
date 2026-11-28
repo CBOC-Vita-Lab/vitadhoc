@@ -1994,6 +1994,7 @@ void MdPlayer::look_start(int mhz)
 	look_mhz_ = mhz;
 	LookConfig lc;
 	lc.down_s = 2;
+	lc.down_start_s = 2;
 	lc.force_s = 1;
 	look_.configure(lc);
 	md_video_info vi;
@@ -2030,8 +2031,9 @@ void MdPlayer::look_second(const LookSecond &s0, uint32_t filter_max_us)
 	const bool half = s.pace_half || pacer_.mode() == PACE_HALF;
 	s.pace_half = half;
 	pace_half_secs_ = half ? pace_half_secs_ + 1 : 0;
-	if (half && drawn > 0 && over > 0) {
-		/* drawn frames over budget would have missed at 60 Hz even though half mode's repeats are planned */
+	if (drawn > 0 && over > 0) {
+		/* drawn frames over budget would miss at 60 Hz (in half mode, or during a half<->full bounce
+		 * where handoff census_line() suppressed repeated) */
 		const int pm = (int) ((uint64_t) over * (uint64_t) s.refreshes / (uint64_t) drawn);
 		if (pm > s.missed) s.missed = pm;
 	}
@@ -2040,9 +2042,10 @@ void MdPlayer::look_second(const LookSecond &s0, uint32_t filter_max_us)
 	 * past that with frames still over recover_pct, pacing is trapped at 30 Hz and the look must ease */
 	const bool pace_blocked = half && ((pace_half_secs_ >= 4 && over_rec > 0) || (pace_half_secs_ >= 6 && look_over_rec_prev_ > 0));
 	if (pace_blocked && s.missed < need_miss) s.missed = need_miss;
-	if (half && s.filter > 0.f && filter_max_us > 0 && (pace_blocked || s.missed >= need_miss)) {
-		/* high-variance scalers (ScaleCache) can average under 80% while peak frames block pacing recovery:
-		 * report the blocking scaler peak (capped) so LookGovernor's learned saving prevents flapping back up */
+	if (s.filter > 0.f && filter_max_us > 0 && (pace_blocked || s.missed >= need_miss)) {
+		/* high-variance scalers (ScaleCache) can average under 80% while peak frames stall the handoff
+		 * gate or block pacing recovery: report the blocking scaler peak (capped) so LookGovernor's
+		 * learned saving prevents flapping back up */
 		float peak_f = (float) filter_max_us / (float) pacer_.config().budget_us;
 		if (peak_f > 1.20f) peak_f = 1.20f;
 		if (peak_f > s.filter) s.filter = peak_f;

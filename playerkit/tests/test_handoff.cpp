@@ -347,6 +347,29 @@ TEST(handoff_gate_gives_up_on_a_drawing_thread_that_never_answers)
 	h.abandon(g);
 }
 
+TEST(handoff_gate_timeout_stays_bounded_after_spurious_wakeup)
+{
+	/* A leftover semaphore count (e.g. from set_enabled(true)) must not double the gate wait. */
+	VirtualSys sys;
+	Handoff h;
+	HandoffConfig c;
+	c.frame_bytes = 64; c.depth.max_depth = 1; c.adaptive = false; c.gate_timeout_us = 22500;
+	CHECK(h.init(c, &sys));
+	HandoffFrame *f = h.begin_write();
+	CHECK(f != 0);
+	f->seq = 1; f->w = f->h = f->pitch = 8;
+	h.commit(f);
+	h.set_enabled(true);                           /* posts gate_sem once while nobody is waiting */
+	const uint64_t t0 = sys.now_us();
+	HandoffFrame *g = h.begin_write();
+	const uint64_t waited = sys.now_us() - t0;
+	CHECK(g != 0);
+	CHECK_EQ(waited, 22500);                       /* final wait passes remaining 500 us, not full 22500 us */
+	CHECK_EQ(h.census().gate_timeouts, 1);
+	CHECK_EQ(h.census().dropped, 1);
+	h.abandon(g);
+}
+
 /* ---- the model and the implementation agree ------------------------------------------------ */
 
 namespace {

@@ -157,3 +157,43 @@ TEST(pace_decide_is_pure)
 	CHECK_EQ(pace_decide(c, PACE_HALF, &s[0], (int) s.size(), 5000), PACE_FULL);
 	CHECK_EQ(pace_decide(c, PACE_HALF, &s[0], 30, 5000), PACE_HALF);      /* 1 s of history is not 3 s */
 }
+
+TEST(pace_wswan_75hz_cadence_holds_full_and_recovers)
+{
+	/* WonderSwan 75.47 Hz cadence: 25.9% of 60 Hz refreshes run 2 emulated frames. */
+	PaceConfig c;
+	c.enter_over_pct = 40;
+	c.enter_avg_pct = 97;
+	c.recover_pct = 64;
+	c.recover_slips = 28;
+	/* Healthy game (9 ms single, 18 ms every 4th refresh -> 11.3 ms avg): stays 60 fps */
+	{
+		Pacer p;
+		p.configure(c);
+		int k = 0;
+		int ch = simulate(p, 15, [&](double) -> uint32_t { return (++k % 4 == 0) ? 18000u : 9000u; });
+		CHECK_EQ(ch, 0);
+		CHECK_EQ(p.mode(), PACE_FULL);
+	}
+	/* Startup draw overload (19 ms for 2 s -> half), then eased (7.5 ms / 15 ms): recovers cleanly */
+	{
+		Pacer p;
+		p.configure(c);
+		int k = 0;
+		int ch = simulate(p, 15, [&](double t) -> uint32_t {
+			if (t < 2500) return 19000u;
+			return (++k % 4 == 0) ? 15000u : 7500u;
+		});
+		CHECK_EQ(ch, 2);
+		CHECK_EQ(p.mode(), PACE_FULL);
+	}
+	/* Genuine sustained overload (13.5 ms single, 27 ms double -> 17 ms avg): goes half and never flaps */
+	{
+		Pacer p;
+		p.configure(c);
+		int k = 0;
+		int ch = simulate(p, 20, [&](double) -> uint32_t { return (++k % 4 == 0) ? 27000u : 13500u; });
+		CHECK_EQ(ch, 1);
+		CHECK_EQ(p.mode(), PACE_HALF);
+	}
+}

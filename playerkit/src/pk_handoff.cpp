@@ -260,7 +260,9 @@ HandoffFrame *Handoff::begin_write()
 			m.gate_waits++;
 			m.w_gate_waits++;
 		}
-		m.sys->sem_wait(m.gate_sem, m.cfg.gate_timeout_us);
+		const uint64_t waited = m.sys->now_us() - t0;
+		const uint32_t left = waited < m.cfg.gate_timeout_us ? (uint32_t) (m.cfg.gate_timeout_us - waited) : 0;
+		if (left > 0) m.sys->sem_wait(m.gate_sem, left);
 		if (m.sys->now_us() - t0 >= m.cfg.gate_timeout_us) {
 			/* the drawing thread is not answering: do not hold the game up for it. Newest wins this once. */
 			SpinGuard g(m.lk);

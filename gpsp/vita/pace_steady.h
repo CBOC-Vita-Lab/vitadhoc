@@ -12,6 +12,9 @@
 extern "C" {
 #endif
 void steady_config(uint32_t budget_us);   /* one refresh */
+/* WonderSwan runs 75.47 Hz (2 emulated frames on ~25.9% of 60 Hz refreshes):
+ * tolerate that deterministic double-frame beat without trapping at 30 fps. */
+void steady_config_wswan(uint32_t budget_us);
 void steady_enable(int on);
 void steady_reset(void);                 /* after the menu, a load, a pause */
 /* one drawn frame's cost (its start to its picture handed over): returns

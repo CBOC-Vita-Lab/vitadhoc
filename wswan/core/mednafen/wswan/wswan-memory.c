@@ -38,6 +38,7 @@
 uint32 wsRAMSize;
 uint8 wsRAM[65536];
 uint8 *wsSRAM = NULL;
+const uint8 *ws_read_bank[16];
 
 uint8 *wsCartROM;
 static uint32 sram_size;
@@ -91,6 +92,32 @@ uint8 *WSwan_GetWWSaveBlock(uint32 *size)
 
 extern uint16 WSButtonStatus;
 
+static void ws_rebuild_read_banks(void)
+{
+   uint32 rom_mask = (rom_size >> 16) ? ((rom_size >> 16) - 1) : 0;
+   uint32 b;
+   ws_read_bank[0] = wsRAM;
+   if (!IsWW && sram_size >= 65536 && wsSRAM)
+      ws_read_bank[1] = wsSRAM + (((uint32)BankSelector[1] << 16) & (sram_size - 1));
+   else
+      ws_read_bank[1] = NULL;
+   if (wsCartROM && rom_size >= 65536)
+   {
+      ws_read_bank[2] = wsCartROM + (((uint32)BankSelector[2] & rom_mask) << 16);
+      ws_read_bank[3] = wsCartROM + (((uint32)BankSelector[3] & rom_mask) << 16);
+      for (b = 4; b < 16; b++)
+      {
+         uint32 bank_num = (((uint32)(BankSelector[0] & 0xF) << 4) | b) & rom_mask;
+         ws_read_bank[b] = wsCartROM + (bank_num << 16);
+      }
+   }
+   else
+   {
+      for (b = 2; b < 16; b++)
+         ws_read_bank[b] = NULL;
+   }
+}
+
 static INLINE void WriteMemCore(uint32 A, uint8 V, bool ww)
 {
    uint32 offset = A & 0xffff;
@@ -98,13 +125,17 @@ static INLINE void WriteMemCore(uint32 A, uint8 V, bool ww)
 
    if(!bank) /*RAM*/
    {
-      WSwan_SoundCheckRAMWrite(offset);
+      if(__builtin_expect((offset >> 6) == ws_sound_sample_ram_pos, 0))
+         WSwan_SoundUpdate();
       wsRAM[offset] = V;
 
-      WSWan_TCacheInvalidByAddr(offset);
-
-      if(offset>=0xfe00) /*WSC palettes*/
-         WSwan_GfxWSCPaletteRAMWrite(offset, V);
+      if(__builtin_expect(offset >= 0x2000, 0))
+      {
+         if(offset < 0xC000)
+            WSWan_TCacheInvalidByAddr(offset);
+         else if(offset >= 0xfe00) /*WSC palettes*/
+            WSwan_GfxWSCPaletteRAMWrite(offset, V);
+      }
    }
    else if(bank == 1) /* SRAM or WonderWitch flash window */
    {
@@ -421,10 +452,10 @@ static INLINE void WritePortCore(uint32 IOPort, uint8 V, bool ww)
                     ButtonReadLatch |= (WSButtonStatus >> 4) & 0xF;
                  break;
 
-      case 0xC0: BankSelector[0] = V & 0xF; break;
-      case 0xC1: BankSelector[1] = V; break;
-      case 0xC2: BankSelector[2] = V; break;
-      case 0xC3: BankSelector[3] = V; break;
+      case 0xC0: BankSelector[0] = V & 0xF; ws_rebuild_read_banks(); break;
+      case 0xC1: BankSelector[1] = V; ws_rebuild_read_banks(); break;
+      case 0xC2: BankSelector[2] = V; ws_rebuild_read_banks(); break;
+      case 0xC3: BankSelector[3] = V; ws_rebuild_read_banks(); break;
    }
 
    if(ww && IOPort == 0xCE)
@@ -456,6 +487,7 @@ void WSwan_MemoryKill(void)
    else if(wsSRAM)
       free(wsSRAM);
    wsSRAM = NULL;
+   memset(ws_read_bank, 0, sizeof(ws_read_bank));
 }
 
 void WSwan_MemoryInit(bool lang, bool IsWSC, uint32 ssize, bool IsWW_arg)
@@ -501,6 +533,7 @@ void WSwan_MemoryInit(bool lang, bool IsWSC, uint32 ssize, bool IsWW_arg)
 
    if(sram_size)
       MDFNMP_AddRAM(sram_size, 0x10000, wsSRAM);
+   ws_rebuild_read_banks();
 }
 
 void WSwan_MemoryReset(void)
@@ -532,6 +565,7 @@ void WSwan_MemoryReset(void)
    SoundDMAControl = 0;
    SoundDMATimer = 0;
 
+   ws_rebuild_read_banks();
 }
 
 int WSwan_MemoryStateAction(StateMem *sm, int load, int data_only)
@@ -593,6 +627,7 @@ int WSwan_MemoryStateAction(StateMem *sm, int load, int data_only)
 
       for(A = 0xfe00; A <= 0xFFFF; A++)
          WSwan_GfxWSCPaletteRAMWrite(A, wsRAM[A]);
+      ws_rebuild_read_banks();
    }
    return(1);
 }

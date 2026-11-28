@@ -32,6 +32,7 @@
 #include "interrupt.h"
 #include "wswan.h"
 #include "wswan-memory.h"
+#include "sound.h"
 
 #include "v30mz.h"
 
@@ -122,14 +123,14 @@ typedef enum
 #define GetMemB(Seg,Off) ((uint8)PhysRead8((DefaultBase(Seg)+(Off))))
 #define GetMemW(Seg,Off) ((uint16)PhysRead16((DefaultBase(Seg)+(Off))))
 
-#define PutMemB(Seg,Off,x) { cpu_writemem20((DefaultBase(Seg)+(Off)),(x)); }
-#define PutMemW(Seg,Off,x) { PutMemB(Seg,Off,(x)&0xff); PutMemB(Seg,(Off)+1,(uint8)((x)>>8)); }
+#define PutMemB(Seg,Off,x) { PhysWrite8((DefaultBase(Seg)+(Off)),(x)); }
+#define PutMemW(Seg,Off,x) { PhysWrite16((DefaultBase(Seg)+(Off)),(x)); }
 
 /* Todo:  Remove these later - plus readword could overflow */
 #define ReadByte(ea) ((uint8)PhysRead8((ea)))
 #define ReadWord(ea) (PhysRead16((ea)))
-#define WriteByte(ea,val) { cpu_writemem20((ea),val); }
-#define WriteWord(ea,val) { cpu_writemem20((ea),(uint8)(val)); cpu_writemem20(((ea)+1),(val)>>8); }
+#define WriteByte(ea,val) { PhysWrite8((ea),(val)); }
+#define WriteWord(ea,val) { PhysWrite16((ea),(val)); }
 
 #define read_port(port) cpu_readport(port)
 #define write_port(port,val) cpu_writeport(port,val)
@@ -343,13 +344,64 @@ static uint8 (*cpu_readport)(uint32) = NULL;
 static void (*cpu_writeport)(uint32, uint8) = NULL;
 static uint8 (*cpu_readmem20)(uint32) = NULL;
 
-#define PhysRead8(addr) cpu_readmem20(addr)
+static INLINE uint8 PhysRead8(uint32 addr)
+{
+   const uint8 *p = ws_read_bank[(addr >> 16) & 0xF];
+   if (__builtin_expect(p != NULL, 1))
+      return p[addr & 0xFFFF];
+   return cpu_readmem20(addr);
+}
 
 static INLINE uint16 PhysRead16(uint32 addr)
 {
- uint16 ret = cpu_readmem20(addr);
- ret |= cpu_readmem20(addr + 1) << 8;
- return ret;
+   uint32 off = addr & 0xFFFF;
+   const uint8 *p = ws_read_bank[(addr >> 16) & 0xF];
+   if (__builtin_expect(p != NULL && off != 0xFFFF, 1))
+   {
+#ifndef MSB_FIRST
+      uint16 v;
+      memcpy(&v, p + off, 2);
+      return v;
+#else
+      return (uint16)(p[off] | ((uint16)p[off + 1] << 8));
+#endif
+   }
+   {
+      uint16 ret = PhysRead8(addr);
+      ret |= (uint16)PhysRead8(addr + 1) << 8;
+      return ret;
+   }
+}
+
+static INLINE void PhysWrite8(uint32 addr, uint8 val)
+{
+   uint32 off = addr & 0xFFFF;
+   if (__builtin_expect((addr & 0xF0000) == 0 && off < 0x2000 &&
+                        (off >> 6) != ws_sound_sample_ram_pos, 1))
+   {
+      wsRAM[off] = val;
+      return;
+   }
+   cpu_writemem20(addr, val);
+}
+
+static INLINE void PhysWrite16(uint32 addr, uint16 val)
+{
+   uint32 off = addr & 0xFFFF;
+   if (__builtin_expect((addr & 0xF0000) == 0 && off < 0x1FFF &&
+                        (off >> 6) != ws_sound_sample_ram_pos &&
+                        ((off + 1) >> 6) != ws_sound_sample_ram_pos, 1))
+   {
+#ifndef MSB_FIRST
+      memcpy(wsRAM + off, &val, 2);
+#else
+      wsRAM[off] = (uint8)val;
+      wsRAM[off + 1] = (uint8)(val >> 8);
+#endif
+      return;
+   }
+   cpu_writemem20(addr, (uint8)val);
+   cpu_writemem20(addr + 1, (uint8)(val >> 8));
 }
 
 /***************************************************************************/
@@ -1465,7 +1517,8 @@ void v30mz_execute(int cycles)
 
    if(InHLT)
    {
-      WSwan_InterruptCheck();
+      if(__builtin_expect(ws_irq_pending, 0))
+         WSwan_InterruptCheck();
       if(InHLT)
       {
          int32 tmp = v30mz_ICount;
@@ -1480,7 +1533,8 @@ void v30mz_execute(int cycles)
    while(v30mz_ICount > 0) 
    {
 
-      WSwan_InterruptCheck();
+      if(__builtin_expect(ws_irq_pending, 0))
+         WSwan_InterruptCheck();
 
       DoOP(FETCHOP);
    }

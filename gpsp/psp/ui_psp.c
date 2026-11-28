@@ -10045,23 +10045,34 @@ static void rom_side_prune_m3u(const char *dir, int start);
  * reads the card again).  A card that has not finished in SCAN_BUDGET_US is
  * stopped the same way.  A directory that does not answer cannot be
  * interrupted from here: an absent mount fails at once and is skipped. */
-#define SCAN_UI_TICK_US  33000u
-#define SCAN_BUDGET_US   240000000u
-static int         g_scan_ui;          /* 1: draw while walking            */
+#define SCAN_UI_TICK_US     33000u
+#define SCAN_BUDGET_US      240000000u
+#define SCAN_RET_PROMOTE_US 250000u
+static int         g_scan_active;      /* 1: interactive scan (Circle / budget active) */
+static int         g_scan_ui;          /* 1: draw scan_ui_frame() while walking        */
 static unsigned    g_scan_ui_t0, g_scan_ui_last, g_scan_ui_frames;
-static int         g_scan_stop;        /* 1 player stopped it, 2 too slow  */
+static int         g_scan_stop;        /* 1 player stopped it, 2 too slow              */
 static unsigned    g_scan_first_us = (unsigned)-1, g_scan_input_us = (unsigned)-1;
-static char        g_scan_last[48];    /* the latest game met              */
+static char        g_scan_last[48];    /* the latest game met                          */
+
+static void scan_cancel_poll(void)
+{
+   unsigned now;
+   if (!g_scan_active)
+      return;
+   now = sceKernelGetSystemTimeLow();
+   if (g_scan_input_us == (unsigned)-1)
+      g_scan_input_us = now - g_scan_ui_t0;
+   if (!g_scan_stop && now - g_scan_ui_t0 > SCAN_BUDGET_US)
+      g_scan_stop = 2;
+   if (!g_scan_stop && pspcompat_pad_scan_cancel())
+      g_scan_stop = 1;
+}
 
 static void scan_ui_frame(void)
 {
    char msg[64];
-   SceCtrlData pd;
-   sceCtrlPeekBufferPositive(&pd, 1);
-   if (g_scan_input_us == (unsigned)-1)
-      g_scan_input_us = sceKernelGetSystemTimeLow() - g_scan_ui_t0;
-   if ((pd.Buttons & PSP_CTRL_CIRCLE) && !g_scan_stop)
-      g_scan_stop = 1;
+   scan_cancel_poll();
    vid_overlay_begin(1);
    page(UI_APP_NAME, NULL);
    snprintf(msg, sizeof(msg), tr("ui.finding_games_found"), g_rom_found);
@@ -10081,11 +10092,21 @@ static void scan_ui_frame(void)
 static void scan_ui_tick(void)
 {
    unsigned now;
-   if (!g_scan_ui)
+   if (!g_scan_active)
+      return;
+   scan_cancel_poll();
+   if (g_scan_stop)
       return;
    now = sceKernelGetSystemTimeLow();
-   if (now - g_scan_ui_t0 > SCAN_BUDGET_US && !g_scan_stop)
-      g_scan_stop = 2;
+   if (!g_scan_ui)
+   {
+      if (g_ret_on == 1 && now - g_scan_ui_t0 < SCAN_RET_PROMOTE_US)
+      {
+         ret_scan_tick();
+         return;
+      }
+      g_scan_ui = 1;
+   }
    if (g_scan_ui_frames && now - g_scan_ui_last < SCAN_UI_TICK_US)
       return;
    scan_ui_frame();
@@ -10235,6 +10256,14 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
    else
       snprintf(dir, sizeof(dir), "%s", SCAN_ROOT);
 
+#ifdef VITA
+   scan_ui_tick();
+   if (g_scan_stop)
+   {
+      g_rom_scan_io_errors++;
+      return;
+   }
+#endif
    d = sceIoDopen(dir);
    if (d < 0)
    {
@@ -10294,6 +10323,12 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
             if (fl > 0 && fl < (int)sizeof(full))
                zipc = ui_host_zip_console(full,
                                           (unsigned)ent.d_stat.st_size);
+            scan_ui_tick();
+            if (g_scan_stop)
+            {
+               g_rom_scan_io_errors++;
+               break;
+            }
          }
       }
 /* (a ".bin" is a Genesis game only when its bytes say so: ui_host_md_bin_ok) */
@@ -10381,9 +10416,12 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
 #endif
       {
          g_rom_found++;
-         ret_scan_tick();
 #ifdef VITA
+         if (!g_scan_active)
+            ret_scan_tick();
          snprintf(g_scan_last, sizeof(g_scan_last), "%s", ent.d_name);
+#else
+         ret_scan_tick();
 #endif
          if (*n < BROWSER_MAX)
          {
@@ -10553,7 +10591,7 @@ static void rom_cache_store(int n, fe_console_t console)
       return;
    cache = &g_rom_cache[console];
    cache->valid = 0;
-   if (g_rom_scan_path_errors || g_rom_scan_io_errors)
+   if (g_rom_scan_path_errors || g_rom_scan_io_errors || g_scan_stop)
       return;
    cache->n = n;
    cache->found = g_rom_found;
@@ -10635,7 +10673,7 @@ static void rom_side_finish(void)
          continue;
       g_side[c].on = 0;
       cache->valid = 0;
-      if (g_rom_scan_path_errors || g_rom_scan_io_errors ||
+      if (g_rom_scan_path_errors || g_rom_scan_io_errors || g_scan_stop ||
           g_side[c].path_errors)
          continue;
       rom_sort_entries(cache->entries, g_side[c].n);
@@ -10677,7 +10715,8 @@ static int rom_scan(const char *rom_dir, fe_console_t console)
    g_rom_found     = 0;
    g_rom_scan_path_errors = 0;
 #ifdef VITA
-   g_scan_stop = 0;
+   if (!g_scan_active)
+      g_scan_stop = 0;
    g_scan_last[0] = '\0';
    g_gb_memo[0] = '\0';
    {
@@ -10809,15 +10848,27 @@ static int rom_scan_boot(const char *rom_dir, fe_console_t console)
                 g_rom_cache[console].roots_key == rom_roots_key();
    g_scan_first_us = g_scan_input_us = (unsigned)-1;
    g_scan_ui_frames = 0;
-   g_scan_ui = !hit && !g_ret_on;
+   g_scan_stop = 0;
+   g_scan_active = !hit;
+   /* On a cold walk, keep the held game frame for SCAN_RET_PROMOTE_US when
+    * returning in-process (g_ret_on == 1) so short walks stay seamless, while
+    * polling Circle from entry 0 and switching to the scan screen if the walk
+    * lingers.  Cold boot (g_ret_on == 0) and external player return (g_ret_on
+    * == 2, fading in from black) show the scan screen immediately. */
+   g_scan_ui = !hit && g_ret_on != 1;
    g_scan_ui_t0 = t0;
-   if (g_scan_ui)
+   if (g_scan_active)
    {
       g_rom_found = 0;
       g_scan_last[0] = '\0';
-      scan_ui_frame();                 /* before the first directory is opened */
+      pspcompat_pad_scan_cancel_begin();
+      if (g_scan_ui)
+         scan_ui_frame();                 /* before the first directory is opened */
+      else
+         scan_cancel_poll();
    }
    n = rom_scan_cached(rom_dir, console);
+   g_scan_active = 0;
    g_scan_ui = 0;
    done = sceKernelGetSystemTimeLow() - t0;
    fe_evt("boot_times first_frame_ms=%u input_ms=%u library_ready_ms=%u "
@@ -10826,8 +10877,11 @@ static int rom_scan_boot(const char *rom_dir, fe_console_t console)
           g_scan_input_us == (unsigned)-1 ? 0u : g_scan_input_us / 1000u,
           done / 1000u, !hit, g_scan_stop, g_scan_ui_frames);
    if (g_scan_stop)
+   {
+      g_prev_pad |= PSP_CTRL_CIRCLE;
       osd_toast(g_scan_stop == 1 ? tr("toast.scan_stopped_showing_what_was_found")
                                  : tr("toast.the_card_is_slow_showing_what"));
+   }
    return n;
 }
 #else
@@ -14445,7 +14499,11 @@ static void browser_switch_apply(const char *rom_dir, int *n_scan, int *n,
    g_pcfg.console = g_sw.to;
    pcfg_display_select(g_sw.to);
    g_sw_cfg_due = 1;
+#ifdef VITA
+   *n_scan = rom_scan_boot(rom_dir, (fe_console_t)g_pcfg.console);
+#else
    *n_scan = rom_scan_cached(rom_dir, (fe_console_t)g_pcfg.console);
+#endif
    if (*n_scan < 0)
       *n_scan = 0;
 #ifdef VITA
@@ -15484,7 +15542,11 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 #endif
             art_free_all();
             browser_state_cache_free();
+#ifdef VITA
+            n_scan = rom_scan_boot(rom_dir, (fe_console_t)g_pcfg.console);
+#else
             n_scan = rom_scan(rom_dir, (fe_console_t)g_pcfg.console);
+#endif
             if (n_scan < 0)
                n_scan = 0;
 #ifdef VITA
@@ -15507,7 +15569,8 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 #ifdef VITA
             if (manual_refresh)
             {
-               osd_toast(n_scan == 1 ? tr("toast.game_found") : tr("toast.games_found"), n_scan);
+               if (!g_scan_stop)
+                  osd_toast(n_scan == 1 ? tr("toast.game_found") : tr("toast.games_found"), n_scan);
                fe_evt("library_refresh_done console=%d roms=%d", g_pcfg.console, n_scan);
             }
 #endif
@@ -15629,7 +15692,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
              !g_sw.active && !g_find[0])
          {
             rom_cache_clear();
-            n_scan = rom_scan(rom_dir, (fe_console_t)g_pcfg.console);
+            n_scan = rom_scan_boot(rom_dir, (fe_console_t)g_pcfg.console);
             if (n_scan < 0)
                n_scan = 0;
             favs_mark(n_scan);
@@ -15638,12 +15701,15 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             cur = 0;
             g_empty_for = -1;
             g_scroll_cur = -1;
-            if (n_scan)
-               osd_toast(n_scan == 1 ? tr("toast.game_found") : tr("toast.games_found"),
-                         n_scan);
-            else
-               osd_toast(tr("toast.still_no_files_in_that_folder"),
-                         skin_of(g_pcfg.console)->ext);
+            if (!g_scan_stop)
+            {
+               if (n_scan)
+                  osd_toast(n_scan == 1 ? tr("toast.game_found") : tr("toast.games_found"),
+                            n_scan);
+               else
+                  osd_toast(tr("toast.still_no_files_in_that_folder"),
+                            skin_of(g_pcfg.console)->ext);
+            }
             fe_evt("ui_browser_rescan console=%d roms=%d", g_pcfg.console,
                    n_scan);
          }

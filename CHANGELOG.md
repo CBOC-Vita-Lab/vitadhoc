@@ -1,5 +1,55 @@
 # What's New
 
+## Version 2.0.2 — 2026-11-28
+
+Maintenance and performance update verified on a physical PS Vita in both 4-core
+and 3-core (stock) modes, bringing WonderSwan up to locked 60 fps, fixing Circle
+cancellation during automatic ROM scans, eliminating remaining SNES and Sega
+handoff gate stalls, and fixing hardcoded vanilla idle-loop corruption in
+expanded GBA Pokémon decompilation ROM hacks (see
+[Performance](docs/PERFORMANCE.md)).
+
+- **WonderSwan locked 60 fps (`eboot.bin`, `wswan/`):** Added a dedicated
+  WonderSwan steady-pacing profile (`steady_config_wswan()`) tuned for the
+  75.47 Hz -> 60 Hz double-stepped cadence (~26% `n=2` refreshes) so normal
+  refreshes no longer trap `Steady Pacer` at 30 fps (`PACE_HALF`). Tightened
+  `LookGovernor` startup step-down (`down_s = 2`, `down_start_s = 2`,
+  `force_s = 1`), prevented stale framebuffer blending on skipped frames
+  (`wscore.c`), and delivered a bit-exact 30–41% speedup across Beetle
+  WonderSwan (`gfx.c`, `v30mz.c`, `wswan-memory.c`, `sound.c`, `interrupt.c`:
+  16-bank direct reads, inlined low-RAM writes, `ws_irq_pending` guard,
+  zero-delta `Blip_Synth` skip, tile-cache/palette range guards, precomputed
+  mono palette LUTs, and per-scanline sprite buckets). Verified 100% bit-exact
+  x86 vs ARM Cortex-A9 NEON and locked 60.0 fps (`steady=1`, `half_passes=0`,
+  `60/60` shown, 0 underruns) in both 4-core and 3-core PS Vita runs.
+- **SNES & Sega handoff stall and `LookGovernor` fixes (`snes.bin`, `md.bin`,
+  `playerkit`):** Bounded `Handoff::begin_write()` waits accurately on spurious
+  wakeups and lowered Vita `gate_timeout_us` from 250 ms to 22 ms across SNES,
+  Mega Drive/Sega CD/SMS/GG/SG-1000, and `eboot.bin` so `xBR 2x` spikes drop a
+  stale frame instead of stalling emulation for 34–50 ms and starving audio.
+  Included `missed_refr` and `gate_timeouts` in `LookGovernor`'s missed-refresh
+  count, counted over-budget drawn frames across `half <-> full` bounces,
+  reported blocking scaler peak cost to prevent flapping back up, and tightened
+  `down_start_s = 2`. Verified on PS Vita: *Yoshi's Island* (4-core), *Rock 'n'
+  Roll Racing* (4-core & 3-core), and *Gunstar Heroes* (4-core & 3-core) shed
+  heavy spikes in 2 s and hold 59.9–60.0 fps with 0 audio underruns.
+- **ROM scan Circle cancellation (`eboot.bin`):** Added 16-sample chronological
+  `pspcompat_pad_scan_cancel_begin()` / `pspcompat_pad_scan_cancel()` with a
+  held-at-entry release guard and face-swap / controller-2 support. Split scan
+  cancellation from UI drawing, enabled immediate scan UI on cold boot and
+  external-player return (`snes.bin` / `md.bin`), polled Circle on every
+  `sceIoDread()`, before `sceIoDopen()`, and after slow archive peeks, stopped
+  caching partial scans, suppressed stray post-cancel browser edges, and gated
+  `vita_browser_others()` on `!g_scan_stop`.
+- **GBA ROM hack idle-loop fix (`gpsp/gba_memory.c`):** Cleared hardcoded
+  vanilla ROM addresses (`idle_loop_target_pc` and `translation_gate_targets`)
+  from `gba_over.h` whenever `is_hack` is detected (e.g. 32 MiB
+  `pokeemerald-expansion` / `pokefirered` decompilation hacks), preventing the
+  dynarec's idle-loop eliminator from firing on unrelated live code while
+  leaving official vanilla carts untouched.
+- **Cover extensions (`gpsp/vita/artfetch.c`):** Added `.mark3` (Master System)
+  and `.sg1000` (SG-1000) to `af_ext_sys()` for parity with `md.bin`.
+
 ## Version 2.0.1 — 2026-11-27
 
 Maintenance and performance update verified on a physical PS Vita in both 4-core

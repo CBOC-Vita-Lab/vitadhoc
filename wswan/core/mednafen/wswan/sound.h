@@ -23,6 +23,8 @@ void WSwan_SetSoundMultiplier(double multiplier);
 
 void WSwan_SoundWrite(uint32, uint8);
 uint8 WSwan_SoundRead(uint32);
+extern uint8 ws_sound_sample_ram_pos;
+void WSwan_SoundUpdate(void);
 void WSwan_SoundCheckRAMWrite(uint32 A);
 
 #ifdef __cplusplus

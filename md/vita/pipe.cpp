@@ -4,7 +4,7 @@
 
 namespace mdp {
 
-bool PicturePipe::start(pk::HandoffSys *sys, int depth_max, bool adaptive, uint32_t refresh_us, uint32_t frame_us)
+bool PicturePipe::start(pk::HandoffSys *sys, int depth_max, bool adaptive, uint32_t refresh_us, uint32_t frame_us, uint32_t gate_timeout_us)
 {
 	if (started_ || !sys) return false;
 	pk::HandoffConfig c;
@@ -13,6 +13,7 @@ bool PicturePipe::start(pk::HandoffSys *sys, int depth_max, bool adaptive, uint3
 	c.adaptive = adaptive;
 	c.refresh_us = refresh_us;
 	c.frame_us = frame_us;
+	c.gate_timeout_us = gate_timeout_us;
 	started_ = box_.init(c, sys);
 	return started_;
 }

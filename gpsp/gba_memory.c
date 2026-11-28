@@ -4344,6 +4344,83 @@ const char *gpsp_backup_name(void)
   }
 }
 
+static void apply_rom_hack_policy(const char *game_code, int force_serial)
+{
+   bool is_128k_flash = (backup_type_reset == BACKUP_FLASH && flash_bank_cnt == FLASH_SIZE_128KB);
+   bool is_pokemon_engine = rom_is_pokemon_family(gamepak_buffers[0]) || is_128k_flash;
+
+   require_m1_hle_bios = false;
+
+   bool title_altered = false;
+   bool is_expanded = (gamepak_size > 16777216);
+
+   if (rom_is_pokemon_family(gamepak_buffers[0]))
+   {
+      char title[13];
+      memcpy(title, &gamepak_buffers[0][0xA0], 12);
+      title[12] = '\0';
+
+      if (strncmp(title, "POKEMON FIRE", 12) != 0 &&
+          strncmp(title, "POKEMON LEAF", 12) != 0 &&
+          strncmp(title, "POKEMON EMER", 12) != 0 &&
+          strncmp(title, "POKEMON RUBY", 12) != 0 &&
+          strncmp(title, "POKEMON SAPP", 12) != 0)
+      {
+         title_altered = true;
+      }
+   }
+
+   bool is_hack = gamepak_header_nonstandard || !is_known_game || title_altered || (is_expanded && is_pokemon_engine);
+
+   if (is_hack)
+   {
+      /* Hardcoded vanilla ROM addresses from gba_over.h (idle_loop_target_pc
+       * and translation_gate_target_*) point at arbitrary live code in decomp
+       * and expanded ROM hacks (e.g. pokeemerald-expansion / pokefirered),
+       * where firing the dynarec idle-loop eliminator corrupts cycle timing. */
+      idle_loop_target_pc = 0xFFFFFFFF;
+      translation_gate_targets = 0;
+#ifdef SMC_GATES
+      smc_gates_reset();
+#endif
+#ifdef GBA_LINK
+      {
+         void gbalink_gates_snapshot(void);
+         gbalink_gates_snapshot();
+      }
+#endif
+   }
+
+   if (is_hack && is_pokemon_engine)
+   {
+      backup_type_reset = BACKUP_FLASH;
+      flash_bank_cnt = FLASH_SIZE_128KB;
+      flash_device_id = FLASH_DEVICE_SANYO_128KB;
+      rtc_enabled = true;
+      require_m1_hle_bios = true;
+
+      if (force_serial == SERIAL_MODE_AUTO)
+         serial_mode = SERIAL_MODE_SERIAL_POKE;
+   }
+   else if (!is_hack && rom_is_pokemon_family(gamepak_buffers[0]))
+   {
+      if (flash_bank_cnt == FLASH_SIZE_128KB)
+         rtc_enabled = true;
+
+      if (force_serial == SERIAL_MODE_AUTO)
+      {
+         if (strncmp(game_code, "AXV", 3) == 0 || strncmp(game_code, "AXP", 3) == 0)
+         {
+            serial_mode = SERIAL_MODE_SERIAL_POKE;
+         }
+         else
+         {
+            serial_mode = SERIAL_MODE_RFU;
+         }
+      }
+   }
+}
+
 u32 load_gamepak(const struct retro_game_info* info, const char *name,
                  int force_rtc, int force_rumble, int force_serial)
 {
@@ -4433,61 +4510,8 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
       detect_backup_subcircuit(gamepak_buffers[0], scan_size);
    }
 
-   bool is_128k_flash = (backup_type_reset == BACKUP_FLASH && flash_bank_cnt == FLASH_SIZE_128KB);
-   bool is_pokemon_engine = rom_is_pokemon_family(gamepak_buffers[0]) || is_128k_flash;
+   apply_rom_hack_policy(game_code, force_serial);
 
-   require_m1_hle_bios = false;
-   
-   bool title_altered = false;
-   bool is_expanded = (gamepak_size > 16777216);
-   
-   if (rom_is_pokemon_family(gamepak_buffers[0]))
-   {
-      char title[13];
-      memcpy(title, &gamepak_buffers[0][0xA0], 12);
-      title[12] = '\0';
-      
-      if (strncmp(title, "POKEMON FIRE", 12) != 0 &&
-          strncmp(title, "POKEMON LEAF", 12) != 0 &&
-          strncmp(title, "POKEMON EMER", 12) != 0 &&
-          strncmp(title, "POKEMON RUBY", 12) != 0 &&
-          strncmp(title, "POKEMON SAPP", 12) != 0)
-      {
-         title_altered = true;
-      }
-   }
-
-   bool is_hack = gamepak_header_nonstandard || !is_known_game || title_altered || (is_expanded && is_pokemon_engine);
-
-   if (is_hack && is_pokemon_engine)
-   {
-      backup_type_reset = BACKUP_FLASH;
-      flash_bank_cnt = FLASH_SIZE_128KB;
-      flash_device_id = FLASH_DEVICE_SANYO_128KB;
-      rtc_enabled = true;
-      require_m1_hle_bios = true;
-      
-      if (force_serial == SERIAL_MODE_AUTO)
-         serial_mode = SERIAL_MODE_SERIAL_POKE;
-   }
-   else if (!is_hack && rom_is_pokemon_family(gamepak_buffers[0]))
-   {
-      if (flash_bank_cnt == FLASH_SIZE_128KB)
-         rtc_enabled = true;
-
-      if (force_serial == SERIAL_MODE_AUTO)
-      {
-         if (strncmp(game_code, "AXV", 3) == 0 || strncmp(game_code, "AXP", 3) == 0)
-         {
-            serial_mode = SERIAL_MODE_SERIAL_POKE;
-         }
-         else
-         {
-            serial_mode = SERIAL_MODE_RFU;
-         }
-      }
-   }
-	
    apply_save_type_choice();   /* [save-type] before the save file is read */
    normalize_blank_backup_for_detected_type();
 

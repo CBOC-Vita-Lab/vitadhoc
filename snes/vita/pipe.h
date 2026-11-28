@@ -22,7 +22,7 @@ public:
 	enum { MAX_W = 512, MAX_H = 512 };       /* the largest picture the player draws (video_fetch clamps to it) */
 	PicturePipe() : serial_(0), started_(false) {}
 	/* depth_max: pictures in flight when there is headroom (the model's choice is 2) */
-	bool start(pk::HandoffSys *sys, int depth_max, bool adaptive, uint32_t refresh_us, uint32_t frame_us);
+	bool start(pk::HandoffSys *sys, int depth_max, bool adaptive, uint32_t refresh_us, uint32_t frame_us, uint32_t gate_timeout_us = 250000);
 	void stop();                              /* wakes both sides; the drawing thread then gets NULL from take() */
 	bool running() const { return started_; }
 	pk::Handoff &box() { return box_; }

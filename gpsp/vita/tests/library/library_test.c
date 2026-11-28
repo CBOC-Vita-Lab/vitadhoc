@@ -815,10 +815,14 @@ static void test_gb_header_lists(const char *root)
 }
 
 static unsigned pad_circle_after_us;     /* press CIRCLE once this much time has passed */
+static unsigned pad_circle_release_before_us; /* if non-zero: held from t=0 until this time */
 static unsigned boot_t0;
 static unsigned boot_pad(void)
 {
-   return pad_circle_after_us && sceKernelGetSystemTimeLow() - boot_t0 >= pad_circle_after_us
+   unsigned elapsed = sceKernelGetSystemTimeLow() - boot_t0;
+   if (pad_circle_release_before_us && elapsed < pad_circle_release_before_us)
+      return PSP_CTRL_CIRCLE;
+   return pad_circle_after_us && elapsed >= pad_circle_after_us
           ? PSP_CTRL_CIRCLE : 0u;
 }
 
@@ -893,8 +897,70 @@ static void test_cold_start(const char *root)
    (void)rom_scan_boot(dir, FE_CONSOLE_GBA);
    check(rom_scan_boot(dir, FE_CONSOLE_GBA) == 600 && g_scan_ui_frames == 0,
          "a cached list opens with no walk and no progress page");
+
+   /* Returning to the game list after an external player relaunch (g_ret_on == 2,
+    * cache is always cold): scan UI is shown and CIRCLE stops the automatic walk. */
+   slow_read_us = per_entry_us;
+   rom_cache_clear();
+   ui_return_fade_in();
+   boot_t0 = sceKernelGetSystemTimeLow();
+   pad_circle_release_before_us = 0;
+   pad_circle_after_us = 10u * per_entry_us;
+   n_boot = (unsigned)rom_scan_boot(dir, FE_CONSOLE_GBA);
+   pad_circle_after_us = 0;
+   check(g_scan_stop == 1 && n_boot > 0 && n_boot < 30 && g_scan_ui_frames >= 1 &&
+         !g_rom_cache[FE_CONSOLE_GBA].valid,
+         "CIRCLE stops the automatic scan after an external-player return (g_ret_on == 2)");
+   g_ret_on = 0;
+
+   /* Returning to the game list in-process with a cold cache (g_ret_on == 1,
+    * e.g. after a previous stopped scan): CIRCLE stops it and long walks
+    * promote to the scan screen; a stopped scan does not make vita_browser_others
+    * re-walk the remaining consoles. */
+   rom_cache_clear();
+   g_ret_on = 1;
+   g_ret_last = sceKernelGetSystemTimeLow();
+   boot_t0 = sceKernelGetSystemTimeLow();
+   pad_circle_after_us = 10u * per_entry_us;
+   n_boot = (unsigned)rom_scan_boot(dir, FE_CONSOLE_GBA);
+   pad_circle_after_us = 0;
+   check(g_scan_stop == 1 && n_boot > 0 && n_boot < 30 && g_scan_ui_frames >= 1 &&
+         !g_rom_cache[FE_CONSOLE_GBA].valid,
+         "CIRCLE stops a cold in-process return scan (g_ret_on == 1) after promoting UI");
+   {
+      unsigned opened_before = directory_opens;
+      g_empty_for = -1;
+      g_pcfg.console = FE_CONSOLE_GB;
+      check(vita_browser_others(dir) == 0 && directory_opens == opened_before,
+            "vita_browser_others does not re-walk uncached consoles after a stopped scan");
+      g_pcfg.console = FE_CONSOLE_GBA;
+   }
+   /* Cached in-process return stays instant with zero scan UI frames */
+   slow_read_us = 0;
+   rom_cache_clear();
+   g_ret_on = 0;
+   (void)rom_scan_boot(dir, FE_CONSOLE_GBA);
+   g_ret_on = 1;
+   check(rom_scan_boot(dir, FE_CONSOLE_GBA) == 600 && g_scan_ui_frames == 0 && g_scan_stop == 0,
+         "a cached in-process return keeps zero scan UI frames");
+   g_ret_on = 0;
+
+   /* CIRCLE already held at scan entry does not spuriously cancel until released
+    * and pressed freshly. */
+   slow_read_us = per_entry_us;
+   rom_cache_clear();
+   boot_t0 = sceKernelGetSystemTimeLow();
+   pad_circle_release_before_us = 5u * per_entry_us;
+   pad_circle_after_us = 15u * per_entry_us;
+   n_boot = (unsigned)rom_scan_boot(dir, FE_CONSOLE_GBA);
+   pad_circle_release_before_us = 0;
+   pad_circle_after_us = 0;
+   check(g_scan_stop == 1 && n_boot >= 10 && n_boot < 35,
+         "CIRCLE held at scan entry waits for release before a fresh press stops the scan");
+   slow_read_us = 0;
+
    pspcompat_host_pad(NULL);
-   puts("PASS: cold start (first frame, input, identical final list, stop, budget, missing mount)");
+   puts("PASS: cold start (first frame, input, identical final list, stop, budget, missing mount, return)");
 }
 
 int main(void)

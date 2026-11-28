@@ -83,6 +83,12 @@ void     pspcompat_wait_vblank(void);
 unsigned pspcompat_pad(void);
 /* Same physical layout without applying g_pc_face_swap. */
 unsigned pspcompat_pad_raw(void);
+/* ROM-scan cancel polling: begin() snapshots cancel buttons already held at
+ * scan entry; poll() returns non-zero on a fresh cancel press (inspecting
+ * Vita's buffered pad history so brief taps between slow I/O calls are not
+ * missed). */
+void     pspcompat_pad_scan_cancel_begin(void);
+unsigned pspcompat_pad_scan_cancel(void);
 /* 1 = pspcompat_pad() also answers for the SECOND controller (plat.h
  * plat_pad_read2), so with two players either one drives the menu and its
  * pages; 0 (the start) = the first pad alone. */

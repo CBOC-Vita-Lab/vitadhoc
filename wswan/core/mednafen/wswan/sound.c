@@ -41,7 +41,8 @@ static uint8 output_control;
 
 static int32 sweep_8192_divider;
 static uint8 sweep_counter;
-static uint8 SampleRAMPos;
+uint8 ws_sound_sample_ram_pos;
+#define SampleRAMPos ws_sound_sample_ram_pos
 
 static int32 sample_cache[4][2];
 
@@ -96,10 +97,9 @@ static void ResetDACLevels(void)
 #define SYNCSAMPLE(wt)	\
    {	\
     int32 left = sample_cache[ch][0], right = sample_cache[ch][1];	\
-    Blip_Synth_offset(&WaveSynth, wt, left - last_val[ch][0], &sbuf[0]);	\
-    Blip_Synth_offset(&WaveSynth, wt, right - last_val[ch][1], &sbuf[1]);	\
-    last_val[ch][0] = left;	\
-    last_val[ch][1] = right;	\
+    int32 dl = left - last_val[ch][0], dr = right - last_val[ch][1];	\
+    if (dl) { Blip_Synth_offset(&WaveSynth, wt, dl, &sbuf[0]); last_val[ch][0] = left; }	\
+    if (dr) { Blip_Synth_offset(&WaveSynth, wt, dr, &sbuf[1]); last_val[ch][1] = right; }	\
    }
 
 #define SYNCSAMPLE_NOISE(wt) SYNCSAMPLE(wt)
@@ -223,10 +223,16 @@ void WSwan_SoundUpdate(void)
       left  = (HVoiceChanCtrl & 0x40) ? sample : 0;
       right = (HVoiceChanCtrl & 0x20) ? sample : 0;
 
-      Blip_Synth_offset(&WaveSynth, v30mz_timestamp, left - last_hv_val[0], &sbuf[0]);
-      Blip_Synth_offset(&WaveSynth, v30mz_timestamp, right - last_hv_val[1], &sbuf[1]);
-      last_hv_val[0] = left;
-      last_hv_val[1] = right;
+      if (left != last_hv_val[0])
+      {
+         Blip_Synth_offset(&WaveSynth, v30mz_timestamp, left - last_hv_val[0], &sbuf[0]);
+         last_hv_val[0] = left;
+      }
+      if (right != last_hv_val[1])
+      {
+         Blip_Synth_offset(&WaveSynth, v30mz_timestamp, right - last_hv_val[1], &sbuf[1]);
+         last_hv_val[1] = right;
+      }
    }
    last_ts = v30mz_timestamp;
 }

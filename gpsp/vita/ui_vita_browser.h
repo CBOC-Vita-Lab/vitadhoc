@@ -133,6 +133,16 @@ static int vita_browser_others(const char *rom_dir)
    if (g_empty_for == g_pcfg.console)
       return g_empty_others;
    g_empty_others = 0;
+   if (g_scan_stop)
+   {
+      /* The scan was stopped early (Circle or slow-card budget): count only
+       * consoles already cached instead of launching un-cancellable walks. */
+      for (c = 0; c < FE_CONSOLE_COUNT; c++)
+         if (c != g_pcfg.console && g_rom_cache[c].valid)
+            g_empty_others += g_rom_cache[c].n;
+      g_empty_for = g_pcfg.console;
+      return g_empty_others;
+   }
    for (c = 0; c < FE_CONSOLE_COUNT; c++)
       if (c != g_pcfg.console && (k = rom_scan_cached(rom_dir, (fe_console_t)c)) > 0)
          g_empty_others += k;

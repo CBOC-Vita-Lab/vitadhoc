@@ -11,7 +11,7 @@ static uint8 IVectorBase;
 static const uint8 LevelTriggeredMask = (1U << WSINT_SERIAL_RECV);
 static uint8 IAsserted;
 
-static bool IOn_Cache;
+bool ws_irq_pending;
 static uint32 IOn_Which;
 static uint32 IVector_Cache;
 
@@ -21,17 +21,17 @@ static void RecalcInterrupt(void)
 
    IStatus |= (IAsserted & LevelTriggeredMask) & IEnable;
 
-   IOn_Cache     = false;
-   IOn_Which     = 0;
-   IVector_Cache = 0;
+   ws_irq_pending = false;
+   IOn_Which      = 0;
+   IVector_Cache  = 0;
 
    for(i = 0; i < 8; i++)
    {
       if(IStatus & IEnable & (1 << i))
       {
-         IOn_Cache     = true;
-         IOn_Which     = i;
-         IVector_Cache = (IVectorBase + i) * 4;
+         ws_irq_pending = true;
+         IOn_Which      = i;
+         IVector_Cache  = (IVectorBase + i) * 4;
          break;
       }
    }
@@ -92,7 +92,7 @@ uint8 WSwan_InterruptRead(uint32 A)
 
 void WSwan_InterruptCheck(void)
 {
-   if(IOn_Cache)
+   if(ws_irq_pending)
       v30mz_int(IVector_Cache, false);
 }
 

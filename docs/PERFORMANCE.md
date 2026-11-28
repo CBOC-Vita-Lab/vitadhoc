@@ -1,5 +1,19 @@
 # Performance
 
+## 2.0.2 Real PS Vita Hardware Results
+
+Measured on 2026-11-28 on a physical PS Vita running VitAdhoc `2.0.2` in both 4-core Auto and forced 3-core (`core4=0`) configurations.
+
+| Measurement | Before (`2.0.1`) | After (`2.0.2`) | Notes |
+| --- | --- | --- | --- |
+| **WonderSwan:** 64-sprite heavy stress (4-core & 3-core) | Trapped at 30 fps (`PACE_HALF`) on 75.47 Hz cadence | **Locked 60.0 fps** (`fps_x1000=60106/60112`, `half_passes=0`, `60/60` shown, **0 underruns**) | `steady_config_wswan()` for 75.47 Hz `n=2` cadence + bit-exact 30–41% Beetle WonderSwan speedup |
+| **SNES:** *Yoshi's Island* SuperFX (4-core, `xBR 2x` Auto) | 46.4 fps, `wmax=42.3 ms`, `LookGovernor` blind at `miss=0%` | **Locked 59.9–60.0 fps** (`wmax` init `21.6 ms`, steady `max=4.8–4.9 ms`, `over=0`, **0 underruns**) | `gate_timeout_us=22 ms`, `missed_refr` + `gate_timeouts` fed to `LookGovernor`, eased in 2 s |
+| **SNES:** *Rock 'n' Roll Racing* (4-core & 3-core `core4=0`) | `30 <-> 60` oscillation (4-core); `wmax=50.5 ms`, `fill=28.1 ms` (3-core) | **Locked 59.9–60.0 fps** (4-core, `max=3.2–10.7 ms`); 3-core `wmax=17.1 ms`, `fill=49.4–84.2 ms`, **0 underruns** | Over-budget frames counted across `half <-> full` bounces; peak scaler cost prevents flapping |
+| **Mega Drive:** *Gunstar Heroes* (4-core & 3-core `core4=0`) | `wmax=34.3 ms` spike stall | **60.0 fps** under `xBR 2x`; heavy spike capped & eased cleanly in 2 s (`up_need=1.10`, **0 underruns**) | `gate_timeout_us=22 ms` + `LookGovernor` `down_start_s=2` |
+| **Library scan UI:** Cold boot across 2,887 ROMs | Un-cancellable scan on return / missed taps | **15 ms first frame**, 76 interactive scan frames, chronological 16-sample Circle cancel | `pspcompat_pad_scan_cancel()` + `sceIoDread()` / archive-peek polling + `vita_browser_others()` gate |
+
+---
+
 ## 2.0.1 Real PS Vita Hardware Results
 
 Measured on 2026-11-27 on a physical PS Vita running VitAdhoc `2.0.1` in both 4-core Auto and forced 3-core (`threads.ini` stock) configurations.

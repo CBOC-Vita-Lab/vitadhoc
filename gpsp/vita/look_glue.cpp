@@ -260,6 +260,13 @@ extern "C" void look_begin(const char *mem_path, int mhz, unsigned user_rows)
       look_end();
    build_ladder(console_of(mem_path));
    g_g = new (g_mem) pk::LookGovernor();
+   {
+      pk::LookConfig lc;
+      lc.down_s = 2;
+      lc.down_start_s = 2;
+      lc.force_s = 1;
+      g_g->configure(lc);
+   }
    g_g->set_ladder(g_ladder, g_n);
    g_user = 0;
    {

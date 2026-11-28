@@ -34,6 +34,7 @@ static uint64_t g_disp_num = 60000, g_disp_den = 1001;
 static int g_rotation = WSCORE_ROT_AUTO;
 static int g_vplay = WSCORE_UPRIGHT;
 static int g_blend_on = 1;
+static int g_blend_stale;       /* 1: a skipped frame left an unrendered slot in g_blend.ring */
 static int g_palette;
 static int g_skip;
 static int g_quiet;             /* wscore_set_quiet: a look-ahead refresh, its sound dropped */
@@ -65,6 +66,7 @@ static void blend_setup(void)
   if (g_blend_ok) wsb_free(&g_blend);
   g_blend_ok = wsb_init(&g_blend, WSWAN_WIDTH, WSWAN_HEIGHT, WSWAN_CLOCK_HZ,
                         WSWAN_FRAME_CLOCKS, g_disp_num, g_disp_den) == 0;
+  g_blend_stale = 0;
 }
 
 void wscore_set_display_rate(uint64_t num, uint64_t den)
@@ -199,7 +201,7 @@ static int present(struct wscore *c)
     }
     return 0;
   }
-  if (blend)
+  if (blend && !g_blend_stale)
     wsb_present(&g_blend, c->out);
   else
   {
@@ -209,6 +211,12 @@ static int present(struct wscore *c)
       for (i = 0; i < WSWAN_HEIGHT; i++)
         memcpy(c->out + i * WSWAN_WIDTH, (const uint8_t *)px + (size_t)i * (size_t)pitch,
                WSWAN_WIDTH * 2);
+    if (g_blend_ok && g_blend.prev)
+    {
+      memcpy(g_blend.prev, c->out, (size_t)PIX * 2);
+      g_blend.have_prev = 1;
+    }
+    g_blend_stale = 0;
   }
   if (c->cb.video)
   {
@@ -242,15 +250,24 @@ int wscore_run_frame(wscore_t *core)
                                  g_show == WSCORE_SHOW_TURNED ? WSL_TURNED : WSL_UPRIGHT));
   for (i = 0; i < n; i++)
   {
+    int render = !g_skip && (blend || i == n - 1);
     /* a frame the picture does not use is not drawn (sound, state equal) */
-    wswan_host_set_render(!g_skip && (blend || i == n - 1));
+    wswan_host_set_render(render);
     wswan_host_run_frame();
     take_audio(c);
     if (g_blend_ok)
     {
-      px = wswan_host_video(&w, &h, &pitch);
-      if (px && pitch == WSWAN_WIDTH * 2) wsb_submit(&g_blend, px);
-      else g_blend.emu_done++;
+      if (render)
+      {
+        px = wswan_host_video(&w, &h, &pitch);
+        if (px && pitch == WSWAN_WIDTH * 2) wsb_submit(&g_blend, px);
+        else { g_blend.emu_done++; g_blend_stale = 1; }
+      }
+      else
+      {
+        g_blend.emu_done++;
+        g_blend_stale = 1;
+      }
     }
   }
   wswan_host_set_render(1);
@@ -291,14 +308,25 @@ int wscore_session_frame(wscore_t *core, unsigned pad)
   last = !g_blend_ok || wsb_frames_needed(&g_blend) <= 1;
   /* both players on the one pad: the keys of either press the console's */
   wswan_host_set_pad(pad);
-  wswan_host_set_render(!g_skip && ((g_blend_on && g_blend_ok) || last));
-  wswan_host_run_frame();
-  take_audio(c);
-  if (g_blend_ok)
   {
-    px = wswan_host_video(&w, &h, &pitch);
-    if (px && pitch == WSWAN_WIDTH * 2) wsb_submit(&g_blend, px);
-    else g_blend.emu_done++;
+    int render = !g_skip && ((g_blend_on && g_blend_ok) || last);
+    wswan_host_set_render(render);
+    wswan_host_run_frame();
+    take_audio(c);
+    if (g_blend_ok)
+    {
+      if (render)
+      {
+        px = wswan_host_video(&w, &h, &pitch);
+        if (px && pitch == WSWAN_WIDTH * 2) wsb_submit(&g_blend, px);
+        else { g_blend.emu_done++; g_blend_stale = 1; }
+      }
+      else
+      {
+        g_blend.emu_done++;
+        g_blend_stale = 1;
+      }
+    }
   }
   wswan_host_set_render(1);
   return 0;
@@ -416,6 +444,7 @@ int wscore_state_load(wscore_t *core, const void *src, size_t size)
   if (!core || core != g_core) return -1;
   if (wswan_host_state_load_mem((const uint8_t *)src, size) != 0) return -1;
   if (g_blend_ok) wsb_reset(&g_blend);    /* the phase starts again */
+  g_blend_stale = 0;
   show_update();
   return 0;
 }
@@ -474,4 +503,5 @@ void wscore_reset(wscore_t *core)
   (void)core;
   wswan_host_reset();
   if (g_blend_ok) wsb_reset(&g_blend);
+  g_blend_stale = 0;
 }

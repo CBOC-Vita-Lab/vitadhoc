@@ -244,11 +244,74 @@ static void test_no_backup(void)
   assert(backup_type_reset != BACKUP_NONE);
 }
 
+/* Decompilation / expanded ROM hacks (e.g. 32 MiB pokeemerald-expansion with
+ * game code "BPEE") must not inherit hardcoded vanilla idle_loop_target_pc or
+ * translation_gate_targets from gba_over.h, while vanilla carts keep them. */
+static void test_hack_clears_vanilla_idle_loop(void)
+{
+  static u8 hdr[0x200];
+  gamepak_buffers[0] = hdr;
+
+  /* 1. Vanilla 16 MiB Pokemon Emerald (U): keeps idle_loop_target_pc. */
+  memset(hdr, 0, sizeof(hdr));
+  hdr[3] = 0xEA; hdr[0xB2] = 0x96;
+  memcpy(&hdr[0xA0], "POKEMON EMER", 12);
+  memcpy(&hdr[0xAC], "BPEE", 4);
+  gamepak_header_nonstandard = false;
+  gamepak_size = 16u * 1024u * 1024u;
+  fresh_cart(BACKUP_UNKN, FLASH_SIZE_64KB);
+  idle_loop_target_pc = 0xFFFFFFFF;
+  translation_gate_targets = 0;
+  load_game_config_over("BPEE");
+  assert(idle_loop_target_pc == 0x80008ce);
+  apply_rom_hack_policy("BPEE", SERIAL_MODE_AUTO);
+  assert(idle_loop_target_pc == 0x80008ce);
+  assert(!require_m1_hle_bios);
+
+  /* 2. Expanded 32 MiB pokeemerald-expansion hack keeping "POKEMON EMER": clears it. */
+  gamepak_size = 32u * 1024u * 1024u;
+  fresh_cart(BACKUP_UNKN, FLASH_SIZE_64KB);
+  idle_loop_target_pc = 0xFFFFFFFF;
+  translation_gate_targets = 2;
+  load_game_config_over("BPEE");
+  assert(idle_loop_target_pc == 0x80008ce);
+  apply_rom_hack_policy("BPEE", SERIAL_MODE_AUTO);
+  assert(idle_loop_target_pc == 0xFFFFFFFF);
+  assert(translation_gate_targets == 0);
+  assert(backup_type_reset == BACKUP_FLASH && flash_bank_cnt == FLASH_SIZE_128KB);
+  assert(rtc_enabled && require_m1_hle_bios);
+
+  /* 3. Retitled 16 MiB Pokemon Emerald hack: clears it too. */
+  gamepak_size = 16u * 1024u * 1024u;
+  memcpy(&hdr[0xA0], "POKE MONOMYT", 12);
+  fresh_cart(BACKUP_UNKN, FLASH_SIZE_64KB);
+  idle_loop_target_pc = 0xFFFFFFFF;
+  translation_gate_targets = 1;
+  load_game_config_over("BPEE");
+  apply_rom_hack_policy("BPEE", SERIAL_MODE_AUTO);
+  assert(idle_loop_target_pc == 0xFFFFFFFF);
+  assert(translation_gate_targets == 0);
+
+  /* 4. Non-standard header FireRed hack: clears 0x80008b2. */
+  memcpy(&hdr[0xA0], "POKEMON FIRE", 12);
+  memcpy(&hdr[0xAC], "BPRE", 4);
+  gamepak_header_nonstandard = true;
+  fresh_cart(BACKUP_UNKN, FLASH_SIZE_64KB);
+  idle_loop_target_pc = 0xFFFFFFFF;
+  load_game_config_over("BPRE");
+  assert(idle_loop_target_pc == 0x80008b2);
+  apply_rom_hack_policy("BPRE", SERIAL_MODE_AUTO);
+  assert(idle_loop_target_pc == 0xFFFFFFFF);
+
+  gamepak_buffers[0] = NULL;
+}
+
 int main(void)
 {
   test_clock();
   test_save_type();
   test_no_backup();
+  test_hack_clears_vanilla_idle_loop();
   puts("ok");
   return 0;
 }

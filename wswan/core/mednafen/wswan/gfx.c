@@ -31,13 +31,45 @@
 #include "../state_inline.h"
 
 extern const uint8 *wsGetTilePtr(uint32 number, uint32 line, int flipv, int fliph, int bank);
+extern uint8 wsTCache[512*64];
+extern uint8 wsTCache2[512*64];
+extern uint8 wsTCacheFlipped[512*64];
+extern uint8 wsTCacheFlipped2[512*64];
+extern uint8 wsTCacheUpdate[512];
+extern uint8 wsTCacheUpdate2[512];
+
+static INLINE const uint8 *wsGetTilePtrFast(uint32 number, uint32 line, int flipv, int fliph, int bank)
+{
+   if((!bank) || (!(wsVMode & 0x07)))
+   {
+      if(__builtin_expect(wsTCacheUpdate[number], 1))
+      {
+         if(flipv)
+            line = 7 - line;
+         return (fliph ? wsTCacheFlipped : wsTCache) + ((number << 6) | (line << 3));
+      }
+   }
+   else
+   {
+      if(__builtin_expect(wsTCacheUpdate2[number], 1))
+      {
+         if(flipv)
+            line = 7 - line;
+         return (fliph ? wsTCacheFlipped2 : wsTCache2) + ((number << 6) | (line << 3));
+      }
+   }
+   return wsGetTilePtr(number, line, flipv, fliph, bank);
+}
 
 static uint32 wsMonoPal[16][4];
 static uint32 wsColors[8];
+static uint8  wsMonoCol[16][4];
+static uint8  wsMonoColFG[16][4];
 static uint32 wsCols[16][16];
 static uint16 wsColsRGB[16][16];
 
 static uint32 ColorMapG[16];
+static uint16 ColorMapG16[16];
 static uint32 ColorMap[4096];
 static uint32 LayerEnabled;
 
@@ -46,6 +78,51 @@ static uint8 wsLine;                 /*current scanline*/
 static uint8 SpriteTable[2][0x80][4];
 static uint32 SpriteCountCache[2];
 static bool FrameWhichActive;
+static int16 spr_head[144];
+static int16 spr_next[1024];
+static uint8 spr_node[1024];
+
+static void wsRebuildMonoCol(void)
+{
+   unsigned p, i;
+   for(p = 0; p < 16; p++)
+      for(i = 0; i < 4; i++)
+      {
+         uint8 c = (uint8)wsColors[wsMonoPal[p][i] & 7];
+         wsMonoCol[p][i] = c;
+         wsMonoColFG[p][i] = c | 0x10;
+      }
+}
+
+static void wsRebuildSpriteLines(void)
+{
+   int count = (int)SpriteCountCache[FrameWhichActive];
+   int h, pool = 0;
+   memset(spr_head, -1, sizeof(spr_head));
+   if(count > 0x80)
+      count = 0x80;
+   for(h = 0; h < count; h++)
+   {
+      int xs = SpriteTable[FrameWhichActive][h][3];
+      int ysx = SpriteTable[FrameWhichActive][h][2];
+      int ys, y0, y1, y;
+      if(xs >= 249)
+         xs -= 256;
+      if(xs >= 224)
+         continue;
+      ys = (ysx > 150) ? (int8)ysx : ysx;
+      y0 = ys < 0 ? 0 : ys;
+      y1 = ys + 7;
+      if(y1 > 143)
+         y1 = 143;
+      for(y = y0; y <= y1; y++)
+      {
+         spr_node[pool] = (uint8)h;
+         spr_next[pool] = spr_head[y];
+         spr_head[y] = (int16)pool++;
+      }
+   }
+}
 static uint8 DispControl;
 static uint8 BGColor;
 static uint8 LineCompare;
@@ -98,11 +175,21 @@ void WSwan_GfxWrite(uint32 A, uint8 V)
    {
       wsColors[(A - 0x1C) * 2 + 0] = 0xF - (V & 0xf);
       wsColors[(A - 0x1C) * 2 + 1] = 0xF - (V >> 4);
+      wsRebuildMonoCol();
    }
    else if(A >= 0x20 && A <= 0x3F)
    {
-      wsMonoPal[(A - 0x20) >> 1][((A & 0x1) << 1) + 0] = V&7;
-      wsMonoPal[(A - 0x20) >> 1][((A & 0x1) << 1) | 1] = (V>>4)&7;
+      unsigned p = (A - 0x20) >> 1;
+      unsigned i0 = ((A & 0x1) << 1);
+      uint8 c0, c1;
+      wsMonoPal[p][i0 + 0] = V & 7;
+      wsMonoPal[p][i0 | 1] = (V >> 4) & 7;
+      c0 = (uint8)wsColors[V & 7];
+      c1 = (uint8)wsColors[(V >> 4) & 7];
+      wsMonoCol[p][i0 + 0] = c0;
+      wsMonoCol[p][i0 | 1] = c1;
+      wsMonoColFG[p][i0 + 0] = c0 | 0x10;
+      wsMonoColFG[p][i0 | 1] = c1 | 0x10;
    }
    else switch(A)
    {
@@ -235,6 +322,7 @@ bool wsExecuteLine(MDFN_Surface *surface, bool skip)
    else if(wsLine == 144)
    {
       FrameWhichActive = !FrameWhichActive;
+      wsRebuildSpriteLines();
       ret = true;
       WSwan_Interrupt(WSINT_VBLANK);
 
@@ -321,6 +409,7 @@ void WSwan_SetMonoPalette(int depth, uint32 mono_start, uint32 mono_end)
 #endif
          case 24: ColorMapG[i] = MAKECOLOR_24(neo_r, neo_g, neo_b, 0); break;
       }
+      ColorMapG16[i] = (uint16)ColorMapG[i];
    }
 }
 
@@ -359,81 +448,77 @@ void WSwan_SetPixelFormat(int depth, uint32 mono_start, uint32 mono_end)
 static inline void wsDrawSprites(uint8 *b_bg, uint8 *b_bg_pal, int vmode,
                                  bool use_win, const bool *in_window)
 {
-   int xs, ts, as, ys, ysx, h;
+   int node;
 
-   for(h = SpriteCountCache[FrameWhichActive] - 1; h >= 0; h--)
+   for(node = spr_head[wsLine]; node >= 0; node = spr_next[node])
    {
-      ts = SpriteTable[FrameWhichActive][h][0];
-      as = SpriteTable[FrameWhichActive][h][1];
-      ysx = SpriteTable[FrameWhichActive][h][2];
-      xs = SpriteTable[FrameWhichActive][h][3];
+      int h = spr_node[node];
+      int ts = SpriteTable[FrameWhichActive][h][0];
+      int as = SpriteTable[FrameWhichActive][h][1];
+      int ysx = SpriteTable[FrameWhichActive][h][2];
+      int xs = SpriteTable[FrameWhichActive][h][3];
+      int ys;
+      uint32 palette = ((as >> 1) & 0x7);
+      const bool win_inv = (as & 0x10) != 0;
+      const uint8 *tile_row;
+      uint8 *dst;
 
       if(xs >= 249) xs -= 256;
+      ys = wsLine - ((ysx > 150) ? (int8)ysx : ysx);
 
-      if(ysx > 150)
-         ys = (int8)ysx;
-      else
-         ys = ysx;
+      ts |= (as & 1) << 8;
+      tile_row = wsGetTilePtrFast(ts, ys, as & 0x80, as & 0x40, 0);
+      dst = b_bg + xs + 7;
 
-      ys = wsLine - ys;
-
-      if(ys >= 0 && ys < 8 && xs < 224)
+      if(vmode)
       {
-         uint32 palette = ((as >> 1) & 0x7);
-         const bool win_inv = (as & 0x10) != 0;
-         const uint8 *tile_row;
-
-         ts |= (as&1) << 8;
-         tile_row = wsGetTilePtr(ts, ys, as & 0x80, as & 0x40, 0);
-
-         if(vmode)
+         uint8 *pdst = b_bg_pal + xs + 7;
+         if(vmode & 0x2)
          {
-            if(vmode & 0x2)
-            {
-               int x;
-               for(x = 0; x < 8; x++)
-                  if(tile_row[x])
+            int x;
+            for(x = 0; x < 8; x++)
+               if(tile_row[x])
+               {
+                  if((as & 0x20) || !(dst[x] & 0x10))
                   {
-                     if((as & 0x20) || !(b_bg[xs + x + 7] & 0x10))
+                     if(!use_win || (in_window[7 + xs + x] != win_inv))
                      {
-                        if(!use_win || (in_window[7 + xs + x] != win_inv))
-                        {
-                           b_bg[xs + x + 7] = tile_row[x] | (b_bg[xs + x + 7] & 0x10);
-                           b_bg_pal[xs + x + 7] = 8 + palette;
-                        }
+                        dst[x] = tile_row[x] | (dst[x] & 0x10);
+                        pdst[x] = 8 + palette;
                      }
                   }
-            }
-            else
-            {
-               int x;
-               for(x = 0; x < 8; x++)
-                  if(tile_row[x] || !(palette & 0x4))
-                  {
-                     if((as & 0x20) || !(b_bg[xs + x + 7] & 0x10))
-                     {
-                        if(!use_win || (in_window[7 + xs + x] != win_inv))
-                        {
-                           b_bg[xs + x + 7] = tile_row[x] | (b_bg[xs + x + 7] & 0x10);
-                           b_bg_pal[xs + x + 7] = 8 + palette;
-                        }
-                     }
-                  }
-            }
+               }
          }
          else
          {
             int x;
             for(x = 0; x < 8; x++)
-               if(tile_row[x] || !(palette & 4))
+               if(tile_row[x] || !(palette & 0x4))
                {
-                  if((as & 0x20) || !(b_bg[xs + x + 7] & 0x10))
+                  if((as & 0x20) || !(dst[x] & 0x10))
                   {
                      if(!use_win || (in_window[7 + xs + x] != win_inv))
-                        b_bg[xs + x + 7] = wsColors[wsMonoPal[8 + palette][tile_row[x]]] | (b_bg[xs + x + 7] & 0x10);
+                     {
+                        dst[x] = tile_row[x] | (dst[x] & 0x10);
+                        pdst[x] = 8 + palette;
+                     }
                   }
                }
          }
+      }
+      else
+      {
+         const uint8 *mp = wsMonoCol[8 + palette];
+         int x;
+         for(x = 0; x < 8; x++)
+            if(tile_row[x] || !(palette & 4))
+            {
+               if((as & 0x20) || !(dst[x] & 0x10))
+               {
+                  if(!use_win || (in_window[7 + xs + x] != win_inv))
+                     dst[x] = mp[tile_row[x]] | (dst[x] & 0x10);
+               }
+            }
       }
    }
 }
@@ -452,11 +537,13 @@ static inline void wsDrawFG(uint8 *b_bg, uint8 *b_bg_pal, int vmode,
       uint32 b2 = wsRAM[map_a + (startindex << 1) + 1];
       uint32 palette = (b2 >> 1) & 15;
       const uint8 *tile_row;
+      uint8 *dst = b_bg + adrbuf;
       b2 = (b2 << 8) | b1;
-      tile_row = wsGetTilePtr(b2 & 0x1ff, start_tile_n & 7, b2 & 0x8000, b2 & 0x4000, b2 & 0x2000);
+      tile_row = wsGetTilePtrFast(b2 & 0x1ff, start_tile_n & 7, b2 & 0x8000, b2 & 0x4000, b2 & 0x2000);
 
       if(vmode)
       {
+         uint8 *pdst = b_bg_pal + adrbuf;
          if(vmode & 0x2)
          {
             int x;
@@ -464,10 +551,17 @@ static inline void wsDrawFG(uint8 *b_bg, uint8 *b_bg_pal, int vmode,
             {
                if(tile_row[x] && (!use_win || in_window[adrbuf + x]))
                {
-                  b_bg[adrbuf + x] = tile_row[x] | 0x10;
-                  b_bg_pal[adrbuf + x] = palette;
+                  dst[x] = tile_row[x] | 0x10;
+                  pdst[x] = palette;
                }
             }
+         }
+         else if(!use_win && !(palette & 0x4))
+         {
+            int x;
+            for(x = 0; x < 8; x++)
+               dst[x] = tile_row[x] | 0x10;
+            memset(pdst, (uint8)palette, 8);
          }
          else
          {
@@ -476,20 +570,29 @@ static inline void wsDrawFG(uint8 *b_bg, uint8 *b_bg_pal, int vmode,
             {
                if((tile_row[x] || !(palette & 0x4)) && (!use_win || in_window[adrbuf + x]))
                {
-                  b_bg[adrbuf + x] = tile_row[x] | 0x10;
-                  b_bg_pal[adrbuf + x] = palette;
+                  dst[x] = tile_row[x] | 0x10;
+                  pdst[x] = palette;
                }
             }
          }
       }
       else
       {
-         int x;
-         for(x = 0; x < 8; x++)
-            if((tile_row[x] || !(palette & 4)) && (!use_win || in_window[adrbuf + x]))
-            {
-               b_bg[adrbuf + x] = wsColors[wsMonoPal[palette][tile_row[x]]] | 0x10;
-            }
+         const uint8 *mp = wsMonoColFG[palette];
+         if(!use_win && !(palette & 4))
+         {
+            dst[0] = mp[tile_row[0]]; dst[1] = mp[tile_row[1]];
+            dst[2] = mp[tile_row[2]]; dst[3] = mp[tile_row[3]];
+            dst[4] = mp[tile_row[4]]; dst[5] = mp[tile_row[5]];
+            dst[6] = mp[tile_row[6]]; dst[7] = mp[tile_row[7]];
+         }
+         else
+         {
+            int x;
+            for(x = 0; x < 8; x++)
+               if((tile_row[x] || !(palette & 4)) && (!use_win || in_window[adrbuf + x]))
+                  dst[x] = mp[tile_row[x]];
+         }
       }
       adrbuf += 8;
       startindex = (startindex + 1) & 31;
@@ -524,43 +627,59 @@ void wsScanline(uint16 *target, int depth)
       {
          uint32 palette;
          const uint8 *tile_row;
+         uint8 *dst = b_bg + adrbuf;
          b1=wsRAM[map_a+(startindex<<1)];
          b2=wsRAM[map_a+(startindex<<1)+1];
          palette=(b2>>1)&15;
          b2=(b2<<8)|b1;
-         tile_row = wsGetTilePtr(b2&0x1ff,start_tile_n&7,b2&0x8000,b2&0x4000,b2&0x2000);
+         tile_row = wsGetTilePtrFast(b2&0x1ff,start_tile_n&7,b2&0x8000,b2&0x4000,b2&0x2000);
 
          if(wsVMode)
          {
+            uint8 *pdst = b_bg_pal + adrbuf;
             if(wsVMode & 0x2)
             {
                int x;
                for(x = 0; x < 8; x++)
                   if(tile_row[x])
                   {
-                     b_bg[adrbuf + x] = tile_row[x];
-                     b_bg_pal[adrbuf + x] = palette;
+                     dst[x] = tile_row[x];
+                     pdst[x] = palette;
                   }
+            }
+            else if(!(palette & 0x4))
+            {
+               memcpy(dst, tile_row, 8);
+               memset(pdst, (uint8)palette, 8);
             }
             else
             {
                int x;
                for(x = 0; x < 8; x++)
-                  if(tile_row[x] || !(palette & 0x4))
+                  if(tile_row[x])
                   {
-                     b_bg[adrbuf + x] = tile_row[x];
-                     b_bg_pal[adrbuf + x] = palette;
+                     dst[x] = tile_row[x];
+                     pdst[x] = palette;
                   }
             }
          }
          else
          {
-            int x;
-            for(x = 0; x < 8; x++)
-               if(tile_row[x] || !(palette & 4))
-               {
-                  b_bg[adrbuf + x] = wsColors[wsMonoPal[palette][tile_row[x]]];
-               }
+            const uint8 *mp = wsMonoCol[palette];
+            if(!(palette & 4))
+            {
+               dst[0] = mp[tile_row[0]]; dst[1] = mp[tile_row[1]];
+               dst[2] = mp[tile_row[2]]; dst[3] = mp[tile_row[3]];
+               dst[4] = mp[tile_row[4]]; dst[5] = mp[tile_row[5]];
+               dst[6] = mp[tile_row[6]]; dst[7] = mp[tile_row[7]];
+            }
+            else
+            {
+               int x;
+               for(x = 0; x < 8; x++)
+                  if(tile_row[x])
+                     dst[x] = mp[tile_row[x]];
+            }
          }
          adrbuf += 8;
          startindex=(startindex + 1)&31;
@@ -602,7 +721,7 @@ void wsScanline(uint16 *target, int depth)
       }
    } /* end FG drawing */
 
-   if((DispControl & 0x04) && SpriteCountCache[FrameWhichActive] && (LayerEnabled & 0x04))/* Sprites */
+   if((DispControl & 0x04) && spr_head[wsLine] >= 0 && (LayerEnabled & 0x04))/* Sprites */
    {
       if(DispControl & 0x08)
       {
@@ -623,8 +742,10 @@ void wsScanline(uint16 *target, int depth)
       {
          case 15:
          case 16: {
+            const uint8 *src = b_bg + 7;
+            const uint8 *pal = b_bg_pal + 7;
             for(l=0;l<224;l++)
-               target[l] = wsColsRGB[b_bg_pal[l+7]][b_bg[(l+7)]&0xf];
+               target[l] = wsColsRGB[pal[l]][src[l]&0xf];
          } break;
 
          case 24: {
@@ -639,8 +760,9 @@ void wsScanline(uint16 *target, int depth)
       {
          case 15:
          case 16: {
+            const uint8 *src = b_bg + 7;
             for(l=0;l<224;l++)
-               target[l] = ColorMapG[(b_bg[l+7])&15];
+               target[l] = ColorMapG16[src[l]&15];
          } break;
 
          case 24: {
@@ -701,6 +823,8 @@ void WSwan_GfxReset(void)
          wsColsRGB[u0][u1]=(uint16)ColorMap[0];
       }
 
+   wsRebuildMonoCol();
+   wsRebuildSpriteLines();
 }
 
 int WSwan_GfxStateAction(StateMem *sm, int load, int data_only)
@@ -773,6 +897,8 @@ int WSwan_GfxStateAction(StateMem *sm, int load, int data_only)
       for(i = 0; i < 8; i++)
          wsColors[i] &= 0xF;
 
+      wsRebuildMonoCol();
+      wsRebuildSpriteLines();
       wsRebuildColsRGB();
       wsSetVideo(VideoMode >> 5, true);
    }

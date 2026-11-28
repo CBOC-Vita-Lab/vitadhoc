@@ -1939,11 +1939,12 @@ static int af_ext_sys(const char *ext, int sys[2], int *nsys, int *no_crc)
        !strcasecmp(ext, ".smd") || !strcasecmp(ext, ".bin") ||
        !strcasecmp(ext, ".68k"))
       { sys[0] = 8; *nsys = 1; return 1; }
-   if (!strcasecmp(ext, ".sms"))
+   if (!strcasecmp(ext, ".sms") || !strcasecmp(ext, ".mark3"))
       { sys[0] = 9; sys[1] = 10; *nsys = 2; return 1; }
    if (!strcasecmp(ext, ".gg"))
       { sys[0] = 10; *nsys = 1; return 1; }
-   if (!strcasecmp(ext, ".sg") || !strcasecmp(ext, ".sc"))
+   if (!strcasecmp(ext, ".sg") || !strcasecmp(ext, ".sc") ||
+       !strcasecmp(ext, ".sg1000"))
       { sys[0] = 11; *nsys = 1; return 1; }
    if (!strcasecmp(ext, ".cue") || !strcasecmp(ext, ".chd") ||
        !strcasecmp(ext, ".iso") || !strcasecmp(ext, ".m3u"))

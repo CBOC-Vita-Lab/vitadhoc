@@ -204,6 +204,11 @@ extern "C" int ho_start(uint32_t frame_us, size_t extra_bytes, ho_draw_fn draw,
    c.frame_bytes = (uint32_t)(g_extra + HO_PIX_BYTES);
    c.refresh_us = 16683;
    c.frame_us = frame_us ? frame_us : 16743;
+#ifdef __vita__
+   /* Bound gate waits to ~1.3 refreshes so an upscaler spike drops a stale
+    * frame instead of stalling emulation and draining the audio cushion. */
+   c.gate_timeout_us = 22000;
+#endif
    if (!g_box->init(c, g_sys))
    {
       g_box->~Handoff();

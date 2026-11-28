@@ -44,8 +44,28 @@ function overAnswer(st, now) {
   return new Response(body, { status: 503, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'retry-after': String(wait), 'x-vad-budget': 'over' } });
 }
 
+/**
+ * The object refused the call (it threw instead of answering). Before, the throw left this Worker uncaught and Cloudflare answered its
+ * HTML error page 1101, which the client cannot read. Same rule as the Galaxy service (its worker.js forward(), quota32 / fix33 S2): only an
+ * error that NAMES a limit or quota (the free plan's daily Durable Object limit) is answered 503 over_budget (reason busy, as the
+ * object's own budget refusal: the client shows ONLINE_BUSY); every other throw (a deploy resetting the object, overload, a transient
+ * internal error) is a plain 503 `unavailable` (a 5xx to the client: ONLINE_SERVICE, try again). The text match is a heuristic.
+ */
+function objectRefused(e) {
+  const msg = String((e && e.message) || e || '');
+  const quota = !(e && (e.overloaded || e.retryable)) && /exceeded|daily|quota|free tier/i.test(msg) && /limit|quota|allowed|free tier|volume/i.test(msg) && !/reset because|code was updated|was reset|memory|cpu|subrequest/i.test(msg);
+  console.error(`[object-throw] ${quota ? 'quota' : 'other'}: ${msg.slice(0, 200)}`); // keeps a bug in the object visible in the logs
+  if (quota) return errorResponse(new ApiError(503, 'over_budget', 'online play is busy, please try again later', { retryAfterSec: 120, reason: 'busy' }, { 'retry-after': '120' }));
+  return errorResponse(new ApiError(503, 'unavailable', 'online play is busy, please try again in a moment', { retryAfterSec: 3, reason: 'object_error' }, { 'retry-after': '3' }));
+}
+
 async function forward(request, env, ipk, route) {
-  const resp = await env.ROOMS.get(env.ROOMS.idFromName('main')).fetch(request);
+  let resp;
+  try {
+    resp = await env.ROOMS.get(env.ROOMS.idFromName('main')).fetch(request);
+  } catch (e) {
+    return objectRefused(e);
+  }
   const flag = resp.headers.get('x-vad-budget');
   if (flag === 'over' || flag === 'new-over') {
     const wait = Number(resp.headers.get('retry-after')) || 600;

@@ -6,10 +6,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <arpa/inet.h>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 static pthread_t worker;
 static int finished, joined;
@@ -131,6 +134,138 @@ static int online(void)
    return getenv("AF_OFFLINE") == NULL;
 }
 
+/* Async mock HTTPS backend for tests: rewrites https://raw.githubusercontent.com/<path>
+ * to http://127.0.0.1:$AF_MOCK_HTTPS_PORT/<path> on a background thread. */
+typedef struct mock_req
+{
+   pthread_t th;
+   int started;
+   int port;
+   char path[1400];
+   size_t max_bytes;
+   int cancel;
+   int done;
+   int status;
+   unsigned char *body;
+   size_t body_len;
+} mock_req;
+
+static void *mock_https_thread(void *arg)
+{
+   mock_req *r = (mock_req *)arg;
+   struct sockaddr_in sa;
+   char req[1600];
+   unsigned char *buf = NULL;
+   size_t cap = r->max_bytes + 4096u, got = 0;
+   int fd, nreq;
+
+   fd = socket(AF_INET, SOCK_STREAM, 0);
+   if (fd < 0) goto out;
+   memset(&sa, 0, sizeof(sa));
+   sa.sin_family = AF_INET;
+   sa.sin_port = htons((uint16_t)r->port);
+   sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+   if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0) { close(fd); goto out; }
+   nreq = snprintf(req, sizeof(req),
+                   "GET %s HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                   r->path);
+   if (nreq <= 0 || nreq >= (int)sizeof(req) ||
+       send(fd, req, (size_t)nreq, 0) != (ssize_t)nreq)
+   {
+      close(fd);
+      goto out;
+   }
+   buf = (unsigned char *)malloc(cap + 1);
+   if (!buf) { close(fd); goto out; }
+   while (!__atomic_load_n(&r->cancel, __ATOMIC_ACQUIRE) && got < cap)
+   {
+      ssize_t n = recv(fd, buf + got, cap - got, 0);
+      if (n <= 0) break;
+      got += (size_t)n;
+   }
+   close(fd);
+   buf[got] = '\0';
+   if (!__atomic_load_n(&r->cancel, __ATOMIC_ACQUIRE))
+   {
+      char *hdr_end = strstr((char *)buf, "\r\n\r\n");
+      int minor = 0, st = 0;
+      if (hdr_end && sscanf((char *)buf, "HTTP/1.%d %d", &minor, &st) == 2)
+      {
+         size_t off = (size_t)(hdr_end + 4 - (char *)buf);
+         size_t blen = got - off;
+         r->status = st;
+         if (st == 200 && blen > 0 && blen <= r->max_bytes)
+         {
+            memmove(buf, buf + off, blen);
+            r->body = buf;
+            r->body_len = blen;
+            buf = NULL;
+         }
+      }
+   }
+   free(buf);
+out:
+   __atomic_store_n(&r->done, 1, __ATOMIC_RELEASE);
+   return NULL;
+}
+
+static int g_mock_https_port;
+
+static uintptr_t mock_https_start(const char *url, size_t max_bytes)
+{
+   static const char prefix[] = "https://raw.githubusercontent.com";
+   mock_req *r;
+   if (!g_mock_https_port || !url || strncmp(url, prefix, sizeof(prefix) - 1) != 0)
+      return 0;
+   r = (mock_req *)calloc(1, sizeof(*r));
+   if (!r) return 0;
+   r->port = g_mock_https_port;
+   r->max_bytes = max_bytes;
+   snprintf(r->path, sizeof(r->path), "%s", url + sizeof(prefix) - 1);
+   if (pthread_create(&r->th, NULL, mock_https_thread, r) != 0)
+   {
+      free(r);
+      return 0;
+   }
+   r->started = 1;
+   return (uintptr_t)r;
+}
+
+static int mock_https_poll(uintptr_t h, int *http_status,
+                           const unsigned char **out_body, size_t *out_len)
+{
+   mock_req *r = (mock_req *)h;
+   if (!r) return -1;
+   if (!__atomic_load_n(&r->done, __ATOMIC_ACQUIRE)) return 0;
+   if (http_status) *http_status = r->status;
+   if (out_body) *out_body = r->body;
+   if (out_len) *out_len = r->body_len;
+   return 1;
+}
+
+static void mock_https_cancel(uintptr_t h)
+{
+   mock_req *r = (mock_req *)h;
+   if (r) __atomic_store_n(&r->cancel, 1, __ATOMIC_RELEASE);
+}
+
+static void mock_https_release(uintptr_t h)
+{
+   mock_req *r = (mock_req *)h;
+   if (!r) return;
+   __atomic_store_n(&r->cancel, 1, __ATOMIC_RELEASE);
+   if (r->started) pthread_join(r->th, NULL);
+   free(r->body);
+   free(r);
+}
+
+static const artfetch_https_ops g_mock_https_ops = {
+   mock_https_start,
+   mock_https_poll,
+   mock_https_cancel,
+   mock_https_release
+};
+
 int main(int argc, char **argv)
 {
    FILE *list;
@@ -163,6 +298,8 @@ int main(int argc, char **argv)
    snprintf(db, sizeof(db), "%s/gamedb.txt", argv[1]);
    gamedb_open(db);
    began = plat_time_us();
+   g_mock_https_port = getenv("AF_MOCK_HTTPS_PORT") ? atoi(getenv("AF_MOCK_HTTPS_PORT")) : 0;
+   artfetch_set_https(g_mock_https_port > 0 ? &g_mock_https_ops : NULL);
    if (artfetch_start(argv[1], argv[2], online)) return 6;
    artfetch_titles(atoi(argv[4]));
    if (!strcmp(argv[5], "retry")) artfetch_retry();

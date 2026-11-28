@@ -105,7 +105,7 @@ class ArtworkWorkerTests(unittest.TestCase):
         self.temp.cleanup()
 
     def run_worker(self, names, routes, titles=True, mode='all', size=0, delay=0,
-                   paths=None, timeout_ms=15000, offline=False):
+                   paths=None, timeout_ms=15000, offline=False, mirror_routes=None):
         listing = self.root / 'list.txt'
         for name in names:
             rom = self.root / 'roms' / name
@@ -115,16 +115,24 @@ class ArtworkWorkerTests(unittest.TestCase):
         listing.write_text(''.join(
             f'{name}\t{paths.get(name, self.root / "roms" / name) if paths else self.root / "roms" / name}\n'
             for name in names))
-        with server(routes) as (url, requests):
+        mirror_cm = server(mirror_routes) if mirror_routes is not None else contextlib.nullcontext((None, []))
+        with server(routes) as (url, requests), mirror_cm as (murl, mrequests):
+            env = {**os.environ, 'AF_IO_DELAY_US': str(delay)}
+            if offline:
+                env['AF_OFFLINE'] = '1'
+            if murl:
+                env['AF_MOCK_HTTPS_PORT'] = murl.rsplit(':', 1)[1]
+            else:
+                env.pop('AF_MOCK_HTTPS_PORT', None)
             process = subprocess.run([str(self.runner), str(self.root), url, str(listing),
                                       str(int(titles)), mode, str(timeout_ms)],
-                                     capture_output=True, text=True, timeout=20,
-                                     env={**os.environ, 'AF_IO_DELAY_US': str(delay),
-                                          **({'AF_OFFLINE': '1'} if offline else {})})
+                                     capture_output=True, text=True, timeout=20, env=env)
         self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
         self.assertNotIn('ERROR: AddressSanitizer', process.stderr)
         self.assertNotIn('runtime error:', process.stderr)
         stats = json.loads(process.stdout)
+        stats['mirror_requests'] = mrequests
+        stats['stderr'] = process.stderr
         if mode.startswith('hold'):
             print('STRESS ' + json.dumps({'mode': mode, 'stats': stats,
                   'requests_observed': len(requests),
@@ -319,7 +327,7 @@ class ArtworkWorkerTests(unittest.TestCase):
     def test_large_current_miss_cache_does_not_probe_every_art_extension(self):
         names = [f'Cached {i:04}.gba' for i in range(900)]
         (self.root / 'boxart' / '.missing.txt').write_text(
-            '# VitAdhoc artwork misses v3\n' + ''.join(f'{Path(name).stem}\n' for name in names))
+            '# VitAdhoc artwork misses v4\n' + ''.join(f'{Path(name).stem}\n' for name in names))
         stats, requests = self.run_worker(names, {}, titles=False)
         self.assertEqual(requests, [])
         self.assertEqual(stats['have'], 0)
@@ -405,7 +413,7 @@ class ArtworkWorkerTests(unittest.TestCase):
     def test_missing_cover_retry_is_serviced_without_draining_notifications(self):
         names = [f'Retry Batch {i:02}.gba' for i in range(40)]
         (self.root / 'boxart' / '.missing.txt').write_text(
-            '# VitAdhoc artwork misses v3\n' +
+            '# VitAdhoc artwork misses v4\n' +
             ''.join(Path(name).stem + '\n' for name in names[-3:]))
         routes = {GBA + 'Named_Boxarts/' + Path(name).stem + '.png': (200, PNG)
                   for name in names}
@@ -448,6 +456,66 @@ class ArtworkWorkerTests(unittest.TestCase):
         self.assertEqual(stats['command_sent'], 1, stats)
         self.assertEqual(stats['pause_quiet'], 1, stats)
         self.assertEqual(stats['seen'], 40, stats)
+
+    def test_v3_missing_cache_is_invalidated_for_outage_recovery(self):
+        name = 'Outage Recovery.gba'
+        (self.root / 'boxart' / '.missing.txt').write_text(
+            '# VitAdhoc artwork misses v3\nOutage Recovery\n')
+        stats, requests = self.run_worker([name], self.routes(name), titles=False)
+        self.assertTrue(requests)
+        self.assertEqual(stats['have'], 1)
+        self.assertEqual((self.root / 'boxart' / 'Outage Recovery.png').read_bytes(), PNG)
+
+    def test_mirror_fallback_recovers_from_primary_404_and_sticks(self):
+        names = [f'Mirror Game {i}.gba' for i in range(4)]
+        mroutes = {
+            '/libretro-thumbnails/Nintendo_-_Game_Boy_Advance/master/Named_Boxarts/'
+            + Path(n).stem + '.png': (200, PNG)
+            for n in names
+        }
+        stats, primary_reqs = self.run_worker(
+            names, {}, titles=False, mirror_routes=mroutes)
+        self.assertEqual(stats['have'], 4, stats)
+        self.assertEqual(len(primary_reqs), 1, primary_reqs)
+        self.assertEqual(len(stats['mirror_requests']), 4, stats['mirror_requests'])
+        self.assertIn('art_fetch mirror active host=raw.githubusercontent.com', stats['stderr'])
+        for n in names:
+            stem = Path(n).stem
+            self.assertEqual((self.root / 'boxart' / (stem + '.png')).read_bytes(), PNG)
+            self.assertTrue((self.root / 'cache' / 'boxart' / (stem + '.t2.565')).is_file())
+
+    def test_mirror_error_does_not_poison_missing_cache(self):
+        name = 'Transient Mirror Error.gba'
+        mroutes = {
+            '/libretro-thumbnails/Nintendo_-_Game_Boy_Advance/master/Named_Boxarts/'
+            'Transient Mirror Error.png': (500, b'err')
+        }
+        stats, _ = self.run_worker([name], {}, titles=False, mirror_routes=mroutes)
+        self.assertEqual(stats['have'], 0)
+        miss = self.root / 'boxart' / '.missing.txt'
+        self.assertFalse(miss.exists() and 'Transient Mirror Error' in miss.read_text())
+
+    def test_both_primary_and_mirror_404_writes_v4_missing_cache(self):
+        name = 'Truly Missing Homebrew.gba'
+        stats, primary_reqs = self.run_worker([name], {}, titles=False, mirror_routes={})
+        self.assertEqual(stats['have'], 0)
+        self.assertTrue(primary_reqs)
+        self.assertTrue(stats['mirror_requests'])
+        miss = (self.root / 'boxart' / '.missing.txt').read_text()
+        self.assertTrue(miss.startswith('# VitAdhoc artwork misses v4\n'), miss)
+        self.assertIn('Truly Missing Homebrew', miss)
+
+    def test_title_screen_reuses_winning_boxart_candidate(self):
+        name = 'Alt Reuse (World) (Rev 1).gba'
+        routes = {
+            GBA + 'Named_Boxarts/Alt Reuse (USA).png': (200, PNG),
+            GBA + 'Named_Titles/Alt Reuse (USA).png': (200, PNG),
+        }
+        stats, requests = self.run_worker([name], routes, titles=True)
+        self.assertEqual(stats['have'], 1)
+        self.assertEqual((self.root / 'titles' / (Path(name).stem + '.png')).read_bytes(), PNG)
+        title_reqs = [r for r in requests if '/Named_Titles/' in r]
+        self.assertEqual(title_reqs, [GBA + 'Named_Titles/Alt Reuse (USA).png'], title_reqs)
 
 
 if __name__ == '__main__':

@@ -166,6 +166,42 @@ struct Conn {
 };
 Conn g_conn;
 
+struct DnsCacheEnt {
+    char host[256];
+    uint32_t ip;
+    int64_t at_ms;
+};
+DnsCacheEnt g_dnsCache[4];
+
+bool DnsCacheGet(const char* host, uint32_t* ip) {
+    if (!host || !host[0] || strcmp(host, "localhost") == 0 || strcmp(host, "127.0.0.1") == 0) return false;
+    const int64_t now = MonoMs();
+    for (int i = 0; i < 4; i++) {
+        if (g_dnsCache[i].at_ms && (now - g_dnsCache[i].at_ms) < 300000 && strcmp(g_dnsCache[i].host, host) == 0) {
+            *ip = g_dnsCache[i].ip;
+            return true;
+        }
+    }
+    return false;
+}
+void DnsCachePut(const char* host, uint32_t ip) {
+    if (!host || !host[0] || strcmp(host, "localhost") == 0 || strcmp(host, "127.0.0.1") == 0) return;
+    int victim = 0;
+    for (int i = 0; i < 4; i++) {
+        if (strcmp(g_dnsCache[i].host, host) == 0) { victim = i; break; }
+        if (!g_dnsCache[i].at_ms) { victim = i; break; }
+        if (g_dnsCache[i].at_ms < g_dnsCache[victim].at_ms) victim = i;
+    }
+    snprintf(g_dnsCache[victim].host, sizeof g_dnsCache[victim].host, "%s", host);
+    g_dnsCache[victim].ip = ip;
+    g_dnsCache[victim].at_ms = MonoMs();
+}
+void DnsCacheDrop(const char* host) {
+    if (!host || !host[0]) return;
+    for (int i = 0; i < 4; i++)
+        if (g_dnsCache[i].at_ms && strcmp(g_dnsCache[i].host, host) == 0) g_dnsCache[i].at_ms = 0;
+}
+
 void ConnClose(bool graceful) {
     if (!g_conn.open) return;
     if (graceful && g_conn.tls) tls::CloseNotify(g_conn.tls);   // one try; a full send buffer or a dead peer is not waited for
@@ -301,11 +337,13 @@ int Connect(Ctx& c) {
     uint32_t ip = 0;
     int sys = 0;
     int64_t left = c.limit - t0;
-    int r = Resolve(s->host, &ip, left > 0 ? (uint32_t)left : 1, &s->cancel, &sys);
+    const bool dns_cached = DnsCacheGet(s->host, &ip);
+    int r = dns_cached ? 0 : Resolve(s->host, &ip, left > 0 ? (uint32_t)left : 1, &s->cancel, &sys);
     s->res.dns_ms = (uint32_t)(MonoMs() - t0);
     if (r == NET_CANCELLED) return Fail(c, NP_HTTPS_E_CANCELLED, "cancelled");
     if (r == NET_TIMEOUT) return Fail(c, NP_HTTPS_E_TIMEOUT, "name lookup took too long", 0, sys);
     if (r != 0) return Fail(c, NP_HTTPS_E_DNS, "name did not resolve", 0, sys);
+    if (!dns_cached) DnsCachePut(s->host, ip);
 
     SetStage(c, NP_HTTPS_S_CONNECT);
     t0 = MonoMs();
@@ -313,6 +351,7 @@ int Connect(Ctx& c) {
     r = SockConnect(&g_conn.sock, ip, s->port, left > 0 ? (uint32_t)left : 1, &s->cancel, &sys);
     s->res.connect_ms = (uint32_t)(MonoMs() - t0);
     if (r == NET_CANCELLED) { SockClose(&g_conn.sock); return Fail(c, NP_HTTPS_E_CANCELLED, "cancelled"); }
+    if (r != 0 && dns_cached) DnsCacheDrop(s->host);
     if (r == NET_TIMEOUT) { SockClose(&g_conn.sock); return Fail(c, NP_HTTPS_E_TIMEOUT, "connect took too long", 0, sys); }
     if (r != 0) { SockClose(&g_conn.sock); return Fail(c, NP_HTTPS_E_CONNECT, "TCP connect failed", 0, sys); }
 
@@ -625,7 +664,7 @@ int Exchange(Ctx& c, bool* any_bytes, bool* keep) {
 
     // answer head: read until the blank line (interim 1xx answers are skipped)
     SetStage(c, NP_HTTPS_S_RESPONSE);
-    static uint8_t buf[8192 + 4096];
+    static uint8_t buf[16384];
     size_t have = 0, head_end = 0;
     Head h;
     for (;;) {
@@ -638,7 +677,7 @@ int Exchange(Ctx& c, bool* any_bytes, bool* keep) {
             if (s->cancel) return Fail(c, NP_HTTPS_E_CANCELLED, "cancelled");
             size_t got = 0;
             int code = 0;
-            const tls::Result r = tls::Read(g_conn.tls, buf + have, 2048, &got, &code);
+            const tls::Result r = tls::Read(g_conn.tls, buf + have, 4096, &got, &code);
             if (r == tls::T_OK) { have += got; *any_bytes = true; Progress(c); continue; }
             if (r == tls::T_WANT_READ || r == tls::T_WANT_WRITE) {
                 if (WaitIo(c, r == tls::T_WANT_WRITE) != 0) return -1;
@@ -691,7 +730,7 @@ int Exchange(Ctx& c, bool* any_bytes, bool* keep) {
         if (s->cancel) return Fail(c, NP_HTTPS_E_CANCELLED, "cancelled");
         size_t got = 0;
         int code = 0;
-        const tls::Result r = tls::Read(g_conn.tls, buf, 4096, &got, &code);
+        const tls::Result r = tls::Read(g_conn.tls, buf, sizeof buf, &got, &code);
         if (r == tls::T_OK) {
             Progress(c);
             if (Feed(c, b, buf, got, &used) != 0) return -1;
@@ -748,10 +787,26 @@ void RunRequest(Slot* s) {
     for (int attempt = 0; attempt < 2; attempt++) {
         bool reused = false;
         if (g_conn.open) {
-            // a kept connection serves only the same host and port, while fresh, and only if the server has not spoken (a close) meanwhile
-            const bool fresh = s->keep_alive && (MonoMs() - g_conn.last_used) < 10000 && g_conn.port == s->port && strcmp(g_conn.host, s->host) == 0;
-            if (fresh && attempt == 0 && SockWait(&g_conn.sock, false, 0) == 0 && tls::Pending(g_conn.tls) == 0) reused = true;
-            else ConnClose(true);
+            // a kept connection serves only the same host and port, while fresh, and only if the server has not closed or sent unexpected data;
+            // TLS 1.3 servers (e.g. Fastly / raw.githubusercontent.com) send post-handshake NewSessionTicket records, which we drain here.
+            const bool fresh = s->keep_alive && (MonoMs() - g_conn.last_used) < 30000 && g_conn.port == s->port && strcmp(g_conn.host, s->host) == 0;
+            if (fresh && attempt == 0 && tls::Pending(g_conn.tls) == 0) {
+                int w = SockWait(&g_conn.sock, false, 0);
+                for (int tries = 0; w > 0 && tries < 4; tries++) {
+                    uint8_t probe = 0;
+                    size_t got = 0;
+                    int code = 0;
+                    const tls::Result pr = tls::Read(g_conn.tls, &probe, 1, &got, &code);
+                    if (pr == tls::T_WANT_READ && got == 0) {
+                        w = SockWait(&g_conn.sock, false, 0);
+                        continue;
+                    }
+                    w = -1;
+                    break;
+                }
+                if (w == 0 && tls::Pending(g_conn.tls) == 0) reused = true;
+            }
+            if (!reused) ConnClose(true);
         }
         if (!reused) {
             memset(&s->res, 0, sizeof s->res);
@@ -835,7 +890,7 @@ void WorkerMain(void*) {
         if (!next) {
             EventWait(g_event, 1000);
 #if defined(NP_HTTPS_HAVE_TLS)
-            if (g_conn.open && MonoMs() - g_conn.last_used > 10000) ConnClose(true);   // an idle kept connection is not held longer than its life
+            if (g_conn.open && MonoMs() - g_conn.last_used > 30000) ConnClose(true);   // an idle kept connection is not held longer than its life
 #endif
             continue;
         }

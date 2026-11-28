@@ -147,6 +147,8 @@ void snes_host_set_render(int on);
  * frame) or NULL when none exists yet; *serial changes whenever a new picture is available. The data
  * must be copied before the next call. Without the PPU thread it returns the current frame. */
 const uint16_t *snes_host_video_nowait(int *width, int *height, int *pitch_bytes, unsigned *serial);
+/* Poll newest finished PPU-thread picture without queueing K_FRAME_END (returns NULL if PPU thread is off). */
+const uint16_t *snes_host_video_poll(int *width, int *height, int *pitch_bytes, unsigned *serial);
 /* Core number (0..2, -1 = any) and Vita priority of the workers, and how many empty polls an idle
  * worker makes before it blocks on a semaphore. Call before enabling the threads. */
 void snes_host_thread_config(int apu_core, int apu_prio, int ppu_core, int ppu_prio, int spin);

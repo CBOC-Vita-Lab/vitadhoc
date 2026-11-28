@@ -525,29 +525,73 @@ static int md_kind_of(FILE *f, long size, const char *path)
    return GAMEDB_MD_NONE;
 }
 
-static uint32_t g_crc_tab[256];
+static uint32_t g_crc_tab[4][256];
+static int g_crc_state; /* 0 = uninit, 1 = building, 2 = ready */
+
+static void crc32_init_tabs(void)
+{
+   int expect;
+   uint32_t i, j;
+   if (__atomic_load_n(&g_crc_state, __ATOMIC_ACQUIRE) == 2)
+      return;
+   expect = 0;
+   if (__atomic_compare_exchange_n(&g_crc_state, &expect, 1, 0,
+                                   __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+   {
+      for (i = 0; i < 256; i++)
+      {
+         uint32_t v = i;
+         for (j = 0; j < 8; j++)
+            v = v & 1 ? 0xEDB88320u ^ (v >> 1) : v >> 1;
+         g_crc_tab[0][i] = v;
+      }
+      for (i = 0; i < 256; i++)
+      {
+         uint32_t v = g_crc_tab[0][i];
+         g_crc_tab[1][i] = (v >> 8) ^ g_crc_tab[0][v & 0xFF];
+         v = g_crc_tab[1][i];
+         g_crc_tab[2][i] = (v >> 8) ^ g_crc_tab[0][v & 0xFF];
+         v = g_crc_tab[2][i];
+         g_crc_tab[3][i] = (v >> 8) ^ g_crc_tab[0][v & 0xFF];
+      }
+      __atomic_store_n(&g_crc_state, 2, __ATOMIC_RELEASE);
+      return;
+   }
+   while (__atomic_load_n(&g_crc_state, __ATOMIC_ACQUIRE) != 2)
+      ;
+}
+
+static uint32_t crc32_update(uint32_t c, const unsigned char *p, size_t n)
+{
+   while (n >= 4)
+   {
+      uint32_t w = (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+                   ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+      c ^= w;
+      c = g_crc_tab[3][c & 0xFF] ^ g_crc_tab[2][(c >> 8) & 0xFF] ^
+          g_crc_tab[1][(c >> 16) & 0xFF] ^ g_crc_tab[0][c >> 24];
+      p += 4;
+      n -= 4;
+   }
+   while (n--)
+      c = g_crc_tab[0][(c ^ *p++) & 0xFF] ^ (c >> 8);
+   return c;
+}
 
 static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
                      int (*cancel)(void), int mode)
 {
-   static unsigned char buf[64 * 1024];
+   unsigned char fallback[4096];
+   unsigned char *heap_buf = NULL;
+   unsigned char *buf = fallback;
+   size_t buf_cap = sizeof(fallback);
    uint32_t c = 0xFFFFFFFFu;
    FILE *f;
    size_t got;
    unsigned long limit = 0;      /* mode 2: bytes of PRG + CHR to hash (0 = to the end) */
    long md_skip = 0;             /* mode 4: a copier header to leave out */
 
-   if (!g_crc_tab[1])
-   {
-      uint32_t i, j;
-      for (i = 0; i < 256; i++)
-      {
-         uint32_t v = i;
-         for (j = 0; j < 8; j++)
-            v = v & 1 ? 0xEDB88320u ^ (v >> 1) : v >> 1;
-         g_crc_tab[i] = v;
-      }
-   }
+   crc32_init_tabs();
    f = path ? fopen(path, "rb") : NULL;
    if (!f)
       return -1;
@@ -609,19 +653,24 @@ static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
          /* SMD: a 512-byte header, then 16 KiB blocks with the odd bytes in
           * the first half and the even bytes in the second (Genesis Plus GX
           * loadrom.c deinterleave_block), hashed as the plain ROM */
-         static unsigned char blk[16384], out[16384];
+         unsigned char *smd_mem = (unsigned char *)malloc(32768);
+         unsigned char *blk, *out;
          long left = size - 512;
-         if (fseek(f, 512, SEEK_SET) != 0)
+         if (!smd_mem || fseek(f, 512, SEEK_SET) != 0)
          {
+            free(smd_mem);
             fclose(f);
             return -1;
          }
+         blk = smd_mem;
+         out = smd_mem + 16384;
          while (left >= 16384)
          {
             int i;
             if ((abort && *abort) || (cancel && cancel()) ||
                 fread(blk, 1, 16384, f) != 16384)
             {
+               free(smd_mem);
                fclose(f);
                return -1;
             }
@@ -630,10 +679,10 @@ static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
                out[i * 2 + 0] = blk[8192 + i];
                out[i * 2 + 1] = blk[i];
             }
-            for (i = 0; i < 16384; i++)
-               c = g_crc_tab[(c ^ out[i]) & 0xFF] ^ (c >> 8);
+            c = crc32_update(c, out, 16384);
             left -= 16384;
          }
+         free(smd_mem);
          fclose(f);
          *crc = c ^ 0xFFFFFFFFu;
          return 0;
@@ -654,22 +703,27 @@ static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
          return -1;
       }
    }
+   heap_buf = (unsigned char *)malloc(128 * 1024);
+   if (heap_buf)
+   {
+      buf = heap_buf;
+      buf_cap = 128 * 1024;
+   }
    for (;;)
    {
-      size_t i;
       if ((abort && *abort) || (cancel && cancel()))
       {
+         free(heap_buf);
          fclose(f);
          return -1;
       }
-      size_t want = sizeof(buf);
+      size_t want = buf_cap;
       if (mode == 2 && limit && limit < want)
          want = (size_t)limit;
       got = fread(buf, 1, want, f);
       if (!got)
          break;
-      for (i = 0; i < got; i++)
-         c = g_crc_tab[(c ^ buf[i]) & 0xFF] ^ (c >> 8);
+      c = crc32_update(c, buf, got);
       if (mode == 2 && limit)
       {
          limit -= got;
@@ -679,9 +733,11 @@ static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
    }
    if (ferror(f))
    {
+      free(heap_buf);
       fclose(f);
       return -1;
    }
+   free(heap_buf);
    fclose(f);
    *crc = c ^ 0xFFFFFFFFu;
    return 0;

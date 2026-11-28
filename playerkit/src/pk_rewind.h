@@ -153,7 +153,8 @@ private:
 	unsigned speed() const;
 
 	RewindConfig cfg_;
-	bool open_ = false, nomem_ = false;
+	std::atomic<bool> open_;
+	bool nomem_ = false;
 	uint8_t *cur_ = 0;             /* the newest packed state, whole */
 	uint8_t *pend_ = 0;            /* the state written by the game thread, waiting to be packed */
 	uint8_t *ring_ = 0;

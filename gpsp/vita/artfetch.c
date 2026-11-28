@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -71,9 +72,30 @@ static int g_rescan;                  /* atomic: artfetch_rescan asked       */
  * art now; 1 while the thread is working through the list */
 static int g_prog_seen, g_prog_total, g_prog_have, g_prog_busy;
 static int (*g_online)(void);
+static artfetch_https_ops g_https;
+static int g_https_ok;
+static int g_prefer_mirror;           /* worker: 1 once GitHub mirror proved alive over dead primary */
+static int g_primary_fails;           /* worker: consecutive primary network failures */
+static int g_mirror_fails;            /* worker: consecutive mirror network failures */
+static uint64_t g_online_at;          /* worker: cached online check timestamp */
+static int g_online_val = 1;
 static char g_root[AF_PATH_CAP];
 static char g_host[128];
 static int g_port = 80;
+
+void artfetch_set_https(const artfetch_https_ops *ops)
+{
+   if (ops && ops->start && ops->poll && ops->cancel && ops->release)
+   {
+      g_https = *ops;
+      g_https_ok = 1;
+   }
+   else
+   {
+      memset(&g_https, 0, sizeof(g_https));
+      g_https_ok = 0;
+   }
+}
 
 /* Two single-producer rings (the thread writes, the UI reads): file names
  * whose picture was just written, and lines for the log. */
@@ -235,16 +257,24 @@ void artfetch_focus(unsigned generation, const char *path, const char *name)
 
 /* ---- the thread's own --------------------------------------------------- */
 
-/* v3: 1.3 names games by checksum and loose title on every console, so the
- * misses of older versions are looked for again */
-#define MISSING_HEADER "# VitAdhoc artwork misses v3\n"
+/* v4: invalidates misses recorded while thumbnails.libretro.com returned 404
+ * across all systems, now backed by the GitHub libretro-thumbnails HTTPS mirror. */
+#define MISSING_HEADER "# VitAdhoc artwork misses v4\n"
 #define AF_MISS_BATCH  16
 static unsigned char *g_body;
 
-static int stop_now(void)
+/* Hard stop: exit, game launched, list replaced, retry, or rescan.
+ * Used during active HTTP/HTTPS transfers so scrolling focus does not abort
+ * an in-flight cover download or tear down the keep-alive socket. */
+static int stop_hard(void)
 {
    return A_LOAD(g_quit) || A_LOAD(g_paused) || A_LOAD(g_new) ||
-          A_LOAD(g_retry) || A_LOAD(g_rescan) || A_LOAD(g_focus);
+          A_LOAD(g_retry) || A_LOAD(g_rescan);
+}
+
+static int stop_now(void)
+{
+   return stop_hard() || A_LOAD(g_focus);
 }
 
 static uint64_t worker_now(void)
@@ -252,6 +282,19 @@ static uint64_t worker_now(void)
    struct timeval tv;
    gettimeofday(&tv, NULL);
    return (uint64_t)tv.tv_sec * 1000000u + (unsigned)tv.tv_usec;
+}
+
+static int online_check(int force)
+{
+   uint64_t now;
+   if (!g_online)
+      return 1;
+   now = worker_now();
+   if (!force && g_online_at && now - g_online_at < 250000u)
+      return g_online_val;
+   g_online_val = g_online() ? 1 : 0;
+   g_online_at = now;
+   return g_online_val;
 }
 
 static void nav_yield(void)
@@ -734,7 +777,7 @@ static void url_name(const char *s, char *out, size_t cap)
    out[n] = '\0';
 }
 
-enum { GET_OK = 0, GET_MISSING = 1, GET_FAILED = -1, GET_REDIRECT = 2 };
+enum { GET_OK = 0, GET_MISSING = 1, GET_FAILED = -1, GET_REDIRECT = 2, GET_UNAVAIL = 3 };
 
 /* The server's address, looked up once: a pass over a library asks it for
  * thousands of pictures, and each lookup was a DNS query on the console.
@@ -1110,7 +1153,7 @@ static int http_get_once(const char *host, int portnum, const char *path,
       int http_minor = 0;
       uint64_t deadline;
 
-      if (stop_now())
+      if (stop_hard())
       {
          http_close();
          return GET_FAILED;
@@ -1132,7 +1175,7 @@ static int http_get_once(const char *host, int portnum, const char *path,
       for (;;)
       {
          ssize_t r;
-         if (stop_now())
+         if (stop_hard())
          {
             http_close();
             return GET_FAILED;
@@ -1147,7 +1190,7 @@ static int http_get_once(const char *host, int portnum, const char *path,
          {
             int e = errno;
             if ((e == EAGAIN || e == EWOULDBLOCK || e == ETIMEDOUT || e == EINTR) &&
-                !stop_now() && worker_now() < deadline)
+                !stop_hard() && worker_now() < deadline)
                continue;
             http_close();
             if (reused && got == 0)
@@ -1402,7 +1445,7 @@ static int thumb_write(const unsigned char *png, size_t len, const char *dst,
    unsigned char *pix;
    int w = 0, h = 0, nc = 0, rc;
 
-   if (!png || len == 0 || stop_now())
+   if (!png || len == 0 || stop_hard())
       return -1;
    thumb_dir_make();
    if (len > AF_MAX_BYTES ||
@@ -1425,6 +1468,44 @@ static int thumb_write(const unsigned char *png, size_t len, const char *dst,
    return rc;
 }
 
+/* Write a complete in-memory buffer to `path`. On Vita, bypass newlib stdio
+ * completely so the entire PNG or thumbnail lands in one sceIoWrite syscall. */
+static int af_write_file(const char *path, const void *buf, size_t len)
+{
+#ifdef __vita__
+   int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+   const unsigned char *p = (const unsigned char *)buf;
+   size_t left = len;
+   int ok = 1;
+   if (fd < 0)
+      return -1;
+   while (left > 0)
+   {
+      ssize_t w = write(fd, p, left);
+      if (w <= 0)
+      {
+         if (w < 0 && errno == EINTR)
+            continue;
+         ok = 0;
+         break;
+      }
+      p += (size_t)w;
+      left -= (size_t)w;
+   }
+   if (close(fd) != 0)
+      ok = 0;
+   return ok ? 0 : -1;
+#else
+   FILE *f = fopen(path, "wb");
+   int ok;
+   if (!f)
+      return -1;
+   ok = fwrite(buf, 1, len, f) == len;
+   ok = fclose(f) == 0 && ok;
+   return ok ? 0 : -1;
+#endif
+}
+
 /* The same from decoded RGB.  `square`: the player's own cover (cover_custom.h)
  * is shown whole -- fitted, enlarged if small, on a square of its average
  * colour -- where a downloaded one is fitted and left at its shape (the tile
@@ -1433,10 +1514,11 @@ static int thumb_rgb(const unsigned char *pix, int w, int h, const char *dst,
                      int square)
 {
    char tmp[AF_PATH_CAP + AF_NAME_CAP + 40];
-   unsigned char hdr[16], *out;
+   unsigned char *file_buf, *hdr, *out;
+   int x0s[ART_THUMB_W], x1s[ART_THUMB_W];
    int tw, th, cw, ch, ox, oy, x, y, rc = -1;
+   size_t row_stride, total_bytes;
    double s;
-   FILE *f;
 
    if (!pix || w <= 0 || h <= 0)
       return -2;
@@ -1471,9 +1553,12 @@ static int thumb_rgb(const unsigned char *pix, int w, int h, const char *dst,
    }
    ox = (cw - tw) / 2;
    oy = (ch - th) / 2;
-   out = malloc((size_t)cw * ch * 2);
-   if (!out)
+   total_bytes = 16u + (size_t)cw * (size_t)ch * 2u;
+   file_buf = (unsigned char *)malloc(total_bytes);
+   if (!file_buf)
       return -1;
+   hdr = file_buf;
+   out = file_buf + 16;
    if (square && (tw < cw || th < ch))
    {
       /* the bars: the picture's average colour, darkened */
@@ -1497,34 +1582,64 @@ static int thumb_rgb(const unsigned char *pix, int w, int h, const char *dst,
          out[2 * x + 1] = (unsigned char)(v >> 8);
       }
    }
+   /* Precompute horizontal spans once and use exact 64-bit reciprocal division
+    * (Cortex-A9 has no hardware integer divide; box-count n changes at most
+    * twice per output row). */
+   for (x = 0; x < tw; x++)
+   {
+      int xa = x * w / tw, xb = (x + 1) * w / tw;
+      if (xb <= xa) xb = xa + 1;
+      if (xb > w) xb = w;
+      x0s[x] = xa;
+      x1s[x] = xb;
+   }
+   row_stride = (size_t)w * 3u;
    for (y = 0; y < th; y++)
    {
-      int y0 = y * h / th, y1 = (y + 1) * h / th, yy, xx;
+      int y0 = y * h / th, y1 = (y + 1) * h / th, yy;
+      unsigned prev_n = 0;
+      uint64_t inv = 0;
+      unsigned char *dst_row;
       if (y1 <= y0) y1 = y0 + 1;
       if (y1 > h) y1 = h;
+      dst_row = out + 2u * ((size_t)(y + oy) * (size_t)cw + (size_t)ox);
       for (x = 0; x < tw; x++)
       {
-         int x0 = x * w / tw, x1 = (x + 1) * w / tw, n = 0;
+         int x0 = x0s[x], x1 = x1s[x];
+         unsigned n = (unsigned)(y1 - y0) * (unsigned)(x1 - x0);
          unsigned r = 0, g = 0, b = 0, v;
-         size_t o;
-         if (x1 <= x0) x1 = x0 + 1;
-         if (x1 > w) x1 = w;
+         size_t span_bytes = (size_t)(x1 - x0) * 3u;
          for (yy = y0; yy < y1; yy++)
-            for (xx = x0; xx < x1; xx++)
+         {
+            const unsigned char *p = pix + (size_t)yy * row_stride + (size_t)x0 * 3u;
+            const unsigned char *pe = p + span_bytes;
+            for (; p < pe; p += 3)
             {
-               const unsigned char *p = pix + ((size_t)yy * w + xx) * 3;
                r += p[0]; g += p[1]; b += p[2];
-               n++;
             }
-         r /= (unsigned)n; g /= (unsigned)n; b /= (unsigned)n;
+         }
+         if (n <= 4096u)
+         {
+            if (n != prev_n)
+            {
+               prev_n = n;
+               inv = ((1ull << 32) + n - 1u) / n;
+            }
+            r = (unsigned)(((uint64_t)r * inv) >> 32);
+            g = (unsigned)(((uint64_t)g * inv) >> 32);
+            b = (unsigned)(((uint64_t)b * inv) >> 32);
+         }
+         else
+         {
+            r /= n; g /= n; b /= n;
+         }
          v = (r >> 3) | ((g >> 2) << 5) | ((b >> 3) << 11);
-         o = 2 * ((size_t)(y + oy) * cw + (x + ox));
-         out[o]     = (unsigned char)(v & 0xFF);
-         out[o + 1] = (unsigned char)(v >> 8);
+         dst_row[2 * x]     = (unsigned char)(v & 0xFF);
+         dst_row[2 * x + 1] = (unsigned char)(v >> 8);
       }
    }
 
-   memset(hdr, 0, sizeof(hdr));
+   memset(hdr, 0, 16);
    hdr[0] = THUMB_MAGIC & 0xFF;
    hdr[1] = (THUMB_MAGIC >> 8) & 0xFF;
    hdr[2] = (THUMB_MAGIC >> 16) & 0xFF;
@@ -1542,18 +1657,11 @@ static int thumb_rgb(const unsigned char *pix, int w, int h, const char *dst,
       snprintf(tmp, sizeof(tmp), "%s.tmp%u", dst,
                __atomic_add_fetch(&seq, 1u, __ATOMIC_RELAXED));
    }
-   f = fopen(tmp, "wb");
-   if (f)
-   {
-      int ok = fwrite(hdr, 1, sizeof(hdr), f) == sizeof(hdr) &&
-               fwrite(out, 1, (size_t)cw * ch * 2, f) == (size_t)cw * ch * 2;
-      ok = fclose(f) == 0 && ok;
-      if (ok && rename(tmp, dst) == 0)
-         rc = 0;
-      else
-         remove(tmp);
-   }
-   free(out);
+   if (af_write_file(tmp, file_buf, total_bytes) == 0 && rename(tmp, dst) == 0)
+      rc = 0;
+   else
+      remove(tmp);
+   free(file_buf);
    return rc;
 }
 
@@ -1583,13 +1691,25 @@ static int own_cover(const char *stem)
 static int save(int k, const char *stem, size_t len)
 {
    char tmp[AF_PATH_CAP + AF_NAME_CAP + 32], dst[sizeof(tmp)];
-   FILE *f;
-   int ok;
+   int wr;
+   if (stop_hard())
+      return -1;
+#ifdef __vita__
+   /* Vita runs one app at a time, cover_custom triggers artfetch_rescan()
+    * (stop_hard()), and rename() refuses to overwrite an existing dst:
+    * skipping 6 linear FAT32 stat() scans per cover avoids ~1 s of card I/O. */
+   if (!g_inventory_valid && have_art_disk(k, stem))
+   {
+      inventory_add(k, stem);
+      return 0;
+   }
+#else
    if (have_art_disk(k, stem))
    {
       inventory_add(k, stem);
       return 0;
    }
+#endif
    if (!g_dir_made[k])
    {
       snprintf(dst, sizeof(dst), "%s/%s", g_root, KIND_DIR[k]);
@@ -1598,19 +1718,15 @@ static int save(int k, const char *stem, size_t len)
    }
    snprintf(dst, sizeof(dst), "%s/%s/%s.png", g_root, KIND_DIR[k], stem);
    snprintf(tmp, sizeof(tmp), "%s/%s/%s.png.tmp", g_root, KIND_DIR[k], stem);
-   f = fopen(tmp, "wb");
-   if (!f && errno == ENOENT)
+   wr = af_write_file(tmp, g_body, len);
+   if (wr != 0 && errno == ENOENT)
    {
       char dir[AF_PATH_CAP + 32];
       snprintf(dir, sizeof(dir), "%s/%s", g_root, KIND_DIR[k]);
       mkdir(dir, 0777);
-      f = fopen(tmp, "wb");
+      wr = af_write_file(tmp, g_body, len);
    }
-   if (!f)
-      return -1;
-   ok = fwrite(g_body, 1, len, f) == len;
-   ok = fclose(f) == 0 && ok;
-   if (!ok || rename(tmp, dst) != 0)
+   if (wr != 0 || stop_hard() || rename(tmp, dst) != 0)
    {
       remove(tmp);
       return -1;
@@ -1736,6 +1852,19 @@ static const char *const SYS[13] = {
    "Sega%20-%20Game%20Gear", "Sega%20-%20SG-1000",
    "Sega%20-%20Mega-CD%20-%20Sega%20CD" };
 
+/* Corresponding GitHub libretro-thumbnails repository names (HTTPS mirror). */
+static const char *const SYS_GH[13] = {
+   "Nintendo_-_Game_Boy_Advance", "Nintendo_-_Game_Boy",
+   "Nintendo_-_Game_Boy_Color",
+   "Nintendo_-_Super_Nintendo_Entertainment_System",
+   "Nintendo_-_Nintendo_Entertainment_System",
+   "Nintendo_-_Family_Computer_Disk_System",
+   "Bandai_-_WonderSwan", "Bandai_-_WonderSwan_Color",
+   "Sega_-_Mega_Drive_-_Genesis",
+   "Sega_-_Master_System_-_Mark_III",
+   "Sega_-_Game_Gear", "Sega_-_SG-1000",
+   "Sega_-_Mega-CD_-_Sega_CD" };
+
 typedef struct
 {
    char stem[AF_NAME_CAP], cand[5 + AF_ALT_MAX][AF_NAME_CAP];
@@ -1743,6 +1872,7 @@ typedef struct
    int no_crc;                  /* UNIF / disc: the checksum names nothing */
    int is_archive;              /* .zip / .7z: inspect inner entry, never raw-hash container */
    int alts_done;               /* the fallback names (artalt.h) are in cand[] */
+   int hit_cand_1, hit_sys_1;   /* 1-based winning (cand, sys) from AK_BOX for AK_TITLE reuse */
 } af_candidates;
 
 /* The cartridge's checksum as the console's catalogue has it: SNES without
@@ -2098,6 +2228,25 @@ static int af_is_hack_stem(const char *stem, const char *hdr_name)
    return 0;
 }
 
+/* Strict marker list for skipping slow ROM CRC32: only unambiguous hack or
+ * fan-translation filenames, never retail tags like (V1.1), Gaiden, Deluxe,
+ * Remix, Renegade, or bare "hack" (which matches retail words like "Shack"). */
+static int af_is_explicit_hack_stem(const char *stem)
+{
+   static const char *const MARKS[] = {
+      "[h", "[t+", "[t-", "kaizo ", "randomiz", "unbound", "radical red",
+      "rocket edition", "ash gray", "crystal clear", "dark violet", "glazed",
+      "flora sky", "light platinum", "blaze black", "volt white",
+      "renegade platinum", "inclement", "translation", "patched", "rebalance",
+      "restoration", "(eng", NULL
+   };
+   int i;
+   for (i = 0; MARKS[i]; i++)
+      if (ci_contains(stem, MARKS[i]))
+         return 1;
+   return 0;
+}
+
 /* Every name asked for has missed: the same game under the name of another
  * release of it (artalt.h).  Appended once; returns how many. */
 static int add_alts(af_candidates *a)
@@ -2198,32 +2347,269 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
       if (!af_is_hack_stem(a->stem, buf))
          cand_add(a, buf);
    }
-   /* Not a No-Intro file name: the cartridge's checksum names it exactly
-    * (any console; SNES without its copier header), read now so it is
-    * asked for first */
-   if (!a->ncand && !a->no_crc && !stop_now())
+   /* For small non-hack ROMs (<= 4 MiB, i.e. 8/16-bit consoles) whose filename
+    * is not in gamedb, compute CRC32 up front so renamed carts ask for their
+    * exact catalogue name first. Larger ROMs (8-32 MiB GBA) defer CRC32 until
+    * after fast filename/header checks, and obvious hacks skip CRC32. */
    {
-      uint32_t crc;
-      int r = cart_crc(a, path, &crc);
-      if (r == 0)
+      int hack = af_is_explicit_hack_stem(a->stem);
+      if (!a->ncand && !a->no_crc && !hack && !stop_now())
       {
-         a->crc_tried = 1;
-         if (gamedb_name_by_crc(crc, buf, AF_NAME_CAP))
-            cand_add(a, buf);
+         struct stat st;
+         if (path && path[0] && stat(path, &st) == 0 &&
+             st.st_size > 0 && st.st_size <= (off_t)(4 * 1024 * 1024))
+         {
+            uint32_t crc;
+            if (cart_crc(a, path, &crc) == 0)
+            {
+               a->crc_tried = 1;
+               if (gamedb_name_by_crc(crc, buf, AF_NAME_CAP))
+                  cand_add(a, buf);
+            }
+         }
       }
+      a->crc_allowed = !gamedb_known_name(a->stem) && !a->no_crc && !hack;
    }
-   a->crc_allowed = !gamedb_known_name(a->stem) && !a->no_crc;
    cand_add(a, a->stem);
    a->ready = 1;
 }
 
+/* Single overlapped HTTPS prefetch slot: while artfetch writes the current PNG
+ * and decodes/shrinks its .t2.565 thumbnail, np_https is already fetching the
+ * next library entry on the kept-alive TLS socket. */
+typedef struct
+{
+   uintptr_t h;
+   char url[AF_NAME_CAP * 3 + 192];
+} af_prefetch;
+static af_prefetch g_pf;
+
+static void prefetch_cancel(void)
+{
+   if (g_pf.h && g_https_ok)
+   {
+      g_https.cancel(g_pf.h);
+      g_https.release(g_pf.h);
+   }
+   g_pf.h = 0;
+   g_pf.url[0] = '\0';
+}
+
+static void mirror_url(int sys, int kind, const char *cand, char *out, size_t cap)
+{
+   char enc[AF_NAME_CAP * 3 + 8];
+   url_name(cand, enc, sizeof(enc));
+   snprintf(out, cap,
+            "https://raw.githubusercontent.com/libretro-thumbnails/%s/master/%s/%s.png",
+            SYS_GH[sys], KIND_URL[kind], enc);
+}
+
+static int https_wait_handle(uintptr_t h, size_t *len)
+{
+   int status = 0;
+   const unsigned char *body = NULL;
+   size_t blen = 0;
+   int rc = GET_FAILED;
+   if (!h || !g_https_ok)
+      return GET_FAILED;
+   for (;;)
+   {
+      int st = g_https.poll(h, &status, &body, &blen);
+      if (st < 0)
+         break;
+      if (st == 1)
+      {
+         if (status == 200 && body && blen > 0 && blen <= AF_MAX_BYTES)
+         {
+            memcpy(g_body, body, blen);
+            g_body[blen] = '\0';
+            *len = blen;
+            rc = GET_OK;
+         }
+         else if (status == 404 || status == 410)
+            rc = GET_MISSING;
+         else
+            rc = GET_FAILED;
+         break;
+      }
+      if (stop_hard() || !online_check(0))
+      {
+         g_https.cancel(h);
+         break;
+      }
+      plat_thread_sleep_us(2000);
+   }
+   g_https.release(h);
+   return rc;
+}
+
+static int fetch_mirror_get(int sys, int kind, const char *cand, size_t *len)
+{
+   char murl[AF_NAME_CAP * 3 + 192];
+   uintptr_t h;
+   if (!g_https_ok || sys < 0 || sys >= 13)
+      return GET_UNAVAIL;
+   mirror_url(sys, kind, cand, murl, sizeof(murl));
+   *len = 0;
+   if (g_pf.h)
+   {
+      if (!strcmp(g_pf.url, murl))
+      {
+         h = g_pf.h;
+         g_pf.h = 0;
+         g_pf.url[0] = '\0';
+         return https_wait_handle(h, len);
+      }
+      /* Cancel mismatched background prefetch so focused covers never sit behind
+       * an unwanted request on np_https's serial worker or hold 2x RAM. */
+      prefetch_cancel();
+   }
+   h = g_https.start(murl, AF_MAX_BYTES);
+   if (!h)
+      return GET_UNAVAIL;
+   return https_wait_handle(h, len);
+}
+
+static int fetch_art_get(int sys, int kind, const char *cand, size_t *len)
+{
+   char url[AF_NAME_CAP * 3 + 128], enc[AF_NAME_CAP * 3 + 8];
+   int r;
+   if (g_https_ok && g_prefer_mirror)
+   {
+      int mr = fetch_mirror_get(sys, kind, cand, len);
+      if (mr == GET_OK)
+      {
+         g_mirror_fails = 0;
+         if (*len >= 8 && memcmp(g_body, "\x89PNG\r\n\x1a\n", 8) == 0)
+            return GET_OK;
+         return GET_FAILED;
+      }
+      if (mr == GET_MISSING)
+      {
+         g_mirror_fails = 0;
+         return GET_MISSING;
+      }
+      if (mr == GET_UNAVAIL)
+      {
+         g_prefer_mirror = 0;
+         g_mirror_fails = 0;
+      }
+      else
+      {
+         if (++g_mirror_fails >= 3)
+         {
+            g_prefer_mirror = 0;
+            g_mirror_fails = 0;
+         }
+         return GET_FAILED;
+      }
+   }
+   url_name(cand, enc, sizeof(enc));
+   snprintf(url, sizeof(url), "/%s/%s/%s.png", SYS[sys], KIND_URL[kind], enc);
+   r = http_get(url, len);
+   if (r == GET_OK)
+   {
+      g_primary_fails = 0;
+      if (*len >= 8 && memcmp(g_body, "\x89PNG\r\n\x1a\n", 8) == 0)
+         return GET_OK;
+      r = GET_FAILED;
+   }
+   else if (r == GET_MISSING)
+      g_primary_fails = 0;
+   else
+      g_primary_fails++;
+   if (!g_https_ok || stop_hard() || !online_check(0))
+      return r;
+   /* Primary failed or returned 404 (e.g. thumbnails.libretro.com outage):
+    * check the GitHub raw HTTPS mirror before accepting a miss or failure. */
+   {
+      int mr = fetch_mirror_get(sys, kind, cand, len);
+      if (mr == GET_OK)
+      {
+         g_mirror_fails = 0;
+         if (*len >= 8 && memcmp(g_body, "\x89PNG\r\n\x1a\n", 8) == 0)
+         {
+            if (!g_prefer_mirror)
+            {
+               g_prefer_mirror = 1;
+               http_close();
+               say("art_fetch mirror active host=%s%s", "raw.githubusercontent.com", "");
+            }
+            return GET_OK;
+         }
+         return GET_FAILED;
+      }
+      if (mr == GET_MISSING)
+      {
+         g_mirror_fails = 0;
+         if (r == GET_FAILED && g_primary_fails >= 2 && !g_prefer_mirror)
+         {
+            g_prefer_mirror = 1;
+            http_close();
+            say("art_fetch mirror active host=%s%s", "raw.githubusercontent.com", "");
+         }
+         return r == GET_MISSING ? GET_MISSING : GET_FAILED;
+      }
+      if (mr == GET_UNAVAIL)
+         return r;   /* local TLS/clock unavailable: respect live primary verdict */
+      /* Mirror itself hit a network/TLS error: never turn a primary 404 into a
+       * permanent miss in .missing.txt. */
+      return GET_FAILED;
+   }
+}
+
+typedef struct af_prefetch_ctx
+{
+   const af_list *list;
+   void *items_v;
+   const char *cur_stem;
+   int next_idx;
+   int kind;
+} af_prefetch_ctx;
+
+static void prefetch_arm_ctx(const af_prefetch_ctx *pf);
+
 /* Candidates and the lazy CRC are shared by box art and title screen.
  * 2 defers an unavailable local identity without a permanent miss or backoff. */
-static int fetch_one(int kind, const char *path, const char *name, af_candidates *a)
+static int fetch_one(int kind, const char *path, const char *name,
+                     af_candidates *a, const af_prefetch_ctx *pf)
 {
    int c, k, failed = 0;
+   int skip_c = -1, skip_k = -1;
    if (!a->ready)
       candidates_init(a, path, name);
+   /* Reuse the winning (candidate, system) from box art first for title screens. */
+   if (a->hit_cand_1 > 0 && a->hit_sys_1 > 0 &&
+       a->hit_cand_1 - 1 < a->ncand && a->hit_sys_1 - 1 < a->nsys)
+   {
+      int hc = a->hit_cand_1 - 1, hk = a->hit_sys_1 - 1;
+      size_t len = 0;
+      int r;
+      if (stop_now() || !online_check(0))
+         return -1;
+      r = fetch_art_get(a->sys[hk], kind, a->cand[hc], &len);
+      if (r == GET_OK)
+      {
+         if (len >= 8 && memcmp(g_body, "\x89PNG\r\n\x1a\n", 8) == 0)
+         {
+            if (pf) prefetch_arm_ctx(pf);
+            if (save(kind, a->stem, len) != 0)
+               return -1;
+            say(kind == AK_BOX ? "art_fetch ok name=\"%s\" as=\"%s\""
+                               : "art_fetch title name=\"%s\" as=\"%s\"",
+                a->stem, a->cand[hc]);
+            return 1;
+         }
+         failed = 1;
+      }
+      else if (r == GET_FAILED)
+         failed = 1;
+      else
+      {
+         skip_c = hc;
+         skip_k = hk;
+      }
+   }
    for (c = 0; ; c++)
    {
       if (c >= a->ncand)
@@ -2279,15 +2665,13 @@ static int fetch_one(int kind, const char *path, const char *name, af_candidates
          continue;
       for (k = 0; k < a->nsys; k++)
       {
-         char url[AF_NAME_CAP * 3 + 128], enc[AF_NAME_CAP * 3 + 8];
          size_t len = 0;
          int r;
-         if (stop_now() || (g_online && !g_online()))
+         if (c == skip_c && k == skip_k)
+            continue;
+         if (stop_now() || !online_check(0))
             return -1;
-         url_name(a->cand[c], enc, sizeof(enc));
-         snprintf(url, sizeof(url), "/%s/%s/%s.png", SYS[a->sys[k]],
-                  KIND_URL[kind], enc);
-         r = http_get(url, &len);
+         r = fetch_art_get(a->sys[k], kind, a->cand[c], &len);
          if (r == GET_OK)
          {
             if (len < 8 || memcmp(g_body, "\x89PNG\r\n\x1a\n", 8) != 0)
@@ -2295,6 +2679,12 @@ static int fetch_one(int kind, const char *path, const char *name, af_candidates
                failed = 1;            /* a portal's page, not a picture */
                continue;
             }
+            if (kind == AK_BOX)
+            {
+               a->hit_cand_1 = c + 1;
+               a->hit_sys_1 = k + 1;
+            }
+            if (pf) prefetch_arm_ctx(pf);
             if (save(kind, a->stem, len) != 0)
                return -1;
             say(kind == AK_BOX ? "art_fetch ok name=\"%s\" as=\"%s\""
@@ -2461,6 +2851,84 @@ static void box_available(const af_list *list, af_item *items,
    A_STORE(g_prog_have, have);
 }
 
+static void prefetch_arm_ctx(const af_prefetch_ctx *pf)
+{
+   static const char TAG[13] = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+                                 'I', 'J', 'K', 'L', 'M' };
+   af_item *items;
+   const af_list *l;
+   int j, kind;
+   unsigned bit;
+   if (!pf || !pf->list || !pf->items_v || !g_https_ok || !g_prefer_mirror ||
+       g_pf.h || stop_now() || !online_check(0))
+      return;
+   l = pf->list;
+   items = (af_item *)pf->items_v;
+   kind = pf->kind;
+   bit = 1u << kind;
+   for (j = pf->next_idx; j < l->n; j++)
+   {
+      char stem[AF_NAME_CAP], murl[AF_NAME_CAP * 3 + 192];
+      uint64_t failed;
+      af_candidates *a;
+      int hc, hk;
+      if (items[j].checked & bit)
+         continue;
+      stem_of(l->name[j], stem, sizeof(stem));
+      if (pf->cur_stem && !strcasecmp(stem, pf->cur_stem))
+         continue;
+      if (have_art(kind, stem) || missing_has(kind, stem))
+         continue;
+      failed = failure_time(l->path[j], l->name[j]);
+      if (failed && worker_now() < failed + AF_COOLDOWN)
+         continue;
+      /* Never stall save() with archive peeks or CRC32 reads: only prefetch items
+       * already resolved or resolvable purely in RAM via gamedb. */
+      if (!items[j].candidates || !items[j].candidates->ready)
+      {
+         const char *ext = strrchr(l->name[j], '.');
+         int sys[4], nsys = 0, no_crc = 0, k, known = 0;
+         char tmp[AF_NAME_CAP];
+         if (ext && (!strcasecmp(ext, ".zip") || !strcasecmp(ext, ".7z")))
+            continue;
+         if (!af_ext_sys(ext, sys, &nsys, &no_crc))
+            { sys[0] = 1; sys[1] = 2; nsys = 2; }
+         if (gamedb_known_name(stem))
+            known = 1;
+         else
+         {
+            for (k = 0; k < nsys; k++)
+               if (gamedb_name_loose(TAG[sys[k]], stem, tmp, sizeof(tmp)))
+                  { known = 1; break; }
+         }
+         if (!known)
+            continue;
+      }
+      if (!items[j].candidates)
+         items[j].candidates = calloc(1, sizeof(*items[j].candidates));
+      a = items[j].candidates;
+      if (!a)
+         return;
+      if (!a->ready)
+         candidates_init(a, l->path[j], l->name[j]);
+      if (a->ncand <= 0 || a->nsys <= 0)
+         continue;
+      hc = (kind == AK_TITLE && a->hit_cand_1 > 0 && a->hit_cand_1 - 1 < a->ncand)
+               ? a->hit_cand_1 - 1 : 0;
+      hk = (kind == AK_TITLE && a->hit_sys_1 > 0 && a->hit_sys_1 - 1 < a->nsys)
+               ? a->hit_sys_1 - 1 : 0;
+      if (a->sys[hk] < 0 || a->sys[hk] >= 13)
+         continue;
+      if (stop_now() || !online_check(0))
+         return;
+      mirror_url(a->sys[hk], kind, a->cand[hc], murl, sizeof(murl));
+      g_pf.h = g_https.start(murl, AF_MAX_BYTES);
+      if (g_pf.h)
+         snprintf(g_pf.url, sizeof(g_pf.url), "%s", murl);
+      return;
+   }
+}
+
 /* -2 is interrupted/allocation failure: never a permanent decision. */
 static int item_kind(const af_list *list, af_item *items,
                      const int *buckets, unsigned bucket_mask,
@@ -2500,7 +2968,16 @@ static int item_kind(const af_list *list, af_item *items,
          item->candidates = calloc(1, sizeof(*item->candidates));
       if (!item->candidates)
          return -2;
-      r = fetch_one(kind, list->path[idx], list->name[idx], item->candidates);
+      {
+         af_prefetch_ctx pf;
+         pf.list = list;
+         pf.items_v = items;
+         pf.cur_stem = stem;
+         pf.next_idx = idx + 1;
+         pf.kind = kind;
+         r = fetch_one(kind, list->path[idx], list->name[idx], item->candidates,
+                       foreground ? NULL : &pf);
+      }
       if (r != 1 && stop_now())
       {
          /* The names worked out for it so far (the header's, the file's)
@@ -2557,6 +3034,7 @@ static void thread_main(void *arg)
             continue;
          }
          missing_flush_all();
+         prefetch_cancel();
          waiting = NULL;
          free(buckets); buckets = NULL; bucket_mask = 0;
          items_free(items, l ? l->n : 0);
@@ -2577,6 +3055,11 @@ static void thread_main(void *arg)
       }
       if (__atomic_exchange_n(&g_retry, 0, __ATOMIC_SEQ_CST))
       {
+         prefetch_cancel();
+         g_prefer_mirror = 0;
+         g_primary_fails = 0;
+         g_mirror_fails = 0;
+         g_online_at = 0;
          failures_clear();
          set_free(&g_thumb_failed);
          for (k = 0; k < AK_KINDS; k++) missing_clear(k, 1);
@@ -2597,6 +3080,7 @@ static void thread_main(void *arg)
       {
          /* A picture was put in or taken out of boxart/ by hand or by
           * cover_custom.c: look at the folders again, forget no misses. */
+         prefetch_cancel();
          missing_flush_all();
          for (k = 0; k < l->n; k++)
             items[k].checked &= ~(1u << AK_BOX);
@@ -2626,9 +3110,11 @@ static void thread_main(void *arg)
       }
       if (!l || A_LOAD(g_paused))
       {
+         prefetch_cancel();
          http_close();
          missing_flush_all();
          A_STORE(g_prog_busy, 0);
+         g_online_at = 0;
          nap_us(250000);
          continue;
       }
@@ -2661,10 +3147,54 @@ static void thread_main(void *arg)
       }
       else if (focus && focus->generation < l->generation)
       { free(focus); focus = NULL; }
+      /* Fast-skip already-cached and already-known-missing entries in O(1) RAM
+       * without calling g_online() or looping once per item on large libraries. */
+      if (g_inventory_valid)
+      {
+         int skipped = 0;
+         while (box_i < l->n)
+         {
+            char stem[AF_NAME_CAP];
+            if (items[box_i].checked & (1u << AK_BOX)) { box_i++; continue; }
+            stem_of(l->name[box_i], stem, sizeof(stem));
+            if (missing_has(AK_BOX, stem) ||
+                (set_has(&g_inventory[AK_BOX], stem) &&
+                 (set_has(&g_inventory[INV_THUMB], stem) ||
+                  (!set_has(&g_inventory[INV_BOX_PNG], stem) &&
+                   !set_has(&g_inventory[INV_BOX_JPG], stem)) ||
+                  set_has(&g_thumb_failed, stem))))
+            {
+               items[box_i].checked |= (1u << AK_BOX);
+               box_done++;
+               box_i++;
+               if (++skipped >= 128 && stop_now()) break;
+               continue;
+            }
+            break;
+         }
+         while (titles_now && title_i < l->n)
+         {
+            char stem[AF_NAME_CAP];
+            if (items[title_i].checked & (1u << AK_TITLE)) { title_i++; continue; }
+            stem_of(l->name[title_i], stem, sizeof(stem));
+            if (set_has(&g_inventory[AK_TITLE], stem) || missing_has(AK_TITLE, stem))
+            {
+               items[title_i].checked |= (1u << AK_TITLE);
+               title_done++;
+               title_i++;
+               if (++skipped >= 128 && stop_now()) break;
+               continue;
+            }
+            break;
+         }
+         if (skipped)
+            progress_publish(box_done, title_done);
+         if (stop_now()) continue;
+      }
       while (box_i < l->n && (items[box_i].checked & (1u << AK_BOX))) box_i++;
       while (titles_now && title_i < l->n &&
              (items[title_i].checked & (1u << AK_TITLE))) title_i++;
-      online_now = !g_online || g_online();
+      online_now = online_check(0);
       work_left = (box_i < l->n) || (titles_now && title_i < l->n) ||
                   (warm_i < l->n) || (focus_idx >= 0 && !focus_served);
       A_STORE(g_prog_busy, online_now && work_left);
@@ -2687,7 +3217,7 @@ static void thread_main(void *arg)
                                  AK_BOX, 1, &box_done, &title_done);
                if (r == -2)
                {
-                  http_close();
+                  if (stop_hard()) { prefetch_cancel(); http_close(); }
                   if (!stop_now()) nap_us(250000);
                   continue;
                }
@@ -2699,10 +3229,33 @@ static void thread_main(void *arg)
       }
       if (warm_i < l->n)
       {
-         if (warm_one(l->name[warm_i])) done(l->name[warm_i]);
-         if (stop_now()) continue;
-         warm_i++;
-         warmed = 1;
+         if (g_inventory_valid)
+         {
+            int wskip = 0;
+            while (warm_i < l->n)
+            {
+               char stem[AF_NAME_CAP];
+               stem_of(l->name[warm_i], stem, sizeof(stem));
+               if (set_has(&g_inventory[INV_THUMB], stem) ||
+                   (!set_has(&g_inventory[INV_BOX_PNG], stem) &&
+                    !set_has(&g_inventory[INV_BOX_JPG], stem)) ||
+                   set_has(&g_thumb_failed, stem))
+               {
+                  warm_i++;
+                  if (++wskip >= 128 && stop_now()) break;
+                  continue;
+               }
+               break;
+            }
+            if (stop_now()) continue;
+         }
+         if (warm_i < l->n)
+         {
+            if (warm_one(l->name[warm_i])) done(l->name[warm_i]);
+            if (stop_now()) continue;
+            warm_i++;
+            warmed = 1;
+         }
       }
       /* Pass 1: all box art (AK_BOX) across the library before Pass 2
        * (AK_TITLE), so visible covers arrive twice as fast. */
@@ -2722,8 +3275,10 @@ static void thread_main(void *arg)
          {
             if (!warmed)
             {
+               prefetch_cancel();
                http_close();
                missing_flush_all();
+               g_online_at = 0;
                nap_us(250000);
             }
             continue;
@@ -2733,8 +3288,10 @@ static void thread_main(void *arg)
             int r;
             if (now < backoff_until)
             {
+               prefetch_cancel();
                http_close();
                missing_flush_all();
+               g_online_at = 0;
                nap_us((uint32_t)(backoff_until - now));
                continue;
             }
@@ -2742,7 +3299,7 @@ static void thread_main(void *arg)
                           0, &box_done, &title_done);
             if (r == -2)
             {
-               http_close();
+               if (stop_hard()) { prefetch_cancel(); http_close(); }
                if (!stop_now()) nap_us(250000);
                continue;
             }
@@ -2764,6 +3321,7 @@ static void thread_main(void *arg)
          }
       }
    }
+   prefetch_cancel();
    http_close();
    missing_flush_all();
    free(buckets);
@@ -2801,6 +3359,13 @@ int artfetch_start(const char *root, const char *base_url, int (*online)(void))
    g_http_sock = -1;
    g_http_host[0] = '\0';
    g_http_port = 0;
+   g_prefer_mirror = 0;
+   g_primary_fails = 0;
+   g_mirror_fails = 0;
+   g_online_at = 0;
+   g_online_val = 1;
+   g_pf.h = 0;
+   g_pf.url[0] = '\0';
    g_dir_made[0] = g_dir_made[1] = 0;
    g_thumb_dir_made = 0;
    A_STORE(g_nav_busy, 0);

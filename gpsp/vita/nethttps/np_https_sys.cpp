@@ -269,6 +269,10 @@ int SockConnect(Sock* s, uint32_t ip, uint16_t port, uint32_t timeout_ms, const 
     }
     if (const int rc = sceNetSetsockopt(s->fd, SCE_NET_IPPROTO_TCP, SCE_NET_TCP_NODELAY, &one, sizeof one); rc < 0)
         nph::Log("TCP_NODELAY refused 0x%08x", (unsigned)rc);
+    {
+        int rcv = 65536;
+        sceNetSetsockopt(s->fd, SCE_NET_SOL_SOCKET, SCE_NET_SO_RCVBUF, &rcv, sizeof rcv);
+    }
     SceNetSockaddrIn sa;
     memset(&sa, 0, sizeof sa);
     sa.sin_len = sizeof sa;

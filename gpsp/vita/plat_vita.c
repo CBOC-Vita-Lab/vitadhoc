@@ -669,9 +669,11 @@ int plat_bg_start(void (*fn)(void *), void *arg)
       return -1;
    g_bg_fn = fn;
    g_bg_arg = arg;
-   /* 64 KiB: sockets, a few paths, the CRC's reads come from the heap */
+   /* 64 KiB: sockets, a few paths, the CRC's reads come from the heap.
+    * Pin to Core 1 so UI (Core 0), artfetch PNG/SD (Core 1), and np_https
+    * TLS/Wi-Fi (Core 2) run in parallel without contending on Core 0. */
    g_bg_thid = sceKernelCreateThread("gbadhoc_bg", bg_entry, PRIO_BG,
-                                     0x10000, 0, 0, NULL);
+                                     0x10000, 0, SCE_KERNEL_CPU_MASK_USER_1, NULL);
    if (g_bg_thid < 0 || sceKernelStartThread(g_bg_thid, 0, NULL) < 0)
    {
       if (g_bg_thid >= 0)

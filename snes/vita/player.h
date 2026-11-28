@@ -14,6 +14,7 @@
 #ifndef SNES_PLAYER_H
 #define SNES_PLAYER_H
 
+#include <atomic>
 #include <stdint.h>
 #include <string>
 #include <vector>
@@ -86,6 +87,7 @@ private:
 	pk::SpinLock lk_;
 	std::vector<WriterJob *> todo_, done_;
 	int running_ = 0;
+	std::atomic<size_t> done_n_{ 0 };
 };
 
 struct StartResult {
@@ -176,6 +178,7 @@ public:
 	void ahead_picture(uint32_t draw_us, uint32_t missed);
 	void ahead_picture_reset() { ahead_.picture_reset(); }
 	void set_ahead_hold(bool hold) { ahead_hold_ = hold; }
+	void set_ahead_auto_hold(bool hold);
 	bool ahead_ran() const { return ahead_ran_; }           /* the last run_frame() ran ahead */
 	int quick() const { return quick_; }
 	const pk::AheadGovernor &ahead() const { return ahead_; }
@@ -349,7 +352,7 @@ private:
 	/* Quick response: 0 Off, 1 Auto (default), 2 On (player.ini quick_response) */
 	int quick_ = 1;
 	pk::AheadGovernor ahead_;
-	bool ahead_ran_ = false, ahead_hold_ = false;
+	bool ahead_ran_ = false, ahead_hold_ = false, ahead_auto_hold_ = false;
 	uint64_t ahead_st0_[3] = { 0, 0, 0 };       /* frames run ahead, ns saving, ns going back at the last census */
 	void ahead_update_blocked();
 	void set_quick(int mode);

@@ -5,6 +5,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
 #ifdef __vita__
 #include <psp2/kernel/threadmgr.h>
 #elif !defined(_WIN32)
@@ -47,13 +50,27 @@ static inline bool get_leb(const uint8_t *&p, const uint8_t *e, size_t *v)
 
 static inline uint64_t ld64(const uint8_t *p) { uint64_t v; memcpy(&v, p, 8); return v; }
 
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+static inline bool eq16(const uint8_t *a, const uint8_t *b)
+{
+	uint8x16_t d = veorq_u8(vld1q_u8(a), vld1q_u8(b));
+	uint64x2_t q = vreinterpretq_u64_u8(d);
+	uint64x1_t o = vorr_u64(vget_low_u64(q), vget_high_u64(q));
+	return vget_lane_u64(o, 0) == 0;
+}
+#endif
+
 size_t delta_encode(const uint8_t *a, const uint8_t *b, size_t n, uint8_t *out, size_t cap)
 {
 	size_t i = 0, o = 0;
 	const size_t FOLD = 4;                 /* an equal run shorter than this stays inside the literal */
 	for (;;) {
-		/* skip equal bytes: eight at a time */
+		/* skip equal bytes: 32 / 16 (NEON) or 8 at a time */
 		size_t s = i;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+		while (i + 32 <= n && eq16(a + i, b + i) && eq16(a + i + 16, b + i + 16)) i += 32;
+		while (i + 16 <= n && eq16(a + i, b + i)) i += 16;
+#endif
 		while (i + 8 <= n && ld64(a + i) == ld64(b + i)) i += 8;
 		while (i < n && a[i] == b[i]) i++;
 		if (i >= n) break;                 /* the tail of equal bytes is not written */
@@ -77,7 +94,16 @@ size_t delta_encode(const uint8_t *a, const uint8_t *b, size_t n, uint8_t *out, 
 		}
 		o += put_leb(out + o, skip);
 		o += put_leb(out + o, cnt);
-		for (size_t k = 0; k < cnt; k++) out[o + k] = (uint8_t) (a[i + k] ^ b[i + k]);
+		size_t k = 0;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+		for (; k + 16 <= cnt; k += 16)
+			vst1q_u8(out + o + k, veorq_u8(vld1q_u8(a + i + k), vld1q_u8(b + i + k)));
+#endif
+		for (; k + 8 <= cnt; k += 8) {
+			uint64_t x = ld64(a + i + k) ^ ld64(b + i + k);
+			memcpy(out + o + k, &x, 8);
+		}
+		for (; k < cnt; k++) out[o + k] = (uint8_t) (a[i + k] ^ b[i + k]);
 		o += cnt;
 		i = last;
 	}
@@ -113,7 +139,7 @@ bool delta_apply(uint8_t *buf, size_t n, const uint8_t *d, size_t len)
 
 /* ---- the ring ----------------------------------------------------------------------------------------------------------- */
 
-Rewind::Rewind() : pend_state_(0) {}
+Rewind::Rewind() : open_(false), pend_state_(0) {}
 Rewind::~Rewind() { close(); }
 
 bool Rewind::open(const RewindConfig &c)
@@ -135,7 +161,6 @@ bool Rewind::open(const RewindConfig &c)
 	if (!cur_ || !pend_ || !ring_) { close(); nomem_ = true; return false; }
 	ents_.assign(ents, Ent());
 	tmp_.assign(tmp_cap, 0);
-	open_ = true;
 	st_ = RewindStats();
 	st_.on = true;
 	st_.seconds = (unsigned) cfg_.seconds;
@@ -144,14 +169,15 @@ bool Rewind::open(const RewindConfig &c)
 	st_.state_bytes = cfg_.state_bytes;
 	ema_pack_ = 0;
 	interval_ = (unsigned) cfg_.interval_min;
+	open_.store(true, std::memory_order_release);
 	clear();
 	return true;
 }
 
 void Rewind::close()
 {
-	if (open_) wait_idle();
-	open_ = false;
+	if (open_.load(std::memory_order_acquire)) wait_idle();
+	open_.store(false, std::memory_order_release);
 	free(cur_); free(pend_); free(ring_);
 	cur_ = pend_ = ring_ = 0;
 	ring_cap_ = 0;
@@ -221,7 +247,7 @@ void Rewind::capture_commit(size_t bytes)
 
 bool Rewind::pack_pending()
 {
-	if (!open_) return false;
+	if (!open_.load(std::memory_order_acquire)) return false;
 	int expect = 1;
 	if (!pend_state_.compare_exchange_strong(expect, 2, std::memory_order_acq_rel)) return false;
 	const uint64_t t0 = clock_ ? clock_() : 0;

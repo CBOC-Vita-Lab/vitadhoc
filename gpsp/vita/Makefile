@@ -25,8 +25,8 @@
 #   VERSION=4.1.1        the GBAdhoc release the core started from
 #   CORE_VERSION=...     what the log, link compatibility and RetroAchievements
 #                        report as the core: VERSION plus the 4.5.0 fixes taken in
-#   APP_VER=02.00        PARAM.SFO version (NN.NN), decoupled from VERSION and
-#                        CORE_VERSION so LiveArea/VitaShell/VitaDB show 2.00
+#   APP_VER=02.01        PARAM.SFO version (NN.NN), decoupled from VERSION and
+#                        CORE_VERSION so LiveArea/VitaShell/VitaDB show 2.01
 #                        while link compatibility stays intact
 #   TITLE_ID=GBAD00001   the bubble's id (4 letters + 5 digits)
 #   ARM_FAR_STUBS=1      build the core with -DARM_FAR_STUBS (arm/: stubs
@@ -166,10 +166,11 @@ $(NET_STAMP): FORCE
 $(B)/app/nethttps/np_https.o $(B)/app/nethttps/np_https_sys.o $(B)/app/nethttps/np_https_tls_mbedtls.o: \
   APP_FILE_FLAGS := $(NET_ENUM_FLAGS) $(NET_MBEDTLS_FLAGS)
 $(B)/app/nethttps/np_https.o $(B)/app/nethttps/np_https_sys.o $(B)/app/nethttps/np_https_tls_mbedtls.o: $(NET_STAMP)
-# The upscaler's per-pixel loops (Scale2x/3x, the picture's preparation):
-# -O3 for this object only (a third fewer instructions in epx_rows on the
-# host twin); the rest of the app stays -O2.
-$(B)/app/vita/upscale_vita.o: APP_FILE_FLAGS := -O3 -ftree-vectorize
+# The upscaler's per-pixel loops (Scale2x/3x, the picture's preparation) and
+# PNG decode / thumbnail box-averaging (artfetch + stb_image): -O3 for these
+# objects only; the rest of the app stays -O2.
+$(B)/app/vita/upscale_vita.o $(B)/app/artfetch.o $(B)/app/psp/stb_impl.o: \
+  APP_FILE_FLAGS := -O3 -ftree-vectorize
 
 LIBS     := $(APP_LIBS_VITA) $(VITA_UI_LIBS) $(NET_VITA_LIBS) $(MBEDTLS_LIBS) \
             -lSceAppUtil_stub -lSceCommonDialog_stub -lSceDisplay_stub \
@@ -317,7 +318,7 @@ $(SELF): $(VELF)
 
 # APP_VER is NN.NN (shown in LiveArea, VitaShell and VitaDB), decoupled from
 # VERSION and CORE_VERSION (4.1.1+4.5.0fixes) so link compatibility stays intact.
-APP_VER ?= 02.00
+APP_VER ?= 02.01
 $(SFO): Makefile $(APP_STAMP)
 	@mkdir -p $(dir $@)
 	$(VITASDK)/bin/vita-mksfoex -s TITLE_ID=$(TITLE_ID) -s APP_VER=$(APP_VER) \

@@ -588,7 +588,7 @@ void online_http_config(const char *base_url, const char *app_version)
    for (size_t n = strlen(g_base); n && g_base[n - 1] == '/'; ) g_base[--n] = 0;
    /* The service refuses anything but digits and dots in `v` (400 bad_version): a build label such as "2.0-dev" must never go out,
     * so an unusable text becomes the release version (ONLINE_APP_VERSION of online_vita.h, the caller's normal argument). */
-   CopyStr(g_ver, sizeof g_ver, VersionOk(app_version) ? app_version : "2.0.0");
+   CopyStr(g_ver, sizeof g_ver, VersionOk(app_version) ? app_version : "2.0.1");
    char ua[96];
    snprintf(ua, sizeof ua, "VitAdhoc/%s (PlayStation Vita)", g_ver);
    np_https_set_user_agent(ua);   // the same on the twin: the service refuses an empty one

@@ -28,10 +28,31 @@
 #define GBADHOC_ARTFETCH_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* Optional async HTTPS GET backend for fallback mirrors (e.g. GitHub raw when
+ * thumbnails.libretro.com is unreachable or returns 404).  Allows artfetch to
+ * overlap the next cover download with PNG decoding and SD-card writes.
+ *   start(url, max_bytes): returns a nonzero handle, or 0 on immediate failure.
+ *   poll(h, &http_status, &body, &len): 0 = running, 1 = finished (body valid
+ *     until release when http_status == 200), -1 = invalid handle.
+ *   cancel(h): request early abort; release(h) is still called afterwards.
+ *   release(h): free handle and response memory.
+ * Set before artfetch_start(); NULL disables HTTPS fallback. */
+typedef struct artfetch_https_ops
+{
+   uintptr_t (*start)(const char *url, size_t max_bytes);
+   int       (*poll)(uintptr_t h, int *http_status,
+                     const unsigned char **out_body, size_t *out_len);
+   void      (*cancel)(uintptr_t h);
+   void      (*release)(uintptr_t h);
+} artfetch_https_ops;
+
+void artfetch_set_https(const artfetch_https_ops *ops);
 
 /* Start the thread.  `root` is the data folder (boxart/ is in it),
  * `base_url` "http://host[:port]" (NULL: the libretro server), `online`

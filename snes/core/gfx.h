@@ -148,6 +148,8 @@ void S9xWideMTStats (uint64_t *busy_ns, uint64_t *frames, uint64_t *centre_waits
 /* Non-blocking: queues the end-of-frame copy and returns the newest picture the worker has finished
  * (usually the previous frame), or NULL when none exists yet. *serial counts finished pictures. */
 const uint16 *S9xPPUMTVideoNoWait (int *width, int *height, unsigned *serial);
+/* Poll-only variant: returns the newest finished picture without queueing a new K_FRAME_END copy. */
+const uint16 *S9xPPUMTVideoPoll (int *width, int *height, unsigned *serial);
 void S9xMTSetSpin (int iterations);
 void S9xPPUMTStats (uint64_t *busy_ns, uint64_t *batches, uint64_t *waits, uint64_t *wait_ns);
 extern bool8 g_s9x_obj_ran;

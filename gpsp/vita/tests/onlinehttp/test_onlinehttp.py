@@ -121,7 +121,9 @@ class Plain(Base):
         s1 = self.stats()
         self.assertEqual(s1["bad"], [])
         self.assertEqual(s1["ua"][-1], "VitAdhoc/1.2.3.4 (PlayStation Vita)")
-        self.assertIn(UA, s1["ua"][len(s0["ua"]):])
+        m = re.search(r'#define\s+ONLINE_APP_VERSION\s+"([^"]+)"', (VITA / "online_vita.h").read_text())
+        fallback_ua = f"VitAdhoc/{m.group(1)} (PlayStation Vita)" if m else UA
+        self.assertIn(fallback_ua, s1["ua"][len(s0["ua"]):])
 
     def test_three_in_flight_and_drop(self):
         self.runner("three", self.base)

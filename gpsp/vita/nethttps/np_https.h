@@ -15,9 +15,9 @@
 //  - DNS (sceNetResolver / getaddrinfo), TCP connect, the handshake, the request and the answer each have a time limit; a
 //    total limit covers the whole request. Redirects are never followed (REDIRECT). Compressed answers are refused.
 //  - HTTP/1.1 GET and POST; the answer is framed by Content-Length, by chunked coding, or by the close of the connection.
-//    The answer is limited (max_response, default 64 KiB, at most 1 MiB; TOO_LARGE past it). At most NP_HTTPS_SLOTS
-//    requests exist at a time; memory is bounded by their limits (< 4.5 MiB in the worst case, ~100 KiB for one typical request).
-//  - keep_alive (optional) keeps one TLS connection to the last host for 10 s: a login followed by a ranking call pays one handshake.
+//    The answer is limited (max_response, default 64 KiB, at most 2 MiB; TOO_LARGE past it). At most NP_HTTPS_SLOTS
+//    requests exist at a time; memory is bounded by their limits (~100 KiB for one typical request).
+//  - keep_alive (optional) keeps one TLS connection to the last host for 30 s: a login followed by a ranking call pays one handshake.
 //    A reused connection that turns out dead is replaced once, silently (so make POSTs safe to repeat).
 //  - Strings: urls, header lines and bodies are copied at start; the caller's memory may go away at once.
 #ifndef NP_HTTPS_H
@@ -33,7 +33,7 @@ extern "C" {
 #define NP_HTTPS_SLOTS 4
 #define NP_HTTPS_MAX_URL 1023
 #define NP_HTTPS_MAX_REQUEST_BODY (64u * 1024u)
-#define NP_HTTPS_MAX_RESPONSE_LIMIT (1024u * 1024u)
+#define NP_HTTPS_MAX_RESPONSE_LIMIT (2u * 1024u * 1024u)
 #define NP_HTTPS_DEFAULT_MAX_RESPONSE (64u * 1024u)
 #define NP_HTTPS_MAX_HEADERS 8
 #define NP_HTTPS_MAX_HEADER_BYTES 1024
@@ -130,7 +130,7 @@ int np_https_available(void);
 int np_https_clock_ok(void);
 
 // vitadhoc: where the client's log lines go (without the newline; called from the client's own threads, so the callback must be
-// thread-safe and quick; NULL = none) and the User-Agent it sends ("VitAdhoc/2.0.0 (PlayStation Vita)"; printable ASCII, at most 95
+// thread-safe and quick; NULL = none) and the User-Agent it sends ("VitAdhoc/2.0.1 (PlayStation Vita)"; printable ASCII, at most 95
 // characters). Set both once, before the first request.
 void np_https_set_log(void (*sink)(const char* line));
 void np_https_set_user_agent(const char* ua);

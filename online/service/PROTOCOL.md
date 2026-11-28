@@ -91,6 +91,7 @@ Errors (status, code, when; client meaning in 1.6):
 | 503 | `switched_off` | `KILL_SWITCH` has `all`, `rooms` or (route 6) `relay` (extra `message` = MAINTENANCE_MESSAGE) |
 | 503 | `relay_unavailable` | TURN not configured |
 | 503 | `relay_budget` | TURN daily or monthly guard, or the optional real-usage guard (extra `retryAfterSec`) |
+| 503 | `unavailable` | the Worker could not reach the room object (a reset after a deploy, overload, an internal error; extra `retryAfterSec` 3, `reason` `object_error`); any route, `/v1/info` included. The free plan's daily object limit is answered `over_budget` instead |
 
 Rate limits (all in memory; every number an env var with this default; `RATE_LIMIT_SCALE` multiplies them for
 tests):

@@ -22,6 +22,7 @@
 #ifndef MD_PLAYER_H
 #define MD_PLAYER_H
 
+#include <atomic>
 #include <stdint.h>
 #include <string>
 #include <vector>
@@ -94,6 +95,7 @@ private:
 	pk::SpinLock lk_;
 	std::vector<WriterJob *> todo_, done_;
 	int running_ = 0;
+	std::atomic<size_t> done_n_{ 0 };
 };
 
 struct StartResult {
@@ -151,6 +153,11 @@ public:
 	 * speed_busy: fast forward is on or the game is rewinding (the picture hand-over drops, nothing waits). */
 	int speed_plan(int normal);
 	bool run_frame(bool render);
+	/* rewind's capture off the frame's path (playerkit pk_speed): the platform switches it on once and then calls capture_idle() every refresh
+	 * where the game thread would only wait for the next one; `late` = this pass already missed its refresh (the capture is put off) */
+	void set_capture_deferred(bool on) { speed_.set_defer_capture(on); }
+	void capture_idle(bool late) { speed_.capture_idle(late); }
+	unsigned captures_put_off() const { return speed_.captures_put_off(); }
 	size_t audio_filter(int16_t *lr, size_t frames);
 	bool speed_draws(int i, int n) const { return speed_.draw_this(i, n); }
 	bool speed_busy() const { return speed_.busy(); }

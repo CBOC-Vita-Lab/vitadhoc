@@ -1015,7 +1015,7 @@ static void sc_host_punch(void)
    CHECK(N.armed && !memcmp(N.key, "\x01\x23\x45\x67\x89\xab\xcd\xef", 8));
    CHECK(!strcmp(S.h.pub, "203.0.113.1:40001"));
    CHECK(!strcmp(S.h.lan, "192.168.1.23:19019"));
-   CHECK(!strcmp(S.h.ver, "2.0.0"));               /* never the caller's build label */
+   CHECK(!strcmp(S.h.ver, ONLINE_APP_VERSION));    /* never the caller's build label */
    CHECK(S.h.sym == 0);
    online_get(&v);
    CHECK(!strcmp(v.code, "K7M2Q") && v.is_host);

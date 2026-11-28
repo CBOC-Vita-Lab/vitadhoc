@@ -2,14 +2,14 @@
 
 | Item | Value |
 | --- | --- |
-| Version | 2.0 |
-| Package | `VitAdhoc.vpk`, SHA-256 `ded2cfc021d7391bae6036d23423650ce07b0297970fccfb19957dd0fd25a7dc` |
-| Runtime (`eboot.bin`) | SHA-256 `fa5dc3d21dbeaf3c63fbd794f197e763591e7b3090e6a7dcb250dd773e47f84c` |
-| SNES player (`snes.bin`) | SHA-256 `fe842ad18938f50f89386e4d3f7e33c960c2ccb7bdd63f1ea1314f54e217a72f` |
-| Sega player (`md.bin`) | SHA-256 `2798f87460a29f56c9df9d77d2380e0df2e4b6c1ec012a9afed3dab8721b3755` |
+| Version | 2.0.1 |
+| Package | `VitAdhoc.vpk`, SHA-256 `8075d120b96121f2c6076a3105edb5ad095d89d262d4e5bad974acb46bb63a31` |
+| Runtime (`eboot.bin`) | SHA-256 `8cbee9bfc7396232d3322d074e75699c19e51cfe17b8059e3288306a3a1db071` |
+| SNES player (`snes.bin`) | SHA-256 `ed456a6dd305c21457732592b505ca9b6245dd4313ef9543fc794bde4351bb89` |
+| Sega player (`md.bin`) | SHA-256 `d4c84436c1eb9830368be9607620e6e1b07b160ed98d6a901a2ba3c9c1a44a89` |
 | Title ID | `GBAD00001` (existing data layout: `ux0:data/GBAdhoc/`) |
-| Source | The `v2.0` tag |
-| Build command | `make -C gpsp/vita -j2 vpk BIOS= VITASDK=/opt/vitasdk GIT_VERSION=2.0` (also builds `snes/vita` and `md/vita`, single job; it also needs `MBEDTLS=<prefix>`, see Version 2.0 below) |
+| Source | The `v2.0.1` tag |
+| Build command | `make -C gpsp/vita -j2 vpk BIOS= VITASDK=/opt/vitasdk GIT_VERSION=2.0.1` (also builds `snes/vita` and `md/vita`, single job; it also needs `MBEDTLS=<prefix>`, see Version 2.0 below) |
 | Toolchain | VitaSDK `0.20260926.321` ([Building](BUILDING.md) has the pins) |
 
 `GIT_VERSION` supplies the version label written in the app log.
@@ -19,7 +19,7 @@ artwork, fonts, 8 interface language catalogues, databases and readable license/
 separate program built only from `snes/` (Snes9x 1.63 and our MIT frontend), and `md.bin` is a separate program built only from `md/` (Genesis Plus GX and our MIT frontend);
 neither contains code from `gpsp/`, and their licences travel as
 `licenses/Snes9x-LICENSE.txt` and `licenses/GenesisPlusGX-LICENSE.txt`. Package checks verify all three program hashes,
-the title ID (`GBAD00001`), `APP_VER` (`02.00`), safe archive paths and matching notices. No commercial game,
+the title ID (`GBAD00001`), `APP_VER` (`02.01`), safe archive paths and matching notices. No commercial game,
 save file or proprietary BIOS is included; the open-source GBA BIOS is built in.
 The install ZIP includes the same VPK and the corresponding source.
 
@@ -30,7 +30,7 @@ TLS 3.6.8 prefix built from the pinned source by `tools/online/build-mbedtls.py`
 (commit `82e69999f91126589a28b70dd75b69fbcabe2711`, tag `mbedtls-3.6.8`, unpatched; `gpsp/vita/deps/lock.json`):
 
 `python3 tools/online/build-mbedtls.py --target vita --work <dir>`, then
-`make -C gpsp/vita -j2 vpk BIOS= VITASDK=/opt/vitasdk MBEDTLS=<dir>/mbedtls/vita GIT_VERSION=2.0`
+`make -C gpsp/vita -j2 vpk BIOS= VITASDK=/opt/vitasdk MBEDTLS=<dir>/mbedtls/vita GIT_VERSION=2.0.1`
 
 The VPK gains the Mbed TLS notice (`licenses/MbedTLS-LICENSE.txt`); the hashes in
 the table above are filled in at release by `tools/pin-release.py`. The room

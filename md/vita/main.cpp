@@ -148,8 +148,8 @@ static std::atomic<unsigned> g_agap_max_us(0);
 
 static pk::Cores *g_cores;
 static pk::Plan g_core_plan;
-static int g_wd_audio = -1, g_wd_writer = -1;     /* watchdog slots of threads that run on core 3 */
-static int g_wd_audio_slot = -1, g_wd_writer_slot = -1;
+static int g_wd_audio = -1;     /* watchdog slot of md_audio when it runs on core 3 */
+static int g_wd_audio_slot = -1;
 
 static int audio_thread(SceSize, void *)
 {
@@ -266,13 +266,6 @@ static void core4_repin(const char *why)
 			g_cores->watchdog().watch(g_wd_audio, true);
 		}
 	} else g_wd_audio = -1;
-	if (w && w->on_core3 && g_wthread >= 0) {
-		if (g_wd_writer < 0) {
-			if (g_wd_writer_slot < 0) g_wd_writer_slot = g_cores->watchdog().add("md_writer");
-			g_wd_writer = g_wd_writer_slot;
-		}
-		if (g_wd_writer >= 0) g_cores->watchdog().watch(g_wd_writer, true);
-	} else g_wd_writer = -1;
 	char c[220];
 	g_cores->census_line(c, sizeof c);
 	logf_("%s (audio rc=%08x, writer rc=%08x)\n%s\n", why, rc, rc2, c);
@@ -1107,12 +1100,9 @@ static VitaPlatform g_platform;
 static int writer_thread(SceSize, void *)
 {
 	for (;;) {
-		if (g_wd_writer >= 0) g_cores->watchdog().set_busy(g_wd_writer, false);
 		sceKernelWaitSema(g_wsema, 1, NULL);
 		if (g_wstop) break;
-		if (g_wd_writer >= 0) g_cores->watchdog().set_busy(g_wd_writer, true);
-		while (g_pl->writer().work_one(g_pl)) { if (g_wd_writer >= 0) g_cores->watchdog().beat(g_wd_writer); }
-		if (g_wd_writer >= 0) g_cores->watchdog().beat(g_wd_writer);
+		while (g_pl->writer().work_one(g_pl)) {}
 	}
 	return sceKernelExitThread(0);
 }
@@ -1126,10 +1116,6 @@ static void writer_start(void)
 	const int prio = s ? s->prio : 0xA0;
 	g_wthread = sceKernelCreateThread("md_writer", writer_thread, prio, 0x10000, 0, mask, NULL);
 	if (g_wthread >= 0 && sceKernelStartThread(g_wthread, 0, NULL) < 0) { sceKernelDeleteThread(g_wthread); g_wthread = -1; }
-	if (g_wthread >= 0 && s && s->on_core3) {
-		g_wd_writer_slot = g_wd_writer = g_cores->watchdog().add("md_writer");
-		g_cores->watchdog().watch(g_wd_writer, true);
-	}
 	logf_("writer thread %s (mask %05x, priority 0x%x)\n", g_wthread >= 0 ? "started" : "NOT started (writes run on the game thread)", mask, prio);
 }
 
@@ -1295,22 +1281,28 @@ static int hd_draw_thread(SceSize, void *)
 		const pic_info gi = g_geo[s.serial & 15];
 		const pic_settings ps = g_pl->picture();     /* one copy for this picture: the game thread may ease the look meanwhile */
 		video_upload(ps, (int) f->seq, s, gi);
+		uint64_t swap_us = 0;
 		bool drew = false;
-		for (int tries = 0; tries < 4 && !drew; tries++) {
+		int tries = 0;
+		for (; tries < 4 && !drew; tries++) {
 			if (tries) sceDisplayWaitVblankStart();
 			drew = frame_draw(ps, 1, (int) f->seq);
 		}
-		auto finish_pic = [&]() {
+		auto finish_pic = [&](uint64_t *swap_out) {
 			if (g_hd_notice_on.load()) {
 				pk::Notices n;
 				{ pk::SpinGuard g(g_hd_lk); n = g_hd_notices; }
 				if (n.active()) { n.draw(g_gfx, g_text, PK_HEX(0x7B6CFF, 255), 26, true); g_text->frame(); }
 			}
-			frame_finish();
+			vita2d_end_drawing();
+			const uint64_t s0 = sceKernelGetProcessTimeWide();
+			vita2d_swap_buffers();
+			if (swap_out) *swap_out = sceKernelGetProcessTimeWide() - s0;
 			g_hd_drawn++;
 		};
-		if (drew) finish_pic(); else g_hd_failed++;
-		const uint64_t dt = sceKernelGetProcessTimeWide() - t0;       /* the cost reported is this picture's own draw, not the repeat after it */
+		if (drew) finish_pic(tries <= 1 ? &swap_us : NULL); else g_hd_failed++;
+		const uint64_t raw_dt = sceKernelGetProcessTimeWide() - t0;       /* exclude normal VSync swap wait; keep GPU-full retry waits */
+		const uint64_t dt = raw_dt > swap_us ? raw_dt - swap_us : 0;
 		g_hd_draw_us += (unsigned) dt;
 		g_hd_cum_us += (unsigned) dt;
 		g_hd_cum_n += 1;
@@ -1320,7 +1312,7 @@ static int hd_draw_thread(SceSize, void *)
 				if (pal_pure_pic(&pure, &pgi) && video_upload(ps, (int) f->seq, pure, pgi)) {
 					bool d2 = false;
 					for (int tries = 0; tries < 4 && !d2; tries++) { sceDisplayWaitVblankStart(); d2 = frame_draw(ps, 1, (int) f->seq); }
-					if (d2) finish_pic();
+					if (d2) finish_pic(NULL);
 				}
 		}
 		g_pipe.box().release(f, (uint32_t) (dt > 0xFFFFFFFFull ? 0xFFFFFFFFu : dt));
@@ -1814,7 +1806,11 @@ int main(int argc, char **argv)
 	pk::ExitReason why = pk::EXIT_NORMAL;
 	g_pl->log_flush(false);
 
+	g_pl->set_capture_deferred(true);
 	for (;;) {
+		/* rewind's state of the frame(s) of the last pass is written here, after the picture and the sound were handed on, in the time this
+		 * thread would wait for the refresh; a pass that already missed its refresh puts it off (pk_speed) */
+		g_pl->capture_idle(sceDisplayGetVcount() != last_vc);
 		/* One pass per display refresh, counted by the display itself */
 		unsigned vc = sceDisplayGetVcount();
 		if (vc == last_vc) {
@@ -1834,7 +1830,7 @@ int main(int argc, char **argv)
 		const uint64_t emu_us0 = emu_us;       /* the refresh's emulation time is the difference at its end (Unlimited fast forward's budget) */
 		if (prev_loop0 && loop0 - prev_loop0 > stall_max_us) stall_max_us = loop0 - prev_loop0;
 		prev_loop0 = loop0;
-		if (g_wd_audio >= 0 || g_wd_writer >= 0) {
+		if (g_wd_audio >= 0) {
 			g_cores->watchdog().ref_beat();
 			if (g_cores->poll_watchdog(loop0)) core4_fallback();
 		}

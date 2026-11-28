@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define ONLINE_APP_VERSION "2.0.0"
+#define ONLINE_APP_VERSION "2.0.1"
 #define ONLINE_URL_DEFAULT "https://vitadhoc.psvita.dev"
 #define ONLINE_STUN_DEFAULT "stun.cloudflare.com:3478,stun.cloudflare.com:53"
 

@@ -1,5 +1,51 @@
 # What's New
 
+## Version 2.0.1 — 2026-11-27
+
+Maintenance and performance update verified on a physical PS Vita in both 4-core
+and 3-core (stock) modes, fixing SNES slowdowns/audio, Mega Drive and Sega CD
+Core 3 watchdog trips, and broken/slow box art downloads (see
+[Performance](docs/PERFORMANCE.md)).
+
+- **SNES 3-core and 4-core fixes (`snes.bin`):** Fixed a spinlock priority
+  inversion in `Writer::work_one()` (release spinlock before `speed_pack()`),
+  added a lock-free `done_n_` fast-path and ARM NEON rewind delta encoding
+  (`pk_rewind.cpp`), raised rewind `interval_min` from 4 to 10 frames, held
+  `Quick response: Auto` off automatically on 3-core Vitas, fixed
+  `hd_draw_thread` VBlank swap accounting, fixed `PACE_HALF` skipped-frame PPU
+  polling (`S9xPPUMTVideoPoll`) and rewind landing display, tuned audio pacer
+  priming (`0.75`) and smoothed base rate tracking, and tightened `LookGovernor`
+  step-down to 3 seconds (`down_s = 2`, `force_s = 1`). *Rock 'n' Roll Racing*
+  and *Super Mario RPG* hold locked 59.9-60.0 fps with 0 audio underruns in both
+  3-core and 4-core runs on Vita.
+- **Mega Drive and Sega CD fixes (`md.bin`):** Removed `md_writer` from the
+  150 ms Core 3 watchdog (monitoring `md_audio` only) so rewind writes no longer
+  trip the watchdog and collapse 4-core Vitas to 3-core mode (`writer` CPU
+  dropped 886 -> 25 ms/s, 0 watchdog trips across all runs). Applied the same
+  writer spinlock fix, NEON rewind delta encoding, deferred rewind capture
+  (`capture_idle()`), Sega CD `interval_min = 10`, VBlank swap accounting,
+  audio pacer tuning, and 3-second `LookGovernor` step-down. *Gunstar Heroes*
+  holds locked 59.8-60.0 fps with 0 audio underruns in both 4-core and 3-core
+  modes.
+- **Box art HTTPS mirror and speedups (`eboot.bin`):** Added automatic fallback
+  to `raw.githubusercontent.com/libretro-thumbnails/...` over Mbed TLS 3.6.8
+  (`np_https`) when `thumbnails.libretro.com` fails or returns 404, and bumped
+  `.missing.txt` from `v3` to `v4` to clear outage-poisoned misses
+  automatically. Fixed TLS 1.3 `NewSessionTicket` keep-alive reuse and added a
+  5-minute DNS cache in `np_https.cpp`, overlapped Core 2 HTTPS prefetch with
+  Core 1 PNG save/decode/thumbnailing (`gbadhoc_bg` pinned to Core 1,
+  `artfetch.o` + `stb_impl.o` compiled at `-O3 -ftree-vectorize`), removed 6
+  linear FAT32 `stat()` scans per cover on Vita, switched Vita PNG/thumbnail
+  writes to single-syscall `open`/`write`/`close`, added O(1) RAM fast-skip
+  loops, title-screen candidate reuse, thread-safe slice-by-4 CRC32
+  (`gamedb.c`), and automatic cover pausing during Online/Link sessions.
+  Improved real-Vita cover throughput from 2,019 ms/cover to 1,368-1,452 ms/cover
+  and cut Home menu SD contention during downloads by 14.6x on reads and 660x on
+  `stat()`.
+- **Online room worker (`online/service/src/worker.js`):** Catch Durable Object
+  throws and answer with structured JSON 503 (`over_budget` or `unavailable`)
+  instead of Cloudflare HTML 1101 pages.
+
 ## Version 2.0 — 2026-11-27
 
 The biggest VitAdhoc update yet: eleven consoles in one native app, true 16:9

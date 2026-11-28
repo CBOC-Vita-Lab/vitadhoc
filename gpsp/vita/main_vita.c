@@ -130,6 +130,9 @@
 #include "menu_diag.h"
 #include "gamedb.h"
 #include "artfetch.h"
+#ifdef __vita__
+#include "nethttps/np_https.h"
+#endif
 #include "update_check.h"
 #include "clip_export.h"
 #include "online_vita.h"    /* ONLINE_APP_VERSION: the app's version */
@@ -3551,10 +3554,14 @@ static void sink_audio(const int16_t *stereo_lr, size_t frames)
 /* ---- box art, fetched by itself (artfetch.h) ------------------------------ */
 
 #ifdef __vita__
-/* The network may be used for it: Wi-Fi up, the radio not in ad hoc mode. */
+static int g_art_online_busy;
+/* The network may be used for it: Wi-Fi up, the radio not in ad hoc mode, and
+ * not contending with an active Online Play / link session on np_https. */
 static int art_online(void)
 {
    net_vita_wifi w;
+   if (__atomic_load_n(&g_art_online_busy, __ATOMIC_ACQUIRE))
+      return 0;
    return net_vita_wifi_status(&w) && net_vita_use() != NET_VITA_ADHOC;
 }
 
@@ -3568,13 +3575,82 @@ static int ra_online(void)
 }
 #endif
 
+#ifdef __vita__
+static uintptr_t vita_art_https_start(const char *url, size_t max_bytes)
+{
+   NpHttpsRequest rq;
+   NpHttpsError err = NP_HTTPS_OK;
+   if (!url || !max_bytes || !np_https_available() || np_https_clock_ok() == 0 ||
+       __atomic_load_n(&g_art_online_busy, __ATOMIC_ACQUIRE))
+      return 0;
+   memset(&rq, 0, sizeof(rq));
+   rq.url = url;
+   rq.method = "GET";
+   rq.connect_timeout_ms = 10000;
+   rq.io_timeout_ms = 10000;
+   rq.total_timeout_ms = 20000;
+   rq.max_response = max_bytes > NP_HTTPS_MAX_RESPONSE_LIMIT
+                         ? NP_HTTPS_MAX_RESPONSE_LIMIT
+                         : (uint32_t)max_bytes;
+   rq.keep_alive = 1;
+   return (uintptr_t)np_https_start(&rq, &err);
+}
+
+static int vita_art_https_poll(uintptr_t h, int *http_status,
+                               const unsigned char **out_body, size_t *out_len)
+{
+   NpHttpsResult res;
+   int st;
+   if (!h)
+      return -1;
+   st = np_https_poll((NpHttpsHandle)h, &res);
+   if (st <= 0)
+      return st;
+   if (http_status)
+      *http_status = (res.error == NP_HTTPS_OK ||
+                      res.error == NP_HTTPS_E_HTTP_STATUS)
+                         ? res.http_status : 0;
+   if (res.error == NP_HTTPS_OK && res.http_status == 200 &&
+       res.body && res.body_len > 0)
+   {
+      if (out_body) *out_body = res.body;
+      if (out_len)  *out_len  = res.body_len;
+   }
+   else
+   {
+      if (out_body) *out_body = NULL;
+      if (out_len)  *out_len  = 0;
+   }
+   return 1;
+}
+
+static void vita_art_https_cancel(uintptr_t h)
+{
+   if (h) np_https_cancel((NpHttpsHandle)h);
+}
+
+static void vita_art_https_release(uintptr_t h)
+{
+   if (h) np_https_release((NpHttpsHandle)h);
+}
+
+static const artfetch_https_ops g_vita_art_https = {
+   vita_art_https_start,
+   vita_art_https_poll,
+   vita_art_https_cancel,
+   vita_art_https_release
+};
+#endif
+
 static void art_start(void)
 {
    int rc = -1;
 #ifdef __vita__
    const int want = g_sw.art != 0;
+   artfetch_set_https(g_sw.art_url[0] ? NULL : &g_vita_art_https);
 #else
    const int want = g_sw.art != 0 && g_sw.art_url[0];   /* the twin: tests */
+   artfetch_set_https(NULL);
 #endif
    artfetch_titles(g_sw.art_titles);
    if (want)
@@ -3681,6 +3757,11 @@ void ui_host_update_now(void)
  * once it has been idle a while. */
 void ui_host_home_idle(int idle)
 {
+#ifdef __vita__
+   __atomic_store_n(&g_art_online_busy,
+                    (online_active() || link_is_active()) ? 1 : 0,
+                    __ATOMIC_RELEASE);
+#endif
    upd_poll(idle, (time_t)plat_wallclock());
    update_say(1);
 }

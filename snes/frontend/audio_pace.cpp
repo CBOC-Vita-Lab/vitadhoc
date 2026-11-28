@@ -290,9 +290,9 @@ void Pacer::render_new(int16_t *out)
 	double tgt = target_ms_ * inframes_per_ms;
 
 	if (!primed_) {
-		/* not playing: priming waits for half the cushion */
+		/* not playing: priming waits for 75% of the cushion (~52 ms) so startup hitches do not immediately underrun */
 		const double fill = (double) (w - r);
-		if (fill >= tgt * 0.5) {
+		if (fill >= tgt * 0.75) {
 			primed_ = true;
 			fadein_left_ = FADE;
 			ema_ = fill;
@@ -330,9 +330,10 @@ void Pacer::render_new(int16_t *out)
 		else if (slow_ && sp > kSlowLeave) slow_ = false;
 		if (!fast_ && sp > kFastEnter) { fast_ = true; slow_ = false; }
 		else if (fast_ && sp < kFastLeave) fast_ = false;
-		if (slow_) base_ = sp > kSlowFloor ? sp : kSlowFloor;
-		else if (fast_) base_ = sp < kFastCeil ? sp : kFastCeil;
-		else base_ = 1.0;
+		const double want_base = slow_ ? (sp > kSlowFloor ? sp : kSlowFloor)
+		                       : fast_ ? (sp < kFastCeil ? sp : kFastCeil)
+		                       : 1.0;
+		base_ += (want_base - base_) * 0.12;
 		const double err = (ema_ - tgt) / tgt;     /* >0: too full, consume faster */
 		const double p = clampd(err * cfg_.kp_ppm, -kPclamp, kPclamp);
 		integ_ppm_ = clampd(integ_ppm_ + err * cfg_.ki_ppm_per_grain, -kIclamp, kIclamp);

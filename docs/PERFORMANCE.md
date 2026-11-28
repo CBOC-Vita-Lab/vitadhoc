@@ -1,5 +1,20 @@
 # Performance
 
+## 2.0.1 Real PS Vita Hardware Results
+
+Measured on 2026-11-27 on a physical PS Vita running VitAdhoc `2.0.1` in both 4-core Auto and forced 3-core (`threads.ini` stock) configurations.
+
+| Measurement | Before (`2.0` / initial `2.0.1`) | After (`2.0.1` final) | Notes |
+| --- | --- | --- | --- |
+| **Mega Drive:** Core 3 watchdog (`Gunstar Heroes`, `Sonic 2`) | Tripped at `t=4s` (`writer=886 ms/s`) | **0 watchdog trips**, `writer=25 ms/s` (**35x lower**) | Watchdog monitors `md_audio` only; writer spinlock released before `speed_pack()`; NEON rewind delta encoding |
+| **Mega Drive:** *Gunstar Heroes* (4-core & 3-core) | 30 fps stalls, audio crackle | **Locked 59.8-60.0 fps** (`over=0`, `max=6.8-11.3 ms`, **0 underruns**) | 3 s `LookGovernor` step-down (`down_s=2, force_s=1`), deferred rewind capture, audio pacer `0.75` priming |
+| **SNES:** *Rock 'n' Roll Racing* (3-core stock) | Slowdowns, audio issues | **Locked 59.9-60.0 fps** (`over=0`, `max=3.2-6.7 ms`, **0 underruns**) | `Quick response: Auto` held off on 3-core, writer spinlock & VBlank accounting fixed |
+| **SNES:** *Super Mario RPG* (3-core & 4-core) | Slowdowns, 7 s LookGovernor delay | **Locked 59.9-60.0 fps** (`over=0`, `max=5.7-15.0 ms`, **0 underruns**) | Rewind `interval_min=10`, `PACE_HALF` poll fix (`S9xPPUMTVideoPoll`), 3 s LookGovernor |
+| **Covers:** Live Vita Wi-Fi download (Genesis 713-ROM shelf) | 0 covers in `2.0` (404 outage); `2,019 ms/cover` initial mirror | **`1,368-1,452 ms/cover`** (32% faster; `v3 -> v4` miss recovery) | TLS 1.3 `NewSessionTicket` keep-alive + DNS cache, Core 2 prefetch + Core 1 decode/save (`-O3`), 0 FAT32 `stat()` scans in `save()`, single-syscall `open`/`write`/`close` |
+| **Home menu SD I/O during live cover downloads** | `stat=528.2 ms`, `read=1,426.3 ms`, `max_io=244.3 ms` | **`stat=0.80 ms` (660x faster), `read=97.4 ms` (14.6x faster), `max_io=19.5 ms` (12.5x faster)** | Eliminated 6 FAT32 `stat()` scans per cover and 56-call chunked stdio writes |
+
+---
+
 ## 2.0 Real PS Vita Hardware Results (`rc7`)
 
 Measured on 2026-11-27 on a physical PS Vita running VitAdhoc `2.0 rc7` (500 MHz via PSVshell, 4-core Auto, default settings: Wide View Auto, Image quality Auto, Fit screen, Ambient Glow 5/10). All timings come directly from on-console telemetry logs (`gbadhoc.log`, `snes/player.log`, `md/player.log`).

@@ -208,6 +208,7 @@ static void core4_repin(const char *why)
 	} else {
 		g_wd_audio = -1;
 	}
+	if (g_pl) g_pl->set_ahead_auto_hold(!g_cores->core3_usable());
 	char c[220];
 	g_cores->census_line(c, sizeof c);
 	logf_("%s rc=%08x\n%s\n", why, rc, c);
@@ -538,7 +539,7 @@ static bool g_next_mix;                            /* the inline fetch: the next
 /* Where the next picture comes from (the wide view's frame or the core's own); false when there is nothing new. The three
  * "seen" values are the caller's memory of what it took last: the drawing side's globals when the picture is fetched
  * inline, the emulating thread's own copies when it goes through the hand-over mailbox. */
-static bool video_source(PicSrc *s, unsigned norm_seen, unsigned wide_seen, int shown_wide)
+static bool video_source(PicSrc *s, unsigned norm_seen, unsigned wide_seen, int shown_wide, bool submit = true)
 {
 	int w = 256, h = 224, pitch = 0;
 	unsigned serial = 0;
@@ -556,7 +557,8 @@ static bool video_source(PicSrc *s, unsigned norm_seen, unsigned wide_seen, int 
 		}
 	}
 	if (!is_wide) {
-		src = snes_host_video_nowait(&w, &h, &pitch, &serial);
+		src = submit ? snes_host_video_nowait(&w, &h, &pitch, &serial)
+		             : snes_host_video_poll(&w, &h, &pitch, &serial);
 		if (!src || (serial == norm_seen && !shown_wide)) return false;
 	}
 	s->p = src; s->w = w; s->h = h; s->pitch = pitch; s->serial = serial; s->is_wide = is_wide; s->mix = false;
@@ -576,10 +578,10 @@ static bool pal_pure_src(PicSrc *s)
 	return true;
 }
 
-static int video_fetch(const pic_settings &ps, int frame_no)
+static int video_fetch(const pic_settings &ps, int frame_no, bool submit = true)
 {
 	PicSrc s;
-	if (!video_source(&s, g_norm_seen, g_wide_seen, g_src_wide)) return 0;
+	if (!video_source(&s, g_norm_seen, g_wide_seen, g_src_wide, submit)) return 0;
 	s.mix = g_next_mix; g_next_mix = false;
 	return video_upload(ps, frame_no, s);
 }
@@ -1177,22 +1179,28 @@ static int hd_draw_thread(SceSize, void *)
 		}
 		const pic_settings ps = g_pl->picture();     /* one copy for this picture: the game thread may ease the look meanwhile */
 		if (have) video_upload(ps, (int) f->seq, s);
+		uint64_t swap_us = 0;
 		bool drew = false;
-		for (int tries = 0; tries < 4 && !drew; tries++) {
-			if (tries) sceDisplayWaitVblankStart();       /* the display queue was full: the picture is not dropped for it */
+		int tries = 0;
+		for (; tries < 4 && !drew; tries++) {
+			if (tries) sceDisplayWaitVblankStart();       /* the display queue was full: keep retry wait in dt so GPU stalls remain visible */
 			drew = frame_draw(ps, 1, (int) f->seq);
 		}
-		auto finish_pic = [&]() {
+		auto finish_pic = [&](uint64_t *swap_out) {
 			if (g_hd_notice_on.load()) {
 				pk::Notices n;
 				{ pk::SpinGuard g(g_hd_lk); n = g_hd_notices; }
 				if (n.active()) { n.draw(g_gfx, g_text, PK_HEX(0x7B6CFF, 255), 26, true); g_text->frame(); }
 			}
-			frame_finish();
+			vita2d_end_drawing();
+			const uint64_t s0 = sceKernelGetProcessTimeWide();
+			vita2d_swap_buffers();
+			if (swap_out) *swap_out = sceKernelGetProcessTimeWide() - s0;
 			g_hd_drawn++;
 		};
-		if (drew) finish_pic(); else g_hd_failed++;
-		const uint64_t dt = sceKernelGetProcessTimeWide() - t0;       /* the cost reported is this picture's own draw, not the repeat after it */
+		if (drew) finish_pic(tries <= 1 ? &swap_us : NULL); else g_hd_failed++;
+		const uint64_t raw_dt = sceKernelGetProcessTimeWide() - t0;       /* exclude normal VSync swap wait; keep GPU-full retry waits */
+		const uint64_t dt = raw_dt > swap_us ? raw_dt - swap_us : 0;
 		g_hd_draw_us += (unsigned) dt;
 		g_hd_cum_us += (unsigned) dt;
 		g_hd_cum_n += 1;
@@ -1202,7 +1210,7 @@ static int hd_draw_thread(SceSize, void *)
 				if (pal_pure_src(&pure) && video_upload(ps, (int) f->seq, pure)) {
 					bool d2 = false;
 					for (int tries = 0; tries < 4 && !d2; tries++) { sceDisplayWaitVblankStart(); d2 = frame_draw(ps, 1, (int) f->seq); }
-					if (d2) finish_pic();
+					if (d2) finish_pic(NULL);
 				}
 		}
 		g_pipe.box().release(f, (uint32_t) (dt > 0xFFFFFFFFull ? 0xFFFFFFFFu : dt));
@@ -1578,6 +1586,7 @@ int main(int argc, char **argv)
 	/* worker threads: switches in threads.ini (apu_thread, ppu_thread, spin); on by default */
 	const char *tini = DATA_ROOT "/threads.ini";
 	core4_start(tini);
+	g_pl->set_ahead_auto_hold(!g_cores->core3_usable());
 	int want_apu = ini_int(tini, "apu_thread", 1), want_ppu = ini_int(tini, "ppu_thread", 1);
 	int spin = ini_int(tini, "spin", 300);
 	{
@@ -1819,14 +1828,16 @@ int main(int argc, char **argv)
 				g_s9xp.cur = S9XP_CPU; g_s9xp.sp = 0; g_s9xp.on = 1; g_s9xp.last = s9xp_now();
 			}
 #endif
+			bool stepped = true;
 			g_emu_busy.store(1, std::memory_order_seq_cst);
 			if (g_link) {
 				/* both players' buttons are needed for a frame: a late partner is a stall (no frame this refresh) */
 				const int lr = g_link->step((uint16_t) g_pl->link_pad());
 				if (lr == snesnet::STEP_OVER) { why = pk::EXIT_GAME_LIST; link_over = true; emu_idle_wake_helpers(); break; }
 				if (lr != snesnet::STEP_FRAME) { emu_idle_wake_helpers(); break; }
-			} else g_pl->run_frame(render);
+			} else stepped = g_pl->run_frame(render);
 			emu_idle_wake_helpers();
+			const bool did_render = stepped && (render || (!g_link && g_pl->speed().rewinding()));
 #ifdef S9X_PROF
 			if (prof_this) {
 				s9xp_enter(S9XP_FRONT); s9xp_leave();
@@ -1864,15 +1875,15 @@ int main(int argc, char **argv)
 							if (g_pipe.put_snap(wsnap, wser, np_, nw, nh, np, (int) (wser & 0x1FFFFFFFu), (uint32_t) frames_run, (uint32_t) render_emu_us) > 0) fresh = true;
 							else { snes_wide_snap_release(wsnap, wser); break; }
 						}
-					} else if (video_source(&ps_src, g_hd_norm_seen, g_hd_wide_seen, g_hd_src_wide)) {
-						const int user = (ps_src.is_wide ? 0x40000000 : 0) | (mix_early && render ? 0x10000000 : 0) | (int) (ps_src.serial & 0x0FFFFFFFu);
+					} else if (video_source(&ps_src, g_hd_norm_seen, g_hd_wide_seen, g_hd_src_wide, did_render)) {
+						const int user = (ps_src.is_wide ? 0x40000000 : 0) | (mix_early ? 0x10000000 : 0) | (int) (ps_src.serial & 0x0FFFFFFFu);
 						if (g_pipe.put(ps_src.p, ps_src.w, ps_src.h, ps_src.pitch, user, (uint32_t) frames_run, (uint32_t) render_emu_us) > 0) {
 							if (ps_src.is_wide) g_hd_wide_seen = ps_src.serial; else g_hd_norm_seen = ps_src.serial;
 							g_hd_src_wide = ps_src.is_wide ? 1 : 0;
 							fresh = true;
 						}
 					}
-				} else { g_next_mix = mix_early && render; if (video_fetch(g_pl->picture(), frames_run)) fresh = true; g_next_mix = false; }
+				} else { g_next_mix = mix_early; if (video_fetch(g_pl->picture(), frames_run, did_render)) fresh = true; g_next_mix = false; }
 				fetch_us += sceKernelGetProcessTimeWide() - f0;
 			}
 			g_pl->after_frame(sceKernelGetProcessTimeWide());

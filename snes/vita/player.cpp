@@ -68,23 +68,28 @@ bool Writer::work_one(SnesPlayer *p)
 	WriterJob *j = 0;
 	{
 		SpinGuard g(lk_);
-		if (todo_.empty()) { return p->speed_pack(); }     /* nothing to write: pack the newest rewind state, if one waits */
-		j = todo_.front();
-		todo_.erase(todo_.begin());
-		running_++;
+		if (!todo_.empty()) {
+			j = todo_.front();
+			todo_.erase(todo_.begin());
+			running_++;
+		}
 	}
+	if (!j) return p->speed_pack();     /* nothing to write: pack the newest rewind state without holding lk_ */
 	p->run_writer_job(j);
 	SpinGuard g(lk_);
 	running_--;
 	done_.push_back(j);
+	done_n_.store(done_.size(), std::memory_order_release);
 	return true;
 }
 
 void Writer::take_done(std::vector<WriterJob *> &out)
 {
+	if (done_n_.load(std::memory_order_acquire) == 0) return;
 	SpinGuard g(lk_);
 	out.insert(out.end(), done_.begin(), done_.end());
 	done_.clear();
+	done_n_.store(0, std::memory_order_release);
 }
 
 bool Writer::idle()
@@ -977,7 +982,8 @@ void SnesPlayer::speed_start()
 {
 	/* a linked game steps both machines in lockstep: neither rewind nor fast forward */
 	if (linked()) speed_.set_locked(true, "rewind.rewind_is_off_while_games_are");
-	speed_.start(snes_host_is_pal() ? 50.0 : 60.0988, 4, speed_settings());
+	/* an SNES state is ~824 KB: 10 frames between captures (~6/s) keeps rewind smooth while cutting state-copy and delta-pack load by 2.5x */
+	speed_.start(snes_host_is_pal() ? 50.0 : 60.0988, 10, speed_settings());
 	speed_.rewind().set_async(pf_->wake_writer(), &SpeedGlue::wake, &glue_);
 	logf("%s (state %u bytes, %d s, %d MB)\n", speed_.stats_line().c_str(), (unsigned) snes_host_state_size(), rewind_len_ ? 60 : 30, rewind_mb_);
 	ahead_.set_frame_us(snes_host_is_pal() && !pal_fast() ? 20000u : 16683u);       /* a PAL game at 50 Hz has a 50 Hz frame's time */
@@ -986,11 +992,20 @@ void SnesPlayer::speed_start()
 
 /* ---- Quick response (run-ahead) -------------------------------------------------------------------------------------------- */
 
+void SnesPlayer::set_ahead_auto_hold(bool hold)
+{
+	if (ahead_auto_hold_ == hold) return;
+	ahead_auto_hold_ = hold;
+	ahead_update_blocked();
+}
+
 void SnesPlayer::ahead_update_blocked()
 {
 	/* never in a linked game (two machines in lockstep), under fast forward or rewind, while steady pacing shows every second frame,
-	 * while the Super FX chip is slowed to keep the game at full speed, or with a cartridge the light snapshot does not cover */
-	ahead_.set_blocked(linked() || speed_.busy() || pacer_.mode() == PACE_HALF || ahead_hold_ || !snes_host_ahead_possible());
+	 * while the Super FX chip is slowed to keep the game at full speed, in Auto mode on a 3-core Vita (APU and PPU have no spare core
+	 * for running two SNES frames per refresh), or with a cartridge the light snapshot does not cover */
+	const bool hold_3core = (quick_ == 1 && ahead_auto_hold_);
+	ahead_.set_blocked(linked() || speed_.busy() || pacer_.mode() == PACE_HALF || ahead_hold_ || hold_3core || !snes_host_ahead_possible());
 }
 
 void SnesPlayer::set_quick(int mode)
@@ -999,7 +1014,8 @@ void SnesPlayer::set_quick(int mode)
 	ahead_.set_mode(quick_);
 	ahead_update_blocked();
 	const char *why = snes_host_ahead_why();
-	logf("quick response: %s%s%s%s\n", quick_ == 0 ? "off" : quick_ == 1 ? "auto" : "on", *why ? " (not for this game: " : "", why, *why ? ")" : "");
+	const char *core_note = (quick_ == 1 && ahead_auto_hold_ && !*why) ? " (held off on 3-core)" : "";
+	logf("quick response: %s%s%s%s%s\n", quick_ == 0 ? "off" : quick_ == 1 ? "auto" : "on", *why ? " (not for this game: " : "", why, *why ? ")" : "", core_note);
 }
 
 void SnesPlayer::ahead_cost(uint32_t emu_us)
@@ -1052,7 +1068,7 @@ void SnesPlayer::ra_begin(const uint8_t *rom, size_t n)
 	h.online = &SnesPlayer::ra_online;
 	h.log = &SnesPlayer::ra_log;
 	h.ud = this;
-	if (!ra_.boot(root_.c_str(), ra_server_.empty() ? 0 : ra_server_.c_str(), "2.0", h)) return;       /* no account on file: nothing runs */
+	if (!ra_.boot(root_.c_str(), ra_server_.empty() ? 0 : ra_server_.c_str(), "2.0.1", h)) return;       /* no account on file: nothing runs */
 	ra_.game_begin(rom, n, pk::RA_SNES);
 }
 
@@ -1748,6 +1764,10 @@ void SnesPlayer::look_start(int mhz)
 	look_bad_ = false;
 	look_pace_reset();
 	look_mhz_ = mhz;
+	LookConfig lc;
+	lc.down_s = 2;
+	lc.force_s = 1;
+	look_.configure(lc);
 	look_.set_ladder(kLookLadder, kLookRungs);
 	look_on_ = true;
 	look_sync_rows();

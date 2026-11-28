@@ -832,6 +832,17 @@ const uint16 *S9xPPUMTVideo(int *w, int *h)
 	return out_pic[slot];
 }
 
+const uint16 *S9xPPUMTVideoPoll(int *w, int *h, unsigned *serial)
+{
+	unsigned n = frames_done.load(std::memory_order_acquire);
+	*serial = n;
+	if (!n) return NULL;
+	int slot = (n - 1) % NOUT;
+	*w = out_w[slot];
+	*h = out_h[slot];
+	return out_pic[slot];
+}
+
 const uint16 *S9xPPUMTVideoNoWait(int *w, int *h, unsigned *serial)
 {
 	{
@@ -842,13 +853,7 @@ const uint16 *S9xPPUMTVideoNoWait(int *w, int *h, unsigned *serial)
 		s.h = *h;
 		release();
 	}
-	unsigned n = frames_done.load(std::memory_order_acquire);
-	*serial = n;
-	if (!n) return NULL;
-	int slot = (n - 1) % NOUT;
-	*w = out_w[slot];
-	*h = out_h[slot];
-	return out_pic[slot];
+	return S9xPPUMTVideoPoll(w, h, serial);
 }
 
 void S9xMTSetSpin(int iterations)

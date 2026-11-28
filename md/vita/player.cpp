@@ -68,23 +68,28 @@ bool Writer::work_one(MdPlayer *p)
 	WriterJob *j = 0;
 	{
 		SpinGuard g(lk_);
-		if (todo_.empty()) { return p->speed_pack(); }     /* nothing to write: pack the newest rewind state, if one waits */
-		j = todo_.front();
-		todo_.erase(todo_.begin());
-		running_++;
+		if (!todo_.empty()) {
+			j = todo_.front();
+			todo_.erase(todo_.begin());
+			running_++;
+		}
 	}
+	if (!j) return p->speed_pack();     /* nothing to write: pack the newest rewind state without holding lk_ */
 	p->run_writer_job(j);
 	SpinGuard g(lk_);
 	running_--;
 	done_.push_back(j);
+	done_n_.store(done_.size(), std::memory_order_release);
 	return true;
 }
 
 void Writer::take_done(std::vector<WriterJob *> &out)
 {
+	if (done_n_.load(std::memory_order_acquire) == 0) return;
 	SpinGuard g(lk_);
 	out.insert(out.end(), done_.begin(), done_.end());
 	done_.clear();
+	done_n_.store(0, std::memory_order_release);
 }
 
 bool Writer::idle()
@@ -1223,9 +1228,9 @@ void MdPlayer::speed_start()
 {
 	/* a linked game steps both machines in lockstep: neither rewind nor fast forward */
 	if (linked()) speed_.set_locked(true, "rewind.rewind_is_off_while_games_are");
-	/* a disc's state is about 1 MB (a cartridge's 0.15 MB): a capture every 4 frames, not 2, halves what the emulating thread spends on rewind (the
-	 * state copy is a few ms on a Vita, an estimate); the ring stretches the interval further when the picture changes much (FMV) */
-	speed_.start(md_host_fps(), scd_ ? 4 : 2, speed_settings());
+	/* a disc's state is about 1 MB (a cartridge's 0.15 MB): 10 frames on Sega CD (~6/s) and 4 frames on cartridges (~15/s) keeps rewind smooth
+	 * while cutting state-copy and delta-pack overhead; the ring stretches the interval further when the picture changes much (FMV) */
+	speed_.start(md_host_fps(), scd_ ? 10 : 4, speed_settings());
 	ahead_.set_frame_us((uint32_t) (1e6 / md_host_fps() + 0.5));
 	set_quick(quick_);
 	/* with a writer thread the rewind states are packed there (the game thread only copies the state); without one capture_commit packs at once */
@@ -1248,7 +1253,7 @@ void MdPlayer::ra_begin(const uint8_t *rom, size_t n)
 	h.online = &MdPlayer::ra_online;
 	h.log = &MdPlayer::ra_log;
 	h.ud = this;
-	if (!ra_.boot(root_.c_str(), ra_server_.empty() ? 0 : ra_server_.c_str(), "2.0", h)) return;       /* no account on file: nothing runs */
+	if (!ra_.boot(root_.c_str(), ra_server_.empty() ? 0 : ra_server_.c_str(), "2.0.1", h)) return;       /* no account on file: nothing runs */
 	ra_.game_begin(rom, n, md_host_ra_console());
 }
 
@@ -1987,6 +1992,10 @@ void MdPlayer::look_start(int mhz)
 	look_bad_ = false;
 	look_pace_reset();
 	look_mhz_ = mhz;
+	LookConfig lc;
+	lc.down_s = 2;
+	lc.force_s = 1;
+	look_.configure(lc);
 	md_video_info vi;
 	md_host_video_info(&vi);
 	look_ceiling_ = pic_scaler_ceiling(system_, vi.native_w, vi.native_h);

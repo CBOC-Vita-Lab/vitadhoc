@@ -4074,6 +4074,16 @@ def t_preview(S):
 
 # ---- the update check and "Save clip" (2.0) -------------------------------------
 
+def _online_app_version():
+    hdr = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "online_vita.h")
+    m = re.search(r'#define\s+ONLINE_APP_VERSION\s+"([^"]+)"', open(hdr).read())
+    return m.group(1) if m else "2.0.1"
+
+
+_APP_VER = _online_app_version()
+_APP_VER_SHORT = ".".join(_APP_VER.split(".")[:2])
+
+
 class UpdateServer:
     """A fake of GitHub's releases API on the loopback (never the real one).
     Each path answers one way; every request is recorded (path, headers)."""
@@ -4082,8 +4092,8 @@ class UpdateServer:
         "newer": b'{"url":"u","author":{"login":"x","tag_name":"v9.9"},"tag_name":"v2.1",'
                  b'"name":"VitAdhoc 2.1","draft":false,"prerelease":false,'
                  b'"assets":[{"name":"VitAdhoc.vpk"}],"body":"notes } ]"}',
-        "same": b'{"tag_name":"v2.0.0","draft":false,"prerelease":false}',
-        "same2": b'{"tag_name":"2.0","draft":false,"prerelease":false}',
+        "same": ('{"tag_name":"v%s","draft":false,"prerelease":false}' % _APP_VER).encode(),
+        "same2": ('{"tag_name":"%s","draft":false,"prerelease":false}' % _APP_VER).encode(),
         "older": b'{"tag_name":"v1.4","draft":false,"prerelease":false}',
         "garbage": b"<html><body>Sign in to the Wi-Fi</body></html>",
         "prerelease": b'{"tag_name":"v9.0","draft":false,"prerelease":true}',
@@ -4162,15 +4172,15 @@ def t_update_check(S):
         S.check(len(srv.requests) == 1 and srv.requests[0][0] == "/newer",
                 "the home screen idle: one request (%s)" % [q[0] for q in srv.requests])
         h = {k.lower(): v for k, v in srv.requests[0][1].items()} if srv.requests else {}
-        S.check(h.get("user-agent") == "VitAdhoc/2.0.0 (PlayStation Vita)",
+        S.check(h.get("user-agent") == "VitAdhoc/%s (PlayStation Vita)" % _APP_VER,
                 "the User-Agent is the app's own, the one online play set up (the check does "
                 "not change it under the room client), and nothing says who the player is "
                 "(%s)" % h.get("user-agent"))
         S.check(not ({"cookie", "authorization", "x-device-id"} & set(h)) and
                 set(h) <= {"host", "user-agent", "accept", "accept-encoding", "connection"},
                 "no cookie, account or id: only the client's standard headers (%s)" % sorted(h))
-        S.check(r.has(r"^EVT update_check newer latest=2\.1 mine=2\.0\.0$"),
-                "2.1 is newer than 2.0.0")
+        S.check(r.has(r"^EVT update_check newer latest=2\.1 mine=%s$" % re.escape(_APP_VER)),
+                "2.1 is newer than %s" % _APP_VER)
         toast = r.evt("update_toast")
         S.check(len(toast) == 1 and toast[0]["by_hand"] == "0" and
                 toast[0]["text"] == '"VitAdhoc 2.1 is out: get it with the CBOC Vita Installer '
@@ -4215,7 +4225,7 @@ def t_update_check(S):
         r = upd_run(S, "update_dayafter", srv, "same", files={"update.txt": old})
         S.clean(r)
         S.check(len(srv.requests) == n0 + 1 and
-                r.has(r"^EVT update_check current latest=2\.0\.0 mine=2\.0\.0$") and
+                r.has(r"^EVT update_check current latest=%s mine=%s$" % (re.escape(_APP_VER), re.escape(_APP_VER))) and
                 not r.evt("update_toast"),
                 "a day later it asks again; the same version says nothing")
         n1 = len(srv.requests)

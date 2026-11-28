@@ -501,6 +501,21 @@ const uint16_t *snes_host_video_snapshot(int *w, int *h)
 	return g_snap_w ? &g_snap[0] : NULL;
 }
 
+const uint16_t *snes_host_video_poll(int *w, int *h, int *pitch, unsigned *serial)
+{
+	if (!S9xPPUMTActive()) {
+		*serial = 0;
+		return NULL;
+	}
+	int pw = g_vw, ph = g_vh;
+	unsigned sr = 0;
+	const uint16_t *pic = S9xPPUMTVideoPoll(&pw, &ph, &sr);
+	*serial = sr;
+	if (!pic) return NULL;
+	*w = pw; *h = ph; *pitch = (int) MAX_SNES_WIDTH * 2;
+	return pic;
+}
+
 const uint16_t *snes_host_video_nowait(int *w, int *h, int *pitch, unsigned *serial)
 {
 	if (S9xPPUMTActive()) {
